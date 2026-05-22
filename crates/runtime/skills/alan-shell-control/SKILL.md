@@ -51,7 +51,7 @@ alan shell pane list
 alan shell pane snapshot --pane <id>
 alan shell pane focus --pane <id>
 alan shell pane split --pane <id> --direction <horizontal|vertical>
-alan shell pane send-text --pane <id> --text "..."
+alan shell terminal send-text --pane <id> --text "..."
 alan shell space create --cwd <path>
 alan shell space open-alan --cwd <path>
 alan shell attention inbox

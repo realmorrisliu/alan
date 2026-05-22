@@ -447,6 +447,11 @@ enum ShellAction {
         #[command(subcommand)]
         action: ShellPaneAction,
     },
+    /// Operate on terminal content
+    Terminal {
+        #[command(subcommand)]
+        action: ShellTerminalAction,
+    },
     /// Attention inbox and overrides
     Attention {
         #[command(subcommand)]
@@ -665,11 +670,30 @@ enum ShellPaneAction {
         #[command(flatten)]
         target: ShellTargetArgs,
     },
-    /// Send text to a pane
+    /// Deprecated alias for `terminal send-text --pane`
+    #[command(hide = true)]
     SendText {
         /// Pane id to target
         #[arg(long)]
         pane: String,
+        /// Text to send
+        #[arg(long)]
+        text: String,
+        #[command(flatten)]
+        target: ShellTargetArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShellTerminalAction {
+    /// Send text to terminal content
+    SendText {
+        /// PaneSlot id to resolve to terminal content
+        #[arg(long, conflicts_with = "content")]
+        pane: Option<String>,
+        /// Terminal content id to target directly
+        #[arg(long, conflicts_with = "pane")]
+        content: Option<String>,
         /// Text to send
         #[arg(long)]
         text: String,
@@ -1132,6 +1156,24 @@ async fn main() -> Result<()> {
                 ShellPaneAction::SendText { pane, text, target } => {
                     cli::shell::run_shell_pane_send_text(
                         &pane,
+                        &text,
+                        shell_target_options(target),
+                    )?;
+                }
+            },
+            ShellAction::Terminal { action } => match action {
+                ShellTerminalAction::SendText {
+                    pane,
+                    content,
+                    text,
+                    target,
+                } => {
+                    if pane.is_none() && content.is_none() {
+                        anyhow::bail!("terminal send-text requires --pane or --content");
+                    }
+                    cli::shell::run_shell_terminal_send_text(
+                        pane.as_deref(),
+                        content.as_deref(),
                         &text,
                         shell_target_options(target),
                     )?;

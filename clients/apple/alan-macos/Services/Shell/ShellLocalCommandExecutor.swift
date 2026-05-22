@@ -582,7 +582,7 @@ enum AlanShellLocalCommandExecutor {
              .paneZoom, .paneUnzoom:
             return nil
 
-        case .paneSendText:
+        case .terminalSendText:
             return nil
 
         case .agentActivity:

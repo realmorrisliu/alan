@@ -13,7 +13,7 @@
 - [x] 2.2 Wrap terminal rendering and runtime attachment behind a terminal ContentInstance adapter that resolves the current PaneSlot mount point.
 - [x] 2.3 Move terminal metadata projection for cwd, title, process status, alan binding, surface readiness, and attention into the terminal content adapter boundary.
 - [x] 2.4 Ensure close PaneSlot, close tab, lifecycle retirement, PaneSlot move, PaneSlot lift, content replacement, and app shutdown finalize or preserve terminal runtimes according to content lifecycle specs.
-- [ ] 2.5 Replace `pane.send_text` surfaces with `terminal.send_text` while keeping PaneSlot as an optional convenience target that resolves to terminal ContentInstance before runtime delivery.
+- [x] 2.5 Replace `pane.send_text` surfaces with `terminal.send_text` while keeping PaneSlot as an optional convenience target that resolves to terminal ContentInstance before runtime delivery.
 - [ ] 2.6 Preserve existing terminal input, search, paste, terminal text delivery, reattachment, and pending delivery behavior through focused content-keyed runtime tests.
 
 ## 3. Non-Terminal Content Surfaces

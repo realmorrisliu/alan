@@ -210,6 +210,7 @@ final class AlanShellControlPlane {
         spaceID: String?,
         tabID: String?,
         paneID: String,
+        contentID: String,
         delivery: TerminalRuntimeDeliveryResult
     ) {
         eventStore.recordTextDelivery(
@@ -217,6 +218,7 @@ final class AlanShellControlPlane {
             spaceID: spaceID,
             tabID: tabID,
             paneID: paneID,
+            contentID: contentID,
             delivery: delivery
         )
     }

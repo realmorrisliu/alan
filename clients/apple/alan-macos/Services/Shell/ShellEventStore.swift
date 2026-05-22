@@ -48,10 +48,12 @@ final class AlanShellEventStore {
         spaceID: String?,
         tabID: String?,
         paneID: String,
+        contentID: String,
         delivery: TerminalRuntimeDeliveryResult
     ) {
         var payload: [String: AlanShellJSONValue] = [
             "request_id": .string(requestID),
+            "content_id": .string(contentID),
             "delivery_code": .string(delivery.code.rawValue),
             "accepted_bytes": .number(Double(delivery.acceptedBytes))
         ]
@@ -66,7 +68,7 @@ final class AlanShellEventStore {
         }
 
         append(
-            type: "pane.text_delivery",
+            type: "terminal.text_delivery",
             spaceID: spaceID,
             tabID: tabID,
             paneID: paneID,

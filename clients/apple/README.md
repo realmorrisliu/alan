@@ -157,7 +157,7 @@ for your terminal on first use.
 - External Ghostty artifact cache plus ignored local links and app-bundled
   resources/terminfo
 - Window-scoped file/socket shell control plane with pane lifecycle events,
-  bounded socket requests, diagnostic surfacing, and truthful `pane.send_text`
+  bounded socket requests, diagnostic surfacing, and truthful `terminal.send_text`
   delivery results
 
 ### Mobile (iOS)
