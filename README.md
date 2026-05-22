@@ -1,6 +1,17 @@
-# alan
+# Alan
 
-**alan** is a Rust-native Agent Runtime built around the **AI Turing Machine** metaphor — a state machine where LLMs drive transitions while the runtime manages tape (context), tooling, and persistence.
+**Alan is an agent-native computer for software work.**
+
+Alan is a local-first environment where a real terminal, an agent runtime,
+workspace memory, governed tools, and native clients are designed as one
+closed-loop experience. The goal is not to bolt an assistant onto a terminal,
+but to give agents their own working environment: a place where they can see
+project context, act through tools, remember durable facts, recover sessions,
+and work alongside the developer in the same workspace.
+
+At the runtime layer, `alan` is built around the **AI Turing Machine** metaphor:
+a state machine where LLMs drive transitions while the runtime manages tape
+(context), tooling, governance, and persistence.
 
 > **⚠️ Project Status: Early Development**
 >
@@ -12,9 +23,9 @@
 
 ---
 
-## Core Concept: AI Turing Machine
+## Architecture Premise: AI Turing Machine
 
-alan models AI agents as **Turing machines**: LLM generation is the transition
+At its core, `alan` models AI agents as **Turing machines**: LLM generation is the transition
 function, the tape is the conversation/context state, and tools are the side
 effects. That computation model sits inside a separate hosting model:
 
