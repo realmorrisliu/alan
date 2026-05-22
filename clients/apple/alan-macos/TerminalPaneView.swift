@@ -1011,13 +1011,19 @@ private struct ShellMarkdownContentView: View {
     let descriptor: ShellContentRenderDescriptor
     @State private var renderedContent = AttributedString("")
     @State private var loadError: String?
+    @State private var isLoading = false
 
     var body: some View {
         ZStack {
             ShellPalette.workspace
 
             ScrollView {
-                if let loadError {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .padding(24)
+                } else if let loadError {
                     VStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 20, weight: .medium))
@@ -1040,30 +1046,79 @@ private struct ShellMarkdownContentView: View {
                 }
             }
         }
-        .onAppear(perform: loadMarkdown)
+        .task(id: markdownSource) {
+            await loadMarkdown()
+        }
     }
 
-    private func loadMarkdown() {
+    @MainActor
+    private func loadMarkdown() async {
         guard let fileURL else {
             renderedContent = AttributedString("")
             loadError = "Unable to open this document."
+            isLoading = false
             return
         }
 
-        do {
-            let markdown = try String(contentsOf: fileURL, encoding: .utf8)
-            renderedContent = (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+        isLoading = true
+        loadError = nil
+        renderedContent = AttributedString("")
+
+        let result = await Task.detached(priority: .userInitiated) {
+            ShellMarkdownContentLoader.load(fileURL: fileURL)
+        }.value
+        guard !Task.isCancelled else { return }
+
+        isLoading = false
+        switch result {
+        case .success(let content):
+            renderedContent = content
             loadError = nil
-        } catch {
+        case .failure:
             renderedContent = AttributedString("")
             loadError = "Unable to read this document."
         }
     }
 
-    private var fileURL: URL? {
-        guard let fileURLString = descriptor.payload?.markdown?.fileURL else { return nil }
-        return URL(string: fileURLString) ?? URL(fileURLWithPath: fileURLString)
+    private var markdownSource: String {
+        descriptor.payload?.markdown?.fileURL ?? ""
     }
+
+    private var fileURL: URL? {
+        ShellMarkdownContentLoader.fileURL(from: descriptor.payload?.markdown?.fileURL)
+    }
+}
+
+private enum ShellMarkdownContentLoader {
+    static func fileURL(from rawValue: String?) -> URL? {
+        guard let rawValue else { return nil }
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let url = URL(string: value),
+           url.scheme != nil
+        {
+            return url.isFileURL ? url.standardizedFileURL : url
+        }
+
+        return URL(fileURLWithPath: NSString(string: value).expandingTildeInPath)
+            .standardizedFileURL
+    }
+
+    static func load(fileURL: URL) -> ShellMarkdownContentLoadResult {
+        do {
+            let markdown = try String(contentsOf: fileURL, encoding: .utf8)
+            let content = (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+            return .success(content)
+        } catch {
+            return .failure
+        }
+    }
+}
+
+private enum ShellMarkdownContentLoadResult {
+    case success(AttributedString)
+    case failure
 }
 
 private struct ShellContentPaneTitleBarView: View {
