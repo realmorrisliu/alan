@@ -26,7 +26,7 @@ enum AlanShellControlCommandKind: String, Codable {
     case paneEqualizeSplits = "pane.equalize_splits"
     case paneZoom = "pane.zoom"
     case paneUnzoom = "pane.unzoom"
-    case paneSendText = "pane.send_text"
+    case terminalSendText = "terminal.send_text"
     case agentActivity = "agent.activity"
     case attentionInbox = "attention.inbox"
     case attentionSet = "attention.set"
@@ -47,6 +47,7 @@ struct AlanShellControlCommand: Codable {
     let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let contentID: String?
     let splitNodeID: String?
     let ratio: Double?
     let section: ShellTabOrganizationSection?
@@ -75,6 +76,7 @@ struct AlanShellControlCommand: Codable {
         case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case contentID = "content_id"
         case splitNodeID = "split_node_id"
         case ratio
         case section
@@ -131,6 +133,7 @@ struct AlanShellControlResponse: Codable {
     let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let contentID: String?
     let section: ShellTabOrganizationSection?
     let index: Int?
     let acceptedBytes: Int?
@@ -171,6 +174,7 @@ struct AlanShellControlResponse: Codable {
         targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        contentID: String? = nil,
         section: ShellTabOrganizationSection? = nil,
         index: Int? = nil,
         acceptedBytes: Int? = nil,
@@ -210,6 +214,7 @@ struct AlanShellControlResponse: Codable {
         self.targetSpaceID = targetSpaceID
         self.tabID = tabID
         self.paneID = paneID
+        self.contentID = contentID
         self.section = section
         self.index = index
         self.acceptedBytes = acceptedBytes
@@ -251,6 +256,7 @@ struct AlanShellControlResponse: Codable {
         case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case contentID = "content_id"
         case section
         case index
         case acceptedBytes = "accepted_bytes"

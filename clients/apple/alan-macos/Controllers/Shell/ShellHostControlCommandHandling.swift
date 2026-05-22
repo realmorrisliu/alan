@@ -1,6 +1,31 @@
 import Foundation
 
 #if os(macOS)
+private struct TerminalSendTextTarget {
+    let paneSlot: ShellPaneSlot
+    let content: ShellContentInstance
+}
+
+private extension ShellContentStateSnapshot {
+    func terminalSendTextTarget(paneSlotID: String) -> TerminalSendTextTarget? {
+        guard let paneSlot = paneSlot(paneSlotID: paneSlotID),
+              let content = content(contentID: paneSlot.contentID)
+        else {
+            return nil
+        }
+        return TerminalSendTextTarget(paneSlot: paneSlot, content: content)
+    }
+
+    func terminalSendTextTarget(contentID: String) -> TerminalSendTextTarget? {
+        guard let content = content(contentID: contentID),
+              let paneSlot = paneSlots.first(where: { $0.contentID == contentID })
+        else {
+            return nil
+        }
+        return TerminalSendTextTarget(paneSlot: paneSlot, content: content)
+    }
+}
+
 @MainActor
 extension ShellHostController {
     func attentionInboxRows() -> [AlanShellAttentionInboxItem] {
@@ -107,6 +132,7 @@ extension ShellHostController {
         targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        contentID: String? = nil,
         section: ShellTabOrganizationSection? = nil,
         index: Int? = nil,
         acceptedBytes: Int? = nil,
@@ -147,6 +173,7 @@ extension ShellHostController {
             targetSpaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID,
+            contentID: contentID,
             section: section,
             index: index,
             acceptedBytes: acceptedBytes,
@@ -643,35 +670,70 @@ extension ShellHostController {
         case .paneUnzoom:
             return handlePaneUnzoomCommand(command)
 
-        case .paneSendText:
-            guard let paneID = command.paneID,
-                  let targetPane = pane(paneID: paneID)
-            else {
+        case .terminalSendText:
+            let contentState = shellState.contentStateProjection()
+            let target: TerminalSendTextTarget?
+            if let contentID = command.contentID {
+                target = contentState.terminalSendTextTarget(contentID: contentID)
+            } else if let paneID = command.paneID {
+                target = contentState.terminalSendTextTarget(paneSlotID: paneID)
+            } else {
+                target = nil
+            }
+
+            guard let target else {
+                let errorCode: String
+                if command.contentID == nil && command.paneID == nil {
+                    errorCode = "terminal_target_required"
+                } else if command.contentID != nil {
+                    errorCode = "content_not_found"
+                } else {
+                    errorCode = "pane_not_found"
+                }
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: command.paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
+                    contentID: command.contentID,
+                    errorCode: errorCode,
+                    errorMessage: "terminal.send_text requires an existing terminal content target."
+                )
+            }
+
+            guard target.content.kind == .terminal else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    spaceID: target.paneSlot.spaceID,
+                    tabID: target.paneSlot.tabID,
+                    paneID: target.paneSlot.paneSlotID,
+                    contentID: target.content.contentID,
+                    errorCode: "unsupported_content",
+                    errorMessage: "terminal.send_text requires terminal content."
                 )
             }
 
             let text = command.text ?? ""
-            let delivery = terminalRuntimeRegistry.sendText(to: paneID, text: text)
+            let delivery = terminalRuntimeRegistry.sendText(
+                toTerminalContentID: target.content.contentID,
+                text: text
+            )
             controlPlane.recordTextDelivery(
                 requestID: command.requestID,
-                spaceID: targetPane.spaceID,
-                tabID: targetPane.tabID,
-                paneID: paneID,
+                spaceID: target.paneSlot.spaceID,
+                tabID: target.paneSlot.tabID,
+                paneID: target.paneSlot.paneSlotID,
+                contentID: target.content.contentID,
                 delivery: delivery
             )
 
             return response(
                 requestID: command.requestID,
                 applied: delivery.applied,
-                spaceID: targetPane.spaceID,
-                tabID: targetPane.tabID,
-                paneID: paneID,
+                spaceID: target.paneSlot.spaceID,
+                tabID: target.paneSlot.tabID,
+                paneID: target.paneSlot.paneSlotID,
+                contentID: target.content.contentID,
                 acceptedBytes: delivery.acceptedBytes,
                 deliveryCode: delivery.code.rawValue,
                 runtimePhase: delivery.runtimePhase,

@@ -32,6 +32,8 @@ struct ShellControlCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pane_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    content_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     split_node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ratio: Option<f64>,
@@ -72,6 +74,7 @@ struct ShellControlResponse {
     space_id: Option<String>,
     tab_id: Option<String>,
     pane_id: Option<String>,
+    content_id: Option<String>,
     split_node_id: Option<String>,
     ratio: Option<f64>,
     changed_split_ids: Option<Value>,
@@ -328,13 +331,23 @@ pub fn run_shell_pane_unzoom(
     print_pretty(&response)
 }
 
-pub fn run_shell_pane_send_text(pane: &str, text: &str, options: ShellTargetOptions) -> Result<()> {
-    let mut command = build_command("pane.send_text");
-    command.pane_id = Some(pane.to_string());
+pub fn run_shell_terminal_send_text(
+    pane: Option<&str>,
+    content: Option<&str>,
+    text: &str,
+    options: ShellTargetOptions,
+) -> Result<()> {
+    let mut command = build_command("terminal.send_text");
+    command.pane_id = pane.map(str::to_owned);
+    command.content_id = content.map(str::to_owned);
     command.text = Some(text.to_string());
     let response = invoke(&options, command)?;
     ensure_success(&response)?;
     print_pretty(&response)
+}
+
+pub fn run_shell_pane_send_text(pane: &str, text: &str, options: ShellTargetOptions) -> Result<()> {
+    run_shell_terminal_send_text(Some(pane), None, text, options)
 }
 
 pub fn run_shell_attention_inbox(options: ShellTargetOptions) -> Result<()> {
@@ -419,6 +432,7 @@ fn build_command(command: &str) -> ShellControlCommand {
         space_id: None,
         tab_id: None,
         pane_id: None,
+        content_id: None,
         split_node_id: None,
         ratio: None,
         direction: None,
@@ -795,6 +809,7 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: None,
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: None,
@@ -862,6 +877,7 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_9".to_string()),
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: None,
@@ -929,6 +945,7 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_2".to_string()),
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: None,
@@ -994,6 +1011,7 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_7".to_string()),
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: None,
@@ -1043,6 +1061,7 @@ mod tests {
                 space_id: None,
                 tab_id: None,
                 pane_id: Some("pane_2".to_string()),
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: None,
@@ -1105,6 +1124,7 @@ mod tests {
                 space_id: None,
                 tab_id: Some("tab_9".to_string()),
                 pane_id: Some("pane_2".to_string()),
+                content_id: None,
                 split_node_id: None,
                 ratio: None,
                 direction: Some("vertical".to_string()),

@@ -553,7 +553,7 @@ require_pattern \
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
     "deliveryCode: String?" \
-    "pane.send_text responses must expose service delivery state"
+    "terminal.send_text responses must expose service delivery state"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
@@ -568,7 +568,7 @@ reject_pattern \
 require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "runtimePhase: delivery.runtimePhase" \
-    "pane.send_text responses must expose the service runtime phase"
+    "terminal.send_text responses must expose the service runtime phase"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
@@ -577,13 +577,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
-    "func sendText\\(to paneID: String, text: String\\)" \
+    "toTerminalContentID contentID: String" \
     "terminal text delivery must go through the runtime registry"
 
 require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
-    "terminalRuntimeRegistry\\.sendText\\(to: paneID, text: text\\)" \
-    "pane.send_text must use the registry delivery result"
+    "toTerminalContentID: target\\.content\\.contentID" \
+    "terminal.send_text must use the registry delivery result"
 
 require_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
