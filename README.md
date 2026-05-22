@@ -1,13 +1,15 @@
 # Alan
 
-**Alan is an agent-native computer for software work.**
+**Alan is an agent built to be the next computer.**
 
-Alan is a local-first environment where a real terminal, an agent runtime,
-workspace memory, governed tools, and native clients are designed as one
-closed-loop experience. The goal is not to bolt an assistant onto a terminal,
-but to give agents their own working environment: a place where they can see
-project context, act through tools, remember durable facts, recover sessions,
-and work alongside the developer in the same workspace.
+Alan starts from the premise that the next computer is not just a device people
+operate through apps, but an agent that can help humans act across the digital
+world. Here, "computer" does not mean a bare-metal machine. It means the
+complete end-to-end experience: interface, runtime, files, memory, tools,
+permissions, sessions, local state, and native clients designed as one closed
+loop. Alan starts local-first, so the agent can see context, take governed
+action, remember durable facts, recover work, and collaborate with the human in
+the same workspace.
 
 At the runtime layer, `alan` is built around the **AI Turing Machine** metaphor:
 a state machine where LLMs drive transitions while the runtime manages tape
