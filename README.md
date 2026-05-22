@@ -19,9 +19,10 @@ a state machine where LLMs drive transitions while the runtime manages tape
 >
 > This project is actively being developed. APIs may change without notice.
 >
-> Governance model note: HITE governance sections in this README reflect the accepted V2 target design and may be in migration until implementation is complete.
+> Governance model note: this README summarizes governance at a high level.
 > The authoritative current implementation contract lives in
-> `docs/governance_current_contract.md`.
+> `docs/governance_current_contract.md`; target-design material lives in
+> OpenSpec.
 
 ---
 
@@ -103,9 +104,10 @@ the primary user-facing hosting abstraction.
 ```
 alan/
 ├── crates/
+│   ├── auth/         # Managed auth storage and ChatGPT/Codex login support
 │   ├── protocol/     # Event/Op protocol definitions + ContentPart
-│   ├── llm/          # LLM provider adapters (Gemini, OpenAI, Anthropic)
-│   ├── runtime/      # Core runtime: tape, session, agent loop, skills
+│   ├── llm/          # LLM provider adapters (ChatGPT/Codex, OpenAI, Gemini, Anthropic, OpenRouter)
+│   ├── runtime/      # Core runtime: tape, session, agent loop, skills, SWE-bench tooling
 │   ├── tools/        # Builtin tool implementations
 │   └── alan/         # Unified CLI & daemon (ask, chat, workspace, daemon)
 ├── clients/
@@ -116,19 +118,21 @@ alan/
 
 ### Crates
 
-| Crate           | Role                                                                |
-| --------------- | ------------------------------------------------------------------- |
-| `alan-protocol` | Wire format — Events (output), Operations (input), ContentPart      |
-| `alan-llm`      | Pluggable LLM adapters — OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, and OpenRouter SDK-backed chat |
-| `alan-runtime`  | Core engine — session, tape, agent loop, tool registry, skills      |
-| `alan-tools`    | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
-| `alan`          | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
+| Crate                  | Role                                                                |
+| ---------------------- | ------------------------------------------------------------------- |
+| `alan-auth`            | Managed credential storage and ChatGPT/Codex login helpers          |
+| `alan-protocol`        | Wire format — Events (output), Operations (input), ContentPart      |
+| `alan-llm`             | Pluggable LLM adapters — ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, and OpenRouter SDK-backed chat |
+| `alan-runtime`         | Core engine — session, tape, agent loop, tool registry, skills      |
+| `alan-swebench-tooling` | SWE-bench workspace and suite materialization helpers               |
+| `alan-tools`           | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
+| `alan`                 | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
 
 ---
 
 ## Features
 
-- **Multi-Provider LLM**: OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, OpenRouter
+- **Multi-Provider LLM**: ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, OpenRouter
 - **Streaming Responses**: Real-time token streaming with tool call support
 - **Layered Tool Profiles**:
   - Core (default): `read_file`, `write_file`, `edit_file`, `bash`
@@ -137,11 +141,12 @@ alan/
 - **Skill System**: Markdown-based capability packages with public Codex/Claude-compatible `SKILL.md` portability, explicit activation, implicit catalog listing, progressive disclosure, and delegated child-agent execution
 - **Capability-Package Hosting**: Built-in first-party packages, agent-root `skills/` directories, and public `.agents/skills/` installs resolve into one `ResolvedCapabilityView`; packages can expose portable skills, child-agent roots, and resource directories without requiring `package.toml`
 - **Skill Management Surface**: daemon APIs expose the local skill catalog, change polling, and skill override writes
-- **Session Persistence**: Rollout recording with pause/resume/replay
-- **HITE Governance**: Humans define boundaries, policy decides (`allow/deny/escalate`), and the current execution backend applies a best-effort local guard (current backend: `workspace_path_guard` with protected subpaths and only plain shell commands with statically addressable paths; shell control flow is rejected, common wrapper forms such as `env`/`command`/`builtin`/`exec`/`time`/`nice`/`nohup`/`timeout`/`stdbuf`/`setsid` are rejected, process path references under protected subpaths are blocked, glob patterns are rejected, direct nested shell/code evaluators are disabled, direct opaque command dispatchers such as `xargs`/`find -exec` are rejected, and a curated set of common direct script interpreters such as `python file.py`/`bash script.sh`/`awk -f script.awk` are rejected; the backend checks explicit path-like argv references and redirection targets but does not infer utility-specific operand roles for arbitrary bare tokens, and arbitrary program-internal writes or dispatch such as `git init`/`git add`/`git config --local`, `find -delete`, build/task runners, or utility-specific script/DSL modes like `sed -f` are not inspected by this backend and instead rely on governance. Public session APIs report this backend as `execution_backend`.)
+- **Session Persistence**: Rollout recording with history reads, reconnect snapshots, resume, fork, rollback, and compaction hooks
+- **HITE Governance**: Humans define boundaries, policy decides (`allow/deny/escalate`), and the current execution backend reports its best-effort local guard as `execution_backend`; see `docs/governance_current_contract.md` for exact guard behavior
 - **Policy Profiles**: Builtin `autonomous`/`conservative` presets, overridable via `policy.yaml` in the resolved agent-root chain
 - **Steering-First Execution**: In-turn `input` can interrupt tool batches and reprioritize the next step
-- **WebSocket + HTTP API**: Real-time bidirectional communication
+- **WebSocket + HTTP API**: Real-time session communication plus connection, skill catalog, and relay control surfaces
+- **Shell Control Surface**: `alan shell` IPC commands expose native shell state, spaces, tabs, panes, attention, routing, and events
 - **Context Compaction**: Automatic summarization when context grows large
 - **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
 - **Thinking Support**: Optional reasoning/thinking display with canonical named effort control
@@ -157,6 +162,7 @@ budgets are derived internally from named effort presets when a provider require
 budget-shaped wire fields. Current provider behavior:
 
 - **Anthropic Messages API**: native thinking blocks, thinking signature, and redacted thinking blocks; named effort maps to provider budget presets
+- **ChatGPT/Codex managed Responses surface**: preserves reasoning text, signatures, response metadata, and cached token usage when available; named effort maps to managed request controls
 - **OpenAI Responses API**: preserves thinking metadata when available and maps named effort to `reasoning.effort`
 - **OpenAI Chat Completions API**: preserves thinking metadata when available and maps named effort to `reasoning_effort`
 - **OpenAI Chat Completions API-compatible**: chat-completions-compatible path with reasoning field support (for example `reasoning_content` and reasoning metadata)
@@ -184,7 +190,7 @@ Notes:
 
 ```bash
 git clone <repo-url>
-cd Alan
+cd alan
 cargo build --release
 
 # Or use just
@@ -243,45 +249,58 @@ supported install location.
 
 ### Configuration
 
-Create `~/.alan/agents/default/agent.toml`:
+The recommended setup path is launching `alan chat` or `alan-tui` and using the
+first-run wizard. The wizard starts with user-facing service presets such as
+ChatGPT/Codex login, OpenAI API Platform, OpenRouter, Kimi Coding, DeepSeek,
+Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
+behind `Advanced / custom setup`.
 
-If you launch `alan chat` or `alan-tui` without a config file, the first-run wizard now starts
-with user-facing service presets such as OpenAI API Platform, ChatGPT/Codex login,
-OpenRouter, Kimi Coding, DeepSeek, Google Gemini via Vertex AI, and Anthropic API.
-Raw API-family selection is kept behind `Advanced / custom setup`, but the generated files
-now use the canonical connection-profile surface shown below.
+Connection/provider metadata lives in `~/.alan/connections.toml`; agent runtime
+knobs live in `~/.alan/agents/default/agent.toml`. An agent config can pin a
+profile with `connection_profile`, otherwise alan resolves a workspace pin or
+the global `default_profile`.
 
 ```toml
-# agent.toml
-llm_request_timeout_secs = 180
-tool_timeout_secs = 30
-
 # ~/.alan/connections.toml
 version = 1
-default_profile = "openai-main"
+default_profile = "chatgpt-main"
 
-[credentials.openai-main]
-kind = "secret_string"
-provider_family = "openai_responses"
-label = "OpenAI API Platform credential"
-backend = "alan_home_secret_store"
+[credentials.chatgpt]
+kind = "managed_oauth"
+provider_family = "chatgpt"
+label = "ChatGPT login"
+backend = "alan_home_auth_json"
 
-[profiles.openai-main]
-provider = "openai_responses"
-label = "OpenAI API Platform"
-credential_id = "openai-main"
+[profiles.chatgpt-main]
+provider = "chatgpt"
+label = "ChatGPT/Codex"
+credential_id = "chatgpt"
 source = "managed"
 
-[profiles.openai-main.settings]
-base_url = "https://api.openai.com/v1"
-model = "gpt-5.4"
+[profiles.chatgpt-main.settings]
+base_url = "https://chatgpt.com/backend-api/codex"
+model = "gpt-5.3-codex"
+account_id = ""
+```
 
-# OpenRouter profile example:
-# alan connection add openrouter --profile openrouter-main --setting model=moonshotai/kimi-k2.6
-# alan connection set-secret openrouter-main
+API-key profiles use the same file shape and are managed through
+`alan connection`:
+
+```bash
+alan connection add openai_responses --profile openai-main --setting model=gpt-5.4
+alan connection set-secret openai-main
+alan connection add openrouter --profile openrouter-main --setting model=moonshotai/kimi-k2.6
+alan connection set-secret openrouter-main
+```
+
+```toml
+# ~/.alan/agents/default/agent.toml
 
 # Optional explicit pin
-# connection_profile = "openai-main"
+# connection_profile = "chatgpt-main"
+
+llm_request_timeout_secs = 180
+tool_timeout_secs = 30
 
 # Optional skill exposure overrides
 [[skill_overrides]]
@@ -367,9 +386,8 @@ packages. A resolved package can also expose package-level resources such as
 `agents/`.
 
 At runtime, a resolved skill may execute inline or as a delegated
-package-local child-agent run. The detailed execution, fallback, and
-availability semantics are part of the legacy skill-system contract material
-being migrated into OpenSpec.
+package-local child-agent run. Detailed execution, fallback, and availability
+semantics live in the OpenSpec skill-system contract.
 
 Each root can also override skill exposure explicitly in `agent.toml`:
 
@@ -387,6 +405,8 @@ Managed ChatGPT login is now scoped to a connection profile:
 
 ```bash
 alan connection login chatgpt-main browser
+alan connection current --workspace /path/to/workspace
+alan connection default set chatgpt-main
 ```
 
 Stable exposure fields are:
@@ -441,6 +461,16 @@ alan daemon start --foreground # foreground
 alan daemon stop
 alan daemon status
 
+# Manage model/provider profiles and credentials
+alan connection list
+alan connection current --workspace ./my-project
+alan connection add chatgpt --profile chatgpt-main
+alan connection login chatgpt-main browser
+alan connection add openai_responses --profile openai-main --setting model=gpt-5.4
+alan connection set-secret openai-main
+alan connection default set chatgpt-main
+alan connection test chatgpt-main
+
 # Interactive chat (launches TUI)
 alan chat
 
@@ -455,6 +485,16 @@ alan ask "Think step by step" --thinking --timeout 60
 # Inspect resolved skills, packages, package exports, and availability
 alan skills list
 alan skills packages
+alan skills init ./my-skill --name my-skill
+alan skills validate ./my-skill --strict
+alan skills eval ./my-skill
+
+# Inspect or drive a local alan shell host
+alan shell state
+alan shell space list
+alan shell tab list
+alan shell pane list
+alan shell events --follow
 
 # Workspace management
 alan workspace list
@@ -476,8 +516,12 @@ curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_dir": "/path/to/workspace",
+    "agent_name": "default",
+    "profile_id": "chatgpt-main",
+    "reasoning_effort": "medium",
     "governance": {"profile": "autonomous", "policy_path": ".alan/agents/default/policy.yaml"},
-    "streaming_mode": "on"
+    "streaming_mode": "on",
+    "partial_stream_recovery_mode": "continue_once"
   }'
 
 # Create a conservative session
@@ -491,8 +535,16 @@ curl -X POST http://localhost:8090/api/v1/sessions \
 #   "websocket_url": "/api/v1/sessions/.../ws",
 #   "events_url": "/api/v1/sessions/.../events",
 #   "submit_url": "/api/v1/sessions/.../submit",
+#   "agent_name": "default",
 #   "governance": {...},
-#   "streaming_mode": "on"
+#   "execution_backend": "workspace_path_guard",
+#   "streaming_mode": "on",
+#   "partial_stream_recovery_mode": "continue_once",
+#   "profile_id": "chatgpt-main",
+#   "provider": "chatgpt",
+#   "resolved_model": "gpt-5.3-codex",
+#   "reasoning_effort": "medium",
+#   "durability": {"durable": false, "required": false}
 # }
 # Note: 409 returned when the workspace already has an active runtime.
 
@@ -501,6 +553,12 @@ curl http://localhost:8090/api/v1/sessions/{id}/read
 
 # Read persisted message history only
 curl http://localhost:8090/api/v1/sessions/{id}/history
+
+# Read reconnect handoff state for TUI/mobile recovery
+curl http://localhost:8090/api/v1/sessions/{id}/reconnect_snapshot
+
+# Inspect delegated child-agent runs
+curl http://localhost:8090/api/v1/sessions/{id}/child_runs
 
 # Poll events from rollout gap-aware API
 curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-123&limit=50"
@@ -518,6 +576,39 @@ curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-12
 curl -X POST http://localhost:8090/api/v1/sessions/{id}/submit \
   -H "Content-Type: application/json" \
   -d '{"op": {"type": "turn", "parts": [{"type": "text", "text": "Hello!"}]}}'
+
+# Runtime recovery and control
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/resume
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/fork
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/compact \
+  -H "Content-Type: application/json" \
+  -d '{"focus": "preserve open todos and file paths"}'
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/rollback \
+  -H "Content-Type: application/json" \
+  -d '{"turns": 1}'
+curl -X POST http://localhost:8090/api/v1/sessions/{id}/schedule_at \
+  -H "Content-Type: application/json" \
+  -d '{"wake_at": "2026-06-24T09:00:00Z"}'
+
+# Connection profile control plane
+curl http://localhost:8090/api/v1/connections/catalog
+curl http://localhost:8090/api/v1/connections
+curl http://localhost:8090/api/v1/connections/current
+curl -X POST http://localhost:8090/api/v1/connections/default/set \
+  -H "Content-Type: application/json" \
+  -d '{"profile_id": "chatgpt-main"}'
+curl -X POST http://localhost:8090/api/v1/connections/{profile_id}/credential/login/browser/start
+curl -X POST http://localhost:8090/api/v1/connections/{profile_id}/test
+
+# Skill catalog and override APIs
+curl http://localhost:8090/api/v1/skills/catalog
+curl "http://localhost:8090/api/v1/skills/changed?after=<cursor>"
+curl -X POST http://localhost:8090/api/v1/skills/overrides \
+  -H "Content-Type: application/json" \
+  -d '{"skill_id": "memory", "allowImplicitInvocation": false}'
+
+# Relay discovery and proxy control
+curl http://localhost:8090/api/v1/relay/nodes
 
 # Stream events (NDJSON)
 curl -N http://localhost:8090/api/v1/sessions/{id}/events
@@ -572,11 +663,19 @@ just fmt            # format code
 just lint           # clippy
 just test           # run all tests
 just smoke          # mock smoke tests (no LLM needed)
+just smoke-e2e      # TUI/daemon smoke path
+just live-providers # live provider checks (needs credentials)
 just verify         # fmt + lint + test + smoke (run after code changes)
 just verify-full    # verify + real LLM e2e test (needs ~/.alan config)
+just harness-autonomy-ci     # autonomy harness gate
+just harness-repo-worker-ci  # repo-worker harness gate
+just harness-compaction-ci   # compaction harness gate
+just self-eval-ci            # structured self-eval gate
 just coverage       # test coverage summary
 just serve          # run the daemon in foreground
 ```
+
+Run `just --list` for the full local gate and release command surface.
 
 ---
 
