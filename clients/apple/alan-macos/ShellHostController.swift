@@ -1995,11 +1995,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         _ state: ShellStateSnapshot,
         publish: Bool = true
     ) {
-        let mountedPaneIDs = Set(state.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
-        let activeMounts = state.panes
-            .filter { mountedPaneIDs.contains($0.paneID) }
-            .map(TerminalContentMount.init(pane:))
-        terminalRuntimeRegistry.releaseRuntimes(excluding: activeMounts)
+        terminalRuntimeRegistry.releaseRuntimes(excluding: activeTerminalContentMounts(in: state))
 
         let hydratedPanes = state.panes.map { pane in
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
@@ -2054,6 +2050,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if publish {
             publishControlPlaneState()
         }
+    }
+
+    private func activeTerminalContentMounts(in state: ShellStateSnapshot) -> [TerminalContentMount] {
+        var activePaneIDs = Set(state.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
+        if let quickTerminalPaneID = state.quickTerminal?.paneID {
+            activePaneIDs.insert(quickTerminalPaneID)
+        }
+        return state.panes
+            .filter { activePaneIDs.contains($0.paneID) }
+            .map(TerminalContentMount.init(pane:))
     }
 
     private func recordControlPlaneDiagnostic(_ message: String) {

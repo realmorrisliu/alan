@@ -233,7 +233,8 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     private func releaseRuntimes(excludingTerminalContentIDs activeContentIDs: Set<String>) {
-        let staleContentIDs = registeredContentIDs.subtracting(activeContentIDs)
+        let trackedContentIDs = registeredContentIDs.union(paneSlotIDByContentID.keys)
+        let staleContentIDs = trackedContentIDs.subtracting(activeContentIDs)
         staleContentIDs.forEach { releaseTerminalContent($0) }
     }
 

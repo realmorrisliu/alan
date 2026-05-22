@@ -905,6 +905,10 @@ private enum ShellRuntimeMetadataTests {
         let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
 
         _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
         presenter.synchronize()
         presenter.windowDidResignKey()
 
@@ -922,6 +926,10 @@ private enum ShellRuntimeMetadataTests {
             "explicit hide must hide the peak without removing the runtime slot"
         )
         expect(controller.quickTerminalPane != nil, "explicit hide must preserve the quick-terminal pane")
+        expect(
+            quickHandle.teardownCount == 0,
+            "explicit hide must keep the hidden quick-terminal runtime alive"
+        )
 
         expect(controller.closeQuickTerminal(), "explicit quick-terminal close must apply")
         presenter.synchronize()
@@ -931,6 +939,7 @@ private enum ShellRuntimeMetadataTests {
             "explicit close must release the peak presentation"
         )
         expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
+        expect(quickHandle.teardownCount == 1, "explicit close must release the quick-terminal runtime")
     }
 
     private static func verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh() {
