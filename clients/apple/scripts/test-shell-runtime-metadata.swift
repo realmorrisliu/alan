@@ -23,6 +23,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
+        verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
         verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -558,6 +559,47 @@ private enum ShellRuntimeMetadataTests {
         registry.releaseRuntime(for: "pane_right")
         expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
         expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
+    }
+
+    private static func verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let previousMount = TerminalContentMount(
+            contentID: "content_previous_terminal",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let currentMount = TerminalContentMount(
+            contentID: "content_current_terminal",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+
+        let previousHandle = registry.surfaceHandle(
+            forTerminalContent: previousMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        registry.releaseRuntimes(excluding: [currentMount])
+        expect(
+            previousHandle.teardownCount == 1,
+            "cleanup must release stale content before the current host remount is configured"
+        )
+        expect(
+            registry.registeredContentIDs.isEmpty,
+            "current mount registration must not keep the previous content alive"
+        )
+
+        let currentHandle = registry.surfaceHandle(
+            forTerminalContent: currentMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        registry.releaseRuntimes(excluding: [currentMount])
+        expect(
+            currentHandle.teardownCount == 0,
+            "cleanup must keep the currently mounted content alive"
+        )
     }
 
     private static func verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement() {

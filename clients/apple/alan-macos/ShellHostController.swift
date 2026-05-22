@@ -1995,8 +1995,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         _ state: ShellStateSnapshot,
         publish: Bool = true
     ) {
-        let paneIDs = Set(state.panes.map(\.paneID))
-        terminalRuntimeRegistry.releaseRuntimes(excluding: paneIDs)
+        let mountedPaneIDs = Set(state.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
+        let activeMounts = state.panes
+            .filter { mountedPaneIDs.contains($0.paneID) }
+            .map(TerminalContentMount.init(pane:))
+        terminalRuntimeRegistry.releaseRuntimes(excluding: activeMounts)
 
         let hydratedPanes = state.panes.map { pane in
             guard paneProjection.needsBootContextProjection(pane) else { return pane }

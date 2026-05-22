@@ -221,6 +221,18 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
         let activeContentIDs = Set(activePaneIDs.map { terminalContentID(mountedAtPaneID: $0) })
+        releaseRuntimes(excludingTerminalContentIDs: activeContentIDs)
+    }
+
+    func releaseRuntimes(excluding activeMounts: [TerminalContentMount]) {
+        activeMounts.forEach { mount in
+            recordMount(contentID: mount.contentID, paneSlotID: mount.paneSlotID)
+        }
+        let activeContentIDs = Set(activeMounts.map(\.contentID))
+        releaseRuntimes(excludingTerminalContentIDs: activeContentIDs)
+    }
+
+    private func releaseRuntimes(excludingTerminalContentIDs activeContentIDs: Set<String>) {
         let staleContentIDs = registeredContentIDs.subtracting(activeContentIDs)
         staleContentIDs.forEach { releaseTerminalContent($0) }
     }
