@@ -123,6 +123,10 @@ extension ShellPane {
             && tabID == ShellQuickTerminalSlot.globalTabID
             && spaceID == ShellQuickTerminalSlot.globalSpaceID
     }
+
+    var terminalContentID: String {
+        ShellContentInstance.terminalContentID(forPaneID: paneID)
+    }
 }
 
 extension ShellPane {

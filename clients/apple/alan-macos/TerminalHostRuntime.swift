@@ -529,6 +529,7 @@ struct AlanShellBootProfile: Equatable {
             "ALAN_SHELL_SPACE_ID": pane.spaceID,
             "ALAN_SHELL_TAB_ID": pane.tabID,
             "ALAN_SHELL_PANE_ID": pane.paneID,
+            "ALAN_SHELL_CONTENT_ID": pane.terminalContentID,
             "ALAN_SHELL_BOOT_MODE": pane.resolvedLaunchTarget.rawValue,
             "ALAN_SHELL_LAUNCH_TARGET": pane.resolvedLaunchTarget.rawValue,
             "ALAN_SHELL_LAUNCH_STRATEGY": command.strategy.rawValue,
@@ -667,6 +668,7 @@ struct TerminalPaneMetadataSnapshot: Equatable {
 
 struct TerminalHostRuntimeSnapshot: Equatable {
     let stage: TerminalHostStage
+    let contentID: String?
     let paneID: String?
     let tabID: String?
     let logicalSize: CGSize
@@ -686,6 +688,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
 
     static let placeholder = TerminalHostRuntimeSnapshot(
         stage: .scaffold,
+        contentID: nil,
         paneID: nil,
         tabID: nil,
         logicalSize: .zero,

@@ -19,6 +19,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
+        verifiesContentScopedHandleSurvivesPaneRemount()
         verifiesDeliveryAndMissingRuntimeResults()
         verifiesDeliveryRejectsExitedRuntime()
         verifiesQueuedAndTimeoutDeliveryStates()
@@ -54,6 +55,10 @@ private enum TerminalRuntimeServiceTests {
         expect(
             profile.environment["COLORTERM"] == "truecolor",
             "boot profile must advertise truecolor terminal support"
+        )
+        expect(
+            profile.environment["ALAN_SHELL_CONTENT_ID"] == pane.terminalContentID,
+            "boot profile must expose terminal content identity to child processes"
         )
     }
 
@@ -144,7 +149,9 @@ private enum TerminalRuntimeServiceTests {
         let bootstrap = FakeAlanGhosttyProcessBootstrap()
         let service = AlanWindowTerminalRuntimeService(
             bootstrap: bootstrap,
-            surfaceFactory: { paneID, _ in FakeAlanTerminalSurfaceHandle(paneID: paneID) }
+            surfaceFactory: { contentID, paneID, _ in
+                FakeAlanTerminalSurfaceHandle(contentID: contentID, paneID: paneID)
+            }
         )
 
         let first = service.surfaceHandle(for: "pane_1", bootProfile: nil)
@@ -154,7 +161,9 @@ private enum TerminalRuntimeServiceTests {
 
         let secondWindow = AlanWindowTerminalRuntimeService(
             bootstrap: bootstrap,
-            surfaceFactory: { paneID, _ in FakeAlanTerminalSurfaceHandle(paneID: paneID) }
+            surfaceFactory: { contentID, paneID, _ in
+                FakeAlanTerminalSurfaceHandle(contentID: contentID, paneID: paneID)
+            }
         )
         secondWindow.ensureReady()
         expect(bootstrap.ensureCallCount == 1, "shared bootstrap must not reinitialize per window")
@@ -174,11 +183,45 @@ private enum TerminalRuntimeServiceTests {
         )
         expect(
             service.snapshot(for: "pane_1")?.paneID == "pane_1",
-            "snapshots must stay pane keyed"
+            "snapshots must remain available through pane convenience lookup"
         )
         expect(
             service.snapshot(for: "pane_2")?.paneID == "pane_2",
-            "snapshots must stay pane keyed"
+            "snapshots must remain available through pane convenience lookup"
+        )
+    }
+
+    private static func verifiesContentScopedHandleSurvivesPaneRemount() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_terminal_primary"
+        let first = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_left",
+            bootProfile: nil
+        )
+        let second = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_right",
+            bootProfile: nil
+        )
+
+        expect(first === second, "same terminal content must reuse the service-owned handle")
+        expect(second.contentID == contentID, "handle must retain terminal content identity")
+        expect(second.paneID == "pane_right", "handle must update to the latest PaneSlot mount")
+        expect(service.registeredContentIDs == [contentID], "service registration must be content keyed")
+        expect(service.registeredPaneIDs == ["pane_right"], "pane registration must reflect the current mount")
+
+        let accepted = service.sendText(toTerminalContentID: contentID, text: "after move")
+        let handle = second as! FakeAlanTerminalSurfaceHandle
+        expect(accepted.applied, "content-keyed delivery must reach the remounted handle")
+        expect(handle.deliveredText == ["after move"], "delivery must stay bound to content identity")
+        expect(
+            service.snapshot(forTerminalContentID: contentID)?.contentID == contentID,
+            "snapshot lookup must be content keyed"
+        )
+        expect(
+            service.snapshot(forTerminalContentID: contentID)?.paneID == "pane_right",
+            "snapshot must project the latest PaneSlot mount"
         )
     }
 
@@ -305,7 +348,9 @@ private enum TerminalRuntimeServiceTests {
         let bootstrap = FakeAlanGhosttyProcessBootstrap(nextDiagnostics: failedDiagnostics)
         let service = AlanWindowTerminalRuntimeService(
             bootstrap: bootstrap,
-            surfaceFactory: { paneID, _ in FakeAlanTerminalSurfaceHandle(paneID: paneID) }
+            surfaceFactory: { contentID, paneID, _ in
+                FakeAlanTerminalSurfaceHandle(contentID: contentID, paneID: paneID)
+            }
         )
 
         let diagnostics = service.ensureReady()

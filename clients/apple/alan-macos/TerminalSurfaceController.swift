@@ -1156,8 +1156,9 @@ final class AlanTerminalSurfaceController {
         onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
         onCloseRequest: @escaping (Bool) -> Void
     ) {
-        surfaceHandle?.configure(bootProfile: bootProfile)
-        surfaceHandle?.attach(
+        guard let surfaceHandle else { return }
+        surfaceHandle.configure(mountedAtPaneID: surfaceHandle.paneID, bootProfile: bootProfile)
+        surfaceHandle.attach(
             to: canvasView,
             focused: focused,
             onDiagnosticsChange: { [weak self] snapshot in

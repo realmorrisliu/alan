@@ -322,8 +322,8 @@ require_semantic_terminal_actions_contract
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
-    "hostViewsByPaneID" \
-    "terminal runtimes must be owned by a pane-keyed registry"
+    "hostViewsByContentID" \
+    "terminal runtimes must be owned by a content-keyed registry"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
@@ -362,18 +362,18 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
-    "runtimeService\\.surfaceHandle\\(for: paneID, bootProfile: bootProfile\\)" \
-    "terminal runtime registry must resolve service-owned handles by pane ID"
+    "forTerminalContentID: mount\\.contentID" \
+    "terminal runtime registry must resolve service-owned handles by content ID"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeService.swift" \
-    "private var handlesByPaneID: \\[String: AlanTerminalSurfaceHandle\\]" \
-    "terminal runtime service must keep runtime identity pane-keyed"
+    "private var handlesByContentID: \\[String: AlanTerminalSurfaceHandle\\]" \
+    "terminal runtime service must keep runtime identity content-keyed"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeService.swift" \
-    "var registeredPaneIDs: Set<String>" \
-    "terminal runtime service must expose pane-keyed registration state"
+    "var registeredContentIDs: Set<String>" \
+    "terminal runtime service must expose content-keyed registration state"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \

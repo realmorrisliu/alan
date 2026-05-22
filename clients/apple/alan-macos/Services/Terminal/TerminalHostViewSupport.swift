@@ -5,6 +5,7 @@ import AppKit
 
 struct TerminalHostView: NSViewRepresentable {
     let pane: ShellPane?
+    let terminalContentMount: TerminalContentMount?
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
     let runtimeRegistry: TerminalRuntimeRegistry
@@ -17,7 +18,8 @@ struct TerminalHostView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AlanTerminalHostNSView {
         runtimeRegistry.hostView(
-            for: pane,
+            forTerminalContent: terminalContentMount,
+            pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
             activationDelegate: activationDelegate,
@@ -32,9 +34,12 @@ struct TerminalHostView: NSViewRepresentable {
     func updateNSView(_ nsView: AlanTerminalHostNSView, context: Context) {
         nsView.configure(
             pane: pane,
+            terminalContentID: terminalContentMount?.contentID,
             bootProfile: bootProfile,
             isSelected: isSelected,
-            surfaceHandle: runtimeRegistry.surfaceHandle(for: pane, bootProfile: bootProfile),
+            surfaceHandle: terminalContentMount.map {
+                runtimeRegistry.surfaceHandle(forTerminalContent: $0, bootProfile: bootProfile)
+            },
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
             onCommandInput: onCommandInput,

@@ -33,12 +33,36 @@ final class MockTerminalRuntimeHandle: TerminalRuntimeHandle {
     }
 }
 
+struct TerminalContentMount: Equatable {
+    let contentID: String
+    let paneSlotID: String
+    let tabID: String
+    let spaceID: String
+
+    init(contentID: String, paneSlotID: String, tabID: String, spaceID: String) {
+        self.contentID = contentID
+        self.paneSlotID = paneSlotID
+        self.tabID = tabID
+        self.spaceID = spaceID
+    }
+
+    init(pane: ShellPane) {
+        self.init(
+            contentID: pane.terminalContentID,
+            paneSlotID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID
+        )
+    }
+}
+
 @MainActor
 final class TerminalRuntimeRegistry: ObservableObject {
     typealias MockDeliveryHandler = (String, String) -> TerminalRuntimeDeliveryResult
 
-    private var hostViewsByPaneID: [String: AlanTerminalHostNSView] = [:]
-    private var snapshotsByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var hostViewsByContentID: [String: AlanTerminalHostNSView] = [:]
+    private var snapshotsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var paneSlotIDByContentID: [String: String] = [:]
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
 
@@ -61,13 +85,40 @@ final class TerminalRuntimeRegistry: ObservableObject {
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
+        hostView(
+            forTerminalContent: pane.map(TerminalContentMount.init(pane:)),
+            pane: pane,
+            bootProfile: bootProfile,
+            isSelected: isSelected,
+            activationDelegate: activationDelegate,
+            onShellAction: onShellAction,
+            onCommandInput: onCommandInput,
+            onCloseRequest: onCloseRequest,
+            onRuntimeUpdate: onRuntimeUpdate,
+            onMetadataUpdate: onMetadataUpdate
+        )
+    }
+
+    func hostView(
+        forTerminalContent mount: TerminalContentMount?,
+        pane: ShellPane?,
+        bootProfile: AlanShellBootProfile?,
+        isSelected: Bool,
+        activationDelegate: TerminalHostActivationDelegate?,
+        onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onCommandInput: (() -> Void)?,
+        onCloseRequest: ((Bool) -> Void)?,
+        onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
+        onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
+    ) -> AlanTerminalHostNSView {
         let hostView: AlanTerminalHostNSView
-        if let paneID = pane?.paneID {
-            if let existing = hostViewsByPaneID[paneID] {
+        if let mount {
+            paneSlotIDByContentID[mount.contentID] = mount.paneSlotID
+            if let existing = hostViewsByContentID[mount.contentID] {
                 hostView = existing
             } else {
                 let created = AlanTerminalHostNSView()
-                hostViewsByPaneID[paneID] = created
+                hostViewsByContentID[mount.contentID] = created
                 hostView = created
             }
         } else {
@@ -75,14 +126,19 @@ final class TerminalRuntimeRegistry: ObservableObject {
         }
 
         let surfaceHandle: AlanTerminalSurfaceHandle?
-        if let paneID = pane?.paneID {
-            surfaceHandle = runtimeService.surfaceHandle(for: paneID, bootProfile: bootProfile)
+        if let mount {
+            surfaceHandle = runtimeService.surfaceHandle(
+                forTerminalContentID: mount.contentID,
+                mountedAtPaneID: mount.paneSlotID,
+                bootProfile: bootProfile
+            )
         } else {
             surfaceHandle = nil
         }
 
         hostView.configure(
             pane: pane,
+            terminalContentID: mount?.contentID,
             bootProfile: bootProfile,
             isSelected: isSelected,
             surfaceHandle: surfaceHandle,
@@ -100,54 +156,88 @@ final class TerminalRuntimeRegistry: ObservableObject {
         for pane: ShellPane?,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalSurfaceHandle? {
-        guard let paneID = pane?.paneID else { return nil }
-        return runtimeService.surfaceHandle(for: paneID, bootProfile: bootProfile)
+        guard let pane else { return nil }
+        return surfaceHandle(
+            forTerminalContent: TerminalContentMount(pane: pane),
+            bootProfile: bootProfile
+        )
+    }
+
+    func surfaceHandle(
+        forTerminalContent mount: TerminalContentMount,
+        bootProfile: AlanShellBootProfile?
+    ) -> AlanTerminalSurfaceHandle {
+        paneSlotIDByContentID[mount.contentID] = mount.paneSlotID
+        return runtimeService.surfaceHandle(
+            forTerminalContentID: mount.contentID,
+            mountedAtPaneID: mount.paneSlotID,
+            bootProfile: bootProfile
+        )
     }
 
     func updateSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
-        guard let paneID = snapshot.paneID else { return }
-        snapshotsByPaneID[paneID] = snapshot
-        runtimeService.existingSurfaceHandle(for: paneID)?.updateHostRuntimeSnapshot(snapshot)
+        guard let contentID = snapshot.contentID ?? snapshot.paneID.map(terminalContentID(forPaneID:)) else {
+            return
+        }
+        if let paneID = snapshot.paneID {
+            paneSlotIDByContentID[contentID] = paneID
+        }
+        snapshotsByContentID[contentID] = snapshot
+        runtimeService
+            .existingSurfaceHandle(forTerminalContentID: contentID)?
+            .updateHostRuntimeSnapshot(snapshot)
     }
 
     func snapshot(for paneID: String?) -> TerminalHostRuntimeSnapshot {
         guard let paneID else { return .placeholder }
-        return snapshotsByPaneID[paneID] ?? runtimeSnapshot(from: runtimeService.snapshot(for: paneID))
+        return snapshot(forTerminalContentID: terminalContentID(forPaneID: paneID))
+    }
+
+    func snapshot(forTerminalContentID contentID: String?) -> TerminalHostRuntimeSnapshot {
+        guard let contentID else { return .placeholder }
+        return snapshotsByContentID[contentID]
+            ?? runtimeSnapshot(from: runtimeService.snapshot(forTerminalContentID: contentID))
     }
 
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
-        let stalePaneIDs = Set(hostViewsByPaneID.keys)
-            .union(snapshotsByPaneID.keys)
-            .union(runtimeService.registeredPaneIDs)
-            .subtracting(activePaneIDs)
-        stalePaneIDs.forEach { releaseRuntime($0) }
+        let activeContentIDs = Set(activePaneIDs.map(terminalContentID(forPaneID:)))
+        let staleContentIDs = registeredContentIDs.subtracting(activeContentIDs)
+        staleContentIDs.forEach { releaseTerminalContent($0) }
     }
 
     func releaseRuntime(for paneID: String) {
-        releaseRuntime(paneID)
+        releaseTerminalContent(terminalContentID(forPaneID: paneID))
     }
 
     func releaseAllRuntimes() {
-        registeredPaneIDs.forEach { releaseRuntime($0) }
+        registeredContentIDs.forEach { releaseTerminalContent($0) }
     }
 
     func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
+        sendText(toTerminalContentID: terminalContentID(forPaneID: paneID), text: text)
+    }
+
+    func sendText(
+        toTerminalContentID contentID: String,
+        text: String
+    ) -> TerminalRuntimeDeliveryResult {
         if let mockDeliveryHandler {
-            return mockDeliveryHandler(paneID, text)
+            return mockDeliveryHandler(contentID, text)
         }
 
-        return runtimeService.sendText(to: paneID, text: text)
+        return runtimeService.sendText(toTerminalContentID: contentID, text: text)
     }
 
     func terminalCommandRuntimeState(for paneID: String) -> ShellTerminalCommandRuntimeState {
-        if let hostView = hostViewsByPaneID[paneID] {
+        let contentID = terminalContentID(forPaneID: paneID)
+        if let hostView = hostViewsByContentID[contentID] {
             return hostView.terminalCommandRuntimeState
         }
 
-        let surfaceHandle = runtimeService.existingSurfaceHandle(for: paneID)
+        let surfaceHandle = runtimeService.existingSurfaceHandle(forTerminalContentID: contentID)
         let selectionEngine = surfaceHandle as? AlanTerminalSelectionEngine
         let searchEngine = surfaceHandle as? AlanTerminalSearchEngine
-        let snapshot = snapshotsByPaneID[paneID]
+        let snapshot = snapshotsByContentID[contentID]
         return ShellTerminalCommandRuntimeState(
             paneID: paneID,
             hasSelection: selectionEngine?.hasSelection() ?? false,
@@ -159,7 +249,8 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func copySelection(for paneID: String) -> Bool {
-        if let hostView = hostViewsByPaneID[paneID] {
+        let contentID = terminalContentID(forPaneID: paneID)
+        if let hostView = hostViewsByContentID[contentID] {
             return hostView.copySelection()
         }
         return copySelection(
@@ -170,10 +261,12 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func copySelection(for paneID: String, to writer: AlanTerminalPasteboardWriting) -> Bool {
-        if let hostView = hostViewsByPaneID[paneID] {
+        let contentID = terminalContentID(forPaneID: paneID)
+        if let hostView = hostViewsByContentID[contentID] {
             return hostView.copySelection(to: writer)
         }
-        guard let selectionEngine = runtimeService.existingSurfaceHandle(for: paneID) as? AlanTerminalSelectionEngine,
+        guard let selectionEngine = runtimeService
+            .existingSurfaceHandle(forTerminalContentID: contentID) as? AlanTerminalSelectionEngine,
               let selectedText = selectionEngine.readSelectionText(),
               !selectedText.isEmpty
         else {
@@ -184,7 +277,8 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func pasteText(_ text: String, to paneID: String) -> TerminalRuntimeDeliveryResult {
-        if let hostView = hostViewsByPaneID[paneID] {
+        let contentID = terminalContentID(forPaneID: paneID)
+        if let hostView = hostViewsByContentID[contentID] {
             return hostView.pasteText(text)
         }
         return sendText(to: paneID, text: text)
@@ -192,12 +286,13 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func beginFindInteraction(for paneID: String) -> Bool {
-        hostViewsByPaneID[paneID]?.beginFindInteraction() ?? false
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.beginFindInteraction() ?? false
     }
 
     @discardableResult
     func beginLastCommandOutputSearch(for paneID: String) -> Bool {
-        hostViewsByPaneID[paneID]?.beginLastCommandOutputSearch() ?? false
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+            .beginLastCommandOutputSearch() ?? false
     }
 
     @discardableResult
@@ -205,45 +300,61 @@ final class TerminalRuntimeRegistry: ObservableObject {
         for paneID: String,
         direction: AlanTerminalPromptNavigationDirection
     ) -> Bool {
-        hostViewsByPaneID[paneID]?.navigateSemanticPrompt(direction) ?? false
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+            .navigateSemanticPrompt(direction) ?? false
     }
 
     @discardableResult
     func copyLastCommandOutput(for paneID: String) -> Bool {
-        hostViewsByPaneID[paneID]?.copyLastCommandOutput() ?? false
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.copyLastCommandOutput() ?? false
     }
 
     @discardableResult
     func updateFindQuery(for paneID: String, query: String) -> Bool {
-        hostViewsByPaneID[paneID]?.updateFindQuery(query) ?? false
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+            .updateFindQuery(query) ?? false
     }
 
     func selectNextFindMatch(for paneID: String) {
-        hostViewsByPaneID[paneID]?.selectNextFindMatch()
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.selectNextFindMatch()
     }
 
     func selectPreviousFindMatch(for paneID: String) {
-        hostViewsByPaneID[paneID]?.selectPreviousFindMatch()
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.selectPreviousFindMatch()
     }
 
     func dismissFindInteraction(for paneID: String, refocusTerminal: Bool = true) {
-        hostViewsByPaneID[paneID]?.dismissFindInteraction(refocusTerminal: refocusTerminal)
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+            .dismissFindInteraction(refocusTerminal: refocusTerminal)
     }
 
     func requestFocus(for paneID: String) {
-        hostViewsByPaneID[paneID]?.focusTerminal()
+        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.focusTerminal()
+    }
+
+    var registeredContentIDs: Set<String> {
+        Set(hostViewsByContentID.keys)
+            .union(snapshotsByContentID.keys)
+            .union(runtimeService.registeredContentIDs)
     }
 
     var registeredPaneIDs: Set<String> {
-        Set(hostViewsByPaneID.keys).union(runtimeService.registeredPaneIDs)
+        Set(paneSlotIDByContentID.values)
+            .union(snapshotsByContentID.values.compactMap(\.paneID))
+            .union(runtimeService.registeredPaneIDs)
     }
 
-    private func releaseRuntime(_ paneID: String) {
-        if let hostView = hostViewsByPaneID.removeValue(forKey: paneID) {
+    private func releaseTerminalContent(_ contentID: String) {
+        if let hostView = hostViewsByContentID.removeValue(forKey: contentID) {
             hostView.teardownTerminalRuntime()
         }
-        runtimeService.finalizePane(paneID)
-        snapshotsByPaneID.removeValue(forKey: paneID)
+        runtimeService.finalizeTerminalContent(contentID)
+        snapshotsByContentID.removeValue(forKey: contentID)
+        paneSlotIDByContentID.removeValue(forKey: contentID)
+    }
+
+    private func terminalContentID(forPaneID paneID: String) -> String {
+        ShellContentInstance.terminalContentID(forPaneID: paneID)
     }
 
     private func runtimeSnapshot(
@@ -252,6 +363,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         guard let surfaceSnapshot else { return .placeholder }
         return TerminalHostRuntimeSnapshot(
             stage: .scaffold,
+            contentID: surfaceSnapshot.contentID,
             paneID: surfaceSnapshot.paneID,
             tabID: nil,
             logicalSize: .zero,

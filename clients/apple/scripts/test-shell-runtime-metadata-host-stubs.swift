@@ -15,6 +15,7 @@ final class AlanTerminalHostNSView: NSView {
 
     func configure(
         pane: ShellPane?,
+        terminalContentID: String?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
         surfaceHandle: AlanTerminalSurfaceHandle?,

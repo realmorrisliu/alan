@@ -259,6 +259,7 @@ enum AlanTerminalSurfaceTeardownStatus: String, Equatable {
 }
 
 struct AlanTerminalSurfaceSnapshot: Equatable {
+    let contentID: String
     let paneID: String
     let lifecyclePhase: AlanTerminalSurfaceLifecyclePhase
     let renderer: TerminalRendererSnapshot
@@ -272,8 +273,9 @@ struct AlanTerminalSurfaceSnapshot: Equatable {
         renderer.phase.rawValue
     }
 
-    static func pending(paneID: String) -> AlanTerminalSurfaceSnapshot {
+    static func pending(contentID: String, paneID: String) -> AlanTerminalSurfaceSnapshot {
         AlanTerminalSurfaceSnapshot(
+            contentID: contentID,
             paneID: paneID,
             lifecyclePhase: .pending,
             renderer: .placeholder,
@@ -288,11 +290,12 @@ struct AlanTerminalSurfaceSnapshot: Equatable {
 
 @MainActor
 protocol AlanTerminalSurfaceHandle: AnyObject {
+    var contentID: String { get }
     var paneID: String { get }
     var snapshot: AlanTerminalSurfaceSnapshot { get }
     var isSurfaceReady: Bool { get }
 
-    func configure(bootProfile: AlanShellBootProfile?)
+    func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
     func attach(
         to canvasView: NSView,
         focused: Bool,
@@ -341,7 +344,8 @@ protocol AlanGhosttyEventSurfaceHandle:
 
 @MainActor
 final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
-    let paneID: String
+    let contentID: String
+    private(set) var paneID: String
 
     private let bootstrap: AlanGhosttyProcessBootstrap
     private var bootProfile: AlanShellBootProfile?
@@ -351,10 +355,11 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private let liveHost = AlanGhosttyLiveHost()
 #endif
 
-    init(paneID: String, bootstrap: AlanGhosttyProcessBootstrap) {
+    init(contentID: String, paneID: String, bootstrap: AlanGhosttyProcessBootstrap) {
+        self.contentID = contentID
         self.paneID = paneID
         self.bootstrap = bootstrap
-        self.currentSnapshot = .pending(paneID: paneID)
+        self.currentSnapshot = .pending(contentID: contentID, paneID: paneID)
     }
 
     var snapshot: AlanTerminalSurfaceSnapshot {
@@ -369,7 +374,8 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #endif
     }
 
-    func configure(bootProfile: AlanShellBootProfile?) {
+    func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
+        self.paneID = paneID
         self.bootProfile = bootProfile
         guard currentSnapshot.teardownStatus != .completed else { return }
         updateSnapshot(
@@ -581,6 +587,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         attachedViewCount: Int? = nil
     ) {
         currentSnapshot = AlanTerminalSurfaceSnapshot(
+            contentID: contentID,
             paneID: paneID,
             lifecyclePhase: lifecyclePhase ?? currentSnapshot.lifecyclePhase,
             renderer: renderer ?? currentSnapshot.renderer,
@@ -692,31 +699,77 @@ extension AlanGhosttySurfaceHandle: AlanGhosttyEventSurfaceHandle {
 @MainActor
 protocol AlanTerminalRuntimeService: AnyObject {
     var diagnostics: AlanGhosttyBootstrapDiagnostics { get }
+    var registeredContentIDs: Set<String> { get }
     var registeredPaneIDs: Set<String> { get }
 
     @discardableResult
     func ensureReady() -> AlanGhosttyBootstrapDiagnostics
-    func surfaceHandle(for paneID: String, bootProfile: AlanShellBootProfile?) -> AlanTerminalSurfaceHandle
-    func existingSurfaceHandle(for paneID: String) -> AlanTerminalSurfaceHandle?
-    func snapshot(for paneID: String) -> AlanTerminalSurfaceSnapshot?
-    func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult
+    func surfaceHandle(
+        forTerminalContentID contentID: String,
+        mountedAtPaneID paneID: String,
+        bootProfile: AlanShellBootProfile?
+    ) -> AlanTerminalSurfaceHandle
+    func existingSurfaceHandle(forTerminalContentID contentID: String) -> AlanTerminalSurfaceHandle?
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot?
+    func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult
     @discardableResult
-    func finalizePane(_ paneID: String) -> AlanTerminalSurfaceTeardownStatus
-    func finalizePanes(excluding activePaneIDs: Set<String>)
+    func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus
+    func finalizeTerminalContents(excluding activeContentIDs: Set<String>)
+}
+
+extension AlanTerminalRuntimeService {
+    func surfaceHandle(
+        for paneID: String,
+        bootProfile: AlanShellBootProfile?
+    ) -> AlanTerminalSurfaceHandle {
+        surfaceHandle(
+            forTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
+            mountedAtPaneID: paneID,
+            bootProfile: bootProfile
+        )
+    }
+
+    func existingSurfaceHandle(for paneID: String) -> AlanTerminalSurfaceHandle? {
+        existingSurfaceHandle(
+            forTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID)
+        )
+    }
+
+    func snapshot(for paneID: String) -> AlanTerminalSurfaceSnapshot? {
+        snapshot(forTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID))
+    }
+
+    func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
+        sendText(
+            toTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
+            text: text
+        )
+    }
+
+    @discardableResult
+    func finalizePane(_ paneID: String) -> AlanTerminalSurfaceTeardownStatus {
+        finalizeTerminalContent(ShellContentInstance.terminalContentID(forPaneID: paneID))
+    }
+
+    func finalizePanes(excluding activePaneIDs: Set<String>) {
+        finalizeTerminalContents(
+            excluding: Set(activePaneIDs.map { ShellContentInstance.terminalContentID(forPaneID: $0) })
+        )
+    }
 }
 
 @MainActor
 final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
-    typealias SurfaceFactory = (String, AlanGhosttyProcessBootstrap) -> AlanTerminalSurfaceHandle
+    typealias SurfaceFactory = (String, String, AlanGhosttyProcessBootstrap) -> AlanTerminalSurfaceHandle
 
     private let bootstrap: AlanGhosttyProcessBootstrap
     private let makeSurfaceHandle: SurfaceFactory
-    private var handlesByPaneID: [String: AlanTerminalSurfaceHandle] = [:]
+    private var handlesByContentID: [String: AlanTerminalSurfaceHandle] = [:]
 
     init(surfaceFactory: SurfaceFactory? = nil) {
         self.bootstrap = AlanDefaultGhosttyProcessBootstrap.shared
-        self.makeSurfaceHandle = surfaceFactory ?? { paneID, bootstrap in
-            AlanGhosttySurfaceHandle(paneID: paneID, bootstrap: bootstrap)
+        self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
+            AlanGhosttySurfaceHandle(contentID: contentID, paneID: paneID, bootstrap: bootstrap)
         }
     }
 
@@ -725,8 +778,8 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         surfaceFactory: SurfaceFactory? = nil
     ) {
         self.bootstrap = bootstrap
-        self.makeSurfaceHandle = surfaceFactory ?? { paneID, bootstrap in
-            AlanGhosttySurfaceHandle(paneID: paneID, bootstrap: bootstrap)
+        self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
+            AlanGhosttySurfaceHandle(contentID: contentID, paneID: paneID, bootstrap: bootstrap)
         }
     }
 
@@ -734,8 +787,12 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         bootstrap.diagnostics
     }
 
+    var registeredContentIDs: Set<String> {
+        Set(handlesByContentID.keys)
+    }
+
     var registeredPaneIDs: Set<String> {
-        Set(handlesByPaneID.keys)
+        Set(handlesByContentID.values.map(\.paneID))
     }
 
     @discardableResult
@@ -744,48 +801,49 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     }
 
     func surfaceHandle(
-        for paneID: String,
+        forTerminalContentID contentID: String,
+        mountedAtPaneID paneID: String,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalSurfaceHandle {
         ensureReady()
-        if let handle = handlesByPaneID[paneID] {
-            handle.configure(bootProfile: bootProfile)
+        if let handle = handlesByContentID[contentID] {
+            handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
             return handle
         }
-        let handle = makeSurfaceHandle(paneID, bootstrap)
-        handle.configure(bootProfile: bootProfile)
-        handlesByPaneID[paneID] = handle
+        let handle = makeSurfaceHandle(contentID, paneID, bootstrap)
+        handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+        handlesByContentID[contentID] = handle
         return handle
     }
 
-    func existingSurfaceHandle(for paneID: String) -> AlanTerminalSurfaceHandle? {
-        handlesByPaneID[paneID]
+    func existingSurfaceHandle(forTerminalContentID contentID: String) -> AlanTerminalSurfaceHandle? {
+        handlesByContentID[contentID]
     }
 
-    func snapshot(for paneID: String) -> AlanTerminalSurfaceSnapshot? {
-        handlesByPaneID[paneID]?.snapshot
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot? {
+        handlesByContentID[contentID]?.snapshot
     }
 
-    func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
-        guard let handle = handlesByPaneID[paneID] else {
+    func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {
+        guard let handle = handlesByContentID[contentID] else {
             return .missingTarget(
-                errorMessage: "The requested pane does not have a service-owned terminal runtime."
+                errorMessage: "The requested terminal content does not have a service-owned runtime."
             )
         }
         return handle.sendControlText(text)
     }
 
     @discardableResult
-    func finalizePane(_ paneID: String) -> AlanTerminalSurfaceTeardownStatus {
-        guard let handle = handlesByPaneID.removeValue(forKey: paneID) else {
+    func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
         return handle.teardown()
     }
 
-    func finalizePanes(excluding activePaneIDs: Set<String>) {
-        let stalePaneIDs = Set(handlesByPaneID.keys).subtracting(activePaneIDs)
-        stalePaneIDs.forEach { finalizePane($0) }
+    func finalizeTerminalContents(excluding activeContentIDs: Set<String>) {
+        let staleContentIDs = Set(handlesByContentID.keys).subtracting(activeContentIDs)
+        staleContentIDs.forEach { finalizeTerminalContent($0) }
     }
 }
 
@@ -826,7 +884,8 @@ final class FakeAlanGhosttyProcessBootstrap: AlanGhosttyProcessBootstrap {
 
 @MainActor
 final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
-    let paneID: String
+    let contentID: String
+    private(set) var paneID: String
     private(set) var configureCount = 0
     private(set) var attachCount = 0
     private(set) var detachCount = 0
@@ -845,9 +904,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private var closeRequestHandler: ((Bool) -> Void)?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
 
-    init(paneID: String) {
+    init(contentID: String, paneID: String) {
+        self.contentID = contentID
         self.paneID = paneID
-        self.currentSnapshot = .pending(paneID: paneID)
+        self.currentSnapshot = .pending(contentID: contentID, paneID: paneID)
+    }
+
+    convenience init(paneID: String) {
+        self.init(contentID: ShellContentInstance.terminalContentID(forPaneID: paneID), paneID: paneID)
     }
 
     var snapshot: AlanTerminalSurfaceSnapshot {
@@ -858,7 +922,8 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         ready && currentSnapshot.teardownStatus != .completed
     }
 
-    func configure(bootProfile: AlanShellBootProfile?) {
+    func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
+        self.paneID = paneID
         configureCount += 1
         updateSnapshot(lifecyclePhase: bootProfile == nil ? .pending : .attachable)
     }
@@ -943,6 +1008,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         attachedViewCount: Int? = nil
     ) {
         currentSnapshot = AlanTerminalSurfaceSnapshot(
+            contentID: contentID,
             paneID: paneID,
             lifecyclePhase: lifecyclePhase ?? currentSnapshot.lifecyclePhase,
             renderer: currentSnapshot.renderer,
@@ -1034,7 +1100,7 @@ extension FakeAlanTerminalSurfaceHandle: AlanTerminalCommandBufferEngine {
 @MainActor
 final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
     let bootstrap: FakeAlanGhosttyProcessBootstrap
-    private(set) var handlesByPaneID: [String: FakeAlanTerminalSurfaceHandle] = [:]
+    private(set) var handlesByContentID: [String: FakeAlanTerminalSurfaceHandle] = [:]
 
     init() {
         self.bootstrap = FakeAlanGhosttyProcessBootstrap()
@@ -1048,8 +1114,12 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
         bootstrap.diagnostics
     }
 
+    var registeredContentIDs: Set<String> {
+        Set(handlesByContentID.keys)
+    }
+
     var registeredPaneIDs: Set<String> {
-        Set(handlesByPaneID.keys)
+        Set(handlesByContentID.values.map(\.paneID))
     }
 
     @discardableResult
@@ -1058,48 +1128,49 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
     }
 
     func surfaceHandle(
-        for paneID: String,
+        forTerminalContentID contentID: String,
+        mountedAtPaneID paneID: String,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalSurfaceHandle {
         ensureReady()
-        if let handle = handlesByPaneID[paneID] {
-            handle.configure(bootProfile: bootProfile)
+        if let handle = handlesByContentID[contentID] {
+            handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
             return handle
         }
-        let handle = FakeAlanTerminalSurfaceHandle(paneID: paneID)
-        handle.configure(bootProfile: bootProfile)
-        handlesByPaneID[paneID] = handle
+        let handle = FakeAlanTerminalSurfaceHandle(contentID: contentID, paneID: paneID)
+        handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+        handlesByContentID[contentID] = handle
         return handle
     }
 
-    func existingSurfaceHandle(for paneID: String) -> AlanTerminalSurfaceHandle? {
-        handlesByPaneID[paneID]
+    func existingSurfaceHandle(forTerminalContentID contentID: String) -> AlanTerminalSurfaceHandle? {
+        handlesByContentID[contentID]
     }
 
-    func snapshot(for paneID: String) -> AlanTerminalSurfaceSnapshot? {
-        handlesByPaneID[paneID]?.snapshot
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot? {
+        handlesByContentID[contentID]?.snapshot
     }
 
-    func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
-        guard let handle = handlesByPaneID[paneID] else {
+    func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {
+        guard let handle = handlesByContentID[contentID] else {
             return .missingTarget(
-                errorMessage: "The requested pane does not have a fake terminal runtime."
+                errorMessage: "The requested terminal content does not have a fake terminal runtime."
             )
         }
         return handle.sendControlText(text)
     }
 
     @discardableResult
-    func finalizePane(_ paneID: String) -> AlanTerminalSurfaceTeardownStatus {
-        guard let handle = handlesByPaneID.removeValue(forKey: paneID) else {
+    func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
         return handle.teardown()
     }
 
-    func finalizePanes(excluding activePaneIDs: Set<String>) {
-        let stalePaneIDs = Set(handlesByPaneID.keys).subtracting(activePaneIDs)
-        stalePaneIDs.forEach { finalizePane($0) }
+    func finalizeTerminalContents(excluding activeContentIDs: Set<String>) {
+        let staleContentIDs = Set(handlesByContentID.keys).subtracting(activeContentIDs)
+        staleContentIDs.forEach { finalizeTerminalContent($0) }
     }
 }
 #endif

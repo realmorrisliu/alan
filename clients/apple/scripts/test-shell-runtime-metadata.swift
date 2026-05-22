@@ -22,6 +22,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarFallbackOrdering()
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
+        verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -112,6 +113,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: pane.terminalContentID,
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 logicalSize: .zero,
@@ -174,6 +176,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: pane.terminalContentID,
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 logicalSize: .zero,
@@ -488,6 +491,55 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !registry.registeredPaneIDs.contains("pane_2"),
             "opening a tab must release stale runtime-only panes after adopting the new state"
+        )
+    }
+
+    private static func verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let contentID = "content_terminal_runtime_primary"
+        let firstMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_left",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_right",
+            tabID: "tab_2",
+            spaceID: "space_main"
+        )
+
+        let first = registry.surfaceHandle(forTerminalContent: firstMount, bootProfile: nil)
+        let second = registry.surfaceHandle(forTerminalContent: secondMount, bootProfile: nil)
+
+        expect(first === second, "registry must reuse runtime handles by terminal content identity")
+        expect(second.contentID == contentID, "registry handle must retain content identity")
+        expect(second.paneID == "pane_right", "registry handle must project the latest PaneSlot mount")
+        expect(registry.registeredContentIDs == [contentID], "registry registration must be content keyed")
+        expect(registry.registeredPaneIDs == ["pane_right"], "registry pane IDs must reflect current mounts")
+
+        registry.updateSnapshot(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: contentID,
+                paneID: "pane_right",
+                tabID: "tab_2",
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: nil,
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: 10)
+            )
+        )
+        expect(
+            registry.snapshot(forTerminalContentID: contentID).paneID == "pane_right",
+            "registry snapshot lookup must be content keyed"
         )
     }
 
@@ -2829,6 +2881,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: exitingPane.terminalContentID,
                 paneID: exitingPane.paneID,
                 tabID: exitingPane.tabID,
                 logicalSize: .zero,
