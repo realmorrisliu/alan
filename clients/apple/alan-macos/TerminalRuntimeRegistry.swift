@@ -63,6 +63,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     private var hostViewsByContentID: [String: AlanTerminalHostNSView] = [:]
     private var snapshotsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
     private var paneSlotIDByContentID: [String: String] = [:]
+    private var contentIDByPaneSlotID: [String: String] = [:]
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
 
@@ -113,7 +114,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     ) -> AlanTerminalHostNSView {
         let hostView: AlanTerminalHostNSView
         if let mount {
-            paneSlotIDByContentID[mount.contentID] = mount.paneSlotID
+            recordMount(contentID: mount.contentID, paneSlotID: mount.paneSlotID)
             if let existing = hostViewsByContentID[mount.contentID] {
                 hostView = existing
             } else {
@@ -167,7 +168,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         forTerminalContent mount: TerminalContentMount,
         bootProfile: AlanShellBootProfile?
     ) -> AlanTerminalSurfaceHandle {
-        paneSlotIDByContentID[mount.contentID] = mount.paneSlotID
+        recordMount(contentID: mount.contentID, paneSlotID: mount.paneSlotID)
         return runtimeService.surfaceHandle(
             forTerminalContentID: mount.contentID,
             mountedAtPaneID: mount.paneSlotID,
@@ -180,7 +181,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             return
         }
         if let paneID = snapshot.paneID {
-            paneSlotIDByContentID[contentID] = paneID
+            recordMount(contentID: contentID, paneSlotID: paneID)
         }
         snapshotsByContentID[contentID] = snapshot
         runtimeService
@@ -190,7 +191,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     func snapshot(for paneID: String?) -> TerminalHostRuntimeSnapshot {
         guard let paneID else { return .placeholder }
-        return snapshot(forTerminalContentID: terminalContentID(forPaneID: paneID))
+        return snapshot(forTerminalContentID: terminalContentID(mountedAtPaneID: paneID))
     }
 
     func snapshot(forTerminalContentID contentID: String?) -> TerminalHostRuntimeSnapshot {
@@ -200,13 +201,13 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
-        let activeContentIDs = Set(activePaneIDs.map(terminalContentID(forPaneID:)))
+        let activeContentIDs = Set(activePaneIDs.map { terminalContentID(mountedAtPaneID: $0) })
         let staleContentIDs = registeredContentIDs.subtracting(activeContentIDs)
         staleContentIDs.forEach { releaseTerminalContent($0) }
     }
 
     func releaseRuntime(for paneID: String) {
-        releaseTerminalContent(terminalContentID(forPaneID: paneID))
+        releaseTerminalContent(terminalContentID(mountedAtPaneID: paneID))
     }
 
     func releaseAllRuntimes() {
@@ -214,7 +215,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     func sendText(to paneID: String, text: String) -> TerminalRuntimeDeliveryResult {
-        sendText(toTerminalContentID: terminalContentID(forPaneID: paneID), text: text)
+        sendText(toTerminalContentID: terminalContentID(mountedAtPaneID: paneID), text: text)
     }
 
     func sendText(
@@ -229,7 +230,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     func terminalCommandRuntimeState(for paneID: String) -> ShellTerminalCommandRuntimeState {
-        let contentID = terminalContentID(forPaneID: paneID)
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
         if let hostView = hostViewsByContentID[contentID] {
             return hostView.terminalCommandRuntimeState
         }
@@ -249,7 +250,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func copySelection(for paneID: String) -> Bool {
-        let contentID = terminalContentID(forPaneID: paneID)
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
         if let hostView = hostViewsByContentID[contentID] {
             return hostView.copySelection()
         }
@@ -261,7 +262,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func copySelection(for paneID: String, to writer: AlanTerminalPasteboardWriting) -> Bool {
-        let contentID = terminalContentID(forPaneID: paneID)
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
         if let hostView = hostViewsByContentID[contentID] {
             return hostView.copySelection(to: writer)
         }
@@ -277,7 +278,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func pasteText(_ text: String, to paneID: String) -> TerminalRuntimeDeliveryResult {
-        let contentID = terminalContentID(forPaneID: paneID)
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
         if let hostView = hostViewsByContentID[contentID] {
             return hostView.pasteText(text)
         }
@@ -286,12 +287,13 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     @discardableResult
     func beginFindInteraction(for paneID: String) -> Bool {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.beginFindInteraction() ?? false
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
+            .beginFindInteraction() ?? false
     }
 
     @discardableResult
     func beginLastCommandOutputSearch(for paneID: String) -> Bool {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
             .beginLastCommandOutputSearch() ?? false
     }
 
@@ -300,36 +302,37 @@ final class TerminalRuntimeRegistry: ObservableObject {
         for paneID: String,
         direction: AlanTerminalPromptNavigationDirection
     ) -> Bool {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
             .navigateSemanticPrompt(direction) ?? false
     }
 
     @discardableResult
     func copyLastCommandOutput(for paneID: String) -> Bool {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.copyLastCommandOutput() ?? false
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
+            .copyLastCommandOutput() ?? false
     }
 
     @discardableResult
     func updateFindQuery(for paneID: String, query: String) -> Bool {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
             .updateFindQuery(query) ?? false
     }
 
     func selectNextFindMatch(for paneID: String) {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.selectNextFindMatch()
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?.selectNextFindMatch()
     }
 
     func selectPreviousFindMatch(for paneID: String) {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.selectPreviousFindMatch()
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?.selectPreviousFindMatch()
     }
 
     func dismissFindInteraction(for paneID: String, refocusTerminal: Bool = true) {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?
             .dismissFindInteraction(refocusTerminal: refocusTerminal)
     }
 
     func requestFocus(for paneID: String) {
-        hostViewsByContentID[terminalContentID(forPaneID: paneID)]?.focusTerminal()
+        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?.focusTerminal()
     }
 
     var registeredContentIDs: Set<String> {
@@ -350,11 +353,35 @@ final class TerminalRuntimeRegistry: ObservableObject {
         }
         runtimeService.finalizeTerminalContent(contentID)
         snapshotsByContentID.removeValue(forKey: contentID)
-        paneSlotIDByContentID.removeValue(forKey: contentID)
+        if let paneSlotID = paneSlotIDByContentID.removeValue(forKey: contentID),
+           contentIDByPaneSlotID[paneSlotID] == contentID
+        {
+            contentIDByPaneSlotID.removeValue(forKey: paneSlotID)
+        }
     }
 
     private func terminalContentID(forPaneID paneID: String) -> String {
         ShellContentInstance.terminalContentID(forPaneID: paneID)
+    }
+
+    private func terminalContentID(mountedAtPaneID paneID: String) -> String {
+        contentIDByPaneSlotID[paneID] ?? terminalContentID(forPaneID: paneID)
+    }
+
+    private func recordMount(contentID: String, paneSlotID: String) {
+        if let previousPaneSlotID = paneSlotIDByContentID[contentID],
+           previousPaneSlotID != paneSlotID,
+           contentIDByPaneSlotID[previousPaneSlotID] == contentID
+        {
+            contentIDByPaneSlotID.removeValue(forKey: previousPaneSlotID)
+        }
+        if let previousContentID = contentIDByPaneSlotID[paneSlotID],
+           previousContentID != contentID
+        {
+            paneSlotIDByContentID.removeValue(forKey: previousContentID)
+        }
+        paneSlotIDByContentID[contentID] = paneSlotID
+        contentIDByPaneSlotID[paneSlotID] = contentID
     }
 
     private func runtimeSnapshot(

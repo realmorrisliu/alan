@@ -541,6 +541,22 @@ private enum ShellRuntimeMetadataTests {
             registry.snapshot(forTerminalContentID: contentID).paneID == "pane_right",
             "registry snapshot lookup must be content keyed"
         )
+
+        let delivery = registry.sendText(to: "pane_right", text: "after remount")
+        let handle = second as! FakeAlanTerminalSurfaceHandle
+        expect(delivery.applied, "pane convenience delivery must resolve the mounted content ID")
+        expect(handle.deliveredText == ["after remount"], "delivery must reach the mounted content")
+
+        registry.releaseRuntimes(excluding: ["pane_right"])
+        expect(handle.teardownCount == 0, "active custom content ID must not be released as stale")
+        expect(
+            registry.registeredContentIDs == [contentID],
+            "cleanup must keep the active mounted content registered"
+        )
+
+        registry.releaseRuntime(for: "pane_right")
+        expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
+        expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
     }
 
     private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {
