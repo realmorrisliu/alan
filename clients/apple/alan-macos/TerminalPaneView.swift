@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 #if os(macOS)
@@ -953,31 +954,42 @@ private struct ShellBoundedContentLeafView: View {
                 onClosePane: onClosePane
             )
 
-            ZStack {
-                ShellPalette.workspace
-
-                VStack(spacing: 10) {
-                    Image(systemName: descriptor.iconName)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .frame(width: 32, height: 32)
-
-                    Text(descriptor.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 260)
-
-                    Text(contentKindLabel)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onFocusPane)
+            switch descriptor.renderKind {
+            case .markdown:
+                ShellMarkdownContentView(descriptor: descriptor)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onFocusPane)
+            case .terminal, .settings, .unavailable:
+                boundedPlaceholder
             }
+        }
+    }
+
+    private var boundedPlaceholder: some View {
+        ZStack {
+            ShellPalette.workspace
+
+            VStack(spacing: 10) {
+                Image(systemName: descriptor.iconName)
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .frame(width: 32, height: 32)
+
+                Text(descriptor.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 260)
+
+                Text(contentKindLabel)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onFocusPane)
         }
     }
 
@@ -993,6 +1005,120 @@ private struct ShellBoundedContentLeafView: View {
             return "Unavailable"
         }
     }
+}
+
+private struct ShellMarkdownContentView: View {
+    let descriptor: ShellContentRenderDescriptor
+    @State private var renderedContent = AttributedString("")
+    @State private var loadError: String?
+    @State private var isLoading = false
+
+    var body: some View {
+        ZStack {
+            ShellPalette.workspace
+
+            ScrollView {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .padding(24)
+                } else if let loadError {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(ShellPalette.mutedInk)
+                        Text(loadError)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(ShellPalette.ink)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .padding(24)
+                } else {
+                    Text(renderedContent)
+                        .font(.system(size: 13))
+                        .foregroundStyle(ShellPalette.ink)
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                }
+            }
+        }
+        .task(id: markdownSource) {
+            await loadMarkdown()
+        }
+    }
+
+    @MainActor
+    private func loadMarkdown() async {
+        guard let fileURL else {
+            renderedContent = AttributedString("")
+            loadError = "Unable to open this document."
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        loadError = nil
+        renderedContent = AttributedString("")
+
+        let result = await Task.detached(priority: .userInitiated) {
+            ShellMarkdownContentLoader.load(fileURL: fileURL)
+        }.value
+        guard !Task.isCancelled else { return }
+
+        isLoading = false
+        switch result {
+        case .success(let content):
+            renderedContent = content
+            loadError = nil
+        case .failure:
+            renderedContent = AttributedString("")
+            loadError = "Unable to read this document."
+        }
+    }
+
+    private var markdownSource: String {
+        descriptor.payload?.markdown?.fileURL ?? ""
+    }
+
+    private var fileURL: URL? {
+        ShellMarkdownContentLoader.fileURL(from: descriptor.payload?.markdown?.fileURL)
+    }
+}
+
+private enum ShellMarkdownContentLoader {
+    static func fileURL(from rawValue: String?) -> URL? {
+        guard let rawValue else { return nil }
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let url = URL(string: value),
+           url.scheme != nil
+        {
+            return url.isFileURL ? url.standardizedFileURL : url
+        }
+
+        return URL(fileURLWithPath: NSString(string: value).expandingTildeInPath)
+            .standardizedFileURL
+    }
+
+    static func load(fileURL: URL) -> ShellMarkdownContentLoadResult {
+        do {
+            let markdown = try String(contentsOf: fileURL, encoding: .utf8)
+            let content = (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+            return .success(content)
+        } catch {
+            return .failure
+        }
+    }
+}
+
+private enum ShellMarkdownContentLoadResult {
+    case success(AttributedString)
+    case failure
 }
 
 private struct ShellContentPaneTitleBarView: View {

@@ -770,6 +770,17 @@ struct ShellPaneSlotTreeNode: Identifiable, Codable, Equatable {
             return (children ?? []).flatMap(\.paneSlotIDs)
         }
     }
+
+    func restoringPaneTree() -> ShellPaneTreeNode {
+        ShellPaneTreeNode(
+            nodeID: nodeID,
+            kind: kind,
+            direction: direction,
+            ratio: ratio,
+            paneID: paneSlotID,
+            children: children?.map { $0.restoringPaneTree() }
+        )
+    }
 }
 
 struct ShellTab: Identifiable, Codable, Equatable {
@@ -873,6 +884,8 @@ struct ShellStateSnapshot: Codable, Equatable {
     let focusedPaneID: String?
     let spaces: [ShellSpace]
     let panes: [ShellPane]
+    var paneSlots: [ShellPaneSlot]? = nil
+    var contents: [ShellContentInstance]? = nil
     var quickTerminal: ShellQuickTerminalSlot? = nil
 
     private enum CodingKeys: String, CodingKey {
@@ -883,6 +896,8 @@ struct ShellStateSnapshot: Codable, Equatable {
         case focusedPaneID = "focused_pane_id"
         case spaces
         case panes
+        case paneSlots = "pane_slots"
+        case contents
         case quickTerminal = "quick_terminal"
     }
 
@@ -1028,8 +1043,33 @@ extension ShellContentStateSnapshot {
     static func projecting(_ shellState: ShellStateSnapshot) -> ShellContentStateSnapshot {
         let layoutPaneIDs = Set(shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
         let projectedPanes = shellState.panes.filter { layoutPaneIDs.contains($0.paneID) }
-        let paneSlots = projectedPanes.map(ShellPaneSlot.projectingTerminalPane)
-        let contents = projectedPanes.map(ShellContentInstance.projectingTerminalPane)
+        let explicitPaneSlots = (shellState.paneSlots ?? []).filter {
+            layoutPaneIDs.contains($0.paneSlotID)
+        }
+        let explicitPaneSlotIDs = Set(explicitPaneSlots.map(\.paneSlotID))
+        let explicitContentIDs = Set(explicitPaneSlots.map(\.contentID))
+        let explicitPaneSlotsByContentID = explicitPaneSlots.reduce(into: [String: ShellPaneSlot]()) {
+            slotsByContentID, slot in
+            slotsByContentID[slot.contentID] = slot
+        }
+        let projectedPanesByID = projectedPanes.reduce(into: [String: ShellPane]()) { panesByID, pane in
+            panesByID[pane.paneID] = pane
+        }
+        let explicitContents = (shellState.contents ?? []).filter {
+            explicitContentIDs.contains($0.contentID)
+        }.map { content in
+            guard content.kind == .terminal,
+                  let paneSlot = explicitPaneSlotsByContentID[content.contentID],
+                  let pane = projectedPanesByID[paneSlot.paneSlotID]
+            else {
+                return content
+            }
+
+            return ShellContentInstance.projectingTerminalPane(pane, contentID: content.contentID)
+        }
+        let terminalPanes = projectedPanes.filter { !explicitPaneSlotIDs.contains($0.paneID) }
+        let paneSlots = explicitPaneSlots + terminalPanes.map(ShellPaneSlot.projectingTerminalPane)
+        let contents = explicitContents + terminalPanes.map(ShellContentInstance.projectingTerminalPane)
         let validPaneSlotIDs = Set(paneSlots.map(\.paneSlotID))
         let focusedPaneSlotID =
             shellState.focusedPaneID.flatMap { validPaneSlotIDs.contains($0) ? $0 : nil }
@@ -1093,9 +1133,105 @@ extension ShellContentStateSnapshot {
         paneSlot(paneSlotID: paneSlotID).flatMap { content(contentID: $0.contentID) }
     }
 
+    func primaryContent(in tabID: String) -> ShellContentInstance? {
+        guard let tab = tab(tabID: tabID) else { return nil }
+        return tab.paneTree.paneSlotIDs.lazy.compactMap { contentMounted(in: $0) }.first
+    }
+
     func userFacingTitle(for tab: ShellContentTab) -> String? {
         tab.title
             ?? tab.paneTree.paneSlotIDs.lazy.compactMap { contentMounted(in: $0)?.title }.first
+    }
+
+    func materializingShellState() -> ShellStateSnapshot? {
+        guard contractVersion == Self.currentContractVersion else { return nil }
+
+        let paneSlotsByID = paneSlots.reduce(into: [String: ShellPaneSlot]()) { slotsByID, slot in
+            slotsByID[slot.paneSlotID] = slot
+        }
+        let contentsByID = contents.reduce(into: [String: ShellContentInstance]()) { contentsByID, content in
+            contentsByID[content.contentID] = content
+        }
+        var materializedPanes: [ShellPane] = []
+        var materializedPaneSlots: [ShellPaneSlot] = []
+        var materializedContents: [ShellContentInstance] = []
+
+        let materializedSpaces = spaces.map { space -> ShellSpace in
+            let tabs = space.tabs.compactMap { tab -> ShellTab? in
+                let paneSlotIDs = tab.paneTree.paneSlotIDs
+                guard !paneSlotIDs.isEmpty else { return nil }
+
+                var tabPaneSlots: [ShellPaneSlot] = []
+                var tabContents: [ShellContentInstance] = []
+                for paneSlotID in paneSlotIDs {
+                    guard let paneSlot = paneSlotsByID[paneSlotID],
+                          let content = contentsByID[paneSlot.contentID]
+                    else {
+                        return nil
+                    }
+                    tabPaneSlots.append(paneSlot)
+                    tabContents.append(content)
+                }
+
+                materializedPanes.append(
+                    contentsOf: zip(tabPaneSlots, tabContents).map {
+                        ShellPane.restoringContent($1, mountedIn: $0)
+                    }
+                )
+                materializedPaneSlots.append(contentsOf: tabPaneSlots)
+                materializedContents.append(contentsOf: tabContents)
+
+                return ShellTab(
+                    tabID: tab.tabID,
+                    kind: tab.kind,
+                    title: tab.title,
+                    paneTree: tab.paneTree.restoringPaneTree(),
+                    isPinned: tab.isPinned
+                )
+            }
+
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: Self.strongestAttention(
+                    in: materializedPaneSlots.filter { $0.spaceID == space.spaceID }
+                ),
+                tabs: tabs
+            )
+        }
+
+        guard !materializedPanes.isEmpty else { return nil }
+
+        let focusableSpaces = materializedSpaces.filter { !$0.tabs.isEmpty }
+        let validSpaceIDs = Set(focusableSpaces.map(\.spaceID))
+        let resolvedFocusedSpaceID = focusedSpaceID.flatMap {
+            validSpaceIDs.contains($0) ? $0 : nil
+        } ?? focusableSpaces.first?.spaceID
+        let focusedSpace = resolvedFocusedSpaceID.flatMap { spaceID in
+            materializedSpaces.first { $0.spaceID == spaceID }
+        }
+        let resolvedFocusedTabID = focusedTabID.flatMap { tabID in
+            focusedSpace?.tabs.contains { $0.tabID == tabID } == true ? tabID : nil
+        } ?? focusedSpace?.tabs.first?.tabID
+        let focusedTab = resolvedFocusedTabID.flatMap { tabID in
+            focusedSpace?.tabs.first { $0.tabID == tabID }
+        }
+        let validPaneSlotIDs = Set(materializedPaneSlots.map(\.paneSlotID))
+        let resolvedFocusedPaneID = focusedPaneSlotID.flatMap {
+            validPaneSlotIDs.contains($0) ? $0 : nil
+        } ?? focusedTab?.paneTree.paneIDs.first ?? materializedPanes.first?.paneID
+
+        return ShellStateSnapshot(
+            contractVersion: Self.currentContractVersion,
+            windowID: windowID,
+            focusedSpaceID: resolvedFocusedSpaceID,
+            focusedTabID: resolvedFocusedTabID,
+            focusedPaneID: resolvedFocusedPaneID,
+            spaces: materializedSpaces,
+            panes: materializedPanes,
+            paneSlots: materializedPaneSlots,
+            contents: materializedContents
+        )
     }
 
     private static func strongestAttention(in paneSlots: [ShellPaneSlot]) -> ShellAttentionState {
@@ -1119,6 +1255,43 @@ extension ShellContentStateSnapshot {
     }
 }
 
+private extension ShellPane {
+    static func restoringContent(
+        _ content: ShellContentInstance,
+        mountedIn paneSlot: ShellPaneSlot
+    ) -> ShellPane {
+        let terminalPayload = content.payload.terminal
+        return ShellPane(
+            paneID: paneSlot.paneSlotID,
+            tabID: paneSlot.tabID,
+            spaceID: paneSlot.spaceID,
+            launchTarget: terminalPayload?.launchTarget,
+            cwd: terminalPayload?.cwd,
+            process: nil,
+            attention: paneSlot.attention,
+            context: nil,
+            viewport: ShellViewportSnapshot(
+                title: content.title,
+                summary: restoredSummary(for: content.kind),
+                visibleExcerpt: nil,
+                lastActivityAt: nil
+            ),
+            alanBinding: nil
+        )
+    }
+
+    static func restoredSummary(for kind: ShellContentKind) -> String? {
+        switch kind {
+        case .terminal:
+            return nil
+        case .markdown:
+            return "markdown viewer ready"
+        case .settings:
+            return "settings surface ready"
+        }
+    }
+}
+
 extension ShellPaneSlot {
     static func projectingTerminalPane(_ pane: ShellPane) -> ShellPaneSlot {
         ShellPaneSlot(
@@ -1133,9 +1306,13 @@ extension ShellPaneSlot {
 
 extension ShellContentInstance {
     static func projectingTerminalPane(_ pane: ShellPane) -> ShellContentInstance {
+        projectingTerminalPane(pane, contentID: terminalContentID(forPaneID: pane.paneID))
+    }
+
+    static func projectingTerminalPane(_ pane: ShellPane, contentID: String) -> ShellContentInstance {
         let title = terminalTitle(for: pane)
         return ShellContentInstance(
-            contentID: terminalContentID(forPaneID: pane.paneID),
+            contentID: contentID,
             kind: .terminal,
             title: title,
             payload: .terminal(
@@ -1151,6 +1328,10 @@ extension ShellContentInstance {
 
     static func terminalContentID(forPaneID paneID: String) -> String {
         "content_\(paneID)"
+    }
+
+    static func markdownContentID(forPaneSlotID paneSlotID: String) -> String {
+        "content_markdown_\(paneSlotID)"
     }
 
     private static func terminalTitle(for pane: ShellPane) -> String {

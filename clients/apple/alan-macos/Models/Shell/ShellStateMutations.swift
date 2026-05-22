@@ -308,6 +308,7 @@ extension ShellStateSnapshot {
         let focusedPane = focusedPaneID.flatMap { paneID in
             remainingPanes.first { $0.paneID == paneID }
         }
+        let retained = retainedContentRecords(in: remainingSpaces)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -316,6 +317,8 @@ extension ShellStateSnapshot {
             focusedPaneID: focusedPaneID,
             spaces: rebuildingAttention(in: remainingSpaces, panes: remainingPanes),
             panes: remainingPanes,
+            paneSlots: retained.paneSlots,
+            contents: retained.contents,
             quickTerminal: quickTerminal
         )
 
@@ -427,6 +430,97 @@ extension ShellStateSnapshot {
         )
     }
 
+    func openingMarkdownTab(
+        fileURL: URL,
+        in requestedSpaceID: String?,
+        title: String?,
+        reservedPaneIDs: Set<String> = [],
+        now: Date = .now
+    ) throws -> ShellStateMutationResult {
+        let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
+        guard let targetSpaceID,
+              space(spaceID: targetSpaceID) != nil
+        else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
+        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
+        let contentID = ShellContentInstance.markdownContentID(forPaneSlotID: paneID)
+        let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
+        let resolvedTitle = Self.markdownTitle(for: resolvedURL, explicitTitle: title)
+        let pane = makeContentPlaceholderPane(
+            paneID: paneID,
+            tabID: tabID,
+            spaceID: targetSpaceID,
+            title: resolvedTitle,
+            summary: "markdown viewer ready",
+            now: now
+        )
+        let tab = ShellTab(
+            tabID: tabID,
+            kind: .terminal,
+            title: resolvedTitle,
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_\(paneID)",
+                kind: .pane,
+                direction: nil,
+                paneID: paneID,
+                children: nil
+            )
+        )
+        let paneSlot = ShellPaneSlot(
+            paneSlotID: paneID,
+            tabID: tabID,
+            spaceID: targetSpaceID,
+            contentID: contentID,
+            attention: .active
+        )
+        let content = ShellContentInstance(
+            contentID: contentID,
+            kind: .markdown,
+            title: resolvedTitle,
+            payload: .markdown(
+                ShellMarkdownContentPayload(
+                    fileURL: resolvedURL.absoluteString,
+                    title: resolvedTitle
+                )
+            ),
+            rendererState: ShellContentRendererState(phase: "ready", detail: resolvedURL.path)
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs + [tab]
+            )
+        }
+        let nextPanes = panes + [pane]
+        let retained = retainedContentRecords(in: nextSpaces)
+        let nextPaneSlots = (retained.paneSlots ?? []) + [paneSlot]
+        let nextContents = (retained.contents ?? []) + [content]
+
+        return ShellStateMutationResult(
+            state: ShellStateSnapshot(
+                contractVersion: ShellContentStateSnapshot.currentContractVersion,
+                windowID: windowID,
+                focusedSpaceID: targetSpaceID,
+                focusedTabID: tabID,
+                focusedPaneID: paneID,
+                spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
+                panes: nextPanes,
+                paneSlots: nextPaneSlots,
+                contents: nextContents,
+                quickTerminal: quickTerminal
+            ),
+            spaceID: targetSpaceID,
+            tabID: tabID,
+            paneID: paneID
+        )
+    }
+
     func showingQuickTerminal(
         workingDirectory: String?,
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
@@ -455,6 +549,7 @@ extension ShellStateSnapshot {
             presentation: .visible,
             lastWorkingDirectory: resolvedWorkingDirectory
         )
+        let retained = retainedContentRecords(in: spaces)
 
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
@@ -465,6 +560,8 @@ extension ShellStateSnapshot {
                 focusedPaneID: focusedPaneID,
                 spaces: spaces,
                 panes: nextPanes,
+                paneSlots: retained.paneSlots,
+                contents: retained.contents,
                 quickTerminal: nextQuickTerminal
             ),
             spaceID: focusedSpaceID,
@@ -480,6 +577,7 @@ extension ShellStateSnapshot {
             throw ShellStateMutationError.paneNotFound
         }
 
+        let retained = retainedContentRecords(in: spaces)
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
                 contractVersion: contractVersion,
@@ -489,6 +587,8 @@ extension ShellStateSnapshot {
                 focusedPaneID: focusedPaneID,
                 spaces: spaces,
                 panes: panes,
+                paneSlots: retained.paneSlots,
+                contents: retained.contents,
                 quickTerminal: ShellQuickTerminalSlot(
                     paneID: quickTerminal.paneID,
                     presentation: .hidden,
@@ -512,6 +612,7 @@ extension ShellStateSnapshot {
             focusedPaneID == quickTerminal.paneID
             ? nextPanes.first(where: { !$0.isQuickTerminalPane })?.paneID
             : focusedPaneID
+        let retained = retainedContentRecords(in: spaces)
 
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
@@ -522,6 +623,8 @@ extension ShellStateSnapshot {
                 focusedPaneID: nextFocusedPaneID,
                 spaces: spaces,
                 panes: nextPanes,
+                paneSlots: retained.paneSlots,
+                contents: retained.contents,
                 quickTerminal: nil
             ),
             spaceID: focusedSpaceID,
@@ -590,6 +693,7 @@ extension ShellStateSnapshot {
             )
         }
 
+        let retained = retainedContentRecords(in: nextSpaces)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -598,6 +702,8 @@ extension ShellStateSnapshot {
             focusedPaneID: quickPane.paneID,
             spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
             panes: nextPanes,
+            paneSlots: retained.paneSlots,
+            contents: retained.contents,
             quickTerminal: nil
         )
 
@@ -1348,6 +1454,7 @@ extension ShellStateSnapshot {
         }
         let focusedSpaceID = focusedPane?.spaceID ?? targetSpaceAfterClose?.spaceID ?? nextSpaces.first?.spaceID
         let focusedTabID = focusedPane?.tabID
+        let retained = retainedContentRecords(in: nextSpaces)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -1356,6 +1463,8 @@ extension ShellStateSnapshot {
             focusedPaneID: preferredPaneID,
             spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
             panes: nextPanes,
+            paneSlots: retained.paneSlots,
+            contents: retained.contents,
             quickTerminal: quickTerminal
         )
 
@@ -1379,6 +1488,7 @@ extension ShellStateSnapshot {
         let focusedPane = resolvedFocusedPaneID.flatMap { candidate in
             panes.first(where: { $0.paneID == candidate })
         }
+        let retained = retainedContentRecords(in: spaces)
 
         return ShellStateSnapshot(
             contractVersion: contractVersion,
@@ -1388,7 +1498,24 @@ extension ShellStateSnapshot {
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
             panes: panes,
+            paneSlots: retained.paneSlots,
+            contents: retained.contents,
             quickTerminal: quickTerminal
+        )
+    }
+
+    private func retainedContentRecords(in spaces: [ShellSpace]) -> (
+        paneSlots: [ShellPaneSlot]?,
+        contents: [ShellContentInstance]?
+    ) {
+        let activePaneSlotIDs = Set(spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
+        let retainedPaneSlots = (paneSlots ?? []).filter { activePaneSlotIDs.contains($0.paneSlotID) }
+        let retainedContentIDs = Set(retainedPaneSlots.map(\.contentID))
+        let retainedContents = (contents ?? []).filter { retainedContentIDs.contains($0.contentID) }
+
+        return (
+            paneSlots: retainedPaneSlots.isEmpty ? nil : retainedPaneSlots,
+            contents: retainedContents.isEmpty ? nil : retainedContents
         )
     }
 
@@ -1466,6 +1593,34 @@ extension ShellStateSnapshot {
         )
     }
 
+    private func makeContentPlaceholderPane(
+        paneID: String,
+        tabID: String,
+        spaceID: String,
+        title: String,
+        summary: String,
+        now: Date
+    ) -> ShellPane {
+        let formatter = ISO8601DateFormatter()
+        return ShellPane(
+            paneID: paneID,
+            tabID: tabID,
+            spaceID: spaceID,
+            launchTarget: nil,
+            cwd: nil,
+            process: nil,
+            attention: .active,
+            context: nil,
+            viewport: ShellViewportSnapshot(
+                title: title,
+                summary: summary,
+                visibleExcerpt: nil,
+                lastActivityAt: formatter.string(from: now)
+            ),
+            alanBinding: nil
+        )
+    }
+
     private static func defaultProcessBinding(for launchTarget: ShellLaunchTarget) -> ShellProcessBinding {
         switch launchTarget {
         case .shell:
@@ -1488,6 +1643,17 @@ extension ShellStateSnapshot {
         case .alan:
             return "alan"
         }
+    }
+
+    private static func markdownTitle(for fileURL: URL, explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        let lastPathComponent = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lastPathComponent.isEmpty ? "Markdown" : lastPathComponent
     }
 
     private static func defaultShellPath(

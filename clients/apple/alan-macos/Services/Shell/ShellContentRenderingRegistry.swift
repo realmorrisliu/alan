@@ -15,6 +15,7 @@ struct ShellContentRenderDescriptor: Equatable {
     let title: String
     let iconName: String
     let capabilities: [ShellContentCapability]
+    let payload: ShellContentPayload?
     let rendererPhase: String
     let detail: String?
 
@@ -44,6 +45,7 @@ enum ShellContentRenderingRegistry {
                 title: "Unavailable",
                 iconName: "exclamationmark.triangle",
                 capabilities: [],
+                payload: nil,
                 rendererPhase: "missing_content",
                 detail: "No content is mounted in this pane."
             )
@@ -56,6 +58,7 @@ enum ShellContentRenderingRegistry {
             title: content.title,
             iconName: iconName(for: content),
             capabilities: content.capabilities,
+            payload: content.payload,
             rendererPhase: content.rendererState.phase,
             detail: content.rendererState.detail
         )

@@ -688,6 +688,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 focusedPaneID: nil,
                 spaces: shellState.spaces,
                 panes: shellState.panes,
+                paneSlots: shellState.paneSlots,
+                contents: shellState.contents,
                 quickTerminal: shellState.quickTerminal
             )
             synchronizeSelection()
@@ -1068,6 +1070,27 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             title: title,
             workingDirectory: workingDirectory
         )
+    }
+
+    @discardableResult
+    func openMarkdownTab(
+        fileURL: URL,
+        in spaceID: String? = nil,
+        title: String? = nil
+    ) -> String? {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.openingMarkdownTab(
+                fileURL: fileURL,
+                in: spaceID,
+                title: title,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
+            )
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.tabID
     }
 
     @discardableResult
@@ -1693,6 +1716,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedPaneID: shellState.focusedPaneID,
             spaces: updatedSpaces,
             panes: updatedPanes,
+            paneSlots: shellState.paneSlots,
+            contents: shellState.contents,
             quickTerminal: shellState.quickTerminal
         )
         synchronizeSelection()
@@ -1864,6 +1889,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
             panes: panes,
+            paneSlots: shellState.paneSlots,
+            contents: shellState.contents,
             quickTerminal: shellState.quickTerminal
         )
         synchronizeSelection()
@@ -1890,7 +1917,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             registry: terminalRuntimeRegistry
         )
 
+        let contentState = state.contentStateProjection()
         let hydratedPanes = state.panes.map { pane in
+            guard contentState.contentMounted(in: pane.paneID)?.kind == .terminal else {
+                return pane
+            }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
             let bootProfile = AlanShellBootProfile.forPane(pane, shellState: state)
             let projectedContext = paneProjection.projectedContext(
@@ -1936,6 +1967,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedPaneID: state.focusedPaneID,
             spaces: hydratedSpaces,
             panes: hydratedPanes,
+            paneSlots: state.paneSlots,
+            contents: state.contents,
             quickTerminal: state.quickTerminal
         )
         reconcilePaneZoomState()
