@@ -24,6 +24,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
+        verifiesRuntimeRegistryPreservesInteractiveBehaviorAcrossPaneRemount()
         verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
         verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
         verifiesTerminalLifecycleFinalizesClosedPaneAndPreservesSiblings()
@@ -667,6 +668,116 @@ private enum ShellRuntimeMetadataTests {
         registry.releaseRuntime(for: "pane_right")
         expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
         expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
+    }
+
+    private static func verifiesRuntimeRegistryPreservesInteractiveBehaviorAcrossPaneRemount() {
+        let runtimeService = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: runtimeService)
+        let contentID = "content_terminal_interactive"
+        let firstMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_left",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_right",
+            tabID: "tab_2",
+            spaceID: "space_main"
+        )
+        let firstHostView = registry.hostView(
+            forTerminalContent: firstMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        let handle = registry.surfaceHandle(
+            forTerminalContent: firstMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        let replacementHostView = AlanTerminalHostNSView()
+        registry.configureHostView(
+            replacementHostView,
+            forTerminalContent: secondMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        let remountedHandle = registry.surfaceHandle(
+            forTerminalContent: secondMount,
+            bootProfile: nil
+        )
+
+        expect(remountedHandle === handle, "reattachment must keep the content-keyed runtime handle")
+        expect(firstHostView.teardownCount == 0, "view reattachment must not teardown the runtime")
+        expect(handle.paneID == "pane_right", "remounted handle must project the latest PaneSlot")
+        expect(
+            registry.terminalCommandRuntimeState(for: "pane_right").inputReady,
+            "terminal input readiness must follow the remounted terminal content"
+        )
+        expect(
+            !registry.terminalCommandRuntimeState(for: "pane_left").inputReady,
+            "stale PaneSlot must not remain an input target after remount"
+        )
+
+        handle.selectedText = "remounted selection"
+        let pasteboard = RecordingTerminalPasteboardWriter()
+        expect(
+            registry.copySelection(for: "pane_right", to: pasteboard),
+            "copy must resolve through the remounted terminal content"
+        )
+        expect(
+            pasteboard.string == "remounted selection",
+            "copy must read selection from the content-keyed runtime"
+        )
+
+        expect(
+            registry.beginFindInteraction(for: "pane_right"),
+            "search must resolve through the remounted terminal host"
+        )
+        expect(
+            handle.searchActions == ["start_search"],
+            "search must reach the remounted content runtime"
+        )
+
+        let paste = registry.pasteText("paste after remount", to: "pane_right")
+        expect(paste.applied, "paste must deliver through the remounted terminal content")
+        expect(
+            handle.deliveredText.last == "paste after remount",
+            "paste must reach the content-keyed runtime"
+        )
+
+        let queuedText = "queued after remount"
+        handle.deliveryResult = .queued(
+            byteCount: queuedText.lengthOfBytes(using: .utf8),
+            runtimePhase: "attachable"
+        )
+        let queued = registry.sendText(to: "pane_right", text: queuedText)
+        expect(queued.code == .queued, "terminal text delivery must preserve queued state")
+        expect(
+            runtimeService.snapshot(forTerminalContentID: contentID)?.lastDelivery == queued,
+            "pending delivery diagnostics must stay on the remounted content"
+        )
+
+        let staleDelivery = registry.sendText(to: "pane_left", text: "stale target")
+        expect(
+            staleDelivery.code == .missingTarget,
+            "stale PaneSlot delivery must not fall through to the remounted runtime"
+        )
     }
 
     private static func verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs() {

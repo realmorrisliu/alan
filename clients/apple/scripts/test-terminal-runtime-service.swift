@@ -20,6 +20,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesContentScopedHandleSurvivesPaneRemount()
+        verifiesContentScopedDeliveryPreservesPendingDiagnostics()
         verifiesDeliveryAndMissingRuntimeResults()
         verifiesDeliveryRejectsExitedRuntime()
         verifiesQueuedAndTimeoutDeliveryStates()
@@ -223,6 +224,56 @@ private enum TerminalRuntimeServiceTests {
             service.snapshot(forTerminalContentID: contentID)?.paneID == "pane_right",
             "snapshot must project the latest PaneSlot mount"
         )
+    }
+
+    private static func verifiesContentScopedDeliveryPreservesPendingDiagnostics() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_terminal_delivery"
+        let handle = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_left",
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        let accepted = service.sendText(toTerminalContentID: contentID, text: "hello")
+        expect(accepted.applied, "content-keyed delivery must report accepted delivery")
+        expect(accepted.acceptedBytes == 5, "content-keyed delivery must report accepted bytes")
+        expect(handle.deliveredText == ["hello"], "content-keyed delivery must reach the surface")
+        expect(
+            service.snapshot(forTerminalContentID: contentID)?.lastDelivery == accepted,
+            "content-keyed delivery diagnostics must stay on the terminal content snapshot"
+        )
+
+        _ = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_right",
+            bootProfile: nil
+        )
+        let queuedText = "queued input"
+        handle.deliveryResult = .queued(
+            byteCount: queuedText.lengthOfBytes(using: .utf8),
+            runtimePhase: "attachable"
+        )
+
+        let queued = service.sendText(toTerminalContentID: contentID, text: queuedText)
+        expect(queued.code == .queued, "queued delivery must stay content keyed after remount")
+        expect(
+            queued.acceptedBytes == queuedText.lengthOfBytes(using: .utf8),
+            "queued delivery must preserve queued byte count"
+        )
+        expect(queued.runtimePhase == "attachable", "queued delivery must preserve runtime phase")
+        expect(
+            service.snapshot(forTerminalContentID: contentID)?.paneID == "pane_right",
+            "queued diagnostics must project the latest PaneSlot mount"
+        )
+        expect(
+            service.snapshot(forTerminalContentID: contentID)?.lastDelivery == queued,
+            "pending delivery state must remain observable by content ID"
+        )
+
+        let missing = service.sendText(toTerminalContentID: "content_missing", text: "hello")
+        expect(missing.code == .missingTarget, "missing content must report runtime-missing")
+        expect(missing.applied == false, "missing content delivery must not report applied")
     }
 
     private static func verifiesDeliveryAndMissingRuntimeResults() {
