@@ -757,7 +757,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func focus(paneID: String, requestTerminalFocus: Bool) {
         guard let result = try? shellState.focusingPane(paneID) else { return }
         applyMutationResult(result)
-        if requestTerminalFocus {
+        if requestTerminalFocus && canRequestTerminalFocus(for: paneID) {
             terminalRuntimeRegistry.requestFocus(for: paneID)
         }
     }
@@ -806,7 +806,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     func refocusSelectedTerminalPane() {
         guard let paneID = selectedPane?.paneID else { return }
+        guard canRequestTerminalFocus(for: paneID) else { return }
         terminalRuntimeRegistry.requestFocus(for: paneID)
+    }
+
+    private func canRequestTerminalFocus(for paneID: String) -> Bool {
+        if shellState.contentStateProjection().contentMounted(in: paneID)?.kind == .terminal {
+            return true
+        }
+
+        return pane(paneID: paneID)?.isQuickTerminalPane == true
     }
 
     @discardableResult
@@ -1082,6 +1091,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         do {
             result = try shellState.openingMarkdownTab(
                 fileURL: fileURL,
+                in: spaceID,
+                title: title,
+                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
+            )
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.tabID
+    }
+
+    @discardableResult
+    func openSettingsTab(
+        in spaceID: String? = nil,
+        title: String? = nil
+    ) -> String? {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.openingSettingsTab(
                 in: spaceID,
                 title: title,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs

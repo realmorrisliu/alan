@@ -521,6 +521,111 @@ extension ShellStateSnapshot {
         )
     }
 
+    func openingSettingsTab(
+        in requestedSpaceID: String?,
+        title: String?,
+        reservedPaneIDs: Set<String> = [],
+        now: Date = .now
+    ) throws -> ShellStateMutationResult {
+        let resolvedTitle = Self.settingsTitle(explicitTitle: title)
+        let contentState = contentStateProjection()
+        if let existingPaneID = contentState.paneSlots.first(where: { paneSlot in
+            guard let content = contentState.content(contentID: paneSlot.contentID) else {
+                return false
+            }
+            return content.kind == .settings
+                && content.contentID == ShellContentInstance.settingsContentID
+                && content.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID
+        })?.paneSlotID,
+           pane(paneID: existingPaneID) != nil
+        {
+            return try focusingPane(existingPaneID)
+        }
+
+        let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
+        guard let targetSpaceID,
+              space(spaceID: targetSpaceID) != nil
+        else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
+        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
+        let pane = makeContentPlaceholderPane(
+            paneID: paneID,
+            tabID: tabID,
+            spaceID: targetSpaceID,
+            title: resolvedTitle,
+            summary: "settings surface ready",
+            now: now
+        )
+        let tab = ShellTab(
+            tabID: tabID,
+            kind: .terminal,
+            title: resolvedTitle,
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_\(paneID)",
+                kind: .pane,
+                direction: nil,
+                paneID: paneID,
+                children: nil
+            )
+        )
+        let paneSlot = ShellPaneSlot(
+            paneSlotID: paneID,
+            tabID: tabID,
+            spaceID: targetSpaceID,
+            contentID: ShellContentInstance.settingsContentID,
+            attention: .active
+        )
+        let content = ShellContentInstance(
+            contentID: ShellContentInstance.settingsContentID,
+            kind: .settings,
+            title: resolvedTitle,
+            payload: .settings(
+                ShellSettingsContentPayload(
+                    surfaceID: ShellContentInstance.settingsSurfaceID,
+                    title: resolvedTitle
+                )
+            ),
+            rendererState: ShellContentRendererState(
+                phase: "ready",
+                detail: ShellContentInstance.settingsSurfaceID
+            )
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs + [tab]
+            )
+        }
+        let nextPanes = panes + [pane]
+        let retained = retainedContentRecords(in: nextSpaces)
+        let nextPaneSlots = (retained.paneSlots ?? []) + [paneSlot]
+        let nextContents = (retained.contents ?? []) + [content]
+
+        return ShellStateMutationResult(
+            state: ShellStateSnapshot(
+                contractVersion: ShellContentStateSnapshot.currentContractVersion,
+                windowID: windowID,
+                focusedSpaceID: targetSpaceID,
+                focusedTabID: tabID,
+                focusedPaneID: paneID,
+                spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
+                panes: nextPanes,
+                paneSlots: nextPaneSlots,
+                contents: nextContents,
+                quickTerminal: quickTerminal
+            ),
+            spaceID: targetSpaceID,
+            tabID: tabID,
+            paneID: paneID
+        )
+    }
+
     func showingQuickTerminal(
         workingDirectory: String?,
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
@@ -1654,6 +1759,16 @@ extension ShellStateSnapshot {
 
         let lastPathComponent = fileURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         return lastPathComponent.isEmpty ? "Markdown" : lastPathComponent
+    }
+
+    private static func settingsTitle(explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        return "Settings"
     }
 
     private static func defaultShellPath(

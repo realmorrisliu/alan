@@ -959,7 +959,11 @@ private struct ShellBoundedContentLeafView: View {
                 ShellMarkdownContentView(descriptor: descriptor)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onFocusPane)
-            case .terminal, .settings, .unavailable:
+            case .settings:
+                ShellSettingsContentView(descriptor: descriptor)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onFocusPane)
+            case .terminal, .unavailable:
                 boundedPlaceholder
             }
         }
@@ -1119,6 +1123,132 @@ private enum ShellMarkdownContentLoader {
 private enum ShellMarkdownContentLoadResult {
     case success(AttributedString)
     case failure
+}
+
+private struct ShellSettingsContentView: View {
+    let descriptor: ShellContentRenderDescriptor
+
+    @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
+    @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
+    @AppStorage("alanShellDimsInactiveSplitPanes") private var dimsInactiveSplitPanes = true
+
+    var body: some View {
+        ZStack {
+            ShellPalette.workspace
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+
+                    VStack(spacing: 0) {
+                        ShellSettingsRow(
+                            systemName: "circle.lefthalf.filled",
+                            title: "Appearance"
+                        ) {
+                            Picker("Appearance", selection: $appearanceMode) {
+                                ForEach(ShellAppearanceMode.allCases) { mode in
+                                    Text(mode.label).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 240)
+                        }
+
+                        ShellSettingsDivider()
+
+                        ShellSettingsRow(
+                            systemName: "sidebar.left",
+                            title: "Sidebar"
+                        ) {
+                            Toggle("Show", isOn: sidebarVisible)
+                                .toggleStyle(.switch)
+                        }
+
+                        ShellSettingsDivider()
+
+                        ShellSettingsRow(
+                            systemName: "rectangle.split.2x1",
+                            title: "Inactive split dimming"
+                        ) {
+                            Toggle("Enabled", isOn: $dimsInactiveSplitPanes)
+                                .toggleStyle(.switch)
+                        }
+                    }
+                    .background {
+                        RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                            .fill(ShellPalette.panel.opacity(0.72))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                            .stroke(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
+                    }
+                }
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: descriptor.iconName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .frame(width: 22, height: 22)
+
+            Text(descriptor.title)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
+    private var sidebarVisible: Binding<Bool> {
+        Binding(
+            get: { !isSidebarCollapsed },
+            set: { isSidebarCollapsed = !$0 }
+        )
+    }
+}
+
+private struct ShellSettingsRow<Accessory: View>: View {
+    let systemName: String
+    let title: String
+    @ViewBuilder let accessory: () -> Accessory
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .frame(width: 18, height: 18)
+
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ShellPalette.ink)
+                .lineLimit(1)
+
+            Spacer(minLength: 16)
+
+            accessory()
+                .font(.system(size: 12, weight: .medium))
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+    }
+}
+
+private struct ShellSettingsDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(ShellPalette.line.opacity(0.22))
+            .frame(height: 0.8)
+            .padding(.leading, 44)
+    }
 }
 
 private struct ShellContentPaneTitleBarView: View {

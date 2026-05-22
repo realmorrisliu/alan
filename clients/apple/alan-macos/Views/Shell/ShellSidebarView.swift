@@ -778,10 +778,13 @@ struct ShellSidebarView: View {
     }
 
     private func tabSubtitle(for tab: ShellTab) -> String {
-        if let content = host.shellState.contentStateProjection().primaryContent(in: tab.tabID),
-           content.kind == .markdown
-        {
-            return "Document"
+        if let content = host.shellState.contentStateProjection().primaryContent(in: tab.tabID) {
+            if content.kind == .settings {
+                return "Settings"
+            }
+            if content.kind == .markdown {
+                return "Document"
+            }
         }
 
         let panes = host.shellState.panes.filter { $0.tabID == tab.tabID }

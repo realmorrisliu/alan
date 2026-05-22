@@ -104,6 +104,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
         verifiesContentRenderingRegistryRoutesSupportedKinds()
         verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
+        verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -3814,6 +3815,84 @@ private enum ShellRuntimeMetadataTests {
         expect(
             restoredContent?.payload.markdown?.fileURL == expectedURL,
             "persisted markdown state must restore markdown file URL"
+        )
+    }
+
+    private static func verifiesOpeningSettingsTabCreatesSingletonShellContent() {
+        let controller = makeController()
+        let initialTabCount = controller.shellState.spaces.flatMap(\.tabs).count
+        guard let firstTabID = controller.openSettingsTab() else {
+            fail("opening settings must create a shell tab")
+        }
+
+        let firstProjection = controller.shellState.contentStateProjection()
+        guard let content = firstProjection.focusedContent else {
+            fail("settings tab must focus a content descriptor")
+        }
+        let descriptor = ShellContentRenderingRegistry.descriptor(for: content)
+        let selectedPaneID = controller.selectedPane?.paneID
+
+        expect(controller.shellState.focusedTabID == firstTabID, "settings open must focus the settings tab")
+        expect(content.contentID == ShellContentInstance.settingsContentID, "settings content must use the canonical content ID")
+        expect(content.kind == .settings, "settings open must create settings content")
+        expect(content.title == "Settings", "settings descriptor must expose a user-facing title")
+        expect(
+            content.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
+            "settings descriptor must persist the canonical settings surface"
+        )
+        expect(
+            content.capabilities == [.settingsSurface],
+            "settings descriptor must expose only settings surface capability"
+        )
+        expect(
+            !content.capabilities.contains(.terminalInput),
+            "settings descriptor must not expose terminal input"
+        )
+        expect(descriptor.renderKind == .settings, "settings descriptor must route to settings renderer")
+        expect(
+            controller.selectedPane?.launchTarget == nil && controller.selectedPane?.process == nil,
+            "settings pane must not describe a terminal process"
+        )
+        expect(
+            selectedPaneID.map {
+                !controller.terminalRuntimeRegistry.registeredPaneIDs.contains($0)
+            } == true,
+            "settings open must not create a terminal runtime"
+        )
+
+        guard let secondTabID = controller.openSettingsTab() else {
+            fail("reopening settings must focus the existing settings tab")
+        }
+        let secondProjection = controller.shellState.contentStateProjection()
+        let settingsContents = secondProjection.contents.filter { $0.kind == .settings }
+        let settingsSlots = secondProjection.paneSlots.filter { paneSlot in
+            secondProjection.content(contentID: paneSlot.contentID)?.kind == .settings
+        }
+
+        expect(secondTabID == firstTabID, "reopening settings must return the existing tab")
+        expect(controller.shellState.focusedTabID == firstTabID, "reopening settings must keep focus on the settings tab")
+        expect(
+            controller.shellState.spaces.flatMap(\.tabs).count == initialTabCount + 1,
+            "reopening settings must not create duplicate tabs"
+        )
+        expect(settingsContents.count == 1, "settings content must remain singleton")
+        expect(settingsSlots.count == 1, "settings PaneSlot must remain singleton")
+
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("settings-content-\(UUID().uuidString).json")
+        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
+        defer { try? FileManager.default.removeItem(at: persistenceURL) }
+        store.save(controller.shellState)
+
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        let restoredContent = restored?.contentStateProjection().focusedContent
+        expect(restoredContent?.kind == .settings, "persisted settings state must restore settings kind")
+        expect(
+            restoredContent?.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
+            "persisted settings state must restore settings surface identity"
         )
     }
 

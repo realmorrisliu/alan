@@ -1334,6 +1334,9 @@ extension ShellContentInstance {
         "content_markdown_\(paneSlotID)"
     }
 
+    static let settingsSurfaceID = "settings_main"
+    static let settingsContentID = "content_settings_main"
+
     private static func terminalTitle(for pane: ShellPane) -> String {
         if let title = pane.viewport?.title?.trimmingCharacters(in: .whitespacesAndNewlines),
            !title.isEmpty

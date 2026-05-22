@@ -49,6 +49,13 @@ struct AlanMacShellCommands: Commands {
             }
         }
 
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings...") {
+                openSettingsTab()
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+
         CommandMenu("Shell") {
             Button(host.shellActionTitle(.newTerminalTab)) {
                 host.performShellAction(.newTerminalTab)
@@ -62,6 +69,10 @@ struct AlanMacShellCommands: Commands {
 
             Button("Open Markdown...") {
                 openMarkdownFile()
+            }
+
+            Button("Open Settings") {
+                openSettingsTab()
             }
 
             Button("Ask alan...") {
@@ -227,6 +238,12 @@ struct AlanMacShellCommands: Commands {
         else { return }
 
         _ = host.openMarkdownTab(fileURL: fileURL)
+    }
+
+    private func openSettingsTab() {
+        openWindow(id: "main")
+        _ = host.openSettingsTab()
+        AlanMacPrimaryWindowPresenter.focusExistingWindowSoon()
     }
 
     private var markdownContentTypes: [UTType] {
