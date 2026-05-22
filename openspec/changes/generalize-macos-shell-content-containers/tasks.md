@@ -20,7 +20,7 @@
 
 - [x] 3.1 Add a content rendering registry or equivalent switch that routes terminal, markdown, and settings descriptors to bounded SwiftUI/AppKit host views.
 - [x] 3.2 Implement read-only markdown content opening with file-backed title, descriptor persistence, and viewer rendering.
-- [ ] 3.3 Implement alan settings as shell tab content using the shared shell chrome rather than a separate page/window model.
+- [x] 3.3 Implement alan settings as shell tab content using the shared shell chrome rather than a separate page/window model.
 - [ ] 3.4 Document browser content as a deferred follow-up area and ensure v0.2 model naming does not block adding a browser ContentInstance kind later.
 
 ## 4. Workspace Mutations And Control Plane
@@ -38,7 +38,7 @@
 - [ ] 5.1 Update `ShellWorkspaceView` / pane layout leaf rendering so mixed content panes share split geometry and focus treatment.
 - [ ] 5.2 Update sidebar tab rows, toolbar titles, pane title bars, and command input labels to use user-facing content titles and type hints.
 - [ ] 5.3 Keep terminal-only status, search, and input affordances visible only on terminal content panes.
-- [ ] 5.4 Make settings content a singleton tab target in v1 so repeated Open Settings focuses the existing ContentInstance.
+- [x] 5.4 Make settings content a singleton tab target in v1 so repeated Open Settings focuses the existing ContentInstance.
 - [ ] 5.5 Capture running-app visual evidence for light-mode mixed content tabs and split panes.
 
 ## 6. Verification And Archive Readiness
