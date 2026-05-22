@@ -268,6 +268,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private var workspaceManifest: ShellWorkspaceManifest?
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     private let paneProjection: ShellPaneProjectionService
+    private let terminalContentProjection: TerminalContentProjectionAdapter
     private let clipboardWriter: ShellClipboardWriter
     lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
         self?.handleControlPlaneCommand(command)
@@ -328,7 +329,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
-        self.paneProjection = ShellPaneProjectionService(fileManager: fileManager)
+        let paneProjection = ShellPaneProjectionService(fileManager: fileManager)
+        self.paneProjection = paneProjection
+        self.terminalContentProjection = TerminalContentProjectionAdapter(
+            paneProjection: paneProjection
+        )
         let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
         self.windowContext = resolvedContext
         self.persistenceURL = persistenceURL ?? resolvedContext.persistenceURL
@@ -1532,65 +1537,36 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
            let pane = pane(paneID: paneID)
         {
             let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
-            let runtimeProcessExited = paneProjection.projectedProcessExited(
-                metadataProcessExited: runtime.paneMetadata.processExited,
-                surfaceState: runtime.surfaceState
-            ) ?? runtime.paneMetadata.processExited
+            let effectProjection = terminalContentProjection.projectRuntime(
+                runtime,
+                for: pane,
+                bootProfile: bootProfile
+            )
             let activeTaskChanged = recordTerminalActiveTask(
                 runtime.paneMetadata.activeTaskState,
-                processExited: runtimeProcessExited,
+                processExited: effectProjection.processExited,
                 for: paneID
             )
-            let projectedActivity = runtime.paneMetadata.clearsActivity
-                ? nil
-                : (runtime.paneMetadata.activity ?? pane.activity)
-            if runtimeProcessExited {
-                routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+            if effectProjection.processExited {
+                routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
             }
-            if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: runtimeProcessExited) {
+            if closePaneAfterChildExitIfNeeded(
+                paneID: paneID,
+                processExited: effectProjection.processExited
+            ) {
                 return
             }
-            let projectedContext = paneProjection.projectedContext(
-                for: pane,
-                bootProfile: bootProfile,
-                workingDirectory: runtime.paneMetadata.workingDirectory ?? pane.cwd,
-                processExited: runtime.paneMetadata.processExited,
-                lastCommandExitCode: runtime.paneMetadata.lastCommandExitCode,
-                lastMetadataAt: runtime.paneMetadata.lastUpdatedAt,
-                activeTaskState: runtime.paneMetadata.activeTaskState,
-                existing: pane.context,
-                runtime: runtime
-            )
 
             let didPublishPaneUpdate = updatePaneState(paneID: paneID) { current in
-                let projectedBinding = paneProjection.projectedAlanBinding(
+                let currentBootProfile = AlanShellBootProfile.forPane(
+                    current,
+                    shellState: shellState
+                )
+                return terminalContentProjection.projectRuntime(
+                    runtime,
                     for: current,
-                    binding: current.alanBinding,
-                    processExited: runtimeProcessExited
-                )
-                let viewport = paneProjection.projectedViewport(
-                    current: current,
-                    metadata: runtime.paneMetadata,
-                    runtime: runtime
-                )
-                return ShellPane(
-                    paneID: current.paneID,
-                    tabID: current.tabID,
-                    spaceID: current.spaceID,
-                    launchTarget: current.launchTarget,
-                    cwd: current.cwd ?? bootProfile.workingDirectory,
-                    process: current.process,
-                    attention: paneProjection.projectedAttention(
-                        metadataAttention: runtime.paneMetadata.attention,
-                        processExited: runtimeProcessExited,
-                        binding: projectedBinding,
-                        surfaceState: runtime.surfaceState
-                    ),
-                    context: projectedContext,
-                    viewport: viewport,
-                    activity: projectedActivity,
-                    alanBinding: projectedBinding
-                )
+                    bootProfile: currentBootProfile
+                ).pane
             }
             if activeTaskChanged && !didPublishPaneUpdate {
                 syncWorkspaceManifestFromShellState()
@@ -1602,67 +1578,41 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let metadataProcessExited = paneProjection.projectedProcessExited(
-            metadataProcessExited: metadata.processExited,
-            surfaceState: runtime.surfaceState
-        ) ?? metadata.processExited
+        let effectProjection = terminalContentProjection.projectMetadata(
+            metadata,
+            runtime: runtime,
+            for: pane,
+            bootProfile: bootProfile
+        )
         let activeTaskChanged = recordTerminalActiveTask(
             metadata.activeTaskState,
-            processExited: metadataProcessExited,
+            processExited: effectProjection.processExited,
             for: paneID
         )
-        let projectedActivity = metadata.clearsActivity ? nil : (metadata.activity ?? pane.activity)
-        if metadataProcessExited {
-            routeActivityNotificationIfNeeded(from: pane, nextActivity: projectedActivity)
+        if effectProjection.processExited {
+            routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
         }
-        if closePaneAfterChildExitIfNeeded(paneID: paneID, processExited: metadataProcessExited) {
+        if closePaneAfterChildExitIfNeeded(
+            paneID: paneID,
+            processExited: effectProjection.processExited
+        ) {
             return
         }
-        let projectedContext = paneProjection.projectedContext(
-            for: pane,
-            bootProfile: bootProfile,
-            workingDirectory: metadata.workingDirectory ?? pane.cwd,
-            processExited: metadata.processExited,
-            lastCommandExitCode: metadata.lastCommandExitCode,
-            lastMetadataAt: metadata.lastUpdatedAt,
-            activeTaskState: metadata.activeTaskState,
-            existing: pane.context,
-            runtime: runtime
-        )
 
         let didPublishPaneUpdate = updatePaneState(
             paneID: pane.paneID,
             tabTitleOverride: metadata.title
         ) { current in
-            let projectedBinding = paneProjection.projectedAlanBinding(
+            let currentBootProfile = AlanShellBootProfile.forPane(
+                current,
+                shellState: shellState
+            )
+            return terminalContentProjection.projectMetadata(
+                metadata,
+                runtime: runtime,
                 for: current,
-                binding: current.alanBinding,
-                processExited: metadataProcessExited
-            )
-            let viewport = paneProjection.projectedViewport(
-                current: current,
-                metadata: metadata,
-                runtime: runtime
-            )
-
-            return ShellPane(
-                paneID: current.paneID,
-                tabID: current.tabID,
-                spaceID: current.spaceID,
-                launchTarget: current.launchTarget,
-                cwd: metadata.workingDirectory ?? current.cwd ?? bootProfile.workingDirectory,
-                process: current.process,
-                attention: paneProjection.projectedAttention(
-                    metadataAttention: metadata.attention,
-                    processExited: metadataProcessExited,
-                    binding: projectedBinding,
-                    surfaceState: runtime.surfaceState
-                ),
-                context: projectedContext,
-                viewport: viewport,
-                activity: projectedActivity,
-                alanBinding: projectedBinding
-            )
+                bootProfile: currentBootProfile
+            ).pane
         }
         if activeTaskChanged && !didPublishPaneUpdate {
             syncWorkspaceManifestFromShellState()
@@ -1671,101 +1621,35 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyAlanBinding(_ binding: ShellAlanBinding?, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
-        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let runtimeProcessExited = paneProjection.projectedProcessExited(
-            metadataProcessExited: runtime.paneMetadata.processExited,
-            surfaceState: runtime.surfaceState
-        ) ?? runtime.paneMetadata.processExited
-        let projectedBinding = paneProjection.projectedAlanBinding(
-            for: pane,
-            binding: binding,
-            processExited: runtimeProcessExited
-        )
-        let projectedContext = paneProjection.projectedContext(
-            for: pane,
-            bootProfile: bootProfile,
-            workingDirectory: pane.cwd,
-            processExited: nil,
-            lastCommandExitCode: pane.context?.lastCommandExitCode,
-            lastMetadataAt: nil,
-            activeTaskState: runtime.paneMetadata.activeTaskState,
-            existing: pane.context,
-            runtime: runtime
-        )
-
         updatePaneState(paneID: paneID) { current in
-            let bindingSummary: String?
-            if let projectedBinding {
-                bindingSummary = projectedBinding.pendingYield
-                    ? "alan is waiting for user input"
-                    : "alan run status: \(projectedBinding.runStatus)"
-            } else {
-                bindingSummary = nil
-            }
-
-            let viewport = ShellViewportSnapshot(
-                title: current.viewport?.title,
-                summary: bindingSummary ?? current.viewport?.summary,
-                visibleExcerpt: current.viewport?.visibleExcerpt,
-                lastActivityAt: binding?.lastProjectedAt ?? current.viewport?.lastActivityAt
+            let currentBootProfile = AlanShellBootProfile.forPane(
+                current,
+                shellState: shellState
             )
-
-            return ShellPane(
-                paneID: current.paneID,
-                tabID: current.tabID,
-                spaceID: current.spaceID,
-                launchTarget: current.launchTarget,
-                cwd: current.cwd ?? bootProfile.workingDirectory,
-                process: current.process,
-                attention: projectedBinding?.pendingYield == true ? .awaitingUser : current.attention,
-                context: projectedContext,
-                viewport: viewport,
-                activity: current.activity,
-                alanBinding: projectedBinding
-            )
+            return terminalContentProjection.projectAlanBinding(
+                binding,
+                runtime: runtime,
+                for: current,
+                bootProfile: currentBootProfile
+            ).pane
         }
     }
 
     private func primeBootContext(for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
-        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
-        let runtimeProcessExited = paneProjection.projectedProcessExited(
-            metadataProcessExited: nil,
-            surfaceState: runtime.surfaceState
-        ) ?? false
-        let projectedContext = paneProjection.projectedContext(
-            for: pane,
-            bootProfile: bootProfile,
-            workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
-            processExited: nil,
-            lastCommandExitCode: pane.context?.lastCommandExitCode,
-            lastMetadataAt: nil,
-            activeTaskState: runtime.paneMetadata.activeTaskState,
-            existing: pane.context,
-            runtime: runtime
-        )
 
         updatePaneState(paneID: paneID) { current in
-            let projectedBinding = paneProjection.projectedAlanBinding(
+            let currentBootProfile = AlanShellBootProfile.forPane(
+                current,
+                shellState: shellState
+            )
+            return terminalContentProjection.projectBootContext(
+                runtime: runtime,
                 for: current,
-                binding: current.alanBinding,
-                processExited: runtimeProcessExited
-            )
-            return ShellPane(
-                paneID: current.paneID,
-                tabID: current.tabID,
-                spaceID: current.spaceID,
-                launchTarget: current.launchTarget,
-                cwd: current.cwd ?? bootProfile.workingDirectory,
-                process: current.process,
-                attention: current.attention,
-                context: projectedContext,
-                viewport: current.viewport,
-                activity: current.activity,
-                alanBinding: projectedBinding
-            )
+                bootProfile: currentBootProfile
+            ).pane
         }
     }
 

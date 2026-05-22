@@ -58,6 +58,7 @@
 		000000000000000000000031 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000131 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift */; };
 		000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */; };
 		000000000000000000000033 /* Services/Terminal/TerminalHostViewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */; };
+		000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -125,6 +126,7 @@
 		000000000000000000000131 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalNativeScrollViewAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostOverlayPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostViewSupport.swift; sourceTree = "<group>"; };
+		000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentProjectionAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Console/AlanConsoleViewModel.swift; sourceTree = "<group>"; };
 		000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
 		000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
@@ -310,6 +312,7 @@
 			children = (
 				000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */,
 				000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */,
+				000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */,
 				000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */,
 				000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */,
 				000000000000000000000131 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift */,
@@ -473,6 +476,7 @@
 				00000000000000000000002E /* Services/Shell/ShellEventStore.swift in Sources */,
 				00000000000000000000002F /* Services/Shell/ShellDiagnostics.swift in Sources */,
 				000000000000000000000030 /* Services/Shell/ShellClipboardWriter.swift in Sources */,
+				000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */,
 				000000000000000000000031 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift in Sources */,
 				000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */,
 				000000000000000000000033 /* Services/Terminal/TerminalHostViewSupport.swift in Sources */,

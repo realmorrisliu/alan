@@ -16,6 +16,7 @@ struct ShellRuntimeMetadataTestRunner {
 private enum ShellRuntimeMetadataTests {
     static func run() {
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
+        verifiesTerminalContentProjectionAdapterOwnsMetadataProjection()
         verifiesSurfaceExitClosesFinalPaneWithoutRestarting()
         verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth()
         verifiesPaneTitleBarPrefersTerminalTitle()
@@ -167,6 +168,108 @@ private enum ShellRuntimeMetadataTests {
         expect(updated?.viewport?.summary == "Renderer failed", "pane viewport must expose renderer status")
         expect(updated?.attention == .notable, "pane attention must reflect terminal attention")
         expect(controller.shellState.spaces.first?.attention == .notable, "space attention must track pane attention")
+    }
+
+    private static func verifiesTerminalContentProjectionAdapterOwnsMetadataProjection() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane,
+              let bootProfile = controller.bootProfile(for: pane)
+        else {
+            fail("bootstrap shell must expose a selected pane and boot profile")
+        }
+
+        let adapter = TerminalContentProjectionAdapter(
+            paneProjection: ShellPaneProjectionService()
+        )
+        let metadata = TerminalPaneMetadataSnapshot(
+            title: "vim main.rs",
+            workingDirectory: "/tmp/alan",
+            summary: "build running",
+            attention: .active,
+            processExited: false,
+            lastCommandExitCode: 0,
+            lastUpdatedAt: Date(timeIntervalSince1970: 4_000),
+            activeTaskState: .foregroundCommand
+        )
+        let runtime = TerminalHostRuntimeSnapshot(
+            stage: .windowAttached,
+            contentID: pane.terminalContentID,
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            logicalSize: .zero,
+            backingSize: .zero,
+            displayName: "Studio Display",
+            displayID: "display_1",
+            attachedWindowTitle: "alan",
+            isFocused: false,
+            renderer: TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .surfaceReady,
+                summary: "surface ready",
+                detail: nil,
+                failureReason: nil,
+                recentEvents: []
+            ),
+            paneMetadata: metadata,
+            surfaceState: AlanTerminalSurfaceStateSnapshot(
+                readiness: .ready,
+                terminalMode: .normalBuffer,
+                scrollback: .empty,
+                search: nil,
+                semanticCommands: .placeholder,
+                readonly: false,
+                secureInput: false,
+                inputReady: true,
+                rendererHealth: "ready",
+                childExited: false,
+                lastUpdatedAt: Date(timeIntervalSince1970: 4_001)
+            ),
+            lastUpdatedAt: Date(timeIntervalSince1970: 4_002)
+        )
+
+        let projection = adapter.projectRuntime(runtime, for: pane, bootProfile: bootProfile)
+
+        expect(projection.pane.cwd == "/tmp/alan", "terminal adapter must project runtime cwd")
+        expect(projection.pane.viewport?.title == "vim main.rs", "terminal adapter must project title")
+        expect(projection.pane.viewport?.summary == "build running", "terminal adapter must project summary")
+        expect(
+            projection.pane.context?.processState == "foreground_command",
+            "terminal adapter must project process state"
+        )
+        expect(
+            projection.pane.context?.surfaceReadiness == "ready",
+            "terminal adapter must project surface readiness"
+        )
+        expect(projection.pane.context?.inputReady == true, "terminal adapter must project input readiness")
+        expect(projection.pane.attention == .active, "terminal adapter must project attention")
+
+        let binding = ShellAlanBinding(
+            sessionID: "session_1",
+            runStatus: "waiting",
+            pendingYield: true,
+            source: "test",
+            lastProjectedAt: "2026-05-22T00:00:00Z"
+        )
+        let bindingProjection = adapter.projectAlanBinding(
+            binding,
+            runtime: runtime,
+            for: projection.pane,
+            bootProfile: bootProfile
+        )
+
+        expect(bindingProjection.pane.alanBinding == binding, "terminal adapter must project alan binding")
+        expect(
+            bindingProjection.pane.attention == .awaitingUser,
+            "terminal adapter must project pending-yield attention"
+        )
+        expect(
+            bindingProjection.pane.viewport?.summary == "alan is waiting for user input",
+            "terminal adapter must project alan binding summary"
+        )
+        expect(
+            bindingProjection.pane.viewport?.lastActivityAt == "2026-05-22T00:00:00Z",
+            "terminal adapter must project binding activity time"
+        )
     }
 
     private static func verifiesSurfaceExitClosesFinalPaneWithoutRestarting() {
