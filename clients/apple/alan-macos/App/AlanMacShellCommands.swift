@@ -2,6 +2,7 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
+import UniformTypeIdentifiers
 
 struct AlanMacShellCommands: Commands {
     @ObservedObject var host: ShellHostController
@@ -58,6 +59,10 @@ struct AlanMacShellCommands: Commands {
                 host.performShellAction(.newAlanTab)
             }
             .shellActionKeyboardShortcut(host.shellActionShortcut(.newAlanTab))
+
+            Button("Open Markdown...") {
+                openMarkdownFile()
+            }
 
             Button("Ask alan...") {
                 host.requestCommandInput()
@@ -208,6 +213,24 @@ struct AlanMacShellCommands: Commands {
 
     private func sendResponderAction(_ selector: Selector) {
         NSApp.sendAction(selector, to: nil, from: nil)
+    }
+
+    private func openMarkdownFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = markdownContentTypes
+
+        guard panel.runModal() == .OK,
+              let fileURL = panel.url
+        else { return }
+
+        _ = host.openMarkdownTab(fileURL: fileURL)
+    }
+
+    private var markdownContentTypes: [UTType] {
+        ["md", "markdown", "mdown"].compactMap { UTType(filenameExtension: $0) }
     }
 
     private func installCommandLineTools() {

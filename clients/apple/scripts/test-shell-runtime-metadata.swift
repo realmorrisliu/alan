@@ -103,6 +103,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
         verifiesContentRenderingRegistryRoutesSupportedKinds()
+        verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -3744,6 +3745,78 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Alan-\(UUID().uuidString).md")
+        let markdown = "# Notes\n\nRead-only content."
+        do {
+            try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("markdown open setup must create a file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let controller = makeController()
+        guard let tabID = controller.openMarkdownTab(fileURL: fileURL) else {
+            fail("opening markdown must create a shell tab")
+        }
+
+        let projection = controller.shellState.contentStateProjection()
+        guard let content = projection.focusedContent else {
+            fail("markdown tab must focus a content descriptor")
+        }
+        let descriptor = ShellContentRenderingRegistry.descriptor(for: content)
+        let expectedURL = fileURL.standardizedFileURL.absoluteString
+
+        expect(controller.shellState.focusedTabID == tabID, "markdown open must focus the new tab")
+        expect(content.kind == .markdown, "markdown open must create markdown content")
+        expect(content.title == fileURL.lastPathComponent, "markdown title must come from file name")
+        expect(
+            content.payload.markdown?.fileURL == expectedURL,
+            "markdown descriptor must persist the backing file URL"
+        )
+        expect(
+            content.capabilities == [.markdownReadOnlyViewer],
+            "markdown descriptor must expose only read-only viewer capability"
+        )
+        expect(
+            !content.capabilities.contains(.terminalInput),
+            "markdown descriptor must not expose terminal input"
+        )
+        expect(descriptor.renderKind == .markdown, "markdown descriptor must route to markdown renderer")
+        expect(
+            descriptor.payload?.markdown?.fileURL == expectedURL,
+            "render descriptor must carry the markdown file payload"
+        )
+        expect(
+            controller.selectedPane?.launchTarget == nil && controller.selectedPane?.process == nil,
+            "markdown pane must not describe a terminal process"
+        )
+        expect(
+            controller.selectedPane.map {
+                !controller.terminalRuntimeRegistry.registeredPaneIDs.contains($0.paneID)
+            } == true,
+            "markdown open must not create a terminal runtime"
+        )
+
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("markdown-content-\(UUID().uuidString).json")
+        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
+        defer { try? FileManager.default.removeItem(at: persistenceURL) }
+        store.save(controller.shellState)
+
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        let restoredContent = restored?.contentStateProjection().focusedContent
+        expect(restoredContent?.kind == .markdown, "persisted markdown state must restore markdown kind")
+        expect(
+            restoredContent?.payload.markdown?.fileURL == expectedURL,
+            "persisted markdown state must restore markdown file URL"
+        )
+    }
+
     private static func verifiesShellStatePersistenceWritesContentStateShape() {
         let windowID = "content_state_persist_\(UUID().uuidString)"
         let persistenceURL = FileManager.default.temporaryDirectory
@@ -3773,12 +3846,61 @@ private enum ShellRuntimeMetadataTests {
             "content-state persistence must use content-container keys"
         )
         expect(!text.contains("\"panes\""), "content-state persistence must not write v0.1 panes")
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        guard let restored else {
+            fail("content-state restore must materialize shell state")
+        }
+        expect(restored.contractVersion == "0.2", "content-state restore must materialize v0.2 shell state")
+        expect(restored.paneSlots?.count == 2, "content-state restore must preserve PaneSlots")
+        expect(restored.contents?.count == 2, "content-state restore must preserve ContentInstances")
         expect(
-            ShellStatePersistenceStore.restoreShellState(
-                fileManager: .default,
-                persistenceURL: persistenceURL
-            ) == nil,
-            "v0.2 content-state snapshots must not be treated as workspace restore authority"
+            restored.contentStateProjection().contents.map(\.kind) == [.terminal, .terminal],
+            "content-state restore must preserve terminal content descriptors"
+        )
+
+        let refreshedPanes = restored.panes.map { pane -> ShellPane in
+            guard pane.paneID == "pane_1" else { return pane }
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                launchTarget: pane.launchTarget,
+                cwd: "/tmp/refreshed",
+                process: pane.process,
+                attention: pane.attention,
+                context: pane.context,
+                viewport: ShellViewportSnapshot(
+                    title: "vim README.md",
+                    summary: pane.viewport?.summary,
+                    visibleExcerpt: nil,
+                    lastActivityAt: pane.viewport?.lastActivityAt
+                ),
+                activity: pane.activity,
+                alanBinding: pane.alanBinding
+            )
+        }
+        let refreshed = ShellStateSnapshot(
+            contractVersion: restored.contractVersion,
+            windowID: restored.windowID,
+            focusedSpaceID: restored.focusedSpaceID,
+            focusedTabID: restored.focusedTabID,
+            focusedPaneID: restored.focusedPaneID,
+            spaces: restored.spaces,
+            panes: refreshedPanes,
+            paneSlots: restored.paneSlots,
+            contents: restored.contents
+        )
+        let refreshedContent = refreshed.contentStateProjection().contentMounted(in: "pane_1")
+        expect(
+            refreshedContent?.title == "vim README.md",
+            "explicit terminal descriptors must refresh from current pane metadata"
+        )
+        expect(
+            refreshedContent?.payload.terminal?.cwd == "/tmp/refreshed",
+            "explicit terminal descriptors must refresh cwd from current pane metadata"
         )
     }
 

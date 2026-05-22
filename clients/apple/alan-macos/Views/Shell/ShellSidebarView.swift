@@ -759,6 +759,12 @@ struct ShellSidebarView: View {
     }
 
     private func tabTitle(for tab: ShellTab) -> String {
+        if let content = host.shellState.contentStateProjection().primaryContent(in: tab.tabID),
+           content.kind != .terminal
+        {
+            return content.title
+        }
+
         let panes = host.shellState.panes.filter { $0.tabID == tab.tabID }
         let primaryPane = panes.first
         return shellDisplayTitle(
@@ -772,6 +778,12 @@ struct ShellSidebarView: View {
     }
 
     private func tabSubtitle(for tab: ShellTab) -> String {
+        if let content = host.shellState.contentStateProjection().primaryContent(in: tab.tabID),
+           content.kind == .markdown
+        {
+            return "Document"
+        }
+
         let panes = host.shellState.panes.filter { $0.tabID == tab.tabID }
         let primaryPane = panes.first
         let title = tabTitle(for: tab)

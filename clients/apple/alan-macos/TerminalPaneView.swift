@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 #if os(macOS)
@@ -953,31 +954,42 @@ private struct ShellBoundedContentLeafView: View {
                 onClosePane: onClosePane
             )
 
-            ZStack {
-                ShellPalette.workspace
-
-                VStack(spacing: 10) {
-                    Image(systemName: descriptor.iconName)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .frame(width: 32, height: 32)
-
-                    Text(descriptor.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 260)
-
-                    Text(contentKindLabel)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onFocusPane)
+            switch descriptor.renderKind {
+            case .markdown:
+                ShellMarkdownContentView(descriptor: descriptor)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onFocusPane)
+            case .terminal, .settings, .unavailable:
+                boundedPlaceholder
             }
+        }
+    }
+
+    private var boundedPlaceholder: some View {
+        ZStack {
+            ShellPalette.workspace
+
+            VStack(spacing: 10) {
+                Image(systemName: descriptor.iconName)
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .frame(width: 32, height: 32)
+
+                Text(descriptor.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ShellPalette.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 260)
+
+                Text(contentKindLabel)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(ShellPalette.mutedInk)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onFocusPane)
         }
     }
 
@@ -992,6 +1004,65 @@ private struct ShellBoundedContentLeafView: View {
         case .unavailable:
             return "Unavailable"
         }
+    }
+}
+
+private struct ShellMarkdownContentView: View {
+    let descriptor: ShellContentRenderDescriptor
+    @State private var renderedContent = AttributedString("")
+    @State private var loadError: String?
+
+    var body: some View {
+        ZStack {
+            ShellPalette.workspace
+
+            ScrollView {
+                if let loadError {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(ShellPalette.mutedInk)
+                        Text(loadError)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(ShellPalette.ink)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .padding(24)
+                } else {
+                    Text(renderedContent)
+                        .font(.system(size: 13))
+                        .foregroundStyle(ShellPalette.ink)
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                }
+            }
+        }
+        .onAppear(perform: loadMarkdown)
+    }
+
+    private func loadMarkdown() {
+        guard let fileURL else {
+            renderedContent = AttributedString("")
+            loadError = "Unable to open this document."
+            return
+        }
+
+        do {
+            let markdown = try String(contentsOf: fileURL, encoding: .utf8)
+            renderedContent = (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+            loadError = nil
+        } catch {
+            renderedContent = AttributedString("")
+            loadError = "Unable to read this document."
+        }
+    }
+
+    private var fileURL: URL? {
+        guard let fileURLString = descriptor.payload?.markdown?.fileURL else { return nil }
+        return URL(string: fileURLString) ?? URL(fileURLWithPath: fileURLString)
     }
 }
 

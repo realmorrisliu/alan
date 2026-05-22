@@ -98,8 +98,20 @@ struct ShellStatePersistenceStore {
     ) -> ShellStateSnapshot? {
         let restoreURL = readablePersistenceURL(fileManager: fileManager, canonicalURL: persistenceURL)
         guard let restoreURL,
-              let data = try? Data(contentsOf: restoreURL),
-              let state = try? JSONDecoder().decode(ShellStateSnapshot.self, from: data),
+              let data = try? Data(contentsOf: restoreURL)
+        else {
+            return nil
+        }
+
+        if let contentState = try? JSONDecoder().decode(ShellContentStateSnapshot.self, from: data),
+           let state = contentState.materializingShellState(),
+           !state.spaces.isEmpty,
+           !state.panes.isEmpty
+        {
+            return state
+        }
+
+        guard let state = try? JSONDecoder().decode(ShellStateSnapshot.self, from: data),
               !state.spaces.isEmpty,
               !state.panes.isEmpty
         else {
