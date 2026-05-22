@@ -21,7 +21,7 @@
 - [x] 3.1 Add a content rendering registry or equivalent switch that routes terminal, markdown, and settings descriptors to bounded SwiftUI/AppKit host views.
 - [x] 3.2 Implement read-only markdown content opening with file-backed title, descriptor persistence, and viewer rendering.
 - [x] 3.3 Implement alan settings as shell tab content using the shared shell chrome rather than a separate page/window model.
-- [ ] 3.4 Document browser content as a deferred follow-up area and ensure v0.2 model naming does not block adding a browser ContentInstance kind later.
+- [x] 3.4 Document browser content as a deferred follow-up area and ensure v0.2 model naming does not block adding a browser ContentInstance kind later.
 
 ## 4. Workspace Mutations And Control Plane
 

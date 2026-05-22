@@ -90,6 +90,10 @@ embedded browser 或未来 agent-native 工具面板时，会产生三个问题�
    v1 需要能表达并打开 markdown viewer 和 alan settings。markdown 先做 read-only viewer；
    settings 先承载 alan app 设置。Browser 不进入 v1 implementation，也不要求 browser
    ContentInstance descriptor；完整 webview 安全策略和 browser content kind 后续单独 change 细化。
+   当前模型名称必须保持通用：`ShellContentKind` 表达可扩展 content kind，`ShellContentPayload`
+   承载 kind-specific restore/render 数据，`ShellContentCapability` 表达 command surface。
+   因此后续 browser change 只需要新增 browser kind/payload/capability/renderer，而不应把
+   `PaneSlot`、`ContentInstance` 或 v0.2 container contract 重命名为 markdown/settings 专用模型。
 
    Alternative considered: v1 加入 browser host boundary。它能提前验证外部资源和嵌入式 host
    边界，但会把 scope 拉到 webview、安全策略、profile/cookie、下载和导航权限，不适合与模型拆分同批完成。
@@ -128,7 +132,7 @@ embedded browser 或未来 agent-native 工具面板时，会产生三个问题�
 - **Risk: control plane 命令语义膨胀。** -> 将命令分为 pane mutation、content creation、
   content-specific runtime command 三类，并为不支持的 content 返回稳定 unsupported code。
 - **Risk: browser scope 过大。** -> browser 不进入 v1；只保留模型扩展性，browser content kind
-  和 webview 策略后续单独设计。
+  和 webview 策略后续单独设计；当前只要求 v0.2 命名和 payload/capability 边界保持可扩展。
 - **Risk: settings 变成 dashboard。** -> UI spec 明确 settings 是 tab content，继承 shell
   chrome，只显示设置本身，不引入营销式页面布局。
 

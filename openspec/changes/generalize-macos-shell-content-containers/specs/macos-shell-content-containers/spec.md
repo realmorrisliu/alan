@@ -111,3 +111,8 @@ surface；超出边界的编辑器、browser content、浏览器权限和扩展�
 - **WHEN** 用户打开 alan app 设置
 - **THEN** alan 将设置页作为 shell tab content 呈现
 - **AND** 设置页继承 shell sidebar、toolbar 和 tab selection 模型
+
+#### Scenario: Browser content is deferred but not blocked
+- **WHEN** 维护者检查 v0.2 content-container 模型
+- **THEN** v1 SHALL NOT 要求 browser ContentInstance kind、browser renderer、WKWebView host、browser profile/cookie policy、download manager 或 browser permission model
+- **AND** 模型 SHALL 保持通用 `ContentInstance`、content kind、payload、capability、renderer、lifecycle 和 PaneSlot 命名，使后续 browser change 可以新增 browser-specific descriptors，而不需要重命名 container contract
