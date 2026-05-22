@@ -102,6 +102,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesShellActionSpaceSelectionReportsMissingTargets()
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
+        verifiesContentRenderingRegistryRoutesSupportedKinds()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -3647,6 +3648,100 @@ private enum ShellRuntimeMetadataTests {
         expect(emptyProjection.focusedPaneSlotID == nil, "empty content projection must keep pane-slot focus nil")
         expect(emptyProjection.paneSlots.isEmpty, "empty content projection must not fabricate PaneSlots")
         expect(emptyProjection.spaces.first?.spaceID == "space_empty", "empty content projection must keep spaces")
+    }
+
+    private static func verifiesContentRenderingRegistryRoutesSupportedKinds() {
+        let terminal = ShellContentInstance(
+            contentID: "content_terminal",
+            kind: .terminal,
+            title: "Shell",
+            payload: .terminal(
+                ShellTerminalContentPayload(
+                    launchTarget: .shell,
+                    cwd: "/tmp",
+                    title: "Shell"
+                )
+            )
+        )
+        let markdown = ShellContentInstance(
+            contentID: "content_markdown",
+            kind: .markdown,
+            title: "README.md",
+            payload: .markdown(
+                ShellMarkdownContentPayload(
+                    fileURL: "file:///tmp/README.md",
+                    title: "README.md"
+                )
+            )
+        )
+        let settings = ShellContentInstance(
+            contentID: "content_settings",
+            kind: .settings,
+            title: "Settings",
+            payload: .settings(
+                ShellSettingsContentPayload(
+                    surfaceID: "settings_main",
+                    title: "Settings"
+                )
+            )
+        )
+
+        let terminalDescriptor = ShellContentRenderingRegistry.descriptor(for: terminal)
+        expect(terminalDescriptor.renderKind == .terminal, "terminal content must route to terminal renderer")
+        expect(terminalDescriptor.isTerminalSurface, "terminal descriptor must expose terminal ownership")
+        expect(
+            terminalDescriptor.capabilities.contains(.terminalInput),
+            "terminal descriptor must retain terminal input capability"
+        )
+
+        let markdownDescriptor = ShellContentRenderingRegistry.descriptor(for: markdown)
+        expect(markdownDescriptor.renderKind == .markdown, "markdown content must route to markdown renderer")
+        expect(markdownDescriptor.iconName == "doc.text", "markdown descriptor must get a bounded viewer icon")
+        expect(
+            !markdownDescriptor.capabilities.contains(.terminalInput),
+            "markdown descriptor must not expose terminal input capability"
+        )
+
+        let settingsDescriptor = ShellContentRenderingRegistry.descriptor(for: settings)
+        expect(settingsDescriptor.renderKind == .settings, "settings content must route to settings renderer")
+        expect(settingsDescriptor.iconName == "gearshape", "settings descriptor must get a settings icon")
+        expect(
+            settingsDescriptor.capabilities == [.settingsSurface],
+            "settings descriptor must retain settings capabilities"
+        )
+
+        let missingDescriptor = ShellContentRenderingRegistry.descriptor(for: nil)
+        expect(missingDescriptor.renderKind == .unavailable, "missing content must route to bounded fallback")
+        expect(
+            missingDescriptor.contentID == nil,
+            "missing content fallback must not invent a content identity"
+        )
+
+        let quickTerminalState = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+            .showingQuickTerminal(workingDirectory: "/tmp")
+            .state
+        let quickTerminalProjection = quickTerminalState.contentStateProjection()
+        let quickTerminalPane = quickTerminalState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)
+        expect(
+            quickTerminalProjection.contentMounted(in: ShellQuickTerminalSlot.globalPaneID) == nil,
+            "quick terminal peak panes must stay outside workspace content projection"
+        )
+        let quickTerminalDescriptor = ShellContentRenderingRegistry.descriptor(
+            forPaneSlotID: ShellQuickTerminalSlot.globalPaneID,
+            in: quickTerminalProjection,
+            fallbackPane: quickTerminalPane
+        )
+        expect(
+            quickTerminalDescriptor.renderKind == .terminal,
+            "quick terminal fallback pane must still route to the terminal renderer"
+        )
+        let expectedQuickTerminalContentID = ShellContentInstance.terminalContentID(
+            forPaneID: ShellQuickTerminalSlot.globalPaneID
+        )
+        expect(
+            quickTerminalDescriptor.contentID == expectedQuickTerminalContentID,
+            "quick terminal fallback must retain the terminal content identity"
+        )
     }
 
     private static func verifiesShellStatePersistenceWritesContentStateShape() {

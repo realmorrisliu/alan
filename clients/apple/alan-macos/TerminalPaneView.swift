@@ -456,83 +456,8 @@ private struct ShellPaneTreeLayoutView: View {
     var body: some View {
         switch node.kind {
         case .pane:
-            if let paneID = node.paneID,
-               let pane = host.shellState.panes.first(where: { $0.paneID == paneID }) {
-                ShellTerminalLeafView(
-                    pane: pane,
-                    bootProfile: host.bootProfile(for: pane),
-                    isSelected: selectedPaneID == pane.paneID,
-                    isZoomed: host.isPaneZoomed(pane.paneID),
-                    canZoom: host.canZoomPane(pane.paneID),
-                    canMovePane: { placement in
-                        host.shellActionAvailability(
-                            paneMoveActionID(for: placement),
-                            target: .contextPane(pane.paneID)
-                        ).isAvailable
-                    },
-                    canCopyTerminalSelection: host.canCopyTerminalSelection(
-                        source: .contextMenu,
-                        target: .contextPane(pane.paneID)
-                    ),
-                    canPasteIntoTerminal: host.canPasteIntoTerminal(
-                        source: .contextMenu,
-                        target: .contextPane(pane.paneID)
-                    ),
-                    canOpenTerminalSearch: host.canOpenTerminalSearch(
-                        source: .contextMenu,
-                        target: .contextPane(pane.paneID)
-                    ),
-                    runtimeRegistry: host.terminalRuntimeRegistry,
-                    activationDelegate: host,
-                    onShellAction: { actionID, target in
-                        host.performShellAction(actionID, target: target, source: .terminalHost)
-                    },
-                    onCommandInput: {
-                        host.requestCommandInput()
-                    },
-                    onToggleZoom: {
-                        if host.isPaneZoomed(pane.paneID) {
-                            _ = host.unzoomSelectedTab()
-                        } else {
-                            _ = host.zoomPane(paneID: pane.paneID)
-                        }
-                    },
-                    onMovePane: { placement in
-                        host.performShellAction(
-                            paneMoveActionID(for: placement),
-                            target: .contextPane(pane.paneID)
-                        )
-                    },
-                    onCopyTerminalSelection: {
-                        host.copyTerminalSelection(
-                            source: .contextMenu,
-                            target: .contextPane(pane.paneID)
-                        )
-                    },
-                    onPasteIntoTerminal: {
-                        host.pasteIntoTerminalFromPasteboard(
-                            source: .contextMenu,
-                            target: .contextPane(pane.paneID)
-                        )
-                    },
-                    onOpenTerminalSearch: {
-                        host.openTerminalSearch(
-                            source: .contextMenu,
-                            target: .contextPane(pane.paneID)
-                        )
-                    },
-                    onClosePane: {
-                        if let onClosePane {
-                            onClosePane(pane)
-                        } else {
-                            host.closePaneByID(pane.paneID)
-                        }
-                    },
-                    onRuntimeUpdate: host.updateTerminalRuntime,
-                    onMetadataUpdate: { metadata in
-                        host.updateTerminalMetadata(metadata, for: pane.paneID)
-                    }
-                )
+            if let paneID = node.paneID {
+                contentLeaf(for: paneID)
             }
         case .split:
             ShellSplitLayoutView(
@@ -542,6 +467,151 @@ private struct ShellPaneTreeLayoutView: View {
                 onClosePane: onClosePane
             )
         }
+    }
+
+    @ViewBuilder
+    private func contentLeaf(for paneSlotID: String) -> some View {
+        let contentState = host.shellState.contentStateProjection()
+        let pane = host.shellState.pane(paneID: paneSlotID)
+        let descriptor = ShellContentRenderingRegistry.descriptor(
+            forPaneSlotID: paneSlotID,
+            in: contentState,
+            fallbackPane: pane
+        )
+
+        switch descriptor.renderKind {
+        case .terminal:
+            if let pane {
+                terminalLeaf(for: pane)
+            } else {
+                boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID, backingPane: nil)
+            }
+        case .markdown, .settings, .unavailable:
+            boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID, backingPane: pane)
+        }
+    }
+
+    private func terminalLeaf(for pane: ShellPane) -> some View {
+        ShellTerminalLeafView(
+            pane: pane,
+            bootProfile: host.bootProfile(for: pane),
+            isSelected: selectedPaneID == pane.paneID,
+            isZoomed: host.isPaneZoomed(pane.paneID),
+            canZoom: host.canZoomPane(pane.paneID),
+            canMovePane: { placement in
+                host.shellActionAvailability(
+                    paneMoveActionID(for: placement),
+                    target: .contextPane(pane.paneID)
+                ).isAvailable
+            },
+            canCopyTerminalSelection: host.canCopyTerminalSelection(
+                source: .contextMenu,
+                target: .contextPane(pane.paneID)
+            ),
+            canPasteIntoTerminal: host.canPasteIntoTerminal(
+                source: .contextMenu,
+                target: .contextPane(pane.paneID)
+            ),
+            canOpenTerminalSearch: host.canOpenTerminalSearch(
+                source: .contextMenu,
+                target: .contextPane(pane.paneID)
+            ),
+            runtimeRegistry: host.terminalRuntimeRegistry,
+            activationDelegate: host,
+            onShellAction: { actionID, target in
+                host.performShellAction(actionID, target: target, source: .terminalHost)
+            },
+            onCommandInput: {
+                host.requestCommandInput()
+            },
+            onToggleZoom: {
+                if host.isPaneZoomed(pane.paneID) {
+                    _ = host.unzoomSelectedTab()
+                } else {
+                    _ = host.zoomPane(paneID: pane.paneID)
+                }
+            },
+            onMovePane: { placement in
+                host.performShellAction(
+                    paneMoveActionID(for: placement),
+                    target: .contextPane(pane.paneID)
+                )
+            },
+            onCopyTerminalSelection: {
+                host.copyTerminalSelection(
+                    source: .contextMenu,
+                    target: .contextPane(pane.paneID)
+                )
+            },
+            onPasteIntoTerminal: {
+                host.pasteIntoTerminalFromPasteboard(
+                    source: .contextMenu,
+                    target: .contextPane(pane.paneID)
+                )
+            },
+            onOpenTerminalSearch: {
+                host.openTerminalSearch(
+                    source: .contextMenu,
+                    target: .contextPane(pane.paneID)
+                )
+            },
+            onClosePane: {
+                if let onClosePane {
+                    onClosePane(pane)
+                } else {
+                    host.closePaneByID(pane.paneID)
+                }
+            },
+            onRuntimeUpdate: host.updateTerminalRuntime,
+            onMetadataUpdate: { metadata in
+                host.updateTerminalMetadata(metadata, for: pane.paneID)
+            }
+        )
+    }
+
+    private func boundedContentLeaf(
+        descriptor: ShellContentRenderDescriptor,
+        paneSlotID: String,
+        backingPane: ShellPane?
+    ) -> some View {
+        ShellBoundedContentLeafView(
+            descriptor: descriptor,
+            paneSlotID: paneSlotID,
+            isSelected: selectedPaneID == paneSlotID,
+            isZoomed: host.isPaneZoomed(paneSlotID),
+            canZoom: host.canZoomPane(paneSlotID),
+            canMovePane: { placement in
+                host.shellActionAvailability(
+                    paneMoveActionID(for: placement),
+                    target: .contextPane(paneSlotID)
+                ).isAvailable
+            },
+            onFocusPane: {
+                host.focus(paneID: paneSlotID)
+            },
+            onToggleZoom: {
+                if host.isPaneZoomed(paneSlotID) {
+                    _ = host.unzoomSelectedTab()
+                } else {
+                    _ = host.zoomPane(paneID: paneSlotID)
+                }
+            },
+            onMovePane: { placement in
+                host.performShellAction(
+                    paneMoveActionID(for: placement),
+                    target: .contextPane(paneSlotID)
+                )
+            },
+            onClosePane: {
+                if let backingPane,
+                   let onClosePane
+                {
+                    onClosePane(backingPane)
+                } else {
+                    host.closePaneByID(paneSlotID)
+                }
+            }
+        )
     }
 }
 
@@ -855,6 +925,187 @@ private enum ShellPaneTitleBarPresentation {
 private enum ShellPaneTitleBarAccessoryMode: Equatable {
     case textAndIcon
     case iconOnly
+}
+
+private struct ShellBoundedContentLeafView: View {
+    let descriptor: ShellContentRenderDescriptor
+    let paneSlotID: String
+    let isSelected: Bool
+    let isZoomed: Bool
+    let canZoom: Bool
+    let canMovePane: (ShellPaneSplitDirection) -> Bool
+    let onFocusPane: () -> Void
+    let onToggleZoom: () -> Void
+    let onMovePane: (ShellPaneSplitDirection) -> Void
+    let onClosePane: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ShellContentPaneTitleBarView(
+                descriptor: descriptor,
+                isSelected: isSelected,
+                isZoomed: isZoomed,
+                canZoom: canZoom,
+                canMovePane: canMovePane,
+                onFocusPane: onFocusPane,
+                onToggleZoom: onToggleZoom,
+                onMovePane: onMovePane,
+                onClosePane: onClosePane
+            )
+
+            ZStack {
+                ShellPalette.workspace
+
+                VStack(spacing: 10) {
+                    Image(systemName: descriptor.iconName)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                        .frame(width: 32, height: 32)
+
+                    Text(descriptor.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(ShellPalette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 260)
+
+                    Text(contentKindLabel)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onFocusPane)
+            }
+        }
+    }
+
+    private var contentKindLabel: String {
+        switch descriptor.renderKind {
+        case .terminal:
+            return "Terminal"
+        case .markdown:
+            return "Document"
+        case .settings:
+            return "Settings"
+        case .unavailable:
+            return "Unavailable"
+        }
+    }
+}
+
+private struct ShellContentPaneTitleBarView: View {
+    let descriptor: ShellContentRenderDescriptor
+    let isSelected: Bool
+    let isZoomed: Bool
+    let canZoom: Bool
+    let canMovePane: (ShellPaneSplitDirection) -> Bool
+    let onFocusPane: () -> Void
+    let onToggleZoom: () -> Void
+    let onMovePane: (ShellPaneSplitDirection) -> Void
+    let onClosePane: () -> Void
+
+    var body: some View {
+        HStack(spacing: ShellPaneTitleBarMetrics.itemSpacing) {
+            Image(systemName: descriptor.iconName)
+                .font(.system(size: ShellPaneTitleTypography.accessorySize, weight: .medium))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .frame(width: 14, height: 14)
+
+            Text(descriptor.title)
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.titleSize,
+                        weight: ShellPaneTitleTypography.titleWeight(isSelected: isSelected)
+                    )
+                )
+                .foregroundStyle(ShellPalette.ink.opacity(isSelected ? 0.96 : 0.72))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(2)
+
+            Spacer(minLength: 0)
+
+            if canZoom {
+                zoomButton
+            }
+
+            closeButton
+        }
+        .padding(.leading, ShellPaneTitleBarMetrics.horizontalLeadingPadding)
+        .padding(.trailing, ShellPaneTitleBarMetrics.horizontalTrailingPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: ShellPaneTitleBarMetrics.height)
+        .background(ShellPalette.workspace)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onFocusPane)
+        .contextMenu {
+            Button("Move Pane Left") {
+                onMovePane(.left)
+            }
+            .disabled(!canMovePane(.left))
+
+            Button("Move Pane Right") {
+                onMovePane(.right)
+            }
+            .disabled(!canMovePane(.right))
+
+            Button("Move Pane Up") {
+                onMovePane(.up)
+            }
+            .disabled(!canMovePane(.up))
+
+            Button("Move Pane Down") {
+                onMovePane(.down)
+            }
+            .disabled(!canMovePane(.down))
+        }
+    }
+
+    private var closeButton: some View {
+        Button(action: onClosePane) {
+            Image(systemName: "xmark")
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.closeSize,
+                        weight: ShellPaneTitleTypography.closeWeight
+                    )
+                )
+                .foregroundStyle(ShellPalette.mutedInk.opacity(isSelected ? 0.78 : 0.58))
+                .frame(
+                    width: ShellPaneTitleBarMetrics.closeButtonSize,
+                    height: ShellPaneTitleBarMetrics.closeButtonSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+        .help("Close pane")
+        .accessibilityLabel("Close pane")
+    }
+
+    private var zoomButton: some View {
+        Button(action: onToggleZoom) {
+            Image(systemName: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(
+                    .system(
+                        size: ShellPaneTitleTypography.closeSize,
+                        weight: ShellPaneTitleTypography.closeWeight
+                    )
+                )
+                .foregroundStyle(ShellPalette.mutedInk.opacity(isSelected ? 0.82 : 0.62))
+                .frame(
+                    width: ShellPaneTitleBarMetrics.closeButtonSize,
+                    height: ShellPaneTitleBarMetrics.closeButtonSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+        .help(isZoomed ? "Unzoom pane" : "Zoom pane")
+        .accessibilityLabel(isZoomed ? "Unzoom pane" : "Zoom pane")
+    }
 }
 
 private struct ShellPaneTitleBarView: View {
