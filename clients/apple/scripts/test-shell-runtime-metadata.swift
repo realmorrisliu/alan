@@ -103,8 +103,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
         verifiesContentRenderingRegistryRoutesSupportedKinds()
+        verifiesOpeningContentTabDefaultsToTerminalIntent()
         verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
+        verifiesSplitPaneAcceptsMarkdownContentIntent()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -3818,6 +3820,29 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesOpeningContentTabDefaultsToTerminalIntent() {
+        let controller = makeController()
+        let initialTabCount = controller.shellState.spaces.flatMap(\.tabs).count
+        guard let tabID = controller.openContentTab() else {
+            fail("default content-intent tab open must create a shell tab")
+        }
+
+        let projection = controller.shellState.contentStateProjection()
+        let content = projection.focusedContent
+        let tab = controller.shellState.tab(tabID: tabID)
+
+        expect(tab?.title == "Shell 2", "default content-intent tab must preserve terminal tab title behavior")
+        expect(
+            controller.shellState.spaces.flatMap(\.tabs).count == initialTabCount + 1,
+            "default content-intent tab must append one tab"
+        )
+        expect(content?.kind == .terminal, "default content-intent tab must create terminal content")
+        expect(
+            controller.selectedPane?.launchTarget == .shell,
+            "default content-intent tab must keep New Terminal Tab behavior"
+        )
+    }
+
     private static func verifiesOpeningSettingsTabCreatesSingletonShellContent() {
         let controller = makeController()
         let initialTabCount = controller.shellState.spaces.flatMap(\.tabs).count
@@ -3893,6 +3918,53 @@ private enum ShellRuntimeMetadataTests {
         expect(
             restoredContent?.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
             "persisted settings state must restore settings surface identity"
+        )
+    }
+
+    private static func verifiesSplitPaneAcceptsMarkdownContentIntent() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Split-\(UUID().uuidString).md")
+        do {
+            try "## Split notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("markdown split setup must create a file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let controller = makeController()
+        let terminalContentIDBefore = controller.shellState
+            .contentStateProjection()
+            .contentMounted(in: "pane_1")?
+            .contentID
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(fileURL: fileURL, title: nil)
+        ) else {
+            fail("markdown content intent must create a split pane")
+        }
+
+        let projection = controller.shellState.contentStateProjection()
+        let markdownContent = projection.contentMounted(in: markdownPaneID)
+        let terminalContentIDAfter = projection.contentMounted(in: "pane_1")?.contentID
+        let paneTree = projection.tab(tabID: "tab_main")?.paneTree
+
+        expect(
+            paneTree?.paneSlotIDs == ["pane_1", markdownPaneID],
+            "markdown split intent must add a PaneSlot beside the existing terminal"
+        )
+        expect(markdownContent?.kind == .markdown, "markdown split intent must mount markdown content")
+        expect(
+            markdownContent?.payload.markdown?.fileURL == fileURL.standardizedFileURL.absoluteString,
+            "markdown split intent must persist the markdown file URL"
+        )
+        expect(
+            terminalContentIDAfter == terminalContentIDBefore,
+            "markdown split intent must preserve existing terminal content identity"
+        )
+        expect(
+            controller.selectedPane?.launchTarget == nil && controller.selectedPane?.process == nil,
+            "markdown split intent must not create a terminal process for the new PaneSlot"
         )
     }
 

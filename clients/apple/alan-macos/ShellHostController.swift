@@ -1029,19 +1029,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    func openTab(
-        launchTarget: ShellLaunchTarget = .shell,
-        in spaceID: String? = nil,
-        title: String? = nil,
-        workingDirectory: String? = nil
+    func openContentTab(
+        _ contentIntent: ShellContentIntent = .terminal(
+            launchTarget: .shell,
+            title: nil,
+            workingDirectory: nil
+        ),
+        in spaceID: String? = nil
     ) -> String? {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.openingTab(
-                launchTarget: launchTarget,
+            result = try shellState.openingContentTab(
+                contentIntent,
                 in: spaceID,
-                title: title,
-                workingDirectory: workingDirectory,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
@@ -1049,6 +1049,23 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
         applyMutationResult(result)
         return result.tabID
+    }
+
+    @discardableResult
+    func openTab(
+        launchTarget: ShellLaunchTarget = .shell,
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil
+    ) -> String? {
+        openContentTab(
+            .terminal(
+                launchTarget: launchTarget,
+                title: title,
+                workingDirectory: workingDirectory
+            ),
+            in: spaceID
+        )
     }
 
     @discardableResult
@@ -1087,19 +1104,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         in spaceID: String? = nil,
         title: String? = nil
     ) -> String? {
-        let result: ShellStateMutationResult
-        do {
-            result = try shellState.openingMarkdownTab(
-                fileURL: fileURL,
-                in: spaceID,
-                title: title,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
-        } catch {
-            return nil
-        }
-        applyMutationResult(result)
-        return result.tabID
+        openContentTab(
+            .markdown(fileURL: fileURL, title: title),
+            in: spaceID
+        )
     }
 
     @discardableResult
@@ -1107,43 +1115,61 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         in spaceID: String? = nil,
         title: String? = nil
     ) -> String? {
-        let result: ShellStateMutationResult
-        do {
-            result = try shellState.openingSettingsTab(
-                in: spaceID,
-                title: title,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
-        } catch {
-            return nil
-        }
-        applyMutationResult(result)
-        return result.tabID
+        openContentTab(
+            .settings(title: title),
+            in: spaceID
+        )
     }
 
     @discardableResult
-    func splitFocusedPane(direction: ShellSplitDirection) -> String? {
-        splitFocusedPane(placement: .defaultPlacement(for: direction))
+    func splitFocusedPane(
+        direction: ShellSplitDirection,
+        contentIntent: ShellContentIntent? = nil
+    ) -> String? {
+        splitFocusedPane(
+            placement: .defaultPlacement(for: direction),
+            contentIntent: contentIntent
+        )
     }
 
     @discardableResult
-    func splitFocusedPane(placement: ShellPaneSplitDirection) -> String? {
+    func splitFocusedPane(
+        placement: ShellPaneSplitDirection,
+        contentIntent: ShellContentIntent? = nil
+    ) -> String? {
         guard let focusedPaneID = shellState.focusedPaneID else { return nil }
-        return splitPane(paneID: focusedPaneID, placement: placement)
+        return splitPane(
+            paneID: focusedPaneID,
+            placement: placement,
+            contentIntent: contentIntent
+        )
     }
 
     @discardableResult
-    func splitPane(paneID: String, direction: ShellSplitDirection) -> String? {
-        splitPane(paneID: paneID, placement: .defaultPlacement(for: direction))
+    func splitPane(
+        paneID: String,
+        direction: ShellSplitDirection,
+        contentIntent: ShellContentIntent? = nil
+    ) -> String? {
+        splitPane(
+            paneID: paneID,
+            placement: .defaultPlacement(for: direction),
+            contentIntent: contentIntent
+        )
     }
 
     @discardableResult
-    func splitPane(paneID: String, placement: ShellPaneSplitDirection) -> String? {
+    func splitPane(
+        paneID: String,
+        placement: ShellPaneSplitDirection,
+        contentIntent: ShellContentIntent? = nil
+    ) -> String? {
         let result: ShellStateMutationResult
         do {
             result = try shellState.splittingPane(
                 paneID,
                 placement: placement,
+                contentIntent: contentIntent,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
