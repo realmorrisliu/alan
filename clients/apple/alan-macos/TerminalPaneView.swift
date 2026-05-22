@@ -757,6 +757,7 @@ private struct ShellTerminalLeafView: View {
             ZStack(alignment: .topTrailing) {
                 TerminalHostView(
                     pane: pane,
+                    terminalContentMount: TerminalContentMount(pane: pane),
                     bootProfile: bootProfile,
                     isSelected: isSelected,
                     runtimeRegistry: runtimeRegistry,

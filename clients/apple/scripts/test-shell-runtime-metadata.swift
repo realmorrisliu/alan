@@ -22,6 +22,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarFallbackOrdering()
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
+        verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
+        verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
+        verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -112,6 +115,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: pane.terminalContentID,
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 logicalSize: .zero,
@@ -174,6 +178,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: pane.terminalContentID,
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 logicalSize: .zero,
@@ -491,6 +496,199 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let contentID = "content_terminal_runtime_primary"
+        let firstMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_left",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_right",
+            tabID: "tab_2",
+            spaceID: "space_main"
+        )
+
+        let first = registry.surfaceHandle(forTerminalContent: firstMount, bootProfile: nil)
+        let second = registry.surfaceHandle(forTerminalContent: secondMount, bootProfile: nil)
+
+        expect(first === second, "registry must reuse runtime handles by terminal content identity")
+        expect(second.contentID == contentID, "registry handle must retain content identity")
+        expect(second.paneID == "pane_right", "registry handle must project the latest PaneSlot mount")
+        expect(registry.registeredContentIDs == [contentID], "registry registration must be content keyed")
+        expect(registry.registeredPaneIDs == ["pane_right"], "registry pane IDs must reflect current mounts")
+
+        registry.updateSnapshot(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: contentID,
+                paneID: "pane_right",
+                tabID: "tab_2",
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: nil,
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: 10)
+            )
+        )
+        expect(
+            registry.snapshot(forTerminalContentID: contentID).paneID == "pane_right",
+            "registry snapshot lookup must be content keyed"
+        )
+
+        let delivery = registry.sendText(to: "pane_right", text: "after remount")
+        let handle = second as! FakeAlanTerminalSurfaceHandle
+        expect(delivery.applied, "pane convenience delivery must resolve the mounted content ID")
+        expect(handle.deliveredText == ["after remount"], "delivery must reach the mounted content")
+
+        registry.releaseRuntimes(excluding: ["pane_right"])
+        expect(handle.teardownCount == 0, "active custom content ID must not be released as stale")
+        expect(
+            registry.registeredContentIDs == [contentID],
+            "cleanup must keep the active mounted content registered"
+        )
+
+        registry.releaseRuntime(for: "pane_right")
+        expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
+        expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
+    }
+
+    private static func verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let previousMount = TerminalContentMount(
+            contentID: "content_previous_terminal",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let currentMount = TerminalContentMount(
+            contentID: "content_current_terminal",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+
+        let previousHandle = registry.surfaceHandle(
+            forTerminalContent: previousMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        registry.releaseRuntimes(excluding: [currentMount])
+        expect(
+            previousHandle.teardownCount == 1,
+            "cleanup must release stale content before the current host remount is configured"
+        )
+        expect(
+            registry.registeredContentIDs.isEmpty,
+            "current mount registration must not keep the previous content alive"
+        )
+
+        let currentHandle = registry.surfaceHandle(
+            forTerminalContent: currentMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        registry.releaseRuntimes(excluding: [currentMount])
+        expect(
+            currentHandle.teardownCount == 0,
+            "cleanup must keep the currently mounted content alive"
+        )
+    }
+
+    private static func verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let firstMount = TerminalContentMount(
+            contentID: "content_terminal_first",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: "content_terminal_second",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+
+        let hostView = registry.hostView(
+            forTerminalContent: firstMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        let firstHandle = registry.surfaceHandle(
+            forTerminalContent: firstMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        registry.configureHostView(
+            hostView,
+            forTerminalContent: secondMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+
+        let secondHandle = registry.surfaceHandle(
+            forTerminalContent: secondMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        expect(
+            registry.beginFindInteraction(for: "pane_stable"),
+            "same-pane content replacement must re-register host actions to the new content"
+        )
+        expect(
+            secondHandle.searchActions == ["start_search"],
+            "host actions must reach the replacement content surface"
+        )
+
+        registry.requestFocus(for: "pane_stable")
+        expect(hostView.focusCount == 1, "focus must route through the re-keyed host view")
+
+        registry.releaseRuntimes(excluding: ["pane_stable"])
+        expect(
+            firstHandle.teardownCount == 1,
+            "cleanup must release stale content after same-pane replacement"
+        )
+        expect(
+            hostView.teardownCount == 0,
+            "stale content cleanup must not teardown the re-keyed active host view"
+        )
+        expect(
+            secondHandle.teardownCount == 0,
+            "active replacement content must remain alive during stale cleanup"
+        )
+
+        registry.releaseRuntime(for: "pane_stable")
+        expect(
+            hostView.teardownCount == 1,
+            "pane release must teardown the active re-keyed host view"
+        )
+        expect(
+            secondHandle.teardownCount == 1,
+            "pane release must finalize the active replacement content"
+        )
+    }
+
     private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {
         let controller = makeController()
         controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
@@ -707,6 +905,10 @@ private enum ShellRuntimeMetadataTests {
         let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
 
         _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
         presenter.synchronize()
         presenter.windowDidResignKey()
 
@@ -724,6 +926,10 @@ private enum ShellRuntimeMetadataTests {
             "explicit hide must hide the peak without removing the runtime slot"
         )
         expect(controller.quickTerminalPane != nil, "explicit hide must preserve the quick-terminal pane")
+        expect(
+            quickHandle.teardownCount == 0,
+            "explicit hide must keep the hidden quick-terminal runtime alive"
+        )
 
         expect(controller.closeQuickTerminal(), "explicit quick-terminal close must apply")
         presenter.synchronize()
@@ -733,6 +939,7 @@ private enum ShellRuntimeMetadataTests {
             "explicit close must release the peak presentation"
         )
         expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
+        expect(quickHandle.teardownCount == 1, "explicit close must release the quick-terminal runtime")
     }
 
     private static func verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh() {
@@ -2829,6 +3036,7 @@ private enum ShellRuntimeMetadataTests {
         controller.updateTerminalRuntime(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
+                contentID: exitingPane.terminalContentID,
                 paneID: exitingPane.paneID,
                 tabID: exitingPane.tabID,
                 logicalSize: .zero,

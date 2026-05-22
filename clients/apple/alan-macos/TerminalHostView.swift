@@ -19,6 +19,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private let windowObserver = TerminalHostWindowObserver()
 
     private var pane: ShellPane?
+    private var terminalContentID: String?
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
     private weak var activationDelegate: TerminalHostActivationDelegate?
@@ -136,6 +137,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     func configure(
         pane: ShellPane?,
+        terminalContentID: String?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
         surfaceHandle: AlanTerminalSurfaceHandle?,
@@ -147,9 +149,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
         let previousPaneID = self.pane?.paneID
+        let previousContentID = self.terminalContentID
         let wasSelected = self.isSelected
 
         self.pane = pane
+        self.terminalContentID = terminalContentID
         self.bootProfile = bootProfile
         self.isSelected = isSelected
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
@@ -169,7 +173,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         syncNativeScrollback()
         if terminalHostShouldAutoFocusAfterConfigure(
             isSelected: isSelected,
-            previousPaneID: previousPaneID,
+            previousPaneID: previousContentID == terminalContentID ? previousPaneID : nil,
             paneID: pane?.paneID,
             wasSelected: wasSelected
         ) {
@@ -314,10 +318,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return .accepted(byteCount: 0)
         }
 
-        guard pane?.paneID != nil else {
+        guard terminalContentID != nil else {
             return .rejected(
                 errorCode: "terminal_runtime_unavailable",
-                errorMessage: "No pane is attached to this terminal runtime."
+                errorMessage: "No terminal content is attached to this host."
             )
         }
 
@@ -364,6 +368,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         let snapshot = TerminalHostRuntimeSnapshot(
             stage: stage,
+            contentID: terminalContentID,
             paneID: pane?.paneID,
             tabID: pane?.tabID,
             logicalSize: logicalSize,
@@ -414,8 +419,14 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private func reportCloseRequest(requiresConfirmation: Bool) {
         guard let closeRequestHandler else { return }
         let paneID = pane?.paneID
+        let contentID = terminalContentID
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.pane?.paneID == paneID else { return }
+            guard let self,
+                  self.pane?.paneID == paneID,
+                  self.terminalContentID == contentID
+            else {
+                return
+            }
             closeRequestHandler(requiresConfirmation)
         }
     }
