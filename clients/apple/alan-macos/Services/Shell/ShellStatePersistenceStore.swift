@@ -19,7 +19,7 @@ struct ShellStatePersistenceStore {
         try? fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(shellState) else { return }
+        guard let data = try? encoder.encode(shellState.contentStateProjection()) else { return }
         try? data.write(to: persistenceURL, options: .atomic)
     }
 
@@ -52,7 +52,7 @@ struct ShellStatePersistenceStore {
 
             return urls.compactMap { url -> (Date, ShellWindowContext)? in
                 guard isShellStatePersistenceURL(url),
-                      let state = restoreShellState(fileManager: fileManager, persistenceURL: url)
+                      let windowID = restorePersistedWindowID(fileManager: fileManager, persistenceURL: url)
                 else {
                     return nil
                 }
@@ -60,13 +60,13 @@ struct ShellStatePersistenceStore {
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
                 let modifiedAt = values?.contentModificationDate ?? .distantPast
                 let canonicalURL = defaultPersistenceURL(
-                    windowID: state.windowID,
+                    windowID: windowID,
                     fileManager: fileManager
                 )
                 return (
                     modifiedAt,
                     ShellWindowContext(
-                        windowID: state.windowID,
+                        windowID: windowID,
                         persistenceURL: canonicalURL,
                         terminalRuntimeRegistry: TerminalRuntimeRegistry()
                     )
@@ -106,6 +106,35 @@ struct ShellStatePersistenceStore {
             return nil
         }
         return state
+    }
+
+    private static func restorePersistedWindowID(
+        fileManager: FileManager,
+        persistenceURL: URL
+    ) -> String? {
+        let restoreURL = readablePersistenceURL(fileManager: fileManager, canonicalURL: persistenceURL)
+        guard let restoreURL,
+              let data = try? Data(contentsOf: restoreURL)
+        else {
+            return nil
+        }
+
+        if let contentState = try? JSONDecoder().decode(ShellContentStateSnapshot.self, from: data),
+           contentState.contractVersion == ShellContentStateSnapshot.currentContractVersion,
+           !contentState.windowID.isEmpty,
+           !contentState.spaces.isEmpty
+        {
+            return contentState.windowID
+        }
+
+        if let state = try? JSONDecoder().decode(ShellStateSnapshot.self, from: data),
+           !state.spaces.isEmpty,
+           !state.panes.isEmpty
+        {
+            return state.windowID
+        }
+
+        return nil
     }
 
     private static func persistenceDirectory(fileManager: FileManager) -> URL {

@@ -918,6 +918,19 @@ struct ShellContentStateSnapshot: Codable, Equatable {
         case paneSlots = "pane_slots"
         case contents
     }
+
+    var prettyPrintedJSON: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(self),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return "{\n  \"error\": \"failed to encode shell content snapshot\"\n}"
+        }
+
+        return string
+    }
 }
 
 extension ShellTab {
@@ -1000,5 +1013,162 @@ extension ShellStateSnapshot {
             }
         }
         return nil
+    }
+
+    func contentStateProjection() -> ShellContentStateSnapshot {
+        ShellContentStateSnapshot.projecting(self)
+    }
+}
+
+extension ShellContentStateSnapshot {
+    static func projecting(_ shellState: ShellStateSnapshot) -> ShellContentStateSnapshot {
+        let layoutPaneIDs = Set(shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
+        let projectedPanes = shellState.panes.filter { layoutPaneIDs.contains($0.paneID) }
+        let paneSlots = projectedPanes.map(ShellPaneSlot.projectingTerminalPane)
+        let contents = projectedPanes.map(ShellContentInstance.projectingTerminalPane)
+        let validPaneSlotIDs = Set(paneSlots.map(\.paneSlotID))
+        let focusedPaneSlotID =
+            shellState.focusedPaneID.flatMap { validPaneSlotIDs.contains($0) ? $0 : nil }
+            ?? paneSlots.first?.paneSlotID
+        let spaces = shellState.spaces.map { space in
+            ShellContentSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: Self.strongestAttention(
+                    in: paneSlots.filter { $0.spaceID == space.spaceID }
+                ),
+                tabs: space.tabs.map { tab in
+                    ShellContentTab(
+                        tabID: tab.tabID,
+                        kind: tab.kind,
+                        title: tab.title,
+                        paneTree: ShellPaneSlotTreeNode.migrating(paneTree: tab.paneTree),
+                        isPinned: tab.isPinned
+                    )
+                }
+            )
+        }
+
+        return ShellContentStateSnapshot(
+            contractVersion: currentContractVersion,
+            windowID: shellState.windowID,
+            focusedSpaceID: shellState.focusedSpaceID,
+            focusedTabID: shellState.focusedTabID,
+            focusedPaneSlotID: focusedPaneSlotID,
+            spaces: spaces,
+            paneSlots: paneSlots,
+            contents: contents
+        )
+    }
+
+    func space(spaceID: String) -> ShellContentSpace? {
+        spaces.first { $0.spaceID == spaceID }
+    }
+
+    func tab(tabID: String) -> ShellContentTab? {
+        spaces.lazy.flatMap(\.tabs).first { $0.tabID == tabID }
+    }
+
+    func paneSlot(paneSlotID: String) -> ShellPaneSlot? {
+        paneSlots.first { $0.paneSlotID == paneSlotID }
+    }
+
+    func content(contentID: String) -> ShellContentInstance? {
+        contents.first { $0.contentID == contentID }
+    }
+
+    var focusedPaneSlot: ShellPaneSlot? {
+        focusedPaneSlotID.flatMap { paneSlot(paneSlotID: $0) }
+    }
+
+    var focusedContent: ShellContentInstance? {
+        focusedPaneSlot.flatMap { content(contentID: $0.contentID) }
+    }
+
+    func contentMounted(in paneSlotID: String) -> ShellContentInstance? {
+        paneSlot(paneSlotID: paneSlotID).flatMap { content(contentID: $0.contentID) }
+    }
+
+    func userFacingTitle(for tab: ShellContentTab) -> String? {
+        tab.title
+            ?? tab.paneTree.paneSlotIDs.lazy.compactMap { contentMounted(in: $0)?.title }.first
+    }
+
+    private static func strongestAttention(in paneSlots: [ShellPaneSlot]) -> ShellAttentionState {
+        paneSlots
+            .map(\.attention)
+            .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
+            ?? .idle
+    }
+
+    private static func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .idle:
+            return 0
+        case .active:
+            return 1
+        case .notable:
+            return 2
+        case .awaitingUser:
+            return 3
+        }
+    }
+}
+
+extension ShellPaneSlot {
+    static func projectingTerminalPane(_ pane: ShellPane) -> ShellPaneSlot {
+        ShellPaneSlot(
+            paneSlotID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            contentID: ShellContentInstance.terminalContentID(forPaneID: pane.paneID),
+            attention: pane.attention
+        )
+    }
+}
+
+extension ShellContentInstance {
+    static func projectingTerminalPane(_ pane: ShellPane) -> ShellContentInstance {
+        let title = terminalTitle(for: pane)
+        return ShellContentInstance(
+            contentID: terminalContentID(forPaneID: pane.paneID),
+            kind: .terminal,
+            title: title,
+            payload: .terminal(
+                ShellTerminalContentPayload(
+                    launchTarget: pane.resolvedLaunchTarget,
+                    cwd: pane.cwd,
+                    title: title
+                )
+            ),
+            rendererState: terminalRendererState(for: pane)
+        )
+    }
+
+    static func terminalContentID(forPaneID paneID: String) -> String {
+        "content_\(paneID)"
+    }
+
+    private static func terminalTitle(for pane: ShellPane) -> String {
+        if let title = pane.viewport?.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        switch pane.resolvedLaunchTarget {
+        case .shell:
+            return "Shell"
+        case .alan:
+            return "alan"
+        }
+    }
+
+    private static func terminalRendererState(for pane: ShellPane) -> ShellContentRendererState {
+        let phase = pane.context?.rendererPhase
+            ?? pane.context?.rendererHealth
+            ?? "placeholder"
+        let detail = pane.context?.surfaceReadiness ?? pane.viewport?.summary
+        return ShellContentRendererState(phase: phase, detail: detail)
     }
 }

@@ -91,6 +91,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
         verifiesShellActionSpaceSelectionReportsMissingTargets()
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
+        verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
+        verifiesShellStatePersistenceWritesContentStateShape()
+        verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
         verifiesExplicitSpaceDeletionRemovesManifestSpace()
@@ -3060,6 +3063,128 @@ private enum ShellRuntimeMetadataTests {
             splitTreeAfter == splitTreeBefore,
             "split-tab selection must not rewrite split tree or divider ratios"
         )
+    }
+
+    private static func verifiesContentStateProjectionSeparatesPaneSlotsAndContent() {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        do {
+            state = try state.splittingPane("pane_1", placement: .right).state
+        } catch {
+            fail("content projection setup must split the bootstrap pane: \(error)")
+        }
+
+        let projection = state.contentStateProjection()
+        let tab = projection.tab(tabID: "tab_main")
+
+        expect(
+            projection.contractVersion == ShellContentStateSnapshot.currentContractVersion,
+            "content projection must publish the v0.2 contract"
+        )
+        expect(
+            projection.focusedPaneSlotID == state.focusedPaneID,
+            "content projection must map focused pane to focused pane slot"
+        )
+        expect(
+            tab?.paneTree.paneSlotIDs == ["pane_1", "pane_2"],
+            "content projection layout leaves must reference pane_slot_id values"
+        )
+        expect(
+            projection.paneSlots.map(\.contentID) == ["content_pane_1", "content_pane_2"],
+            "content projection must bind each PaneSlot to a distinct ContentInstance"
+        )
+        expect(
+            projection.contents.map(\.kind) == [.terminal, .terminal],
+            "terminal-only runtime panes must project as terminal content instances"
+        )
+        expect(
+            tab.flatMap { projection.userFacingTitle(for: $0) } == "Shell",
+            "content-aware title projection must derive sidebar titles from tab/content descriptors"
+        )
+
+        let emptySpaceState = ShellStateSnapshot(
+            contractVersion: "0.1",
+            windowID: "empty_projection",
+            focusedSpaceID: "space_empty",
+            focusedTabID: nil,
+            focusedPaneID: nil,
+            spaces: [
+                ShellSpace(
+                    spaceID: "space_empty",
+                    title: "Empty",
+                    attention: .idle,
+                    tabs: []
+                )
+            ],
+            panes: []
+        )
+        let emptyProjection = emptySpaceState.contentStateProjection()
+        expect(emptyProjection.focusedPaneSlotID == nil, "empty content projection must keep pane-slot focus nil")
+        expect(emptyProjection.paneSlots.isEmpty, "empty content projection must not fabricate PaneSlots")
+        expect(emptyProjection.spaces.first?.spaceID == "space_empty", "empty content projection must keep spaces")
+    }
+
+    private static func verifiesShellStatePersistenceWritesContentStateShape() {
+        let windowID = "content_state_persist_\(UUID().uuidString)"
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
+        var state = ShellStateSnapshot.bootstrapDefault(windowID: windowID, workingDirectory: "/tmp")
+        do {
+            state = try state.splittingPane("pane_1", placement: .right).state
+        } catch {
+            fail("content persistence setup must split the bootstrap pane: \(error)")
+        }
+
+        store.save(state)
+
+        guard let data = try? Data(contentsOf: persistenceURL),
+              let persisted = try? JSONDecoder().decode(ShellContentStateSnapshot.self, from: data),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            fail("shell state persistence must write a decodable content-state snapshot")
+        }
+
+        expect(persisted.windowID == windowID, "content-state persistence must preserve window identity")
+        expect(persisted.paneSlots.count == 2, "content-state persistence must save PaneSlots")
+        expect(persisted.contents.count == 2, "content-state persistence must save ContentInstances")
+        expect(
+            text.contains("\"pane_slots\"") && text.contains("\"contents\""),
+            "content-state persistence must use content-container keys"
+        )
+        expect(!text.contains("\"panes\""), "content-state persistence must not write v0.1 panes")
+        expect(
+            ShellStatePersistenceStore.restoreShellState(
+                fileManager: .default,
+                persistenceURL: persistenceURL
+            ) == nil,
+            "v0.2 content-state snapshots must not be treated as workspace restore authority"
+        )
+    }
+
+    private static func verifiesLegacyShellStateDecodeRemainsCompatibilityOnly() {
+        let windowID = "legacy_state_\(UUID().uuidString)"
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let state = ShellStateSnapshot.bootstrapDefault(windowID: windowID, workingDirectory: "/tmp")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        guard let data = try? encoder.encode(state) else {
+            fail("legacy shell state setup must encode v0.1 state")
+        }
+
+        do {
+            try data.write(to: persistenceURL, options: .atomic)
+        } catch {
+            fail("legacy shell state setup must write v0.1 state: \(error)")
+        }
+
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        expect(restored?.windowID == windowID, "legacy v0.1 shell-state decode must remain available")
+        expect(restored?.panes.first?.paneID == "pane_1", "legacy v0.1 shell-state decode must preserve panes")
     }
 
     private static func verifiesWorkspaceManifestStartupRestoresPinnedSnapshot() {

@@ -2,10 +2,10 @@
 
 - [x] 1.1 Rebase this change after `persist-macos-shell-workspaces` is archived, and read the accepted `ShellWorkspaceManifest` schema/materializer before implementation.
 - [x] 1.2 Introduce v0.2 shell state value types: `ShellPaneSlot`, `ShellContentInstance`, content kind, content capabilities, and content payloads for terminal, markdown, and settings surfaces.
-- [ ] 1.3 Change pane layout leaves to reference `pane_slot_id` and change shell focus state to use `focused_pane_slot_id`.
-- [ ] 1.4 Replace new-state `panes: [ShellPane]` persistence with `pane_slots` and `contents`; keep v0.1 `ShellPane` decoding only as diagnostics/compatibility input, not as workspace restore authority.
+- [x] 1.3 Change pane layout leaves to reference `pane_slot_id` and change shell focus state to use `focused_pane_slot_id`.
+- [x] 1.4 Replace new-state `panes: [ShellPane]` persistence with `pane_slots` and `contents`; keep v0.1 `ShellPane` decoding only as diagnostics/compatibility input, not as workspace restore authority.
 - [x] 1.5 Add one-time manifest migration that turns terminal-only workspace restore snapshots into PaneSlot plus terminal ContentInstance restore snapshots while preserving Space/Tab IDs, selection, pin state, TTL anchors, and active-task metadata.
-- [ ] 1.6 Update shell state projection helpers so focused space, focused tab, focused PaneSlot, attention, titles, and sidebar rows derive from content-aware descriptors.
+- [x] 1.6 Update shell state projection helpers so focused space, focused tab, focused PaneSlot, attention, titles, and sidebar rows derive from content-aware descriptors.
 
 ## 2. Terminal Adapter
 
