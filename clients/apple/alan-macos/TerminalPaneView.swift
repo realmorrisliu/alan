@@ -472,18 +472,22 @@ private struct ShellPaneTreeLayoutView: View {
     @ViewBuilder
     private func contentLeaf(for paneSlotID: String) -> some View {
         let contentState = host.shellState.contentStateProjection()
-        let content = contentState.contentMounted(in: paneSlotID)
-        let descriptor = ShellContentRenderingRegistry.descriptor(for: content)
+        let pane = host.shellState.pane(paneID: paneSlotID)
+        let descriptor = ShellContentRenderingRegistry.descriptor(
+            forPaneSlotID: paneSlotID,
+            in: contentState,
+            fallbackPane: pane
+        )
 
         switch descriptor.renderKind {
         case .terminal:
-            if let pane = host.shellState.panes.first(where: { $0.paneID == paneSlotID }) {
+            if let pane {
                 terminalLeaf(for: pane)
             } else {
-                boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID)
+                boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID, backingPane: nil)
             }
         case .markdown, .settings, .unavailable:
-            boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID)
+            boundedContentLeaf(descriptor: descriptor, paneSlotID: paneSlotID, backingPane: pane)
         }
     }
 
@@ -567,7 +571,8 @@ private struct ShellPaneTreeLayoutView: View {
 
     private func boundedContentLeaf(
         descriptor: ShellContentRenderDescriptor,
-        paneSlotID: String
+        paneSlotID: String,
+        backingPane: ShellPane?
     ) -> some View {
         ShellBoundedContentLeafView(
             descriptor: descriptor,
@@ -598,7 +603,13 @@ private struct ShellPaneTreeLayoutView: View {
                 )
             },
             onClosePane: {
-                host.closePaneByID(paneSlotID)
+                if let backingPane,
+                   let onClosePane
+                {
+                    onClosePane(backingPane)
+                } else {
+                    host.closePaneByID(paneSlotID)
+                }
             }
         )
     }

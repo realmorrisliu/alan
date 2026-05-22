@@ -24,6 +24,17 @@ struct ShellContentRenderDescriptor: Equatable {
 }
 
 enum ShellContentRenderingRegistry {
+    static func descriptor(
+        forPaneSlotID paneSlotID: String,
+        in contentState: ShellContentStateSnapshot,
+        fallbackPane: ShellPane? = nil
+    ) -> ShellContentRenderDescriptor {
+        let content =
+            contentState.contentMounted(in: paneSlotID)
+            ?? fallbackPane.map(ShellContentInstance.projectingTerminalPane)
+        return descriptor(for: content)
+    }
+
     static func descriptor(for content: ShellContentInstance?) -> ShellContentRenderDescriptor {
         guard let content else {
             return ShellContentRenderDescriptor(

@@ -3716,6 +3716,32 @@ private enum ShellRuntimeMetadataTests {
             missingDescriptor.contentID == nil,
             "missing content fallback must not invent a content identity"
         )
+
+        let quickTerminalState = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+            .showingQuickTerminal(workingDirectory: "/tmp")
+            .state
+        let quickTerminalProjection = quickTerminalState.contentStateProjection()
+        let quickTerminalPane = quickTerminalState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)
+        expect(
+            quickTerminalProjection.contentMounted(in: ShellQuickTerminalSlot.globalPaneID) == nil,
+            "quick terminal peak panes must stay outside workspace content projection"
+        )
+        let quickTerminalDescriptor = ShellContentRenderingRegistry.descriptor(
+            forPaneSlotID: ShellQuickTerminalSlot.globalPaneID,
+            in: quickTerminalProjection,
+            fallbackPane: quickTerminalPane
+        )
+        expect(
+            quickTerminalDescriptor.renderKind == .terminal,
+            "quick terminal fallback pane must still route to the terminal renderer"
+        )
+        let expectedQuickTerminalContentID = ShellContentInstance.terminalContentID(
+            forPaneID: ShellQuickTerminalSlot.globalPaneID
+        )
+        expect(
+            quickTerminalDescriptor.contentID == expectedQuickTerminalContentID,
+            "quick terminal fallback must retain the terminal content identity"
+        )
     }
 
     private static func verifiesShellStatePersistenceWritesContentStateShape() {
