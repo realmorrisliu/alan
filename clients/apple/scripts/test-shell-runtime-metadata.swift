@@ -23,6 +23,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
+        verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -557,6 +558,93 @@ private enum ShellRuntimeMetadataTests {
         registry.releaseRuntime(for: "pane_right")
         expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
         expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
+    }
+
+    private static func verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let firstMount = TerminalContentMount(
+            contentID: "content_terminal_first",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: "content_terminal_second",
+            paneSlotID: "pane_stable",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+
+        let hostView = registry.hostView(
+            forTerminalContent: firstMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        let firstHandle = registry.surfaceHandle(
+            forTerminalContent: firstMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        registry.configureHostView(
+            hostView,
+            forTerminalContent: secondMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCommandInput: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+
+        let secondHandle = registry.surfaceHandle(
+            forTerminalContent: secondMount,
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        expect(
+            registry.beginFindInteraction(for: "pane_stable"),
+            "same-pane content replacement must re-register host actions to the new content"
+        )
+        expect(
+            secondHandle.searchActions == ["start_search"],
+            "host actions must reach the replacement content surface"
+        )
+
+        registry.requestFocus(for: "pane_stable")
+        expect(hostView.focusCount == 1, "focus must route through the re-keyed host view")
+
+        registry.releaseRuntimes(excluding: ["pane_stable"])
+        expect(
+            firstHandle.teardownCount == 1,
+            "cleanup must release stale content after same-pane replacement"
+        )
+        expect(
+            hostView.teardownCount == 0,
+            "stale content cleanup must not teardown the re-keyed active host view"
+        )
+        expect(
+            secondHandle.teardownCount == 0,
+            "active replacement content must remain alive during stale cleanup"
+        )
+
+        registry.releaseRuntime(for: "pane_stable")
+        expect(
+            hostView.teardownCount == 1,
+            "pane release must teardown the active re-keyed host view"
+        )
+        expect(
+            secondHandle.teardownCount == 1,
+            "pane release must finalize the active replacement content"
+        )
     }
 
     private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {

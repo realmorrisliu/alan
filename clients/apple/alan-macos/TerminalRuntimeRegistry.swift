@@ -112,28 +112,48 @@ final class TerminalRuntimeRegistry: ObservableObject {
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) -> AlanTerminalHostNSView {
-        let hostView: AlanTerminalHostNSView
-        if let mount {
-            recordMount(contentID: mount.contentID, paneSlotID: mount.paneSlotID)
-            if let existing = hostViewsByContentID[mount.contentID] {
-                hostView = existing
-            } else {
-                let created = AlanTerminalHostNSView()
-                hostViewsByContentID[mount.contentID] = created
-                hostView = created
-            }
-        } else {
-            hostView = AlanTerminalHostNSView()
-        }
+        let hostView = mount.flatMap { hostViewsByContentID[$0.contentID] }
+            ?? AlanTerminalHostNSView()
 
+        configureHostView(
+            hostView,
+            forTerminalContent: mount,
+            pane: pane,
+            bootProfile: bootProfile,
+            isSelected: isSelected,
+            activationDelegate: activationDelegate,
+            onShellAction: onShellAction,
+            onCommandInput: onCommandInput,
+            onCloseRequest: onCloseRequest,
+            onRuntimeUpdate: onRuntimeUpdate,
+            onMetadataUpdate: onMetadataUpdate
+        )
+        return hostView
+    }
+
+    func configureHostView(
+        _ hostView: AlanTerminalHostNSView,
+        forTerminalContent mount: TerminalContentMount?,
+        pane: ShellPane?,
+        bootProfile: AlanShellBootProfile?,
+        isSelected: Bool,
+        activationDelegate: TerminalHostActivationDelegate?,
+        onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onCommandInput: (() -> Void)?,
+        onCloseRequest: ((Bool) -> Void)?,
+        onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
+        onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
+    ) {
         let surfaceHandle: AlanTerminalSurfaceHandle?
         if let mount {
+            registerHostView(hostView, contentID: mount.contentID, paneSlotID: mount.paneSlotID)
             surfaceHandle = runtimeService.surfaceHandle(
                 forTerminalContentID: mount.contentID,
                 mountedAtPaneID: mount.paneSlotID,
                 bootProfile: bootProfile
             )
         } else {
+            unregisterHostView(hostView)
             surfaceHandle = nil
         }
 
@@ -150,7 +170,6 @@ final class TerminalRuntimeRegistry: ObservableObject {
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
         )
-        return hostView
     }
 
     func surfaceHandle(
@@ -366,6 +385,26 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     private func terminalContentID(mountedAtPaneID paneID: String) -> String {
         contentIDByPaneSlotID[paneID] ?? terminalContentID(forPaneID: paneID)
+    }
+
+    private func registerHostView(
+        _ hostView: AlanTerminalHostNSView,
+        contentID: String,
+        paneSlotID: String
+    ) {
+        unregisterHostView(hostView, excludingContentID: contentID)
+        recordMount(contentID: contentID, paneSlotID: paneSlotID)
+        hostViewsByContentID[contentID] = hostView
+    }
+
+    private func unregisterHostView(
+        _ hostView: AlanTerminalHostNSView,
+        excludingContentID retainedContentID: String? = nil
+    ) {
+        let staleContentIDs = hostViewsByContentID.compactMap { contentID, registeredHostView in
+            registeredHostView === hostView && contentID != retainedContentID ? contentID : nil
+        }
+        staleContentIDs.forEach { hostViewsByContentID.removeValue(forKey: $0) }
     }
 
     private func recordMount(contentID: String, paneSlotID: String) {

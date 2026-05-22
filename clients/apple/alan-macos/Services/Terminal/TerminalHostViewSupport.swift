@@ -32,14 +32,12 @@ struct TerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: AlanTerminalHostNSView, context: Context) {
-        nsView.configure(
+        runtimeRegistry.configureHostView(
+            nsView,
+            forTerminalContent: terminalContentMount,
             pane: pane,
-            terminalContentID: terminalContentMount?.contentID,
             bootProfile: bootProfile,
             isSelected: isSelected,
-            surfaceHandle: terminalContentMount.map {
-                runtimeRegistry.surfaceHandle(forTerminalContent: $0, bootProfile: bootProfile)
-            },
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
             onCommandInput: onCommandInput,
