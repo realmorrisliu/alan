@@ -26,6 +26,11 @@ private enum ShellRuntimeMetadataTests {
         verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
         verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
         verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
+        verifiesTerminalLifecycleFinalizesClosedPaneAndPreservesSiblings()
+        verifiesTerminalLifecycleFinalizesAllTabContentsOnce()
+        verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes()
+        verifiesMovingLastPaneClosesSourceTabWithoutFinalizingMovedRuntime()
+        verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -789,6 +794,105 @@ private enum ShellRuntimeMetadataTests {
         expect(
             secondHandle.teardownCount == 1,
             "pane release must finalize the active replacement content"
+        )
+    }
+
+    private static func verifiesTerminalLifecycleFinalizesClosedPaneAndPreservesSiblings() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let leftHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let rightHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+
+        _ = controller.closePane(paneID: "pane_2")
+
+        expect(leftHandle.teardownCount == 0, "closing one pane must preserve sibling terminal runtime")
+        expect(rightHandle.teardownCount == 1, "closing one pane must finalize its terminal runtime once")
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs == ["pane_1"],
+            "closed PaneSlot must stop being a terminal runtime target"
+        )
+    }
+
+    private static func verifiesTerminalLifecycleFinalizesAllTabContentsOnce() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let leftHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let rightHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+
+        _ = controller.closeTab(tabID: "tab_main")
+        _ = controller.closeTab(tabID: "tab_main")
+
+        expect(leftHandle.teardownCount == 1, "closing a tab must finalize first terminal once")
+        expect(rightHandle.teardownCount == 1, "closing a tab must finalize second terminal once")
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.isEmpty,
+            "closed tab terminal runtimes must leave the registry"
+        )
+    }
+
+    private static func verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let movedHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let siblingHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        guard let targetTabID = controller.openTerminalTab() else {
+            fail("test setup must create target tab")
+        }
+
+        expect(
+            controller.movePane(paneID: "pane_1", toTab: targetTabID, direction: .horizontal),
+            "pane move must apply"
+        )
+        expect(movedHandle.teardownCount == 0, "moving a pane must preserve moved runtime")
+        expect(siblingHandle.teardownCount == 0, "moving a pane must preserve source sibling runtime")
+
+        switch controller.liftPaneToTab(paneID: "pane_1") {
+        case .lifted:
+            break
+        case .lastPane, .paneNotFound:
+            fail("lift after move must apply while the target tab still has a sibling")
+        }
+        expect(movedHandle.teardownCount == 0, "lifting a pane must preserve moved runtime")
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.contains("pane_1"),
+            "lifted PaneSlot must remain a terminal runtime target"
+        )
+    }
+
+    private static func verifiesMovingLastPaneClosesSourceTabWithoutFinalizingMovedRuntime() {
+        let controller = makeController()
+        let movedHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        guard let targetTabID = controller.openTerminalTab() else {
+            fail("test setup must create target tab")
+        }
+
+        expect(
+            controller.movePane(paneID: "pane_1", toTab: targetTabID, direction: .vertical),
+            "moving the last source pane must apply"
+        )
+
+        expect(controller.shellState.tab(tabID: "tab_main") == nil, "empty source tab must close")
+        expect(movedHandle.teardownCount == 0, "source tab cleanup must not finalize moved runtime")
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.contains("pane_1"),
+            "moved PaneSlot must remain a terminal runtime target"
+        )
+    }
+
+    private static func verifiesTerminalLifecycleShutdownFinalizesAllRuntimes() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let leftHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let rightHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+
+        controller.shutdownTerminalRuntimes()
+        controller.shutdownTerminalRuntimes()
+
+        expect(leftHandle.teardownCount == 1, "shutdown must finalize first terminal once")
+        expect(rightHandle.teardownCount == 1, "shutdown must finalize second terminal once")
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.isEmpty,
+            "shutdown must clear terminal runtime registry state"
         )
     }
 

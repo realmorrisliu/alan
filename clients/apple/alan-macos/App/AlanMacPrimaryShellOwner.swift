@@ -38,6 +38,12 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
         quickTerminalPeakPresenter.synchronize()
     }
 
+    deinit {
+        let host = host
+        Task { @MainActor in
+            host.shutdownTerminalRuntimes()
+        }
+    }
 }
 
 @MainActor

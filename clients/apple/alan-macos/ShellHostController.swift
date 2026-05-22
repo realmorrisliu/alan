@@ -269,6 +269,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     private let paneProjection: ShellPaneProjectionService
     private let terminalContentProjection: TerminalContentProjectionAdapter
+    private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
     lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
         self?.handleControlPlaneCommand(command)
@@ -362,9 +363,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     deinit {
         let terminalRuntimeRegistry = terminalRuntimeRegistry
+        let terminalContentLifecycle = terminalContentLifecycle
         Task { @MainActor in
-            terminalRuntimeRegistry.releaseAllRuntimes()
+            terminalContentLifecycle.finalizeAllRuntimes(registry: terminalRuntimeRegistry)
         }
+    }
+
+    func shutdownTerminalRuntimes() {
+        terminalContentLifecycle.finalizeAllRuntimes(registry: terminalRuntimeRegistry)
     }
 
     static func live(
@@ -1879,7 +1885,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         _ state: ShellStateSnapshot,
         publish: Bool = true
     ) {
-        terminalRuntimeRegistry.releaseRuntimes(excluding: activeTerminalContentMounts(in: state))
+        terminalContentLifecycle.reconcileRuntimes(
+            afterAdopting: state,
+            registry: terminalRuntimeRegistry
+        )
 
         let hydratedPanes = state.panes.map { pane in
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
@@ -1934,16 +1943,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if publish {
             publishControlPlaneState()
         }
-    }
-
-    private func activeTerminalContentMounts(in state: ShellStateSnapshot) -> [TerminalContentMount] {
-        var activePaneIDs = Set(state.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
-        if let quickTerminalPaneID = state.quickTerminal?.paneID {
-            activePaneIDs.insert(quickTerminalPaneID)
-        }
-        return state.panes
-            .filter { activePaneIDs.contains($0.paneID) }
-            .map(TerminalContentMount.init(pane:))
     }
 
     private func recordControlPlaneDiagnostic(_ message: String) {
