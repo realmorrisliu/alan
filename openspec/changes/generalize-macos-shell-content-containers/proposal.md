@@ -27,6 +27,9 @@ workspace restore authority 先由 `ShellWorkspaceManifest` 接管；随后本 c
   runtime owner，PaneSlot 只是当前承载位置。
 - 为首批非 terminal content 定义 v1 范围：markdown viewer 和 alan settings；browser 作为
   后续 change 单独设计。
+- v0.2 采用 `ContentInstance`、content kind、capability 和 payload 这组通用命名；
+  v1 不新增 browser kind，但后续 browser change 可以在同一模型中添加 browser
+  descriptor、capability、payload 和 renderer，而不需要重命名 PaneSlot / ContentInstance。
 - 区分通用 pane/control-plane 命令和 content-specific 命令：split、focus、move、close 是
   PaneSlot 命令；terminal input 使用 terminal-specific command，并先解析到 `terminal`
   ContentInstance。
