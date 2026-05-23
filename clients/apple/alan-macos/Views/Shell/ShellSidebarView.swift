@@ -588,9 +588,11 @@ struct ShellSidebarView: View {
     ) -> some View {
         let isSelected = host.selectedTab?.tabID == tab.tabID
         let isHovered = hoveredTabID == tab.tabID
+        let contentState = host.shellState.contentStateProjection()
         let projection = shellSidebarTabProjection(
             for: tab,
             panes: host.shellState.panes,
+            contentState: contentState,
             focusedPaneID: host.shellState.focusedPaneID,
             focusedTabID: host.selectedTab?.tabID,
             now: activityFreshnessNow
@@ -735,8 +737,9 @@ struct ShellSidebarView: View {
     }
 
     private func paneSummary(for tab: ShellTab) -> ShellTabPaneSummary? {
+        let contentState = host.shellState.contentStateProjection()
         let paneIDs = tab.paneTree.paneIDs.filter { paneID in
-            host.shellState.panes.contains { $0.paneID == paneID }
+            contentState.paneSlot(paneSlotID: paneID)?.tabID == tab.tabID
         }
         guard !paneIDs.isEmpty else { return nil }
 
@@ -849,6 +852,11 @@ struct ShellSidebarView: View {
             return "square.stack.3d.up"
         }
 
+        let contentState = host.shellState.contentStateProjection()
+        if let content = space.tabs.lazy.compactMap({ contentState.primaryContent(in: $0.tabID) }).first {
+            return contentIconName(for: content)
+        }
+
         return "terminal"
     }
 
@@ -856,6 +864,23 @@ struct ShellSidebarView: View {
         guard activity?.source.kind != .alan else { return false }
         return host.shellState.panes.contains { pane in
             pane.tabID == tab.tabID && pane.resolvedLaunchTarget == .alan
+        }
+    }
+
+    private func contentIconName(for content: ShellContentInstance) -> String {
+        if let iconName = content.iconName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !iconName.isEmpty
+        {
+            return iconName
+        }
+
+        switch content.kind {
+        case .terminal:
+            return "terminal"
+        case .markdown:
+            return "doc.text"
+        case .settings:
+            return "gearshape"
         }
     }
 
@@ -1074,7 +1099,29 @@ private struct ShellSidebarSpaceHeader: View {
             return "square.stack.3d.up"
         }
 
+        let contentState = host.shellState.contentStateProjection()
+        if let content = space.tabs.lazy.compactMap({ contentState.primaryContent(in: $0.tabID) }).first {
+            return contentIconName(for: content)
+        }
+
         return "terminal"
+    }
+
+    private func contentIconName(for content: ShellContentInstance) -> String {
+        if let iconName = content.iconName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !iconName.isEmpty
+        {
+            return iconName
+        }
+
+        switch content.kind {
+        case .terminal:
+            return "terminal"
+        case .markdown:
+            return "doc.text"
+        case .settings:
+            return "gearshape"
+        }
     }
 }
 

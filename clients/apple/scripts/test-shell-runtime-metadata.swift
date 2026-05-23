@@ -49,6 +49,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
         verifiesTerminalCommandResolverProtectsShellTextInput()
+        verifiesTerminalCommandResolverRejectsNonTerminalContent()
         verifiesCopyPasteRouteToFocusedTerminalRuntime()
         verifiesContextMenuTerminalCommandsUseContextPane()
         verifiesTerminalSearchRoutesThroughFocusedHostSurface()
@@ -104,6 +105,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
         verifiesContentRenderingRegistryRoutesSupportedKinds()
+        verifiesContentAwareSidebarProjectionUsesNonTerminalLabels()
         verifiesOpeningContentTabDefaultsToTerminalIntent()
         verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
@@ -1447,6 +1449,33 @@ private enum ShellRuntimeMetadataTests {
             controller.terminalCommandResolution(for: .copySelection, source: .commandUI)
                 .terminalTarget?.paneID == "pane_1",
             "command UI execution must still route through the shared terminal resolver"
+        )
+    }
+
+    private static func verifiesTerminalCommandResolverRejectsNonTerminalContent() {
+        let controller = makeController()
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("notes.md"),
+                title: "Notes"
+            )
+        ) else {
+            fail("test setup must create a markdown PaneSlot")
+        }
+        controller.focus(paneID: markdownPaneID)
+
+        expect(
+            controller.terminalCommandResolution(for: .paste, source: .commandUI)
+                == .shell(reason: "terminal_content_unavailable"),
+            "terminal commands must reject a focused non-terminal ContentInstance before runtime lookup"
+        )
+        expect(
+            controller.shellActionAvailability(.findOpen)
+                == .unavailable(reason: "Focused content is not a terminal"),
+            "find action availability must be terminal-content scoped"
         )
     }
 
@@ -3792,6 +3821,58 @@ private enum ShellRuntimeMetadataTests {
             quickTerminalDescriptor.contentID == expectedQuickTerminalContentID,
             "quick terminal fallback must retain the terminal content identity"
         )
+    }
+
+    private static func verifiesContentAwareSidebarProjectionUsesNonTerminalLabels() {
+        let controller = makeController()
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("sidebar-notes.md"),
+                title: "Research Notes"
+            )
+        ) else {
+            fail("sidebar projection setup must create a markdown split")
+        }
+
+        guard let tab = controller.shellState.tab(tabID: "tab_main") else {
+            fail("sidebar projection setup must keep the mixed tab")
+        }
+        let projection = shellSidebarTabProjection(
+            for: tab,
+            panes: controller.shellState.panes,
+            contentState: controller.shellState.contentStateProjection(),
+            focusedPaneID: markdownPaneID,
+            focusedTabID: tab.tabID
+        )
+        expect(
+            projection.title == "Research Notes",
+            "focused markdown content must provide the sidebar row primary label"
+        )
+        expect(
+            projection.secondaryLine == "Document",
+            "focused markdown content must provide a user-facing type hint"
+        )
+        expect(
+            !projection.title.contains("pane_") && !projection.secondaryLine.contains("content_"),
+            "content-aware sidebar labels must not expose implementation identifiers"
+        )
+
+        _ = controller.openSettingsTab()
+        guard let settingsTab = controller.selectedTab else {
+            fail("settings open must focus a settings tab")
+        }
+        let settingsProjection = shellSidebarTabProjection(
+            for: settingsTab,
+            panes: controller.shellState.panes,
+            contentState: controller.shellState.contentStateProjection(),
+            focusedPaneID: controller.shellState.focusedPaneID,
+            focusedTabID: settingsTab.tabID
+        )
+        expect(settingsProjection.title == "Settings", "settings content must label the sidebar row")
+        expect(settingsProjection.secondaryLine == "Settings", "settings content must expose a type hint")
     }
 
     private static func verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor() {

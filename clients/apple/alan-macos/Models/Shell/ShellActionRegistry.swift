@@ -143,6 +143,12 @@ enum ShellCommandTargetResolver {
         else {
             return .shell(reason: "terminal_pane_unavailable")
         }
+        let contentState = state.contentStateProjection()
+        guard let mountedContent = contentState.contentMounted(in: paneID),
+              mountedContent.kind == .terminal
+        else {
+            return .shell(reason: "terminal_content_unavailable")
+        }
 
         let runtime = runtimeState(paneID)
         switch command {
@@ -169,7 +175,7 @@ enum ShellCommandTargetResolver {
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
-                mountedContentID: pane.paneID
+                mountedContentID: mountedContent.contentID
             )
         )
     }
@@ -736,7 +742,7 @@ private let standardActions: [ShellActionDescriptor] = [
         targetKind: .pane,
         defaultShortcut: ShellActionShortcut(key: "f", modifiers: [.command], context: .shell),
         effect: .disabledPlaceholder,
-        availability: focusedPaneAvailability
+        availability: terminalContentAvailability
     ),
     ShellActionDescriptor(
         id: .spaceSelectPrevious,
@@ -829,6 +835,29 @@ private func focusedPaneAvailability(
             ? .unavailable(reason: "No focused pane")
             : .available
     }
+}
+
+private func terminalContentAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    let paneID: String?
+    if case .contextPane(let contextPaneID) = target {
+        paneID = contextPaneID
+    } else {
+        paneID = state.focusedPaneID
+    }
+
+    guard let paneID else {
+        return .unavailable(reason: "No focused pane")
+    }
+    guard state.pane(paneID: paneID) != nil else {
+        return .unavailable(reason: "Pane is not available")
+    }
+    guard state.contentStateProjection().contentMounted(in: paneID)?.kind == .terminal else {
+        return .unavailable(reason: "Focused content is not a terminal")
+    }
+    return .available
 }
 
 private func splitPaneAvailability(

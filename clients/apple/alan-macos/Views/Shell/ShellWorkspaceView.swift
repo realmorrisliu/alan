@@ -6,11 +6,12 @@ struct ShellWorkspaceView: View {
     let expandedSidebarProgress: CGFloat
 
     var body: some View {
+        let contentState = host.shellState.contentStateProjection()
         TerminalPaneView(
             host: host,
             tab: host.selectedTab,
             spaceID: host.selectedSpace?.spaceID,
-            selectedPaneID: host.selectedPane?.paneID,
+            selectedPaneID: contentState.focusedPaneSlotID,
             zoomedPaneID: host.selectedTabZoomedPaneID,
             terminalSurfaceInsets: ShellWorkspaceMetrics.terminalSurfaceInsets(
                 expandedSidebarProgress: expandedSidebarProgress

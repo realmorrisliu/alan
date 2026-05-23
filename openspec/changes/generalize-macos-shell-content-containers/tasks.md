@@ -35,9 +35,9 @@
 
 ## 5. UI Integration
 
-- [ ] 5.1 Update `ShellWorkspaceView` / pane layout leaf rendering so mixed content panes share split geometry and focus treatment.
-- [ ] 5.2 Update sidebar tab rows, toolbar titles, pane title bars, and command input labels to use user-facing content titles and type hints.
-- [ ] 5.3 Keep terminal-only status, search, and input affordances visible only on terminal content panes.
+- [x] 5.1 Update `ShellWorkspaceView` / pane layout leaf rendering so mixed content panes share split geometry and focus treatment.
+- [x] 5.2 Update sidebar tab rows, toolbar titles, pane title bars, and command input labels to use user-facing content titles and type hints.
+- [x] 5.3 Keep terminal-only status, search, and input affordances visible only on terminal content panes.
 - [x] 5.4 Make settings content a singleton tab target in v1 so repeated Open Settings focuses the existing ContentInstance.
 - [ ] 5.5 Capture running-app visual evidence for light-mode mixed content tabs and split panes.
 
@@ -48,8 +48,8 @@
 - [ ] 6.3 Add fake runtime service tests for `terminal.send_text`, `content_id` delivery, missing runtime errors, and queued delivery diagnostics.
 - [x] 6.4 Add control-plane tests for `pane_slots` / `contents` query, content-aware split creation, `terminal.send_text` success, and non-terminal terminal-command rejection.
 - [ ] 6.5 Add workspace manifest migration and lifecycle tests for terminal-only pin snapshots, terminal-only live snapshots, mixed content pin/live snapshots, inactive unpinned Tab retirement finalization, and the rule that `shell-state-window_main.json` is not restore authority.
-- [ ] 6.6 Run the focused Apple shell contract scripts affected by model, control-plane, workspace manifest, and terminal-runtime changes.
-- [ ] 6.7 Run the macOS app build or document any local dependency blocker with the exact failing command.
-- [ ] 6.8 Validate `generalize-macos-shell-content-containers` with `openspec validate generalize-macos-shell-content-containers --strict`.
-- [ ] 6.9 Run `openspec validate --all --strict` after `persist-macos-shell-workspaces` is archived or while both active changes validate together.
+- [x] 6.6 Run the focused Apple shell contract scripts affected by model, control-plane, workspace manifest, and terminal-runtime changes.
+- [x] 6.7 Run the macOS app build or document any local dependency blocker with the exact failing command.
+- [x] 6.8 Validate `generalize-macos-shell-content-containers` with `openspec validate generalize-macos-shell-content-containers --strict`.
+- [x] 6.9 Run `openspec validate --all --strict` after `persist-macos-shell-workspaces` is archived or while both active changes validate together.
 - [ ] 6.10 After implementation is merged, sync accepted requirements into `openspec/specs/` and confirm the change is archive-ready.
