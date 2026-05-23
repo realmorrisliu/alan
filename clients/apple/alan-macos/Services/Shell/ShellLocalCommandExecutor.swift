@@ -18,15 +18,19 @@ enum AlanShellLocalCommandExecutor {
     ) -> AlanShellLocalCommandResult? {
         switch command.command {
         case .state:
+            let contentState = state.contentStateProjection()
             return AlanShellLocalCommandResult(
                 response: response(
                     for: command,
                     state: state,
                     applied: true,
                     snapshot: state,
+                    paneSlots: contentState.paneSlots,
+                    contents: contentState.contents,
                     spaceID: state.focusedSpaceID,
                     tabID: state.focusedTabID,
-                    paneID: state.focusedPaneID
+                    paneID: state.focusedPaneID,
+                    paneSlotID: contentState.focusedPaneSlotID
                 ),
                 updatedState: nil,
                 sideEffect: nil
@@ -326,12 +330,15 @@ enum AlanShellLocalCommandExecutor {
             }
 
         case .paneList:
+            let contentState = state.contentStateProjection()
             return AlanShellLocalCommandResult(
                 response: response(
                     for: command,
                     state: state,
                     applied: true,
                     panes: state.panes(in: command.tabID),
+                    paneSlots: contentState.controlPlanePaneSlots(in: command.tabID),
+                    contents: contentState.controlPlaneContents(in: command.tabID),
                     tabID: command.tabID ?? state.focusedTabID
                 ),
                 updatedState: nil,
@@ -360,7 +367,8 @@ enum AlanShellLocalCommandExecutor {
                     pane: pane,
                     spaceID: pane.spaceID,
                     tabID: pane.tabID,
-                    paneID: pane.paneID
+                    paneID: pane.paneID,
+                    paneSlotID: pane.paneID
                 ),
                 updatedState: nil,
                 sideEffect: nil
@@ -401,9 +409,11 @@ enum AlanShellLocalCommandExecutor {
                         for: command,
                         state: result.state,
                         applied: true,
+                        snapshot: result.state,
                         spaceID: result.spaceID,
                         tabID: result.tabID,
-                        paneID: result.paneID
+                        paneID: result.paneID,
+                        paneSlotID: result.paneID
                     ),
                     updatedState: result.state,
                     sideEffect: nil
@@ -925,6 +935,8 @@ enum AlanShellLocalCommandExecutor {
         spaces: [ShellSpace]? = nil,
         tabs: [ShellTab]? = nil,
         panes: [ShellPane]? = nil,
+        paneSlots: [ShellPaneSlot]? = nil,
+        contents: [ShellContentInstance]? = nil,
         pane: ShellPane? = nil,
         items: [AlanShellAttentionInboxItem]? = nil,
         candidates: [AlanShellRoutingCandidate]? = nil,
@@ -934,6 +946,11 @@ enum AlanShellLocalCommandExecutor {
         targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        paneSlotID: String? = nil,
+        contentID: String? = nil,
+        contentKind: ShellContentKind? = nil,
+        contentTitle: String? = nil,
+        contentCapabilities: [ShellContentCapability]? = nil,
         section: ShellTabOrganizationSection? = nil,
         index: Int? = nil,
         acceptedBytes: Int? = nil,
@@ -943,24 +960,37 @@ enum AlanShellLocalCommandExecutor {
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) -> AlanShellControlResponse {
-        AlanShellControlResponse(
+        let contentState = state.contentStateProjection()
+        let contentProjection = contentState.controlPlaneContentProjection(
+            paneSlotID: paneSlotID ?? paneID,
+            contentID: contentID
+        )
+        return AlanShellControlResponse(
             requestID: command.requestID,
-            contractVersion: state.contractVersion,
+            contractVersion: contentState.contractVersion,
             applied: applied,
             state: snapshot,
             spaces: spaces,
             tabs: tabs,
             panes: panes,
+            paneSlots: paneSlots,
+            contents: contents,
             pane: pane,
             items: items,
             candidates: candidates,
             events: events,
             focusedPaneID: state.focusedPaneID,
+            focusedPaneSlotID: contentState.focusedPaneSlotID,
             spaceID: spaceID,
             sourceSpaceID: sourceSpaceID,
             targetSpaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID,
+            paneSlotID: paneSlotID ?? contentProjection.paneSlotID,
+            contentID: contentID ?? contentProjection.contentID,
+            contentKind: contentKind ?? contentProjection.kind,
+            contentTitle: contentTitle ?? contentProjection.title,
+            contentCapabilities: contentCapabilities ?? contentProjection.capabilities,
             section: section,
             index: index,
             acceptedBytes: acceptedBytes,

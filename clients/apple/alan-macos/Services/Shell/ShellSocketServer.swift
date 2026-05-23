@@ -224,7 +224,7 @@ final class AlanShellSocketServer {
             debugLog("socket response timeout fd=\(fileDescriptor)")
             let timeoutResponse = AlanShellControlResponse(
                 requestID: command.requestID,
-                contractVersion: "0.1",
+                contractVersion: ShellContentStateSnapshot.currentContractVersion,
                 applied: false,
                 state: nil,
                 spaces: nil,
@@ -256,7 +256,7 @@ final class AlanShellSocketServer {
             response
             ?? AlanShellControlResponse(
                 requestID: command.requestID,
-                contractVersion: "0.1",
+                contractVersion: ShellContentStateSnapshot.currentContractVersion,
                 applied: false,
                 state: nil,
                 spaces: nil,

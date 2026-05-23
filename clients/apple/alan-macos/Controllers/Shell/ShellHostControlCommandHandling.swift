@@ -123,6 +123,8 @@ extension ShellHostController {
         spaces: [ShellSpace]? = nil,
         tabs: [ShellTab]? = nil,
         panes: [ShellPane]? = nil,
+        paneSlots: [ShellPaneSlot]? = nil,
+        contents: [ShellContentInstance]? = nil,
         pane: ShellPane? = nil,
         items: [AlanShellAttentionInboxItem]? = nil,
         candidates: [AlanShellRoutingCandidate]? = nil,
@@ -132,7 +134,11 @@ extension ShellHostController {
         targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        paneSlotID: String? = nil,
         contentID: String? = nil,
+        contentKind: ShellContentKind? = nil,
+        contentTitle: String? = nil,
+        contentCapabilities: [ShellContentCapability]? = nil,
         section: ShellTabOrganizationSection? = nil,
         index: Int? = nil,
         acceptedBytes: Int? = nil,
@@ -148,6 +154,8 @@ extension ShellHostController {
         targetTabID: String? = nil,
         previousFocusedPaneID: String? = nil,
         currentFocusedPaneID: String? = nil,
+        previousFocusedPaneSlotID: String? = nil,
+        currentFocusedPaneSlotID: String? = nil,
         splitDirection: ShellSplitDirection? = nil,
         spatialDirection: ShellSpatialFocusDirection? = nil,
         placement: ShellPaneSplitDirection? = nil,
@@ -155,25 +163,37 @@ extension ShellHostController {
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) -> AlanShellControlResponse {
-        AlanShellControlResponse(
+        let contentState = shellState.contentStateProjection()
+        let contentProjection = contentState.controlPlaneContentProjection(
+            paneSlotID: paneSlotID ?? paneID,
+            contentID: contentID
+        )
+        return AlanShellControlResponse(
             requestID: requestID,
-            contractVersion: shellState.contractVersion,
+            contractVersion: contentState.contractVersion,
             applied: applied,
             state: state,
             spaces: spaces,
             tabs: tabs,
             panes: panes,
+            paneSlots: paneSlots,
+            contents: contents,
             pane: pane,
             items: items,
             candidates: candidates,
             events: events,
             focusedPaneID: shellState.focusedPaneID,
+            focusedPaneSlotID: contentState.focusedPaneSlotID,
             spaceID: spaceID,
             sourceSpaceID: sourceSpaceID,
             targetSpaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID,
-            contentID: contentID,
+            paneSlotID: paneSlotID ?? contentProjection.paneSlotID,
+            contentID: contentID ?? contentProjection.contentID,
+            contentKind: contentKind ?? contentProjection.kind,
+            contentTitle: contentTitle ?? contentProjection.title,
+            contentCapabilities: contentCapabilities ?? contentProjection.capabilities,
             section: section,
             index: index,
             acceptedBytes: acceptedBytes,
@@ -189,10 +209,12 @@ extension ShellHostController {
             targetTabID: targetTabID,
             previousFocusedPaneID: previousFocusedPaneID,
             currentFocusedPaneID: currentFocusedPaneID,
+            previousFocusedPaneSlotID: previousFocusedPaneSlotID ?? previousFocusedPaneID,
+            currentFocusedPaneSlotID: currentFocusedPaneSlotID ?? currentFocusedPaneID,
             splitDirection: splitDirection,
             spatialDirection: spatialDirection,
             placement: placement,
-            mountedContentInstanceID: mountedContentInstanceID,
+            mountedContentInstanceID: contentProjection.contentID ?? mountedContentInstanceID,
             errorCode: errorCode,
             errorMessage: errorMessage
         )
@@ -201,10 +223,14 @@ extension ShellHostController {
     func handleControlPlaneCommand(_ command: AlanShellControlCommand) -> AlanShellControlResponse {
         switch command.command {
         case .state:
+            let contentState = shellState.contentStateProjection()
             return response(
                 requestID: command.requestID,
                 applied: true,
-                state: shellState
+                state: shellState,
+                paneSlots: contentState.paneSlots,
+                contents: contentState.contents,
+                paneSlotID: contentState.focusedPaneSlotID
             )
 
         case .spaceList:
@@ -453,10 +479,13 @@ extension ShellHostController {
             )
 
         case .paneList:
+            let contentState = shellState.contentStateProjection()
             return response(
                 requestID: command.requestID,
                 applied: true,
                 panes: paneList(tabID: command.tabID),
+                paneSlots: contentState.controlPlanePaneSlots(in: command.tabID),
+                contents: contentState.controlPlaneContents(in: command.tabID),
                 tabID: command.tabID
             )
 
@@ -479,7 +508,8 @@ extension ShellHostController {
                 pane: pane,
                 spaceID: pane.spaceID,
                 tabID: pane.tabID,
-                paneID: pane.paneID
+                paneID: pane.paneID,
+                paneSlotID: pane.paneID
             )
 
         case .paneSplit:
@@ -512,9 +542,11 @@ extension ShellHostController {
             return response(
                 requestID: command.requestID,
                 applied: true,
+                state: shellState,
                 spaceID: shellState.focusedSpaceID,
                 tabID: shellState.focusedTabID,
-                paneID: newPaneID
+                paneID: newPaneID,
+                paneSlotID: newPaneID
             )
 
         case .paneClose:
@@ -707,6 +739,7 @@ extension ShellHostController {
                     spaceID: target.paneSlot.spaceID,
                     tabID: target.paneSlot.tabID,
                     paneID: target.paneSlot.paneSlotID,
+                    paneSlotID: target.paneSlot.paneSlotID,
                     contentID: target.content.contentID,
                     errorCode: "unsupported_content",
                     errorMessage: "terminal.send_text requires terminal content."
@@ -733,6 +766,7 @@ extension ShellHostController {
                 spaceID: target.paneSlot.spaceID,
                 tabID: target.paneSlot.tabID,
                 paneID: target.paneSlot.paneSlotID,
+                paneSlotID: target.paneSlot.paneSlotID,
                 contentID: target.content.contentID,
                 acceptedBytes: delivery.acceptedBytes,
                 deliveryCode: delivery.code.rawValue,
