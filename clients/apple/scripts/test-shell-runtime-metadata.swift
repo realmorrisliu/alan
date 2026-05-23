@@ -4095,6 +4095,119 @@ private enum ShellRuntimeMetadataTests {
             "pane.split response must expose terminal content capabilities"
         )
 
+        let terminalHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        guard let terminalContentID = controller.shellState
+            .contentStateProjection()
+            .contentMounted(in: "pane_1")?
+            .contentID
+        else {
+            fail("control-plane send-text setup must expose terminal content identity")
+        }
+
+        let paneSlotText = "echo slot"
+        let paneSlotSendResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-slot-send-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "pane_1",
+                  "text": "\(paneSlotText)"
+                }
+                """
+            )
+        )
+        expect(
+            paneSlotSendResponse.applied == true
+                && paneSlotSendResponse.paneSlotID == "pane_1"
+                && paneSlotSendResponse.contentID == terminalContentID
+                && paneSlotSendResponse.contentKind == .terminal
+                && paneSlotSendResponse.acceptedBytes == paneSlotText.lengthOfBytes(using: .utf8)
+                && paneSlotSendResponse.deliveryCode == TerminalRuntimeDeliveryCode.accepted.rawValue,
+            "terminal.send_text must resolve pane_slot_id to terminal content before delivery"
+        )
+        expect(
+            terminalHandle.deliveredText == [paneSlotText],
+            "pane_slot_id delivery must reach the terminal runtime"
+        )
+
+        let contentText = "echo content"
+        let contentSendResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-content-send-1",
+                  "command": "terminal.send_text",
+                  "content_id": "\(terminalContentID)",
+                  "text": "\(contentText)"
+                }
+                """
+            )
+        )
+        expect(
+            contentSendResponse.applied == true
+                && contentSendResponse.paneSlotID == "pane_1"
+                && contentSendResponse.contentID == terminalContentID
+                && contentSendResponse.acceptedBytes == contentText.lengthOfBytes(using: .utf8),
+            "terminal.send_text must deliver explicit terminal content_id targets"
+        )
+        expect(
+            terminalHandle.deliveredText == [paneSlotText, contentText],
+            "content_id delivery must use the terminal content runtime"
+        )
+
+        let deliveredBeforeRejections = terminalHandle.deliveredText
+        let nonTerminalResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-markdown-send-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "\(markdownPaneID)",
+                  "text": "ignored"
+                }
+                """
+            )
+        )
+        expect(
+            nonTerminalResponse.applied == false
+                && nonTerminalResponse.errorCode == "unsupported_content"
+                && nonTerminalResponse.paneSlotID == markdownPaneID
+                && nonTerminalResponse.contentKind == .markdown
+                && nonTerminalResponse.acceptedBytes == nil
+                && nonTerminalResponse.deliveryCode == nil,
+            "terminal.send_text must reject non-terminal PaneSlot targets"
+        )
+        expect(
+            terminalHandle.deliveredText == deliveredBeforeRejections,
+            "non-terminal terminal.send_text rejection must not deliver runtime text"
+        )
+
+        let missingPaneSlotResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-missing-slot-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "pane_missing",
+                  "text": "ignored"
+                }
+                """
+            )
+        )
+        expect(
+            missingPaneSlotResponse.applied == false
+                && missingPaneSlotResponse.errorCode == "pane_not_found"
+                && missingPaneSlotResponse.paneSlotID == "pane_missing"
+                && missingPaneSlotResponse.contentID == nil
+                && missingPaneSlotResponse.contentKind == nil,
+            "terminal.send_text must preserve missing pane_slot_id diagnostics"
+        )
+        expect(
+            terminalHandle.deliveredText == deliveredBeforeRejections,
+            "missing pane_slot_id rejection must not deliver runtime text"
+        )
+
         let invalidContentResponse = controller.handleControlPlaneCommand(
             decodeControlCommand(
                 """

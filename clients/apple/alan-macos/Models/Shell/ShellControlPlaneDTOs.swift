@@ -47,6 +47,7 @@ struct AlanShellControlCommand: Codable {
     let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let paneSlotID: String?
     let contentID: String?
     let splitNodeID: String?
     let ratio: Double?
@@ -76,6 +77,7 @@ struct AlanShellControlCommand: Codable {
         case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case paneSlotID = "pane_slot_id"
         case contentID = "content_id"
         case splitNodeID = "split_node_id"
         case ratio
