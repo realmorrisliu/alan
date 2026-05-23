@@ -25,9 +25,9 @@
 
 ## 4. Workspace Generated State
 
-- [ ] 4.1 Add a channel namespace for generated workspace runtime state such as sessions, memory, cache, shell restore, and runtime metadata.
-- [ ] 4.2 Preserve stable compatibility with existing legacy generated state while ensuring dev never writes to stable legacy generated paths.
-- [ ] 4.3 Update repository ignore rules and docs so channel-scoped generated state is ignored and authored `.alan/agents/` / `.agents/skills/` content remains trackable.
+- [x] 4.1 Add a channel namespace for generated workspace runtime state such as sessions, memory, cache, shell restore, and runtime metadata.
+- [x] 4.2 Preserve stable compatibility with existing legacy generated state while ensuring dev never writes to stable legacy generated paths.
+- [x] 4.3 Update repository ignore rules and docs so channel-scoped generated state is ignored and authored `.alan/agents/` / `.agents/skills/` content remains trackable.
 
 ## 5. Verification And Guardrails
 

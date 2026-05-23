@@ -878,7 +878,19 @@ fn inbox_entry_path(memory_dir: &Path, now: DateTime<Utc>, id: &str) -> PathBuf 
 
 fn format_relative_memory_path(memory_dir: &Path, path: &Path) -> String {
     path.strip_prefix(memory_dir)
-        .map(|relative| format!(".alan/memory/{}", relative.display()))
+        .map(|relative| {
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            if let Some(channel_dir) = memory_dir.parent()
+                && channel_dir
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "runtime")
+                && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
+            {
+                return format!(".alan/runtime/{channel_id}/memory/{relative}");
+            }
+            format!(".alan/memory/{relative}")
+        })
         .unwrap_or_else(|_| path.display().to_string())
 }
 

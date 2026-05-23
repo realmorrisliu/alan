@@ -384,7 +384,7 @@ mod tests {
             parent_session_id.to_string(),
             format!("child-session-{child_run_id}"),
             Some("/tmp/workspace".to_string()),
-            Some("/tmp/workspace/.alan/sessions/child.jsonl".to_string()),
+            Some("/tmp/workspace/.alan/runtime/stable/sessions/child.jsonl".to_string()),
             Some("repo-coding".to_string()),
         )
     }

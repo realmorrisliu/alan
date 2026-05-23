@@ -2536,7 +2536,10 @@ Body
             parent_session_id.to_string(),
             format!("child-session-{child_run_id}"),
             Some("/tmp/alan-child-route-workspace".to_string()),
-            Some("/tmp/alan-child-route-workspace/.alan/sessions/child.jsonl".to_string()),
+            Some(
+                "/tmp/alan-child-route-workspace/.alan/runtime/stable/sessions/child.jsonl"
+                    .to_string(),
+            ),
             Some("repo-coding".to_string()),
         )
     }
@@ -2564,12 +2567,20 @@ Body
         let workspace_path = base_dir.join("workspace");
         let alan_dir = workspace_path.join(".alan");
         std::fs::create_dir_all(alan_dir.join("agents/default/skills")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&memory_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
-        std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
-        let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
+        let guard = SessionsDirPermissionGuard::new(sessions_dir);
         (workspace_path, guard)
     }
 

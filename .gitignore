@@ -49,11 +49,13 @@ lcov.info
 .coverage.*
 htmlcov/
 
-# Local agent/tooling runtime state.
+# Local agent/tooling runtime state, including channel-scoped workspace
+# generated state under .alan/runtime/.
 .alan/*
 !.alan/agents/
 !.alan/agents/**
 !.alan/models.toml
+# Workspace public skills under .agents/skills/ are authored source content.
 .codex/
 
 # Local Ghostty developer artifacts for the Apple client.

@@ -990,9 +990,11 @@ pub fn effective_core_config_for_runtime(
     if core_config.connection_profile.is_some() || has_connections_store {
         core_config.resolve_connection_profile(home_paths.as_ref())?;
     }
+    let channel = runtime_install_channel(config);
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir =
-            Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+        core_config.memory.workspace_dir = Some(
+            crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
+        );
     }
     crate::resolve_session_request_controls(
         &core_config,
@@ -1021,14 +1023,35 @@ pub fn spawn_with_llm_client_and_tools(
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
+    let channel = runtime_install_channel(&config);
     if let Some(default_cwd) = config.default_cwd_override.as_ref() {
         if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-            tools.set_default_workspace_binding(ws_root.clone(), default_cwd.clone());
+            let scratch_dir = resolved_agent_definition
+                .workspace_alan_dir
+                .as_ref()
+                .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
+                .unwrap_or_else(|| default_cwd.join(".alan").join("tmp"));
+            tools.set_default_execution_binding(
+                crate::tools::ToolExecutionBinding::with_workspace(
+                    ws_root.clone(),
+                    default_cwd.clone(),
+                    scratch_dir,
+                ),
+            );
         } else {
             tools.set_default_cwd(default_cwd.clone());
         }
     } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-        tools.set_default_workspace_root(ws_root.clone());
+        let scratch_dir = resolved_agent_definition
+            .workspace_alan_dir
+            .as_ref()
+            .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
+            .unwrap_or_else(|| ws_root.join(".alan").join("tmp"));
+        tools.set_default_execution_binding(crate::tools::ToolExecutionBinding::with_workspace(
+            ws_root.clone(),
+            ws_root.clone(),
+            scratch_dir,
+        ));
     }
 
     let mut agent_config = config.agent_config.clone();
@@ -1048,8 +1071,9 @@ pub fn spawn_with_llm_client_and_tools(
         core_config.resolve_connection_profile(home_paths.as_ref())?;
     }
     if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir =
-            Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+        core_config.memory.workspace_dir = Some(
+            crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
+        );
     }
 
     let mut runtime_config = agent_config.runtime_config.clone();
@@ -1083,7 +1107,7 @@ pub fn spawn_with_llm_client_and_tools(
     let session_dir = resolved_agent_definition
         .workspace_alan_dir
         .as_ref()
-        .map(|dir| crate::workspace_sessions_dir_from_alan_dir(dir));
+        .map(|dir| crate::workspace_sessions_dir_for_channel_from_alan_dir(dir, channel));
     let rollout_cwd = config
         .default_cwd_override
         .clone()
@@ -1390,6 +1414,14 @@ pub fn spawn_with_llm_client_and_tools(
     })
 }
 
+fn runtime_install_channel(config: &WorkspaceRuntimeConfig) -> crate::InstallChannel {
+    config
+        .agent_home_paths
+        .as_ref()
+        .map(|paths| paths.channel)
+        .unwrap_or_else(crate::InstallChannel::detect_current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1622,6 +1654,7 @@ mod tests {
     async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
+        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let mut core_config = crate::Config::default();
         core_config.memory.enabled = true;
@@ -2044,8 +2077,9 @@ model_reasoning_effort = "high"
         );
         assert_eq!(
             core_config.memory.workspace_dir,
-            Some(crate::workspace_memory_dir_from_alan_dir(
-                &workspace_alan_dir
+            Some(crate::workspace_runtime_memory_dir_from_alan_dir(
+                &workspace_alan_dir,
+                crate::InstallChannel::Stable
             ))
         );
     }
@@ -2630,7 +2664,66 @@ required = true
         );
         assert_eq!(
             core_config.memory.workspace_dir,
+            Some(
+                workspace_alan_dir
+                    .join("runtime")
+                    .join("stable")
+                    .join("memory")
+            )
+        );
+    }
+
+    #[test]
+    fn test_effective_core_config_for_runtime_stable_reads_existing_legacy_memory() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(workspace_alan_dir.join("memory")).unwrap();
+
+        let config = WorkspaceRuntimeConfig {
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(workspace_alan_dir.clone()),
+            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir(
+                &temp.path().join("home"),
+            )),
+            ..WorkspaceRuntimeConfig::default()
+        };
+
+        let core_config = effective_core_config_for_runtime(&config).unwrap();
+
+        assert_eq!(
+            core_config.memory.workspace_dir,
             Some(workspace_alan_dir.join("memory"))
+        );
+    }
+
+    #[test]
+    fn test_effective_core_config_for_runtime_dev_ignores_legacy_memory() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        std::fs::create_dir_all(workspace_alan_dir.join("memory")).unwrap();
+
+        let config = WorkspaceRuntimeConfig {
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(workspace_alan_dir.clone()),
+            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir_for_channel(
+                &temp.path().join("home"),
+                crate::InstallChannel::Dev,
+            )),
+            ..WorkspaceRuntimeConfig::default()
+        };
+
+        let core_config = effective_core_config_for_runtime(&config).unwrap();
+
+        assert_eq!(
+            core_config.memory.workspace_dir,
+            Some(
+                workspace_alan_dir
+                    .join("runtime")
+                    .join("dev")
+                    .join("memory")
+            )
         );
     }
 

@@ -189,7 +189,7 @@ fn sample_session_read_response() -> SessionReadResponse {
         resolved_model: "gpt-5.3-codex".to_string(),
         reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
-        rollout_path: Some("/tmp/workspace/.alan/sessions/sess-1.jsonl".to_string()),
+        rollout_path: Some("/tmp/workspace/.alan/runtime/stable/sessions/sess-1.jsonl".to_string()),
         latest_compaction_attempt: None,
         latest_memory_flush_attempt: None,
         latest_plan_snapshot: None,
@@ -203,7 +203,7 @@ fn sample_child_run_record() -> ChildRunRecord {
         "sess-1".to_string(),
         "sess-child".to_string(),
         Some("/tmp/workspace".to_string()),
-        Some("/tmp/workspace/.alan/sessions/child.jsonl".to_string()),
+        Some("/tmp/workspace/.alan/runtime/stable/sessions/child.jsonl".to_string()),
         Some("repo-coding".to_string()),
     );
     record.latest_event_kind = Some("text_delta".to_string());

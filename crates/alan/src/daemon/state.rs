@@ -710,6 +710,8 @@ impl AppState {
         ));
         let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(&alan_home));
+        runtime_config.agent_home_paths =
+            Some(alan_runtime::AlanHomePaths::from_alan_home_dir(&alan_home));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store = Arc::new(SessionStore::with_dir(
             alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
@@ -809,6 +811,25 @@ impl AppState {
         }
     }
 
+    fn install_channel(&self) -> alan_runtime::InstallChannel {
+        alan_runtime::AlanHomePaths::from_alan_home_dir(self.workspace_resolver.alan_home_dir())
+            .channel
+    }
+
+    fn workspace_session_write_dir(&self, workspace_alan_dir: &Path) -> PathBuf {
+        alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(
+            workspace_alan_dir,
+            self.install_channel(),
+        )
+    }
+
+    fn workspace_session_read_dirs(&self, workspace_alan_dir: &Path) -> Vec<PathBuf> {
+        alan_runtime::workspace_session_read_dirs_for_channel_from_alan_dir(
+            workspace_alan_dir,
+            self.install_channel(),
+        )
+    }
+
     /// Get workspace path for a session by session ID
     #[allow(dead_code)]
     pub async fn get_workspace_path(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
@@ -831,10 +852,10 @@ impl AppState {
 
     /// Get sessions directory for a session by session ID
     ///
-    /// This resolves to `<workspace_alan_dir>/sessions`.
+    /// This resolves to the active channel's generated sessions directory.
     pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let alan_dir = self.get_workspace_alan_dir(session_id).await?;
-        Ok(alan_dir.map(|p| alan_runtime::workspace_sessions_dir_from_alan_dir(&p)))
+        Ok(alan_dir.map(|p| self.workspace_session_write_dir(&p)))
     }
 
     pub fn resolve_skill_catalog_snapshot(
@@ -1599,7 +1620,7 @@ impl AppState {
 
         // Detect rollout path for the specific session we just started.
         let rollout_path = detect_latest_rollout_path_for_session(
-            &alan_runtime::workspace_sessions_dir_from_alan_dir(&workspace_alan_dir),
+            &self.workspace_session_write_dir(&workspace_alan_dir),
             &session_id,
         );
 
@@ -1769,6 +1790,7 @@ impl AppState {
                     id,
                     persisted_rollout_path.clone(),
                     workspace_alan_dir.as_path(),
+                    self.install_channel(),
                 )? {
                     ResumeRolloutResolution::Use(path) => {
                         fallback_rollout_path = Some(path.clone());
@@ -1808,9 +1830,11 @@ impl AppState {
         };
 
         // Refresh rollout path using session-scoped lookup only.
-        let rollout_path =
-            detect_latest_rollout_path_for_session(&workspace_alan_dir.join("sessions"), id)
-                .or(fallback_rollout_path);
+        let rollout_path = detect_latest_rollout_path_for_session_in_dirs(
+            &self.workspace_session_read_dirs(&workspace_alan_dir),
+            id,
+        )
+        .or(fallback_rollout_path);
 
         {
             let mut sessions = self.sessions.write().await;
@@ -2182,6 +2206,15 @@ fn detect_latest_rollout_path_for_session(
     })
 }
 
+fn detect_latest_rollout_path_for_session_in_dirs(
+    sessions_dirs: &[PathBuf],
+    session_id: &str,
+) -> Option<PathBuf> {
+    sessions_dirs
+        .iter()
+        .find_map(|dir| detect_latest_rollout_path_for_session(dir, session_id))
+}
+
 fn detect_latest_rollout_path_matching(
     sessions_dir: &std::path::Path,
     mut include_path: impl FnMut(&std::path::Path) -> bool,
@@ -2340,18 +2373,24 @@ fn resolve_resume_rollout_path(
     session_id: &str,
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
+    channel: alan_runtime::InstallChannel,
 ) -> anyhow::Result<ResumeRolloutResolution> {
-    let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(workspace_alan_dir);
+    let sessions_dirs = alan_runtime::workspace_session_read_dirs_for_channel_from_alan_dir(
+        workspace_alan_dir,
+        channel,
+    );
 
     if let Some(path) = persisted_rollout_path.as_deref().and_then(|path| {
-        canonical_rollout_file_path(&canonical_rollout_sessions_dir(&sessions_dir)?, path)
+        sessions_dirs.iter().find_map(|sessions_dir| {
+            canonical_rollout_file_path(&canonical_rollout_sessions_dir(sessions_dir)?, path)
+        })
     }) {
         if rollout_path_matches_session(&path, session_id) {
             return Ok(ResumeRolloutResolution::Use(path));
         }
 
         if let Some(matched_path) =
-            detect_latest_rollout_path_for_session(&sessions_dir, session_id)
+            detect_latest_rollout_path_for_session_in_dirs(&sessions_dirs, session_id)
         {
             warn!(
                 %session_id,
@@ -2370,7 +2409,7 @@ fn resolve_resume_rollout_path(
         return Ok(ResumeRolloutResolution::StartFresh);
     }
 
-    if let Some(path) = detect_latest_rollout_path_for_session(&sessions_dir, session_id) {
+    if let Some(path) = detect_latest_rollout_path_for_session_in_dirs(&sessions_dirs, session_id) {
         return Ok(ResumeRolloutResolution::Use(path));
     }
 
@@ -2692,9 +2731,13 @@ Body
         write_rollout_with_session(&persisted, "sess-a");
         write_rollout_with_session(&sessions_dir.join("rollout-20260306-other.jsonl"), "other");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-a", Some(persisted.clone()), &workspace_alan_dir)
-                .unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-a",
+            Some(persisted.clone()),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&persisted))
@@ -2714,8 +2757,13 @@ Body
         let matched = sessions_dir.join("rollout-20260306-sess-a.jsonl");
         write_rollout_with_session(&matched, "sess-a");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-a", Some(legacy), &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-a",
+            Some(legacy),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&matched))
@@ -2738,8 +2786,13 @@ Body
         write_rollout_with_session(&nested.join("rollout-20260303-other.jsonl"), "other");
 
         let missing = sessions_dir.join("missing.jsonl");
-        let resolved =
-            resolve_resume_rollout_path("sess-a", Some(missing), &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-a",
+            Some(missing),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&latest))
@@ -2760,8 +2813,13 @@ Body
         let matched = sessions_dir.join("rollout-20260306-sess-a.jsonl");
         write_rollout_with_session(&matched, "sess-a");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-a", Some(outside), &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-a",
+            Some(outside),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&matched))
@@ -2779,11 +2837,65 @@ Body
         write_rollout_with_session(&legacy, "sess-legacy");
         write_rollout_with_session(&sessions_dir.join("rollout-20260305-other.jsonl"), "other");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-legacy", None, &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-legacy",
+            None,
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&legacy))
+        );
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_prefers_stable_runtime_dir_over_legacy_dir() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let legacy_sessions_dir = workspace_alan_dir.join("sessions");
+        let runtime_sessions_dir = workspace_alan_dir.join("runtime/stable/sessions");
+        std::fs::create_dir_all(&legacy_sessions_dir).unwrap();
+        std::fs::create_dir_all(&runtime_sessions_dir).unwrap();
+
+        let legacy = legacy_sessions_dir.join("rollout-20260305-sess-a.jsonl");
+        write_rollout_with_session(&legacy, "sess-a");
+        let runtime = runtime_sessions_dir.join("rollout-20260306-sess-a.jsonl");
+        write_rollout_with_session(&runtime, "sess-a");
+
+        let resolved = resolve_resume_rollout_path(
+            "sess-a",
+            None,
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            ResumeRolloutResolution::Use(canonical_test_path(&runtime))
+        );
+    }
+
+    #[test]
+    fn resolve_resume_rollout_path_dev_does_not_read_legacy_stable_dir() {
+        let temp = TempDir::new().unwrap();
+        let workspace_alan_dir = temp.path().join(".alan");
+        let legacy_sessions_dir = workspace_alan_dir.join("sessions");
+        std::fs::create_dir_all(&legacy_sessions_dir).unwrap();
+        let legacy = legacy_sessions_dir.join("rollout-20260305-sess-a.jsonl");
+        write_rollout_with_session(&legacy, "sess-a");
+
+        let err = resolve_resume_rollout_path(
+            "sess-a",
+            Some(legacy),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Dev,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("refusing fallback to unrelated latest rollout")
         );
     }
 
@@ -2798,8 +2910,13 @@ Body
         let persisted = sessions_dir.join(format!("rollout-20260305-{storage_key}.jsonl"));
         write_rollout_with_session(&persisted, &storage_key);
 
-        let resolved =
-            resolve_resume_rollout_path("sess-storage", None, &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-storage",
+            None,
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResumeRolloutResolution::Use(canonical_test_path(&persisted))
@@ -2816,8 +2933,13 @@ Body
         let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
         write_rollout_with_session(&legacy, "runtime-legacy");
 
-        let resolved =
-            resolve_resume_rollout_path("sess-daemon", Some(legacy), &workspace_alan_dir).unwrap();
+        let resolved = resolve_resume_rollout_path(
+            "sess-daemon",
+            Some(legacy),
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap();
         assert_eq!(resolved, ResumeRolloutResolution::StartFresh);
     }
 
@@ -2830,8 +2952,13 @@ Body
 
         write_rollout_with_session(&sessions_dir.join("rollout-20260305-other.jsonl"), "other");
 
-        let err =
-            resolve_resume_rollout_path("sess-missing", None, &workspace_alan_dir).unwrap_err();
+        let err = resolve_resume_rollout_path(
+            "sess-missing",
+            None,
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("refusing fallback to unrelated latest rollout")
@@ -2924,7 +3051,7 @@ Body
         );
         let workspace_path = temp.path().to_path_buf();
         let workspace_alan_dir = state.workspace_resolver.workspace_alan_dir(&workspace_path);
-        let sessions_dir = alan_runtime::workspace_sessions_dir_from_alan_dir(&workspace_alan_dir);
+        let sessions_dir = state.workspace_session_write_dir(&workspace_alan_dir);
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
         let legacy = sessions_dir.join("rollout-20260305-runtime-legacy.jsonl");
@@ -2997,7 +3124,10 @@ Body
         );
 
         let workspace_alan_dir = temp.path().join(".alan");
-        let sessions_dir = workspace_alan_dir.join("sessions");
+        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
         std::fs::create_dir_all(&sessions_dir).unwrap();
         let source_rollout = sessions_dir.join("rollout-20260305-legacy-runtime.jsonl");
         write_rollout_with_session(&source_rollout, "legacy-runtime");

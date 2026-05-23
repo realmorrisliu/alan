@@ -241,8 +241,10 @@ where
     }
     if spec.has_handle(SpawnHandle::Memory) {
         if let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref() {
-            resolved_child_agent_config.core_config.memory.workspace_dir =
-                Some(crate::workspace_memory_dir_from_alan_dir(alan_dir));
+            let channel = parent_runtime_channel(parent);
+            resolved_child_agent_config.core_config.memory.workspace_dir = Some(
+                crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
+            );
         }
     } else {
         resolved_child_agent_config.core_config.memory.workspace_dir = None;
@@ -1280,13 +1282,42 @@ fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option
         return None;
     }
     let alan_dir = memory_dir.parent()?;
-    (alan_dir.file_name()? == ".alan").then(|| alan_dir.to_path_buf())
+    if alan_dir.file_name()? == ".alan" {
+        return Some(alan_dir.to_path_buf());
+    }
+    if alan_dir
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "runtime")
+    {
+        let workspace_alan_dir = alan_dir.parent()?.parent()?;
+        return (workspace_alan_dir.file_name()? == ".alan")
+            .then(|| workspace_alan_dir.to_path_buf());
+    }
+    None
 }
 
 pub(super) fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
     let alan_dir = infer_workspace_alan_dir_from_memory_dir(memory_dir);
     let alan_dir = alan_dir.as_deref()?;
     (alan_dir.file_name()? == ".alan").then(|| alan_dir.parent().map(Path::to_path_buf))?
+}
+
+fn parent_runtime_channel(parent: &RuntimeLoopState) -> crate::InstallChannel {
+    let Some(memory_dir) = parent.core_config.memory.workspace_dir.as_deref() else {
+        return crate::InstallChannel::detect_current();
+    };
+    if let Some(channel_dir) = memory_dir.parent()
+        && channel_dir
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "runtime")
+        && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
+        && let Some(channel) = crate::InstallChannel::from_id(channel_id)
+    {
+        return channel;
+    }
+    crate::InstallChannel::detect_current()
 }
 
 pub(super) fn bound_workspace_root(state: &RuntimeLoopState) -> Option<PathBuf> {
@@ -1725,12 +1756,19 @@ mod tests {
         let workspace_alan_dir = workspace_root.join(".alan");
         let launch_root = workspace_root.join(".alan/agents/grader");
         std::fs::create_dir_all(launch_root.join("persona")).unwrap();
-        std::fs::create_dir_all(workspace_alan_dir.join("sessions")).unwrap();
+        std::fs::create_dir_all(crate::workspace_runtime_sessions_dir_from_alan_dir(
+            &workspace_alan_dir,
+            crate::InstallChannel::Stable,
+        ))
+        .unwrap();
         std::fs::create_dir_all(launch_root.join("skills")).unwrap();
         std::fs::write(launch_root.join("agent.toml"), "tool_repeat_limit = 4\n").unwrap();
 
         let mut core_config = crate::Config::default();
-        core_config.memory.workspace_dir = Some(workspace_alan_dir.join("memory"));
+        core_config.memory.workspace_dir = Some(crate::workspace_runtime_memory_dir_from_alan_dir(
+            &workspace_alan_dir,
+            crate::InstallChannel::Stable,
+        ));
         core_config.openai_responses_model = "gpt-5.4".to_string();
         let mut tools = ToolRegistry::with_config(Arc::new(core_config.clone()));
         tools.set_default_cwd(workspace_root.clone());
@@ -2381,6 +2419,7 @@ model_reasoning_effort = "high"
     fn child_workspace_alan_dir_requires_memory_or_policy_context() {
         let workspace_root = PathBuf::from("/tmp/repo");
         let memory_dir = PathBuf::from("/tmp/repo/.alan/memory");
+        let runtime_memory_dir = PathBuf::from("/tmp/repo/.alan/runtime/stable/memory");
         let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
 
         assert_eq!(
@@ -2397,7 +2436,7 @@ model_reasoning_effort = "high"
             resolve_child_workspace_alan_dir(
                 &spec,
                 Some(workspace_root.as_path()),
-                Some(memory_dir.as_path()),
+                Some(runtime_memory_dir.as_path()),
             ),
             Some(workspace_root.join(".alan"))
         );

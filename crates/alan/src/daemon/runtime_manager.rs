@@ -136,7 +136,7 @@ impl RuntimeManager {
     /// # Arguments
     /// * `session_id` - Session ID
     /// * `workspace_root_path` - Workspace root path (used as tool cwd)
-    /// * `workspace_alan_dir` - Workspace `.alan` dir (agent overlays/memory/sessions)
+    /// * `workspace_alan_dir` - Workspace `.alan` dir (agent overlays and generated runtime root)
     /// * `resume_rollout_path` - Optional rollout recovery path
     ///
     /// # Returns
@@ -570,10 +570,18 @@ mod tests {
     ) -> (PathBuf, PathBuf, SessionsDirPermissionGuard) {
         let workspace_root = temp.path().join("workspace");
         let alan_dir = workspace_root.join(".alan");
-        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(memory_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
-        let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
+        let guard = SessionsDirPermissionGuard::new(sessions_dir);
         (workspace_root, alan_dir, guard)
     }
 
@@ -721,8 +729,16 @@ mod tests {
         let workspace_root = temp.path().join("workspace");
         let alan_dir = workspace_root.join(".alan");
         std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        std::fs::create_dir_all(alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        ))
+        .unwrap();
+        std::fs::create_dir_all(alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        ))
+        .unwrap();
         std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         std::fs::write(
             alan_dir.join("models.toml"),
