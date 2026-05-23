@@ -4794,7 +4794,7 @@ private enum ShellRuntimeMetadataTests {
         )
 
         do {
-            try store.save(manifest)
+            try store.saveLegacyTerminalManifest(manifest)
         } catch {
             fail("failed to write test manifest: \(error)")
         }
@@ -4816,6 +4816,19 @@ private enum ShellRuntimeMetadataTests {
             controller.shellState.focusedTabID == "tab_main",
             "workspace manifest startup must preserve selected tab"
         )
+        guard let migratedManifest = decodeManifest(at: manifestURL),
+              let migratedTab = migratedManifest.spaces.flatMap(\.tabs).first
+        else {
+            fail("workspace manifest startup must migrate legacy terminal manifest")
+        }
+        expect(
+            migratedTab.pinSnapshot?.paneSlots.first?.paneSlotID == "pane_1",
+            "legacy terminal manifest migration must preserve PaneSlot identity"
+        )
+        expect(
+            migratedTab.pinSnapshot?.contents.first?.payload.terminal?.cwd == "/pinned",
+            "legacy terminal manifest migration must preserve terminal restore payload"
+        )
     }
 
     private static func verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest() {
@@ -4826,7 +4839,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 30)
@@ -4862,7 +4875,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 40)
@@ -4891,7 +4904,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 50)
@@ -4911,24 +4924,28 @@ private enum ShellRuntimeMetadataTests {
             fail("pin-tab must persist manifest tab")
         }
 
-        expect(tab.isPinned, "pin-tab must mark the tab as pinned")
-        expect(tab.pinSnapshot?.paneTree.paneIDs.count == 2, "pin snapshot must preserve split layout at pin time")
-        expect(tab.liveSnapshot?.paneTree.paneIDs.count == 3, "live snapshot must track later transient split changes")
         expect(
-            tab.pinSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/pinned",
+            rawManifestText(at: manifestURL)?.contains("\"panes\"") == false,
+            "persisted content manifest must not dual-write terminal-only panes"
+        )
+        expect(tab.isPinned, "pin-tab must mark the tab as pinned")
+        expect(tab.pinSnapshot?.paneTree.paneSlotIDs.count == 2, "pin snapshot must preserve split layout at pin time")
+        expect(tab.liveSnapshot?.paneTree.paneSlotIDs.count == 3, "live snapshot must track later transient split changes")
+        expect(
+            terminalPayload(in: tab.pinSnapshot, paneSlotID: "pane_1")?.cwd == "/pinned",
             "pin snapshot must keep cwd from pin time"
         )
         expect(
-            tab.liveSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/moved",
+            terminalPayload(in: tab.liveSnapshot, paneSlotID: "pane_1")?.cwd == "/moved",
             "live snapshot must track later cwd changes without mutating pin snapshot"
         )
 
         expect(controller.updatePinnedTabSnapshot(tabID: "tab_main"), "update-pin must be accepted")
         let updatedManifest = decodeManifest(at: manifestURL)
         let updatedTab = updatedManifest?.spaces.flatMap(\.tabs).first { $0.tabID == "tab_main" }
-        expect(updatedTab?.pinSnapshot?.paneTree.paneIDs.count == 3, "update-pin must replace pin split snapshot")
+        expect(updatedTab?.pinSnapshot?.paneTree.paneSlotIDs.count == 3, "update-pin must replace pin split snapshot")
         expect(
-            updatedTab?.pinSnapshot?.panes.first(where: { $0.paneID == "pane_1" })?.cwd == "/moved",
+            terminalPayload(in: updatedTab?.pinSnapshot, paneSlotID: "pane_1")?.cwd == "/moved",
             "update-pin must replace pin cwd snapshot"
         )
     }
@@ -4941,7 +4958,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -4992,7 +5009,7 @@ private enum ShellRuntimeMetadataTests {
         let foregroundController = makeController(
             windowID: "active_foreground_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: foregroundURL),
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -5012,7 +5029,7 @@ private enum ShellRuntimeMetadataTests {
         let idleController = makeController(
             windowID: "active_idle_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: idleURL),
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 61)
@@ -5032,7 +5049,7 @@ private enum ShellRuntimeMetadataTests {
         let exitedController = makeController(
             windowID: "active_exited_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: exitedURL),
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 62)
@@ -5055,7 +5072,7 @@ private enum ShellRuntimeMetadataTests {
         let activeOnlyController = makeController(
             windowID: "active_only_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: activeOnlyURL),
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 64)
@@ -5080,7 +5097,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: alanPendingWindowID,
             shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingYield: true),
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: alanPendingURL),
-            workspaceManifest: ShellWorkspaceManifest.defaultManifest(
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
                 windowID: alanPendingWindowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 63)
@@ -5094,7 +5111,7 @@ private enum ShellRuntimeMetadataTests {
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil,
+        workspaceManifest: ShellContentWorkspaceManifest? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
@@ -5168,11 +5185,28 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func decodeManifest(at url: URL) -> ShellWorkspaceManifest? {
+    private static func decodeManifest(at url: URL) -> ShellContentWorkspaceManifest? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(ShellWorkspaceManifest.self, from: data)
+        return try? decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+    }
+
+    private static func rawManifestText(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func terminalPayload(
+        in snapshot: ShellContentTabRestoreSnapshot?,
+        paneSlotID: String
+    ) -> ShellTerminalContentPayload? {
+        guard let snapshot,
+              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneSlotID })
+        else {
+            return nil
+        }
+        return snapshot.contents.first { $0.contentID == paneSlot.contentID }?.payload.terminal
     }
 
     private static func pane(
