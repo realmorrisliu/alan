@@ -10,6 +10,20 @@ struct CaptureOptions {
     var listOnly = false
 }
 
+enum CaptureChannel: String {
+    case stable
+    case dev
+
+    var bundleID: String {
+        switch self {
+        case .stable:
+            return "app.alanworks.macos"
+        case .dev:
+            return "app.alanworks.macos.dev"
+        }
+    }
+}
+
 enum CaptureAlanWindow {
     static func run(options: CaptureOptions) async throws {
         await MainActor.run {
@@ -158,6 +172,17 @@ enum CaptureAlanWindow {
             let argument = arguments[index]
 
             switch argument {
+            case "--channel":
+                index += 1
+                let rawValue = try value(after: argument, at: index, in: arguments)
+                guard let channel = CaptureChannel(rawValue: rawValue) else {
+                    throw NSError(
+                        domain: "AlanCapture",
+                        code: 8,
+                        userInfo: [NSLocalizedDescriptionKey: "Invalid channel: \(rawValue)"]
+                    )
+                }
+                options.bundleID = channel.bundleID
             case "--bundle-id":
                 index += 1
                 options.bundleID = try value(after: argument, at: index, in: arguments)
@@ -223,6 +248,7 @@ enum CaptureAlanWindow {
 
             Options:
               --output <path>            Write PNG screenshot to this path.
+              --channel <stable|dev>     Match Alan or Alan Dev by bundle id. Default: stable
               --bundle-id <bundle_id>    Bundle identifier to match. Default: app.alanworks.macos
               --pid <pid>                Match a specific process ID instead of bundle id.
               --title-contains <text>    Match only windows whose title contains this text.

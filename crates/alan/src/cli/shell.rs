@@ -1,3 +1,4 @@
+use alan_runtime::InstallChannel;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -471,11 +472,21 @@ fn invoke(
 }
 
 fn resolve_target(options: &ShellTargetOptions) -> Result<ShellTarget> {
+    resolve_target_for_channel(options, InstallChannel::detect_current())
+}
+
+fn resolve_target_for_channel(
+    options: &ShellTargetOptions,
+    channel: InstallChannel,
+) -> Result<ShellTarget> {
     let explicit_socket = options.socket.clone();
     let explicit_control_dir = options.control_dir.clone();
     let env_socket = std::env::var_os("ALAN_SHELL_SOCKET").map(PathBuf::from);
     let env_control_dir = std::env::var_os("ALAN_SHELL_CONTROL_DIR").map(PathBuf::from);
-    let window_root = options.window.as_deref().map(control_dir_for_window);
+    let window_root = options
+        .window
+        .as_deref()
+        .map(|window| control_dir_for_window_for_channel(window, channel));
 
     let control_dir = explicit_control_dir
         .clone()
@@ -520,8 +531,10 @@ fn resolve_target(options: &ShellTargetOptions) -> Result<ShellTarget> {
     })
 }
 
-fn control_dir_for_window(window: &str) -> PathBuf {
-    std::env::temp_dir().join("alan-shell-control").join(window)
+fn control_dir_for_window_for_channel(window: &str, channel: InstallChannel) -> PathBuf {
+    std::env::temp_dir()
+        .join(channel.descriptor().shell_control_namespace)
+        .join(window)
 }
 
 fn invoke_via_socket(
@@ -772,6 +785,41 @@ mod tests {
         let target = resolve_target(&options).unwrap();
         assert!(target.socket_path.ends_with("window_test/shell.sock"));
         assert!(target.control_dir.ends_with("window_test"));
+    }
+
+    #[test]
+    fn resolve_target_derives_window_control_dir_from_channel_namespace() {
+        let options = ShellTargetOptions {
+            socket: None,
+            control_dir: None,
+            window: Some("window_test".to_string()),
+            timeout_ms: 500,
+        };
+
+        let stable = resolve_target_for_channel(&options, InstallChannel::Stable).unwrap();
+        let dev = resolve_target_for_channel(&options, InstallChannel::Dev).unwrap();
+
+        assert_ne!(stable.control_dir, dev.control_dir);
+        assert!(
+            stable
+                .control_dir
+                .components()
+                .any(|component| component.as_os_str().to_string_lossy() == "alan-shell-control")
+        );
+        assert!(
+            dev.control_dir.components().any(
+                |component| component.as_os_str().to_string_lossy() == "alan-dev-shell-control"
+            )
+        );
+        assert!(
+            stable
+                .socket_path
+                .ends_with("alan-shell-control/window_test/shell.sock")
+        );
+        assert!(
+            dev.socket_path
+                .ends_with("alan-dev-shell-control/window_test/shell.sock")
+        );
     }
 
     #[test]

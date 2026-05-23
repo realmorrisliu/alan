@@ -23,23 +23,28 @@ struct ShellStatePersistenceStore {
         try? data.write(to: persistenceURL, options: .atomic)
     }
 
-    static func defaultPersistenceURL(windowID: String, fileManager: FileManager) -> URL {
+    static func defaultPersistenceURL(
+        windowID: String,
+        fileManager: FileManager,
+        channel: AlanInstallChannel = .current()
+    ) -> URL {
         let sanitizedWindowID = windowID
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
-        return persistenceDirectory(fileManager: fileManager)
+        return persistenceDirectory(fileManager: fileManager, channel: channel)
             .appendingPathComponent("\(persistenceFilePrefix)\(sanitizedWindowID)\(persistenceFileExtension)")
     }
 
     @MainActor
     static func restoredWindowContext(
         fileManager: FileManager,
-        restorePrevious: Bool
+        restorePrevious: Bool,
+        channel: AlanInstallChannel = .current()
     ) -> ShellWindowContext? {
         guard restorePrevious else { return nil }
 
-        let directories = [persistenceDirectory(fileManager: fileManager)]
-            + legacyPersistenceDirectories(fileManager: fileManager)
+        let directories = [persistenceDirectory(fileManager: fileManager, channel: channel)]
+            + legacyPersistenceDirectories(fileManager: fileManager, channel: channel)
 
         let candidates = directories.flatMap { directory -> [(Date, ShellWindowContext)] in
             guard let urls = try? fileManager.contentsOfDirectory(
@@ -52,7 +57,11 @@ struct ShellStatePersistenceStore {
 
             return urls.compactMap { url -> (Date, ShellWindowContext)? in
                 guard isShellStatePersistenceURL(url),
-                      let windowID = restorePersistedWindowID(fileManager: fileManager, persistenceURL: url)
+                      let windowID = restorePersistedWindowID(
+                        fileManager: fileManager,
+                        persistenceURL: url,
+                        channel: channel
+                      )
                 else {
                     return nil
                 }
@@ -61,13 +70,15 @@ struct ShellStatePersistenceStore {
                 let modifiedAt = values?.contentModificationDate ?? .distantPast
                 let canonicalURL = defaultPersistenceURL(
                     windowID: windowID,
-                    fileManager: fileManager
+                    fileManager: fileManager,
+                    channel: channel
                 )
                 return (
                     modifiedAt,
                     ShellWindowContext(
                         windowID: windowID,
                         persistenceURL: canonicalURL,
+                        installChannel: channel,
                         terminalRuntimeRegistry: TerminalRuntimeRegistry()
                     )
                 )
@@ -80,23 +91,30 @@ struct ShellStatePersistenceStore {
     @MainActor
     static func defaultWindowContext(
         fileManager: FileManager,
-        restorePrevious: Bool
+        restorePrevious: Bool,
+        channel: AlanInstallChannel = .current()
     ) -> ShellWindowContext {
         if restorePrevious {
             return ShellWindowContext.make(
                 fileManager: fileManager,
-                windowID: defaultRestorationWindowID
+                windowID: defaultRestorationWindowID,
+                installChannel: channel
             )
         }
 
-        return ShellWindowContext.make(fileManager: fileManager)
+        return ShellWindowContext.make(fileManager: fileManager, installChannel: channel)
     }
 
     static func restoreShellState(
         fileManager: FileManager,
-        persistenceURL: URL
+        persistenceURL: URL,
+        channel: AlanInstallChannel = .current()
     ) -> ShellStateSnapshot? {
-        let restoreURL = readablePersistenceURL(fileManager: fileManager, canonicalURL: persistenceURL)
+        let restoreURL = readablePersistenceURL(
+            fileManager: fileManager,
+            canonicalURL: persistenceURL,
+            channel: channel
+        )
         guard let restoreURL,
               let data = try? Data(contentsOf: restoreURL)
         else {
@@ -122,9 +140,14 @@ struct ShellStatePersistenceStore {
 
     private static func restorePersistedWindowID(
         fileManager: FileManager,
-        persistenceURL: URL
+        persistenceURL: URL,
+        channel: AlanInstallChannel
     ) -> String? {
-        let restoreURL = readablePersistenceURL(fileManager: fileManager, canonicalURL: persistenceURL)
+        let restoreURL = readablePersistenceURL(
+            fileManager: fileManager,
+            canonicalURL: persistenceURL,
+            channel: channel
+        )
         guard let restoreURL,
               let data = try? Data(contentsOf: restoreURL)
         else {
@@ -149,14 +172,27 @@ struct ShellStatePersistenceStore {
         return nil
     }
 
-    private static func persistenceDirectory(fileManager: FileManager) -> URL {
+    private static func persistenceDirectory(
+        fileManager: FileManager,
+        channel: AlanInstallChannel
+    ) -> URL {
         let appSupportURL =
             fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
-        return appSupportURL.appendingPathComponent("alan-macos", isDirectory: true)
+        return appSupportURL.appendingPathComponent(
+            channel.applicationSupportDirectoryName,
+            isDirectory: true
+        )
     }
 
-    private static func legacyPersistenceDirectories(fileManager: FileManager) -> [URL] {
+    private static func legacyPersistenceDirectories(
+        fileManager: FileManager,
+        channel: AlanInstallChannel
+    ) -> [URL] {
+        guard channel == .stable else {
+            return []
+        }
+
         let appSupportURL =
             fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
@@ -167,13 +203,14 @@ struct ShellStatePersistenceStore {
 
     private static func readablePersistenceURL(
         fileManager: FileManager,
-        canonicalURL: URL
+        canonicalURL: URL,
+        channel: AlanInstallChannel
     ) -> URL? {
         if fileManager.fileExists(atPath: canonicalURL.path) {
             return canonicalURL
         }
 
-        return legacyPersistenceDirectories(fileManager: fileManager)
+        return legacyPersistenceDirectories(fileManager: fileManager, channel: channel)
             .map { $0.appendingPathComponent(canonicalURL.lastPathComponent) }
             .first { fileManager.fileExists(atPath: $0.path) }
     }

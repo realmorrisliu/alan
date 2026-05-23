@@ -244,6 +244,37 @@ private func testChannelResolvesFromBundleIdentifier() throws {
     )
 }
 
+private func testChannelDescriptorsExposeRuntimeIsolationIdentity() throws {
+    try require(
+        AlanInstallChannel.stable.bundleIdentifier == "app.alanworks.macos",
+        "stable bundle identifier must preserve public app identity"
+    )
+    try require(
+        AlanInstallChannel.dev.bundleIdentifier == "app.alanworks.macos.dev",
+        "dev bundle identifier must expose local dev app identity"
+    )
+    try require(
+        AlanInstallChannel.stable.applicationSupportDirectoryName == "alan-macos",
+        "stable support directory must remain compatible"
+    )
+    try require(
+        AlanInstallChannel.dev.applicationSupportDirectoryName == "alan-macos-dev",
+        "dev support directory must be channel-scoped"
+    )
+    try require(
+        AlanInstallChannel.stable.shellControlNamespace == "alan-shell-control",
+        "stable shell-control namespace must remain compatible"
+    )
+    try require(
+        AlanInstallChannel.dev.shellControlNamespace == "alan-dev-shell-control",
+        "dev shell-control namespace must be channel-scoped"
+    )
+    try require(
+        AlanInstallChannel.dev.logSubsystem == "app.alanworks.macos.dev",
+        "dev log subsystem must be channel-scoped"
+    )
+}
+
 @main
 private enum TestRunner {
     static func main() throws {
@@ -256,5 +287,6 @@ private enum TestRunner {
         try testRejectsAlanHomeBinTarget()
         try testRejectsDevAlanHomeBinTarget()
         try testChannelResolvesFromBundleIdentifier()
+        try testChannelDescriptorsExposeRuntimeIsolationIdentity()
     }
 }

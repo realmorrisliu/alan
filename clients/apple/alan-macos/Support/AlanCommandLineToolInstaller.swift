@@ -56,6 +56,37 @@ enum AlanInstallChannel: Equatable {
         }
     }
 
+    var bundleIdentifier: String {
+        switch self {
+        case .stable:
+            return "app.alanworks.macos"
+        case .dev:
+            return "app.alanworks.macos.dev"
+        }
+    }
+
+    var applicationSupportDirectoryName: String {
+        switch self {
+        case .stable:
+            return "alan-macos"
+        case .dev:
+            return "alan-macos-dev"
+        }
+    }
+
+    var shellControlNamespace: String {
+        switch self {
+        case .stable:
+            return "alan-shell-control"
+        case .dev:
+            return "alan-dev-shell-control"
+        }
+    }
+
+    var logSubsystem: String {
+        bundleIdentifier
+    }
+
     var toolNames: [String] {
         [cliToolName, tuiToolName]
     }

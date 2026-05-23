@@ -26,11 +26,16 @@ struct ShellWorkspaceManifestStore {
 
     init(
         fileManager: FileManager = .default,
-        windowID: String
+        windowID: String,
+        channel: AlanInstallChannel = .current()
     ) {
         self.init(
             fileManager: fileManager,
-            manifestURL: Self.defaultManifestURL(windowID: windowID, fileManager: fileManager)
+            manifestURL: Self.defaultManifestURL(
+                windowID: windowID,
+                fileManager: fileManager,
+                channel: channel
+            )
         )
     }
 
@@ -122,14 +127,15 @@ struct ShellWorkspaceManifestStore {
 
     static func defaultManifestURL(
         windowID: String,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        channel: AlanInstallChannel = .current()
     ) -> URL {
         let applicationSupportURL = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? fileManager.temporaryDirectory
         return applicationSupportURL
-            .appendingPathComponent("alan-macos", isDirectory: true)
+            .appendingPathComponent(channel.applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("shell-workspace-\(sanitizedWindowID(windowID)).json")
     }
 

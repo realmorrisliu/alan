@@ -42,6 +42,7 @@ final class AlanAppSingletonGuard {
 
         let lockDirectory = try singletonLockDirectory(
             applicationSupportDirectory: applicationSupportDirectory,
+            channel: AlanInstallChannel.current(bundleIdentifier: bundleIdentifier),
             fileManager: fileManager
         )
         let lockURL = lockDirectory.appendingPathComponent(
@@ -96,6 +97,7 @@ final class AlanAppSingletonGuard {
 
     private static func singletonLockDirectory(
         applicationSupportDirectory: URL?,
+        channel: AlanInstallChannel,
         fileManager: FileManager
     ) throws -> URL {
         let appSupportURL =
@@ -103,7 +105,7 @@ final class AlanAppSingletonGuard {
             ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         let lockDirectory = appSupportURL
-            .appendingPathComponent("alan-macos", isDirectory: true)
+            .appendingPathComponent(channel.applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("SingletonLocks", isDirectory: true)
         try fileManager.createDirectory(at: lockDirectory, withIntermediateDirectories: true)
         return lockDirectory

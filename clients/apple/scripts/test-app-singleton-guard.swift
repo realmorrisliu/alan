@@ -89,10 +89,45 @@ private func testDroppedOwnerReleasesLock() throws {
     reacquired.release()
 }
 
+private func testStableAndDevLocksUseChannelSupportDirectories() throws {
+    let supportDirectory = try temporarySupportDirectory("channel-locks")
+
+    let stable = try acquiredGuard(
+        supportDirectory: supportDirectory,
+        bundleIdentifier: AlanInstallChannel.stable.bundleIdentifier
+    )
+    defer { stable.release() }
+
+    let dev = try acquiredGuard(
+        supportDirectory: supportDirectory,
+        bundleIdentifier: AlanInstallChannel.dev.bundleIdentifier
+    )
+    defer { dev.release() }
+
+    try require(stable.lockURL != dev.lockURL, "stable and dev singleton locks must differ")
+    try require(
+        stable.lockURL.path.contains("/alan-macos/SingletonLocks/"),
+        "stable singleton lock must stay under the stable support directory"
+    )
+    try require(
+        dev.lockURL.path.contains("/alan-macos-dev/SingletonLocks/"),
+        "dev singleton lock must use the dev support directory"
+    )
+    try require(
+        stable.lockURL.lastPathComponent == "app.alanworks.macos.lock",
+        "stable singleton lock must be keyed by stable bundle id"
+    )
+    try require(
+        dev.lockURL.lastPathComponent == "app.alanworks.macos.dev.lock",
+        "dev singleton lock must be keyed by dev bundle id"
+    )
+}
+
 @main
 private enum TestRunner {
     static func main() throws {
         try testRejectsSecondOwnerUntilRelease()
         try testDroppedOwnerReleasesLock()
+        try testStableAndDevLocksUseChannelSupportDirectories()
     }
 }

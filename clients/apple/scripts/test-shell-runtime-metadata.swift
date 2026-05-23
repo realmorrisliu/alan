@@ -114,6 +114,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesControlPlaneResponsesExposeContentContainers()
         verifiesContentContainerEventsCaptureLifecycleAndRejections()
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
+        verifiesChannelScopedSupportStatePaths()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -4762,6 +4763,49 @@ private enum ShellRuntimeMetadataTests {
         expect(
             terminalHandle.teardownCount == 0,
             "closing settings tab must not finalize unrelated terminal runtime"
+        )
+    }
+
+    private static func verifiesChannelScopedSupportStatePaths() {
+        let fileManager = FileManager.default
+        let stableState = ShellStatePersistenceStore.defaultPersistenceURL(
+            windowID: "window_main",
+            fileManager: fileManager,
+            channel: .stable
+        )
+        let devState = ShellStatePersistenceStore.defaultPersistenceURL(
+            windowID: "window_main",
+            fileManager: fileManager,
+            channel: .dev
+        )
+        let stableManifest = ShellWorkspaceManifestStore.defaultManifestURL(
+            windowID: "window_main",
+            fileManager: fileManager,
+            channel: .stable
+        )
+        let devManifest = ShellWorkspaceManifestStore.defaultManifestURL(
+            windowID: "window_main",
+            fileManager: fileManager,
+            channel: .dev
+        )
+
+        expect(stableState != devState, "stable and dev shell state paths must differ")
+        expect(stableManifest != devManifest, "stable and dev shell manifest paths must differ")
+        expect(
+            stableState.path.contains("/alan-macos/"),
+            "stable shell state path must remain under alan-macos"
+        )
+        expect(
+            devState.path.contains("/alan-macos-dev/"),
+            "dev shell state path must be under alan-macos-dev"
+        )
+        expect(
+            stableManifest.path.contains("/alan-macos/"),
+            "stable shell manifest path must remain under alan-macos"
+        )
+        expect(
+            devManifest.path.contains("/alan-macos-dev/"),
+            "dev shell manifest path must be under alan-macos-dev"
         )
     }
 

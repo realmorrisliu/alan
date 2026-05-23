@@ -5,6 +5,7 @@ import Foundation
 final class AlanShellControlFilePoller {
     private let windowID: String
     private let fileManager: FileManager
+    private let channel: AlanInstallChannel
     private let commandsURL: URL
     private let resultsURL: URL
     private let encoder: JSONEncoder
@@ -19,6 +20,7 @@ final class AlanShellControlFilePoller {
     init(
         windowID: String,
         fileManager: FileManager,
+        channel: AlanInstallChannel = .current(),
         commandsURL: URL,
         resultsURL: URL,
         encoder: JSONEncoder,
@@ -29,6 +31,7 @@ final class AlanShellControlFilePoller {
     ) {
         self.windowID = windowID
         self.fileManager = fileManager
+        self.channel = channel
         self.commandsURL = commandsURL
         self.resultsURL = resultsURL
         self.encoder = encoder
@@ -149,7 +152,8 @@ final class AlanShellControlFilePoller {
             let bindingURL = alanShellBindingFileURL(
                 windowID: windowID,
                 paneID: paneID,
-                fileManager: fileManager
+                fileManager: fileManager,
+                channel: channel
             )
 
             guard fileManager.fileExists(atPath: bindingURL.path) else {
