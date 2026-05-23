@@ -1049,17 +1049,30 @@ extension ShellContentStateSnapshot {
     static func projecting(_ shellState: ShellStateSnapshot) -> ShellContentStateSnapshot {
         let layoutPaneIDs = Set(shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
         let projectedPanes = shellState.panes.filter { layoutPaneIDs.contains($0.paneID) }
-        let explicitPaneSlots = (shellState.paneSlots ?? []).filter {
-            layoutPaneIDs.contains($0.paneSlotID)
+        let paneSlotLocations = paneSlotLocations(in: shellState.spaces)
+        let projectedPanesByID = projectedPanes.reduce(into: [String: ShellPane]()) { panesByID, pane in
+            panesByID[pane.paneID] = pane
+        }
+        let explicitPaneSlots = (shellState.paneSlots ?? []).compactMap { paneSlot -> ShellPaneSlot? in
+            guard layoutPaneIDs.contains(paneSlot.paneSlotID),
+                  let location = paneSlotLocations[paneSlot.paneSlotID]
+            else {
+                return nil
+            }
+
+            return ShellPaneSlot(
+                paneSlotID: paneSlot.paneSlotID,
+                tabID: location.tabID,
+                spaceID: location.spaceID,
+                contentID: paneSlot.contentID,
+                attention: projectedPanesByID[paneSlot.paneSlotID]?.attention ?? paneSlot.attention
+            )
         }
         let explicitPaneSlotIDs = Set(explicitPaneSlots.map(\.paneSlotID))
         let explicitContentIDs = Set(explicitPaneSlots.map(\.contentID))
         let explicitPaneSlotsByContentID = explicitPaneSlots.reduce(into: [String: ShellPaneSlot]()) {
             slotsByContentID, slot in
             slotsByContentID[slot.contentID] = slot
-        }
-        let projectedPanesByID = projectedPanes.reduce(into: [String: ShellPane]()) { panesByID, pane in
-            panesByID[pane.paneID] = pane
         }
         let explicitContents = (shellState.contents ?? []).filter {
             explicitContentIDs.contains($0.contentID)
@@ -1245,6 +1258,18 @@ extension ShellContentStateSnapshot {
             .map(\.attention)
             .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
             ?? .idle
+    }
+
+    private static func paneSlotLocations(
+        in spaces: [ShellSpace]
+    ) -> [String: (spaceID: String, tabID: String)] {
+        spaces.reduce(into: [String: (spaceID: String, tabID: String)]()) { locationsByID, space in
+            for tab in space.tabs {
+                for paneSlotID in tab.paneTree.paneIDs {
+                    locationsByID[paneSlotID] = (spaceID: space.spaceID, tabID: tab.tabID)
+                }
+            }
+        }
     }
 
     private static func attentionRank(for attention: ShellAttentionState) -> Int {

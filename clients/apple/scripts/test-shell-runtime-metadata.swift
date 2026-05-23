@@ -107,6 +107,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesSplitPaneAcceptsMarkdownContentIntent()
+        verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -3965,6 +3966,195 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.launchTarget == nil && controller.selectedPane?.process == nil,
             "markdown split intent must not create a terminal process for the new PaneSlot"
+        )
+    }
+
+    private static func verifiesMixedContentPaneSlotMutationsStayContentAgnostic() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Mixed-\(UUID().uuidString).md")
+        do {
+            try "## Mixed notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("mixed content setup must create a markdown file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let controller = makeController()
+        let terminalHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let terminalContentID = controller.shellState
+            .contentStateProjection()
+            .contentMounted(in: "pane_1")?
+            .contentID
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(fileURL: fileURL, title: nil)
+        ) else {
+            fail("mixed content setup must create a markdown split")
+        }
+        guard let settingsPaneID = controller.splitPane(
+            paneID: markdownPaneID,
+            placement: .down,
+            contentIntent: .settings(title: nil)
+        ) else {
+            fail("mixed content setup must create a settings split")
+        }
+        guard let mixedTabID = controller.shellState.pane(paneID: "pane_1")?.tabID else {
+            fail("mixed content setup must keep the source tab")
+        }
+
+        var projection = controller.shellState.contentStateProjection()
+        let markdownContentID = projection.contentMounted(in: markdownPaneID)?.contentID
+        let settingsContentID = projection.contentMounted(in: settingsPaneID)?.contentID
+        expect(
+            projection.tab(tabID: mixedTabID)?.paneTree.paneSlotIDs == [
+                "pane_1",
+                markdownPaneID,
+                settingsPaneID,
+            ],
+            "mixed split setup must keep terminal, markdown, and settings PaneSlots in one tree"
+        )
+        expect(
+            projection.contentMounted(in: markdownPaneID)?.kind == .markdown,
+            "mixed split setup must mount markdown content"
+        )
+        expect(
+            projection.contentMounted(in: settingsPaneID)?.kind == .settings,
+            "mixed split setup must mount settings content"
+        )
+        expect(
+            terminalContentID == projection.contentMounted(in: "pane_1")?.contentID,
+            "mixed split setup must preserve terminal content identity"
+        )
+        expect(
+            !controller.terminalRuntimeRegistry.registeredPaneIDs.contains(markdownPaneID),
+            "markdown PaneSlot must not allocate a terminal runtime"
+        )
+        expect(
+            !controller.terminalRuntimeRegistry.registeredPaneIDs.contains(settingsPaneID),
+            "settings PaneSlot must not allocate a terminal runtime"
+        )
+
+        controller.focus(paneID: settingsPaneID)
+        projection = controller.shellState.contentStateProjection()
+        expect(
+            projection.focusedContent?.kind == .settings,
+            "PaneSlot focus must move from terminal to settings content"
+        )
+        expect(
+            terminalHandle.teardownCount == 0,
+            "focusing non-terminal content must not finalize the terminal runtime"
+        )
+
+        guard let splitNodeID = controller.shellState
+            .tab(tabID: mixedTabID)?
+            .paneTree
+            .splitNodes
+            .first?
+            .nodeID
+        else {
+            fail("mixed split setup must expose a resizable split node")
+        }
+        expect(controller.resizeSplit(splitNodeID: splitNodeID, ratio: 0.7), "mixed split resize must apply")
+        expect(controller.equalizeSelectedTabSplits(), "mixed split equalize must apply")
+        expect(
+            terminalHandle.teardownCount == 0,
+            "resize and equalize must preserve terminal runtime identity"
+        )
+
+        guard let targetTabID = controller.openTerminalTab(in: controller.selectedSpaceID) else {
+            fail("mixed content move setup must create a target tab")
+        }
+        expect(
+            controller.movePane(paneID: markdownPaneID, toTab: targetTabID, direction: .horizontal),
+            "cross-tab move must accept a markdown PaneSlot"
+        )
+        projection = controller.shellState.contentStateProjection()
+        expect(
+            projection.paneSlot(paneSlotID: markdownPaneID)?.tabID == targetTabID,
+            "moved markdown PaneSlot must adopt the target tab membership"
+        )
+        expect(
+            controller.shellState.paneSlots?.first { $0.paneSlotID == markdownPaneID }?.tabID == targetTabID,
+            "cross-tab move must persist markdown PaneSlot target tab membership"
+        )
+        expect(
+            projection.paneSlot(paneSlotID: markdownPaneID)?.spaceID == controller.shellState.focusedSpaceID,
+            "moved markdown PaneSlot must adopt the target space membership"
+        )
+        expect(
+            projection.contentMounted(in: markdownPaneID)?.contentID == markdownContentID,
+            "cross-tab move must preserve markdown ContentInstance identity"
+        )
+        expect(
+            projection.tab(tabID: mixedTabID)?.paneTree.paneSlotIDs.contains(markdownPaneID) == false,
+            "source split tree must drop the moved markdown PaneSlot"
+        )
+        expect(
+            projection.tab(tabID: targetTabID)?.paneTree.paneSlotIDs.contains(markdownPaneID) == true,
+            "target split tree must include the moved markdown PaneSlot"
+        )
+        expect(
+            terminalHandle.teardownCount == 0,
+            "moving non-terminal content must preserve sibling terminal runtime"
+        )
+
+        expect(
+            controller.closePane(paneID: markdownPaneID) == .closed,
+            "closing moved markdown PaneSlot must apply"
+        )
+        projection = controller.shellState.contentStateProjection()
+        expect(
+            projection.paneSlot(paneSlotID: markdownPaneID) == nil,
+            "closing markdown PaneSlot must remove the PaneSlot descriptor"
+        )
+        expect(
+            markdownContentID.flatMap { projection.content(contentID: $0) } == nil,
+            "closing markdown PaneSlot must remove the mounted ContentInstance"
+        )
+        expect(
+            terminalHandle.teardownCount == 0,
+            "closing markdown PaneSlot must not call terminal finalizer"
+        )
+
+        expect(
+            controller.liftPaneToTab(paneID: settingsPaneID) == .lifted,
+            "PaneSlot lift must accept settings content"
+        )
+        projection = controller.shellState.contentStateProjection()
+        guard let liftedSettingsSlot = projection.paneSlot(paneSlotID: settingsPaneID) else {
+            fail("lifted settings PaneSlot must remain in content state")
+        }
+        expect(
+            liftedSettingsSlot.tabID != mixedTabID,
+            "lifted settings PaneSlot must adopt the new tab membership"
+        )
+        expect(
+            controller.shellState.paneSlots?.first { $0.paneSlotID == settingsPaneID }?.tabID
+                == liftedSettingsSlot.tabID,
+            "PaneSlot lift must persist settings target tab membership"
+        )
+        expect(
+            projection.contentMounted(in: settingsPaneID)?.contentID == settingsContentID,
+            "PaneSlot lift must preserve settings ContentInstance identity"
+        )
+        expect(
+            controller.terminalRuntimeRegistry.registeredPaneIDs.contains(settingsPaneID) == false,
+            "lifted settings PaneSlot must not allocate a terminal runtime"
+        )
+
+        expect(
+            controller.closeTab(tabID: liftedSettingsSlot.tabID) == .closed,
+            "closing settings tab must apply"
+        )
+        projection = controller.shellState.contentStateProjection()
+        expect(
+            settingsContentID.flatMap { projection.content(contentID: $0) } == nil,
+            "closing settings tab must remove the settings ContentInstance"
+        )
+        expect(
+            terminalHandle.teardownCount == 0,
+            "closing settings tab must not finalize unrelated terminal runtime"
         )
     }
 

@@ -26,7 +26,7 @@
 ## 4. Workspace Mutations And Control Plane
 
 - [x] 4.1 Update tab and split creation paths to accept content intent while keeping New Terminal Tab as the default behavior.
-- [ ] 4.2 Update split, focus, resize, equalize, PaneSlot lift, PaneSlot move, close PaneSlot, and close tab mutations to operate on content-agnostic PaneSlots.
+- [x] 4.2 Update split, focus, resize, equalize, PaneSlot lift, PaneSlot move, close PaneSlot, and close tab mutations to operate on content-agnostic PaneSlots.
 - [ ] 4.3 Extend shell control-plane DTOs and responses to expose `pane_slots`, `contents`, `pane_slot_id`, `content_id`, content capabilities, and content-aware mutation results.
 - [ ] 4.4 Replace terminal text delivery with a terminal-specific command such as `terminal.send_text` that resolves PaneSlot targets to terminal ContentInstances before delivery.
 - [ ] 4.5 Reject terminal-specific commands against non-terminal ContentInstances with stable unsupported-content errors and observable diagnostics.
