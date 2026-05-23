@@ -6,20 +6,35 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=scripts/release-env.sh
 source "$SCRIPT_DIR/release-env.sh"
+# shellcheck source=scripts/install-channel.sh
+source "$SCRIPT_DIR/install-channel.sh"
 # shellcheck source=scripts/app-bundle-paths.sh
 source "$SCRIPT_DIR/app-bundle-paths.sh"
 
+alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
+
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$PROJECT_ROOT/target/xcode-derived}"
-APP_SOURCE="$DERIVED_DATA/Build/Products/Release/Alan.app"
+APP_SOURCE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 APP_INSTALL_DIR="${ALAN_APP_INSTALL_DIR:-$HOME/Applications}"
-APP_TARGET="$APP_INSTALL_DIR/Alan.app"
-LEGACY_APP_TARGET="$APP_INSTALL_DIR/alan.app"
+APP_TARGET="$APP_INSTALL_DIR/$ALAN_APP_BUNDLE_NAME"
+LEGACY_APP_TARGET=""
+if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+    LEGACY_APP_TARGET="$APP_INSTALL_DIR/$ALAN_LEGACY_APP_BUNDLE_NAME"
+fi
 CLI_INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-/usr/local/bin}"
 APP_WAS_RUNNING=0
 
 is_app_running() {
-    pgrep -f "/Alan\\.app/Contents/MacOS/Alan" >/dev/null 2>&1 ||
-        pgrep -f "/alan\\.app/Contents/MacOS/alan" >/dev/null 2>&1
+    local app_pattern="${ALAN_APP_BUNDLE_NAME//./\\.}"
+
+    pgrep -f "/$app_pattern/Contents/MacOS/" >/dev/null 2>&1 && return 0
+
+    if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+        local legacy_pattern="${ALAN_LEGACY_APP_BUNDLE_NAME//./\\.}"
+        pgrep -f "/$legacy_pattern/Contents/MacOS/" >/dev/null 2>&1 && return 0
+    fi
+
+    return 1
 }
 
 is_alan_owned_link() {
@@ -32,13 +47,22 @@ is_alan_owned_link() {
 
     target="$(readlink "$path")"
     case "$target" in
-        *"/Alan.app/Contents/Resources/bin/"*|*"/alan.app/Contents/Resources/bin/"*)
+        *"/$ALAN_APP_BUNDLE_NAME/Contents/Resources/bin/"*)
             return 0
             ;;
         *)
-            return 1
             ;;
     esac
+
+    if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+        case "$target" in
+            *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/"*)
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
 }
 
 is_homebrew_prefix_target() {
@@ -85,18 +109,26 @@ has_homebrew_managed_tool_links() {
     [[ -d /usr/local/Homebrew ]] && prefixes+=("/usr/local")
 
     for prefix in "${prefixes[@]}"; do
-        for tool in alan alan-tui; do
+        for tool in "$ALAN_CLI_NAME" "$ALAN_TUI_NAME"; do
             link="$prefix/bin/$tool"
             if [[ ! -L "$link" ]]; then
                 continue
             fi
             target="$(readlink "$link")"
             case "$target" in
-                *"/Alan.app/Contents/Resources/bin/$tool"|*"/alan.app/Contents/Resources/bin/$tool")
+                *"/$ALAN_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
                     printf '%s\n' "$link"
                     return 0
                     ;;
             esac
+            if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+                case "$target" in
+                    *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
+                        printf '%s\n' "$link"
+                        return 0
+                        ;;
+                esac
+            fi
         done
     done
 
@@ -139,11 +171,11 @@ if [[ ! -d "$APP_SOURCE" ]]; then
     exit 1
 fi
 
-printf 'Installing Alan.app to %s...\n' "$APP_TARGET"
+printf 'Installing %s to %s...\n' "$ALAN_APP_BUNDLE_NAME" "$APP_TARGET"
 mkdir -p "$APP_INSTALL_DIR"
 rm -rf "$APP_TARGET"
 ditto "$APP_SOURCE" "$APP_TARGET"
-if alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
+if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     printf 'Removing legacy lowercase app bundle at %s...\n' "$LEGACY_APP_TARGET"
     rm -rf "$LEGACY_APP_TARGET"
 fi
@@ -155,21 +187,21 @@ if is_homebrew_prefix_target "$CLI_INSTALL_DIR"; then
     exit 1
 fi
 if homebrew_link="$(has_homebrew_managed_tool_links)"; then
-    printf 'error: Homebrew already manages alan command-line links at %s\n' "$homebrew_link" >&2
-    printf '       use the Homebrew cask to update alan, or remove the Homebrew links before creating direct-install symlinks.\n' >&2
+    printf 'error: Homebrew already manages %s command-line links at %s\n' "$ALAN_DISPLAY_NAME" "$homebrew_link" >&2
+    printf '       use the Homebrew cask to update stable Alan, or remove the Homebrew links before creating direct-install symlinks.\n' >&2
     exit 1
 fi
 mkdir -p "$CLI_INSTALL_DIR"
-link_tool "alan"
-link_tool "alan-tui"
+link_tool "$ALAN_CLI_NAME"
+link_tool "$ALAN_TUI_NAME"
 
-printf '\nAlan installed:\n'
+printf '\n%s installed:\n' "$ALAN_DISPLAY_NAME"
 printf '  app: %s\n' "$APP_TARGET"
-printf '  cli: %s/alan -> %s/Contents/Resources/bin/alan\n' "$CLI_INSTALL_DIR" "$APP_TARGET"
-printf '  tui: %s/alan-tui -> %s/Contents/Resources/bin/alan-tui\n' "$CLI_INSTALL_DIR" "$APP_TARGET"
+printf '  cli: %s/%s -> %s/Contents/Resources/bin/%s\n' "$CLI_INSTALL_DIR" "$ALAN_CLI_NAME" "$APP_TARGET" "$ALAN_CLI_NAME"
+printf '  tui: %s/%s -> %s/Contents/Resources/bin/%s\n' "$CLI_INSTALL_DIR" "$ALAN_TUI_NAME" "$APP_TARGET" "$ALAN_TUI_NAME"
 
 if [[ "$APP_WAS_RUNNING" -eq 1 ]]; then
-    printf '\nAlan.app was running during install. It was not stopped or relaunched; restart it manually to use the newly installed app.\n'
+    printf '\n%s was running during install. It was not stopped or relaunched; restart it manually to use the newly installed app.\n' "$ALAN_APP_BUNDLE_NAME"
 fi
 
 printf '\nEnsure %s is on PATH if you want shell access.\n' "$CLI_INSTALL_DIR"

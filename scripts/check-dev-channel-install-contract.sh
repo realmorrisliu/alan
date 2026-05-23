@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+require_pattern() {
+    local file="$1"
+    local pattern="$2"
+    local message="$3"
+
+    if ! rg -n --pcre2 "$pattern" "$REPO_ROOT/$file" >/dev/null; then
+        fail "$message"
+    fi
+}
+
+reject_pattern() {
+    local file="$1"
+    local pattern="$2"
+    local message="$3"
+
+    if rg -n --pcre2 "$pattern" "$REPO_ROOT/$file" >/dev/null; then
+        fail "$message"
+    fi
+}
+
+"$SCRIPT_DIR/test-install-channel-descriptor.sh" >/dev/null
+
+require_pattern "justfile" "^install-dev:" "justfile must expose install-dev"
+require_pattern "justfile" "^uninstall-dev:" "justfile must expose uninstall-dev"
+require_pattern "scripts/assemble-release-app.sh" "ALAN_APP_BUNDLE_NAME" "assembly must use channel app bundle name"
+require_pattern "scripts/assemble-release-app.sh" 'PRODUCT_BUNDLE_IDENTIFIER="\$ALAN_BUNDLE_ID"' "assembly must override channel bundle id"
+require_pattern "scripts/assemble-release-app.sh" 'INFOPLIST_KEY_CFBundleDisplayName="\$ALAN_DISPLAY_NAME"' "assembly must override channel display name"
+require_pattern "scripts/assemble-release-app.sh" 'ALAN_TUI_BINARY_OUTFILE="\$STAGING_DIR/\$ALAN_TUI_NAME"' "assembly must build channel-named TUI"
+require_pattern "scripts/assemble-release-app.sh" "Dev channel builds are local-only" "assembly must block dev public release artifacts"
+require_pattern "scripts/install.sh" "ALAN_CLI_NAME" "install script must link channel CLI name"
+require_pattern "scripts/install.sh" "ALAN_TUI_NAME" "install script must link channel TUI name"
+require_pattern "scripts/uninstall.sh" "ALAN_CLI_NAME" "uninstall script must remove channel CLI name"
+require_pattern "scripts/uninstall.sh" "ALAN_TUI_NAME" "uninstall script must remove channel TUI name"
+require_pattern "packaging/homebrew/Casks/alan.rb.template" "app \"Alan\\.app\"" "Homebrew cask must remain stable-only"
+require_pattern "packaging/homebrew/Casks/alan.rb.template" "target: \"alan\"" "Homebrew cask must keep stable CLI target"
+reject_pattern "packaging/homebrew/Casks/alan.rb.template" "Alan Dev|alan-dev" "Homebrew cask must not publish dev artifacts"
+
+printf 'Dev channel install contract checks passed.\n'

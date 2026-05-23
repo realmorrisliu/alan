@@ -1,6 +1,66 @@
 import Foundation
 
 #if os(macOS)
+enum AlanInstallChannel: Equatable {
+    case stable
+    case dev
+
+    static func current(
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> AlanInstallChannel {
+        if let channel = fromBundleIdentifier(bundleIdentifier) {
+            return channel
+        }
+        if environment["ALAN_INSTALL_CHANNEL"] == "dev" {
+            return .dev
+        }
+        return .stable
+    }
+
+    static func fromBundleIdentifier(_ bundleIdentifier: String?) -> AlanInstallChannel? {
+        switch bundleIdentifier {
+        case "app.alanworks.macos":
+            return .stable
+        case "app.alanworks.macos.dev":
+            return .dev
+        default:
+            return nil
+        }
+    }
+
+    var cliToolName: String {
+        switch self {
+        case .stable:
+            return "alan"
+        case .dev:
+            return "alan-dev"
+        }
+    }
+
+    var tuiToolName: String {
+        switch self {
+        case .stable:
+            return "alan-tui"
+        case .dev:
+            return "alan-dev-tui"
+        }
+    }
+
+    var toolNames: [String] {
+        [cliToolName, tuiToolName]
+    }
+
+    var ownedAppBundleNames: [String] {
+        switch self {
+        case .stable:
+            return ["Alan.app", "alan.app"]
+        case .dev:
+            return ["Alan Dev.app"]
+        }
+    }
+}
+
 struct AlanCommandLineToolInstallRecord: Equatable {
     enum Status: Equatable {
         case installed
@@ -15,7 +75,7 @@ struct AlanCommandLineToolInstallRecord: Equatable {
 
 enum AlanCommandLineToolInstaller {
     static let defaultInstallDirectory = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
-    static let toolNames = ["alan", "alan-tui"]
+    static let toolNames = AlanInstallChannel.stable.toolNames
 
     static func embeddedBinDirectory(resourceURL: URL? = Bundle.main.resourceURL) -> URL? {
         resourceURL?.appendingPathComponent("bin", isDirectory: true)
@@ -25,13 +85,18 @@ enum AlanCommandLineToolInstaller {
         targetDirectory: URL = defaultInstallDirectory,
         resourceURL: URL? = Bundle.main.resourceURL,
         fileManager: FileManager = .default,
-        homebrewPrefixes: [String]? = nil
+        homebrewPrefixes: [String]? = nil,
+        channel: AlanInstallChannel = .current()
     ) throws -> [AlanCommandLineToolInstallRecord] {
         guard let embeddedBinDirectory = embeddedBinDirectory(resourceURL: resourceURL) else {
             throw CocoaError(.fileNoSuchFile)
         }
+        let toolNames = channel.toolNames
 
-        if targetDirectory.standardizedFileURL.path.contains("/.alan/bin") {
+        let standardizedTargetPath = targetDirectory.standardizedFileURL.path
+        if standardizedTargetPath.contains("/.alan/bin")
+            || standardizedTargetPath.contains("/.alan-dev/bin")
+        {
             throw CocoaError(.fileWriteInvalidFileName)
         }
         if isHomebrewPrefixTarget(
@@ -44,7 +109,8 @@ enum AlanCommandLineToolInstaller {
 
         let existingHomebrewLinks = homebrewManagedCommandLinks(
             fileManager: fileManager,
-            homebrewPrefixes: homebrewPrefixes
+            homebrewPrefixes: homebrewPrefixes,
+            channel: channel
         )
         if !existingHomebrewLinks.isEmpty {
             return toolNames.map { tool in
@@ -74,7 +140,7 @@ enum AlanCommandLineToolInstaller {
             }
 
             if fileManager.fileExists(atPath: target.path) || isSymbolicLink(target, fileManager: fileManager) {
-                guard isAlanOwnedLink(target, tool: tool, fileManager: fileManager) else {
+                guard isAlanOwnedLink(target, tool: tool, channel: channel, fileManager: fileManager) else {
                     return AlanCommandLineToolInstallRecord(
                         tool: tool,
                         sourcePath: source.path,
@@ -111,6 +177,7 @@ enum AlanCommandLineToolInstaller {
     private static func isAlanOwnedLink(
         _ url: URL,
         tool: String,
+        channel: AlanInstallChannel,
         fileManager: FileManager
     ) -> Bool {
         guard isSymbolicLink(url, fileManager: fileManager),
@@ -119,8 +186,9 @@ enum AlanCommandLineToolInstaller {
             return false
         }
 
-        return destination.hasSuffix("/Alan.app/Contents/Resources/bin/\(tool)")
-            || destination.hasSuffix("/alan.app/Contents/Resources/bin/\(tool)")
+        return channel.ownedAppBundleNames.contains { bundleName in
+            destination.hasSuffix("/\(bundleName)/Contents/Resources/bin/\(tool)")
+        }
     }
 
     private static func isHomebrewPrefixTarget(
@@ -144,7 +212,8 @@ enum AlanCommandLineToolInstaller {
 
     private static func homebrewManagedCommandLinks(
         fileManager: FileManager,
-        homebrewPrefixes: [String]? = nil
+        homebrewPrefixes: [String]? = nil,
+        channel: AlanInstallChannel
     ) -> [String: String] {
         let prefixes = resolvedHomebrewPrefixes(
             fileManager: fileManager,
@@ -155,9 +224,9 @@ enum AlanCommandLineToolInstaller {
         for prefix in prefixes {
             let binDirectory = URL(fileURLWithPath: prefix, isDirectory: true)
                 .appendingPathComponent("bin", isDirectory: true)
-            for tool in toolNames {
+            for tool in channel.toolNames {
                 let link = binDirectory.appendingPathComponent(tool)
-                if isAlanOwnedLink(link, tool: tool, fileManager: fileManager) {
+                if isAlanOwnedLink(link, tool: tool, channel: channel, fileManager: fileManager) {
                     links[tool] = link.path
                 }
             }

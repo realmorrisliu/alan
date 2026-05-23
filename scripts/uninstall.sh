@@ -2,12 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/install-channel.sh
+source "$SCRIPT_DIR/install-channel.sh"
 # shellcheck source=scripts/app-bundle-paths.sh
 source "$SCRIPT_DIR/app-bundle-paths.sh"
 
+alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
+
 APP_INSTALL_DIR="${ALAN_APP_INSTALL_DIR:-$HOME/Applications}"
-APP_TARGET="$APP_INSTALL_DIR/Alan.app"
-LEGACY_APP_TARGET="$APP_INSTALL_DIR/alan.app"
+APP_TARGET="$APP_INSTALL_DIR/$ALAN_APP_BUNDLE_NAME"
+LEGACY_APP_TARGET=""
+if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+    LEGACY_APP_TARGET="$APP_INSTALL_DIR/$ALAN_LEGACY_APP_BUNDLE_NAME"
+fi
 CLI_INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-/usr/local/bin}"
 
 remove_alan_link() {
@@ -21,18 +28,26 @@ remove_alan_link() {
 
     target="$(readlink "$path")"
     case "$target" in
-        *"/Alan.app/Contents/Resources/bin/$tool"|*"/alan.app/Contents/Resources/bin/$tool")
+        *"/$ALAN_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
             rm -f "$path"
             ;;
     esac
+
+    if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
+        case "$target" in
+            *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
+                rm -f "$path"
+                ;;
+        esac
+    fi
 }
 
-remove_alan_link "alan"
-remove_alan_link "alan-tui"
+remove_alan_link "$ALAN_CLI_NAME"
+remove_alan_link "$ALAN_TUI_NAME"
 rm -rf "$APP_TARGET"
-if alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
+if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     rm -rf "$LEGACY_APP_TARGET"
 fi
 
-printf 'Alan app and PATH symlinks were removed when owned by this install.\n'
-printf 'User data under ~/.alan was left intact.\n'
+printf '%s app and PATH symlinks were removed when owned by this install.\n' "$ALAN_DISPLAY_NAME"
+printf 'User data under %s was left intact.\n' "$ALAN_HOME_DISPLAY"

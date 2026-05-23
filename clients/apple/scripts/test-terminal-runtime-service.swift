@@ -17,6 +17,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
+        verifiesDevChannelUsesBundledDevBinary()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesContentScopedHandleSurvivesPaneRemount()
@@ -143,6 +144,42 @@ private enum TerminalRuntimeServiceTests {
         expect(
             !alanDuringInstall.requiresSurfaceRecreation(comparedTo: alanFromBundle),
             "install-time alan binary discovery changes must not recreate a running surface"
+        )
+    }
+
+    private static func verifiesDevChannelUsesBundledDevBinary() {
+        let resourceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan-dev-resource-\(UUID().uuidString)", isDirectory: true)
+        let bin = resourceRoot.appendingPathComponent("bin", isDirectory: true)
+        let alanDev = bin.appendingPathComponent("alan-dev", isDirectory: false)
+
+        try! FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try! "#!/bin/sh\nexit 0\n".write(to: alanDev, atomically: true, encoding: .utf8)
+        try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: alanDev.path)
+        defer {
+            try? FileManager.default.removeItem(at: resourceRoot)
+        }
+
+        let resolution = AlanCommandResolution.resolve(
+            for: .alan,
+            environment: [
+                "ALAN_INSTALL_CHANNEL": "dev",
+                "ALAN_APP_RESOURCE_DIR": resourceRoot.path,
+                "PATH": "",
+            ]
+        )
+
+        expect(
+            resolution.strategy == .bundledResourceBinary,
+            "dev channel must prefer the bundled alan-dev binary"
+        )
+        expect(
+            resolution.executablePath == alanDev.path,
+            "dev channel must resolve the bundled alan-dev path"
+        )
+        expect(
+            resolution.bootCommand.contains("alan-dev") && resolution.arguments == ["chat"],
+            "dev channel boot command must use alan-dev"
         )
     }
 

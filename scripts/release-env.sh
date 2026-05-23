@@ -14,6 +14,7 @@ alan_release_env_allowed_key() {
         APPLE_APP_SPECIFIC_PASSWORD | \
         ALAN_NOTARIZE | \
         ALAN_CREATE_RELEASE_ARCHIVE | \
+        ALAN_INSTALL_CHANNEL | \
         ALAN_XCODE_DERIVED_DATA | \
         ALAN_RELEASE_ARTIFACT_DIR | \
         ALAN_APP_INSTALL_DIR | \

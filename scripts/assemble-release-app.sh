@@ -6,11 +6,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=scripts/release-env.sh
 source "$SCRIPT_DIR/release-env.sh"
+# shellcheck source=scripts/install-channel.sh
+source "$SCRIPT_DIR/install-channel.sh"
+
+alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
-APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/Alan.app"
+APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 TUI_ENTITLEMENTS="$REPO_ROOT/scripts/entitlements/alan-tui.entitlements"
@@ -26,6 +30,10 @@ if ! git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- 2>/dev/null ||
     DIRTY="true"
 fi
 
+if alan_install_channel_is_dev && [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+fi
+
 fail() {
     printf 'error: %s\n' "$*" >&2
     exit 1
@@ -38,6 +46,10 @@ require_command() {
 }
 
 require_signing_identity() {
+    if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+        return
+    fi
+
     if [[ -z "$SIGNING_IDENTITY" ]]; then
         fail "Developer ID signing identity is required. Set ALAN_DEVELOPER_ID_APPLICATION='Developer ID Application: ...', ALAN_SIGNING_IDENTITY, or ALAN_RELEASE_ENV_FILE."
     fi
@@ -69,17 +81,26 @@ sha256() {
 
 sign_path() {
     local path="$1"
-    codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$path"
+    local args=(--force --options runtime --sign "$SIGNING_IDENTITY")
+    if [[ "$SIGNING_IDENTITY" != "-" ]]; then
+        args+=(--timestamp)
+    fi
+    codesign "${args[@]}" "$path"
 }
 
 sign_path_with_entitlements() {
     local path="$1"
     local entitlements="$2"
-    codesign --force --timestamp --options runtime \
-        --entitlements "$entitlements" \
-        --sign "$SIGNING_IDENTITY" \
-        "$path"
+    local args=(--force --options runtime --entitlements "$entitlements" --sign "$SIGNING_IDENTITY")
+    if [[ "$SIGNING_IDENTITY" != "-" ]]; then
+        args+=(--timestamp)
+    fi
+    codesign "${args[@]}" "$path"
 }
+
+if ! alan_install_channel_is_stable && [[ "$NOTARIZE" == "1" || "$CREATE_ARCHIVE" == "1" ]]; then
+    fail "Dev channel builds are local-only and cannot create public release archives or notarization submissions."
+fi
 
 require_command cargo
 require_command bun
@@ -87,37 +108,42 @@ require_command xcodebuild
 require_command codesign
 require_command ditto
 require_command shasum
-require_command security
+if [[ "$SIGNING_IDENTITY" != "-" ]]; then
+    require_command security
+fi
 require_signing_identity
 
 [[ -f "$TUI_ENTITLEMENTS" ]] || fail "alan-tui entitlements file not found: $TUI_ENTITLEMENTS"
 
 mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 
-printf 'Building release alan CLI...\n'
+printf 'Building release alan CLI for %s channel...\n' "$ALAN_CHANNEL_ID"
 cargo build --release -p alan
 
-printf 'Building standalone alan-tui...\n'
+printf 'Building standalone %s...\n' "$ALAN_TUI_NAME"
 (
     cd "$REPO_ROOT/clients/tui"
     bun install --frozen-lockfile 2>/dev/null || bun install
     bun run build:js
-    ALAN_TUI_BINARY_OUTFILE="$STAGING_DIR/alan-tui" bun run build:standalone
+    ALAN_TUI_BINARY_OUTFILE="$STAGING_DIR/$ALAN_TUI_NAME" bun run build:standalone
 )
-chmod +x "$STAGING_DIR/alan-tui"
+chmod +x "$STAGING_DIR/$ALAN_TUI_NAME"
 
 if [[ -e "$APP_BUNDLE" ]]; then
-    printf 'Removing stale Release Alan.app build product...\n'
+    printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
     rm -rf "$APP_BUNDLE"
 fi
 
-printf 'Building Release Alan.app...\n'
+printf 'Building Release %s...\n' "$ALAN_APP_BUNDLE_NAME"
 xcodebuild \
     -project "$REPO_ROOT/clients/apple/alan-macos.xcodeproj" \
     -scheme alan-macos \
     -configuration Release \
     -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
+    PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
+    PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
+    INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
     CODE_SIGNING_ALLOWED=NO \
     build
 
@@ -125,36 +151,38 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
     fail "Release build did not produce $APP_BUNDLE"
 fi
 
-printf 'Embedding CLI and TUI into Alan.app...\n'
+printf 'Embedding CLI and TUI into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
-cp "$REPO_ROOT/target/release/alan" "$EMBEDDED_BIN_DIR/alan"
-cp "$STAGING_DIR/alan-tui" "$EMBEDDED_BIN_DIR/alan-tui"
-chmod +x "$EMBEDDED_BIN_DIR/alan" "$EMBEDDED_BIN_DIR/alan-tui"
+cp "$REPO_ROOT/target/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+cp "$STAGING_DIR/$ALAN_TUI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
+chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
-sign_path "$EMBEDDED_BIN_DIR/alan"
-sign_path_with_entitlements "$EMBEDDED_BIN_DIR/alan-tui" "$TUI_ENTITLEMENTS"
+sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+sign_path_with_entitlements "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME" "$TUI_ENTITLEMENTS"
 
 printf 'Recording signed embedded binary checksums...\n'
-ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/alan")"
-TUI_SHA="$(sha256 "$EMBEDDED_BIN_DIR/alan-tui")"
+ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
+TUI_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
   "schema_version": 1,
-  "package": "Alan.app",
+  "install_channel": "$(json_escape "$ALAN_CHANNEL_ID")",
+  "package": "$(json_escape "$ALAN_APP_BUNDLE_NAME")",
+  "bundle_identifier": "$(json_escape "$ALAN_BUNDLE_ID")",
   "version": "$(json_escape "$VERSION")",
   "git_revision": "$(json_escape "$REVISION")",
   "git_dirty": $DIRTY,
   "assembled_at_utc": "$(json_escape "$ASSEMBLED_AT")",
   "embedded_binaries": {
-    "alan": {
-      "path": "Contents/Resources/bin/alan",
+    "$(json_escape "$ALAN_CLI_NAME")": {
+      "path": "Contents/Resources/bin/$(json_escape "$ALAN_CLI_NAME")",
       "sha256": "$(json_escape "$ALAN_SHA")"
     },
-    "alan-tui": {
-      "path": "Contents/Resources/bin/alan-tui",
+    "$(json_escape "$ALAN_TUI_NAME")": {
+      "path": "Contents/Resources/bin/$(json_escape "$ALAN_TUI_NAME")",
       "sha256": "$(json_escape "$TUI_SHA")"
     }
   }
@@ -162,7 +190,7 @@ cat >"$MANIFEST_PATH" <<EOF
 EOF
 
 printf 'Signing app bundle...\n'
-codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+sign_path "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
 ZIP_PATH=""
