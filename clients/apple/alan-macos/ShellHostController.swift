@@ -265,7 +265,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let persistenceURL: URL
     private let persistenceStore: ShellStatePersistenceStore
     private let workspaceManifestStore: ShellWorkspaceManifestStore?
-    private var workspaceManifest: ShellWorkspaceManifest?
+    private var workspaceManifest: ShellContentWorkspaceManifest?
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     private let paneProjection: ShellPaneProjectionService
     private let terminalContentProjection: TerminalContentProjectionAdapter
@@ -326,7 +326,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         persistenceURL: URL? = nil,
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellWorkspaceManifest? = nil,
+        workspaceManifest: ShellContentWorkspaceManifest? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
@@ -395,7 +395,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let persistenceURL = resolvedWindowContext.persistenceURL
         let shellState: ShellStateSnapshot
         let manifestStore: ShellWorkspaceManifestStore?
-        let manifest: ShellWorkspaceManifest?
+        let manifest: ShellContentWorkspaceManifest?
         let manifestRecovery: ShellWorkspaceManifestRecovery?
         let retiredTabCount: Int
         switch startupMode {
@@ -433,7 +433,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 now: now
             )
             let loadedManifest = loadResult?.manifest
-                ?? ShellWorkspaceManifest.defaultManifest(
+                ?? ShellContentWorkspaceManifest.defaultManifest(
                     windowID: resolvedWindowContext.windowID,
                     defaultWorkingDirectory: workingDirectory,
                     now: now
@@ -2118,7 +2118,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func applyPinSnapshotOverrides(
-        to manifest: inout ShellWorkspaceManifest,
+        to manifest: inout ShellContentWorkspaceManifest,
         tabIDs: Set<String>
     ) {
         for spaceIndex in manifest.spaces.indices {
@@ -2128,7 +2128,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                       let tab = shellState.tab(tabID: tabID)
                 else { continue }
 
-                let snapshot = makeRestoreSnapshot(for: tab, panes: shellState.panes(in: tabID))
+                let snapshot = makeRestoreSnapshot(for: tab)
                 manifest.spaces[spaceIndex].tabs[tabIndex].isPinned = true
                 manifest.spaces[spaceIndex].tabs[tabIndex].pinSnapshot = snapshot
                 manifest.spaces[spaceIndex].tabs[tabIndex].liveSnapshot = snapshot
@@ -2138,7 +2138,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func updateWorkspaceManifestTab(
         tabID: String,
-        mutate: (inout ShellWorkspaceTabRecord, ShellTabRestoreSnapshot) -> Void,
+        mutate: (inout ShellContentWorkspaceTabRecord, ShellContentTabRestoreSnapshot) -> Void,
         diagnostic: (String) -> String
     ) -> Bool {
         guard let tab = shellState.tab(tabID: tabID),
@@ -2147,8 +2147,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return false
         }
 
-        let panes = shellState.panes(in: tabID)
-        let snapshot = makeRestoreSnapshot(for: tab, panes: panes)
+        let snapshot = makeRestoreSnapshot(for: tab)
         var manifest = makeWorkspaceManifestFromShellState(now: .now)
         var didUpdate = false
 
@@ -2175,7 +2174,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
-    private func makeWorkspaceManifestFromShellState(now: Date) -> ShellWorkspaceManifest {
+    private func makeWorkspaceManifestFromShellState(now: Date) -> ShellContentWorkspaceManifest {
         let existingSpaces = Dictionary(
             uniqueKeysWithValues: (workspaceManifest?.spaces ?? []).map { ($0.spaceID, $0) }
         )
@@ -2184,13 +2183,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 .flatMap(\.tabs)
                 .map { ($0.tabID, $0) }
         )
+        let contentState = shellState.contentStateProjection()
 
-        let spaces = shellState.spaces.enumerated().map { index, space -> ShellWorkspaceSpaceRecord in
+        let spaces = shellState.spaces.enumerated().map { index, space -> ShellContentWorkspaceSpaceRecord in
             let existingSpace = existingSpaces[space.spaceID]
-            let tabRecords = space.tabs.map { tab -> ShellWorkspaceTabRecord in
+            let tabRecords = space.tabs.map { tab -> ShellContentWorkspaceTabRecord in
                 let existingTab = existingTabs[tab.tabID]
                 let panes = shellState.panes(in: tab.tabID)
-                let snapshot = makeRestoreSnapshot(for: tab, panes: panes)
+                let snapshot = makeRestoreSnapshot(for: tab, contentState: contentState)
                 let paneActivityAt = panes.compactMap { paneActivityDate($0) }.max()
                 let lastActivatedAt = tab.tabID == shellState.focusedTabID
                     ? now
@@ -2200,7 +2200,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     paneActivityAt ?? existingTab?.lastActivityAt ?? now
                 )
 
-                return ShellWorkspaceTabRecord(
+                return ShellContentWorkspaceTabRecord(
                     tabID: tab.tabID,
                     title: tab.title,
                     kind: tab.kind,
@@ -2214,7 +2214,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 )
             }
 
-            return ShellWorkspaceSpaceRecord(
+            return ShellContentWorkspaceSpaceRecord(
                 spaceID: space.spaceID,
                 title: space.title,
                 order: existingSpace?.order ?? index,
@@ -2224,8 +2224,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             )
         }
 
-        var manifest = ShellWorkspaceManifest(
+        var manifest = ShellContentWorkspaceManifest(
             schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: shellState.windowID,
             selectedSpaceID: shellState.focusedSpaceID ?? selectedSpaceID,
             selectedTabID: shellState.focusedTabID,
@@ -2236,20 +2237,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func makeRestoreSnapshot(
+        for tab: ShellTab
+    ) -> ShellContentTabRestoreSnapshot {
+        makeRestoreSnapshot(for: tab, contentState: shellState.contentStateProjection())
+    }
+
+    private func makeRestoreSnapshot(
         for tab: ShellTab,
-        panes: [ShellPane]
-    ) -> ShellTabRestoreSnapshot {
-        let paneByID = Dictionary(uniqueKeysWithValues: panes.map { ($0.paneID, $0) })
-        let restorePanes = tab.paneTree.paneIDs.compactMap { paneID -> ShellPaneRestoreRecord? in
-            guard let pane = paneByID[paneID] else { return nil }
-            return ShellPaneRestoreRecord(
-                paneID: pane.paneID,
-                launchTarget: pane.resolvedLaunchTarget,
-                cwd: pane.cwd,
-                title: pane.viewport?.title ?? tab.title
-            )
-        }
-        return ShellTabRestoreSnapshot(paneTree: tab.paneTree, panes: restorePanes)
+        contentState: ShellContentStateSnapshot
+    ) -> ShellContentTabRestoreSnapshot {
+        ShellContentTabRestoreSnapshot.projecting(tab: tab, contentState: contentState)
     }
 
     private func paneActivityDate(_ pane: ShellPane) -> Date? {
@@ -2354,6 +2351,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         switch recovery {
         case .loadedExisting:
             return
+        case .migratedLegacyTerminalManifest:
+            recordControlPlaneDiagnostic("workspace manifest migrated terminal snapshots to content containers")
         case .createdDefault:
             recordControlPlaneDiagnostic("workspace manifest created default")
         case .quarantinedCorruptFile(let url):

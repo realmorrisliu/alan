@@ -516,6 +516,21 @@ require_pattern \
     "workspace restore authority must use the ShellWorkspaceManifest store filename"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "ShellContentWorkspaceManifest\\.self" \
+    "workspace manifest restore must prefer content-container manifests"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "makeWorkspaceManifestFromShellState\\(now: Date\\) -> ShellContentWorkspaceManifest" \
+    "workspace manifest writes must produce content-container manifests"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "persisted content manifest must not dual-write terminal-only panes" \
+    "workspace manifest tests must reject terminal-only snapshot dual-write"
+
+require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "case \\.workspaceManifest:" \
     "shell host startup must have a workspace-manifest restore path"

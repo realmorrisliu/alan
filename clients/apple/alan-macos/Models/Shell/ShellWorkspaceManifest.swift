@@ -210,6 +210,60 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
     }
 }
 
+extension ShellContentWorkspaceManifest {
+    static func defaultManifest(
+        windowID: String,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellContentWorkspaceManifest {
+        ShellWorkspaceManifest.defaultManifest(
+            windowID: windowID,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
+        .migratingTerminalRestoreSnapshotsToContentContainers()
+    }
+
+    func pruningExpiredTabs(now: Date, ttl: TimeInterval) -> ShellContentWorkspaceManifest {
+        var pruned = self
+        pruned.spaces = spaces.map { space in
+            var space = space
+            space.tabs = space.tabs.filter { $0.shouldRetain(now: now, ttl: ttl) }
+            space.updatedAt = now
+            return space
+        }
+        pruned.repairSelection()
+        return pruned
+    }
+
+    mutating func repairSelection() {
+        guard !spaces.isEmpty else {
+            selectedSpaceID = nil
+            selectedTabID = nil
+            return
+        }
+
+        if selectedSpaceID == nil || !spaces.contains(where: { $0.spaceID == selectedSpaceID }) {
+            selectedSpaceID = spaces.first?.spaceID
+        }
+
+        guard let selectedSpaceID,
+              let selectedSpace = spaces.first(where: { $0.spaceID == selectedSpaceID })
+        else {
+            selectedTabID = nil
+            return
+        }
+
+        let selectedTabStillExists = selectedTabID.map { selectedTabID in
+            selectedSpace.tabs.contains { $0.tabID == selectedTabID }
+        } ?? false
+
+        if !selectedTabStillExists {
+            selectedTabID = selectedSpace.tabs.first?.tabID
+        }
+    }
+}
+
 struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var spaceID: String
     var title: String
@@ -256,6 +310,63 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
         case liveSnapshot = "live_snapshot"
         case activeTask = "active_task"
     }
+
+    func restoreSnapshot(defaultWorkingDirectory: String) -> ShellContentTabRestoreSnapshot {
+        if isPinned, let pinSnapshot {
+            return pinSnapshot
+        }
+
+        if let liveSnapshot {
+            return liveSnapshot
+        }
+
+        let paneSlotID = "pane_\(tabID)"
+        let contentID = ShellContentInstance.terminalContentID(forPaneID: paneSlotID)
+        let title = title ?? ShellWorkspaceMaterializer.defaultViewportTitleForMigration(
+            launchTarget: .shell
+        )
+        return ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(paneSlotID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: paneSlotID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlotID,
+                    contentID: contentID
+                )
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: contentID,
+                    kind: .terminal,
+                    title: title,
+                    payload: .terminal(
+                        ShellTerminalContentPayload(
+                            launchTarget: .shell,
+                            cwd: defaultWorkingDirectory,
+                            title: title
+                        )
+                    )
+                )
+            ]
+        )
+    }
+
+    func shouldRetain(now: Date, ttl: TimeInterval) -> Bool {
+        if isPinned {
+            return true
+        }
+
+        if activeTask.protectsFromPruning {
+            return true
+        }
+
+        return now.timeIntervalSince(max(lastActivatedAt, lastActivityAt)) <= ttl
+    }
 }
 
 struct ShellContentTabRestoreSnapshot: Codable, Equatable {
@@ -295,6 +406,38 @@ struct ShellContentRestoreRecord: Codable, Equatable, Identifiable {
         case kind
         case title
         case payload
+    }
+}
+
+extension ShellContentTabRestoreSnapshot {
+    static func projecting(
+        tab: ShellTab,
+        contentState: ShellContentStateSnapshot
+    ) -> ShellContentTabRestoreSnapshot {
+        let paneSlotIDs = tab.paneTree.paneIDs
+        let paneSlots = paneSlotIDs.compactMap { paneSlotID in
+            contentState.paneSlot(paneSlotID: paneSlotID)
+        }
+        let mountedContentIDs = Set(paneSlots.map(\.contentID))
+        let contents = contentState.contents.filter { mountedContentIDs.contains($0.contentID) }
+
+        return ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode.migrating(paneTree: tab.paneTree),
+            paneSlots: paneSlots.map { paneSlot in
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlot.paneSlotID,
+                    contentID: paneSlot.contentID
+                )
+            },
+            contents: contents.map { content in
+                ShellContentRestoreRecord(
+                    contentID: content.contentID,
+                    kind: content.kind,
+                    title: content.title,
+                    payload: content.payload
+                )
+            }
+        )
     }
 }
 
@@ -411,6 +554,127 @@ extension ShellTabRestoreSnapshot {
 }
 
 struct ShellWorkspaceMaterializer {
+    static func materialize(
+        manifest: ShellContentWorkspaceManifest,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellStateSnapshot {
+        var repairedManifest = manifest
+        repairedManifest.repairSelection()
+
+        let sourceManifest = repairedManifest.spaces.isEmpty
+            ? ShellContentWorkspaceManifest.defaultManifest(
+                windowID: manifest.windowID,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
+            )
+            : repairedManifest
+
+        if let state = materializeContentManifest(
+            sourceManifest,
+            defaultWorkingDirectory: defaultWorkingDirectory
+        ) {
+            return state
+        }
+
+        let fallbackManifest = ShellContentWorkspaceManifest.defaultManifest(
+            windowID: manifest.windowID,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
+        return materializeContentManifest(
+            fallbackManifest,
+            defaultWorkingDirectory: defaultWorkingDirectory
+        ) ?? ShellStateSnapshot.bootstrapDefault(
+            windowID: manifest.windowID,
+            workingDirectory: defaultWorkingDirectory
+        )
+    }
+
+    private static func materializeContentManifest(
+        _ sourceManifest: ShellContentWorkspaceManifest,
+        defaultWorkingDirectory: String
+    ) -> ShellStateSnapshot? {
+        let spaces = sourceManifest.spaces.sorted { lhs, rhs in
+            if lhs.order == rhs.order {
+                return lhs.spaceID < rhs.spaceID
+            }
+            return lhs.order < rhs.order
+        }
+
+        var paneSlots: [ShellPaneSlot] = []
+        var contents: [ShellContentInstance] = []
+        let contentSpaces = spaces.map { space -> ShellContentSpace in
+            let contentTabs = organizedTabs(space.tabs).compactMap { tabRecord -> ShellContentTab? in
+                let restoreSnapshot = tabRecord.restoreSnapshot(
+                    defaultWorkingDirectory: defaultWorkingDirectory
+                )
+                let validContentIDs = Set(restoreSnapshot.contents.map(\.contentID))
+                let snapshotPaneSlots = restoreSnapshot.paneSlots.compactMap { paneSlot -> ShellPaneSlot? in
+                    guard validContentIDs.contains(paneSlot.contentID) else { return nil }
+                    return ShellPaneSlot(
+                        paneSlotID: paneSlot.paneSlotID,
+                        tabID: tabRecord.tabID,
+                        spaceID: space.spaceID,
+                        contentID: paneSlot.contentID,
+                        attention: tabRecord.tabID == sourceManifest.selectedTabID ? .active : .idle
+                    )
+                }
+                guard !snapshotPaneSlots.isEmpty else { return nil }
+
+                paneSlots.append(contentsOf: snapshotPaneSlots)
+                contents.append(
+                    contentsOf: restoreSnapshot.contents.map { content in
+                        ShellContentInstance(
+                            contentID: content.contentID,
+                            kind: content.kind,
+                            title: content.title,
+                            payload: content.payload
+                        )
+                    }
+                )
+
+                return ShellContentTab(
+                    tabID: tabRecord.tabID,
+                    kind: tabRecord.kind,
+                    title: tabRecord.title,
+                    paneTree: restoreSnapshot.paneTree,
+                    isPinned: tabRecord.isPinned
+                )
+            }
+
+            return ShellContentSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: strongestAttention(
+                    in: paneSlots.filter { $0.spaceID == space.spaceID }
+                ),
+                tabs: contentTabs
+            )
+        }
+
+        let contentState = ShellContentStateSnapshot(
+            contractVersion: ShellContentStateSnapshot.currentContractVersion,
+            windowID: sourceManifest.windowID,
+            focusedSpaceID: sourceManifest.selectedSpaceID,
+            focusedTabID: sourceManifest.selectedTabID,
+            focusedPaneSlotID: sourceManifest.selectedTabID
+                .flatMap { selectedTabID in
+                    contentSpaces
+                        .flatMap(\.tabs)
+                        .first { $0.tabID == selectedTabID }?
+                        .paneTree
+                        .paneSlotIDs
+                        .first
+                },
+            spaces: contentSpaces,
+            paneSlots: paneSlots,
+            contents: contents
+        )
+
+        return contentState.materializingShellState()
+    }
+
     static func materialize(
         manifest: ShellWorkspaceManifest,
         defaultWorkingDirectory: String,
@@ -533,6 +797,12 @@ struct ShellWorkspaceMaterializer {
         tabs.filter(\.isPinned) + tabs.filter { !$0.isPinned }
     }
 
+    private static func organizedTabs(
+        _ tabs: [ShellContentWorkspaceTabRecord]
+    ) -> [ShellContentWorkspaceTabRecord] {
+        tabs.filter(\.isPinned) + tabs.filter { !$0.isPinned }
+    }
+
     private static func strongestAttention(
         for tabs: [ShellTab],
         panes: [ShellPane]
@@ -556,6 +826,13 @@ struct ShellWorkspaceMaterializer {
         case .awaitingUser:
             return 3
         }
+    }
+
+    private static func strongestAttention(in paneSlots: [ShellPaneSlot]) -> ShellAttentionState {
+        paneSlots
+            .map(\.attention)
+            .max { attentionRank(for: $0) < attentionRank(for: $1) }
+            ?? .idle
     }
 
     private static func defaultViewportTitle(for launchTarget: ShellLaunchTarget) -> String {

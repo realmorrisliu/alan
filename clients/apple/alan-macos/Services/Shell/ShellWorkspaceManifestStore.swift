@@ -1,12 +1,13 @@
 import Foundation
 
 struct ShellWorkspaceManifestLoadResult: Equatable {
-    var manifest: ShellWorkspaceManifest
+    var manifest: ShellContentWorkspaceManifest
     var recovery: ShellWorkspaceManifestRecovery
 }
 
 enum ShellWorkspaceManifestRecovery: Equatable {
     case loadedExisting
+    case migratedLegacyTerminalManifest
     case createdDefault
     case quarantinedCorruptFile(URL)
 }
@@ -39,7 +40,7 @@ struct ShellWorkspaceManifestStore {
         now: Date
     ) throws -> ShellWorkspaceManifestLoadResult {
         if !fileManager.fileExists(atPath: manifestURL.path) {
-            let manifest = ShellWorkspaceManifest.defaultManifest(
+            let manifest = ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now
@@ -50,16 +51,35 @@ struct ShellWorkspaceManifestStore {
 
         do {
             let data = try Data(contentsOf: manifestURL)
-            let manifest = try Self.decoder.decode(ShellWorkspaceManifest.self, from: data)
-            guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion else {
+            if let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data) {
+                guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion,
+                      manifest.contentContractVersion == ShellContentWorkspaceManifest.currentContentContractVersion
+                else {
+                    throw DecodingError.dataCorrupted(
+                        DecodingError.Context(
+                            codingPath: [],
+                            debugDescription: "Unsupported shell workspace manifest schema"
+                        )
+                    )
+                }
+                return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
+            }
+
+            let legacyManifest = try Self.decoder.decode(ShellWorkspaceManifest.self, from: data)
+            guard legacyManifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion else {
                 throw DecodingError.dataCorrupted(
                     DecodingError.Context(
                         codingPath: [],
-                        debugDescription: "Unsupported shell workspace manifest schema"
+                        debugDescription: "Unsupported legacy shell workspace manifest schema"
                     )
                 )
             }
-            return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
+            let migratedManifest = legacyManifest.migratingTerminalRestoreSnapshotsToContentContainers()
+            try save(migratedManifest)
+            return ShellWorkspaceManifestLoadResult(
+                manifest: migratedManifest,
+                recovery: .migratedLegacyTerminalManifest
+            )
         } catch {
             let corruptURL = quarantineURL(now: now)
             if fileManager.fileExists(atPath: corruptURL.path) {
@@ -67,7 +87,7 @@ struct ShellWorkspaceManifestStore {
             }
             try fileManager.moveItem(at: manifestURL, to: corruptURL)
 
-            let manifest = ShellWorkspaceManifest.defaultManifest(
+            let manifest = ShellContentWorkspaceManifest.defaultManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now
@@ -80,7 +100,17 @@ struct ShellWorkspaceManifestStore {
         }
     }
 
-    func save(_ manifest: ShellWorkspaceManifest) throws {
+    func save(_ manifest: ShellContentWorkspaceManifest) throws {
+        let directoryURL = manifestURL.deletingLastPathComponent()
+        try fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let data = try Self.encoder.encode(manifest)
+        try data.write(to: manifestURL, options: .atomic)
+    }
+
+    func saveLegacyTerminalManifest(_ manifest: ShellWorkspaceManifest) throws {
         let directoryURL = manifestURL.deletingLastPathComponent()
         try fileManager.createDirectory(
             at: directoryURL,

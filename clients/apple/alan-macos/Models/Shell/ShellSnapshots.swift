@@ -1165,6 +1165,9 @@ extension ShellContentStateSnapshot {
     func materializingShellState() -> ShellStateSnapshot? {
         guard contractVersion == Self.currentContractVersion else { return nil }
 
+        let sourceTabCount = spaces.reduce(0) { count, space in
+            count + space.tabs.count
+        }
         let paneSlotsByID = paneSlots.reduce(into: [String: ShellPaneSlot]()) { slotsByID, slot in
             slotsByID[slot.paneSlotID] = slot
         }
@@ -1219,13 +1222,15 @@ extension ShellContentStateSnapshot {
             )
         }
 
-        guard !materializedPanes.isEmpty else { return nil }
+        if sourceTabCount > 0 && materializedPanes.isEmpty {
+            return nil
+        }
 
         let focusableSpaces = materializedSpaces.filter { !$0.tabs.isEmpty }
         let validSpaceIDs = Set(focusableSpaces.map(\.spaceID))
         let resolvedFocusedSpaceID = focusedSpaceID.flatMap {
             validSpaceIDs.contains($0) ? $0 : nil
-        } ?? focusableSpaces.first?.spaceID
+        } ?? focusableSpaces.first?.spaceID ?? materializedSpaces.first?.spaceID
         let focusedSpace = resolvedFocusedSpaceID.flatMap { spaceID in
             materializedSpaces.first { $0.spaceID == spaceID }
         }

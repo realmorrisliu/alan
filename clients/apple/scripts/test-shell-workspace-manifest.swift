@@ -47,10 +47,10 @@ private enum ShellWorkspaceManifestTests {
         expect(result.recovery == .createdDefault, "missing manifest must report default creation")
         expect(fileManager.fileExists(atPath: manifestURL.path), "missing manifest must write a new manifest")
 
-        let tab = try requireOnlyTab(in: result.manifest)
-        let pane = try requireOnlyPane(in: tab.liveSnapshot)
+        let tab = try requireOnlyContentTab(in: result.manifest)
+        let content = try requireOnlyTerminalContent(in: tab.liveSnapshot)
         expect(
-            pane.cwd == "/fresh/project",
+            content.payload.terminal?.cwd == "/fresh/project",
             "default manifest must use the requested working directory"
         )
 
@@ -58,6 +58,10 @@ private enum ShellWorkspaceManifestTests {
         expect(
             !persistedManifestText.contains("/legacy/project"),
             "workspace manifest startup must not migrate legacy ShellStateSnapshot data"
+        )
+        expect(
+            !persistedManifestText.contains("\"panes\""),
+            "default workspace manifest must not dual-write terminal-only panes"
         )
     }
 
@@ -88,19 +92,20 @@ private enum ShellWorkspaceManifestTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         _ = try decoder.decode(
-            ShellWorkspaceManifest.self,
+            ShellContentWorkspaceManifest.self,
             from: Data(contentsOf: manifestURL)
         )
     }
 
     private static func verifiesMaterializerPreservesEmptySelectedSpace() throws {
-        let manifest = ShellWorkspaceManifest(
+        let manifest = ShellContentWorkspaceManifest(
             schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_empty",
             selectedTabID: nil,
             spaces: [
-                ShellWorkspaceSpaceRecord(
+                ShellContentWorkspaceSpaceRecord(
                     spaceID: "space_empty",
                     title: "Empty",
                     order: 0,
@@ -125,7 +130,7 @@ private enum ShellWorkspaceManifestTests {
     }
 
     private static func verifiesPinnedSnapshotWinsOverLaterLiveSnapshot() throws {
-        let tab = makeTab(
+        let tab = makeContentTab(
             tabID: "tab_pinned",
             title: "Pinned",
             isPinned: true,
@@ -135,7 +140,7 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: referenceDate,
             activeTask: .inactive
         )
-        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+        let manifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
 
         let state = ShellWorkspaceMaterializer.materialize(
             manifest: manifest,
@@ -151,7 +156,7 @@ private enum ShellWorkspaceManifestTests {
     }
 
     private static func verifiesPinnedSplitSnapshotRestoresSplitTree() throws {
-        var tab = makeTab(
+        var tab = makeContentTab(
             tabID: "tab_split",
             title: "Pinned Split",
             isPinned: true,
@@ -161,8 +166,8 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: referenceDate,
             activeTask: .inactive
         )
-        tab.pinSnapshot = makeSplitSnapshot(tabID: tab.tabID)
-        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
+        tab.pinSnapshot = makeContentSplitSnapshot(tabID: tab.tabID)
+        let manifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
 
         let state = ShellWorkspaceMaterializer.materialize(
             manifest: manifest,
@@ -307,7 +312,7 @@ private enum ShellWorkspaceManifestTests {
     private static func verifiesUnpinnedTabPruningUsesTtlAndActiveTask() throws {
         let expiredAt = referenceDate.addingTimeInterval(-(twelveHours + 60))
         let recentAt = referenceDate.addingTimeInterval(-60)
-        let expiredInactive = makeTab(
+        let expiredInactive = makeContentTab(
             tabID: "tab_expired",
             title: "Expired",
             isPinned: false,
@@ -317,7 +322,7 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: expiredAt,
             activeTask: .inactive
         )
-        let expiredActive = makeTab(
+        let expiredActive = makeContentTab(
             tabID: "tab_active",
             title: "Active",
             isPinned: false,
@@ -327,7 +332,7 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: expiredAt,
             activeTask: .foregroundCommand
         )
-        let recentInactive = makeTab(
+        let recentInactive = makeContentTab(
             tabID: "tab_recent",
             title: "Recent",
             isPinned: false,
@@ -337,22 +342,22 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: recentAt,
             activeTask: .inactive
         )
-        let manifest = makeManifest(
+        let manifest = makeContentManifest(
             selectedTabID: expiredInactive.tabID,
             tabs: [expiredInactive, expiredActive, recentInactive]
         )
 
         let pruned = manifest.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
 
-        expect(findTab("tab_expired", in: pruned) == nil, "expired inactive unpinned tab must be pruned")
-        expect(findTab("tab_active", in: pruned) != nil, "active unpinned tab must survive TTL pruning")
-        expect(findTab("tab_recent", in: pruned) != nil, "recent unpinned tab must survive TTL pruning")
+        expect(findContentTab("tab_expired", in: pruned) == nil, "expired inactive unpinned tab must be pruned")
+        expect(findContentTab("tab_active", in: pruned) != nil, "active unpinned tab must survive TTL pruning")
+        expect(findContentTab("tab_recent", in: pruned) != nil, "recent unpinned tab must survive TTL pruning")
         expect(pruned.selectedTabID == "tab_active", "selected pruned tab must repair to first retained tab")
     }
 
     private static func verifiesSelectedTabPruningCanLeaveSelectedSpaceEmpty() throws {
         let expiredAt = referenceDate.addingTimeInterval(-(twelveHours + 60))
-        let expiredInactive = makeTab(
+        let expiredInactive = makeContentTab(
             tabID: "tab_expired",
             title: "Expired",
             isPinned: false,
@@ -362,7 +367,7 @@ private enum ShellWorkspaceManifestTests {
             lastActivityAt: expiredAt,
             activeTask: .inactive
         )
-        let manifest = makeManifest(selectedTabID: expiredInactive.tabID, tabs: [expiredInactive])
+        let manifest = makeContentManifest(selectedTabID: expiredInactive.tabID, tabs: [expiredInactive])
 
         let pruned = manifest.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
         let state = ShellWorkspaceMaterializer.materialize(
@@ -400,6 +405,29 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
+    private static func makeContentManifest(
+        selectedTabID: String?,
+        tabs: [ShellContentWorkspaceTabRecord]
+    ) -> ShellContentWorkspaceManifest {
+        ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: selectedTabID,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    tabs: tabs
+                )
+            ]
+        )
+    }
+
     private static func makeTab(
         tabID: String,
         title: String,
@@ -424,6 +452,30 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
+    private static func makeContentTab(
+        tabID: String,
+        title: String,
+        isPinned: Bool,
+        pinCwd: String?,
+        liveCwd: String?,
+        lastActivatedAt: Date,
+        lastActivityAt: Date,
+        activeTask: ShellTabActiveTaskState
+    ) -> ShellContentWorkspaceTabRecord {
+        ShellContentWorkspaceTabRecord(
+            tabID: tabID,
+            title: title,
+            kind: .terminal,
+            createdAt: referenceDate,
+            lastActivatedAt: lastActivatedAt,
+            lastActivityAt: lastActivityAt,
+            isPinned: isPinned,
+            pinSnapshot: pinCwd.map { makeContentSnapshot(tabID: tabID, cwd: $0) },
+            liveSnapshot: liveCwd.map { makeContentSnapshot(tabID: tabID, cwd: $0) },
+            activeTask: activeTask
+        )
+    }
+
     private static func makeSnapshot(tabID: String, cwd: String?) -> ShellTabRestoreSnapshot {
         let paneID = "pane_\(tabID)"
         return ShellTabRestoreSnapshot(
@@ -440,6 +492,43 @@ private enum ShellWorkspaceManifestTests {
                     launchTarget: .shell,
                     cwd: cwd,
                     title: nil
+                )
+            ]
+        )
+    }
+
+    private static func makeContentSnapshot(
+        tabID: String,
+        cwd: String?
+    ) -> ShellContentTabRestoreSnapshot {
+        let paneSlotID = "pane_\(tabID)"
+        let contentID = "content_\(paneSlotID)"
+        return ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(paneSlotID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: paneSlotID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlotID,
+                    contentID: contentID
+                )
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: contentID,
+                    kind: .terminal,
+                    title: "Shell",
+                    payload: .terminal(
+                        ShellTerminalContentPayload(
+                            launchTarget: .shell,
+                            cwd: cwd,
+                            title: "Shell"
+                        )
+                    )
                 )
             ]
         )
@@ -489,19 +578,15 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func findTab(
-        _ tabID: String,
-        in manifest: ShellWorkspaceManifest
-    ) -> ShellWorkspaceTabRecord? {
-        manifest.spaces.flatMap(\.tabs).first { $0.tabID == tabID }
+    private static func makeContentSplitSnapshot(tabID: String) -> ShellContentTabRestoreSnapshot {
+        makeSplitSnapshot(tabID: tabID).migratingTerminalPanesToContentContainers()
     }
 
-    private static func requireOnlyTab(in manifest: ShellWorkspaceManifest) throws -> ShellWorkspaceTabRecord {
-        let tabs = manifest.spaces.flatMap(\.tabs)
-        guard tabs.count == 1, let tab = tabs.first else {
-            throw TestFailure("expected exactly one tab")
-        }
-        return tab
+    private static func findContentTab(
+        _ tabID: String,
+        in manifest: ShellContentWorkspaceManifest
+    ) -> ShellContentWorkspaceTabRecord? {
+        manifest.spaces.flatMap(\.tabs).first { $0.tabID == tabID }
     }
 
     private static func requireOnlySpace(
@@ -542,11 +627,18 @@ private enum ShellWorkspaceManifestTests {
         return snapshot
     }
 
-    private static func requireOnlyPane(in snapshot: ShellTabRestoreSnapshot?) throws -> ShellPaneRestoreRecord {
-        guard let snapshot, snapshot.panes.count == 1, let pane = snapshot.panes.first else {
-            throw TestFailure("expected exactly one restore pane")
+    private static func requireOnlyTerminalContent(
+        in snapshot: ShellContentTabRestoreSnapshot?
+    ) throws -> ShellContentRestoreRecord {
+        let snapshot = try requireSnapshot(snapshot)
+        guard snapshot.contents.count == 1,
+              let content = snapshot.contents.first,
+              content.kind == .terminal,
+              content.payload.terminal != nil
+        else {
+            throw TestFailure("expected exactly one terminal content restore record")
         }
-        return pane
+        return content
     }
 
     private static func requirePane(_ paneID: String, in state: ShellStateSnapshot) throws -> ShellPane {
