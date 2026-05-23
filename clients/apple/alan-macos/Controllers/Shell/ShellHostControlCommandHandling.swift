@@ -735,6 +735,18 @@ extension ShellHostController {
             }
 
             guard target.content.kind == .terminal else {
+                let errorCode = "unsupported_content"
+                let errorMessage = "terminal.send_text requires terminal content."
+                controlPlane.recordContentCommandRejected(
+                    requestID: command.requestID,
+                    command: command.command,
+                    spaceID: target.paneSlot.spaceID,
+                    tabID: target.paneSlot.tabID,
+                    paneSlotID: target.paneSlot.paneSlotID,
+                    content: target.content,
+                    errorCode: errorCode,
+                    errorMessage: errorMessage
+                )
                 return response(
                     requestID: command.requestID,
                     applied: false,
@@ -743,8 +755,8 @@ extension ShellHostController {
                     paneID: target.paneSlot.paneSlotID,
                     paneSlotID: target.paneSlot.paneSlotID,
                     contentID: target.content.contentID,
-                    errorCode: "unsupported_content",
-                    errorMessage: "terminal.send_text requires terminal content."
+                    errorCode: errorCode,
+                    errorMessage: errorMessage
                 )
             }
 

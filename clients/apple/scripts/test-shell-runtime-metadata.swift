@@ -71,6 +71,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAgentActivityControlCommandProjectsOntoPane()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
+        verifiesPublishedStateMergePreservesContentContainers()
         verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
         verifiesTabSidebarProjectionFallsBackToRepositoryBranch()
@@ -108,6 +109,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesSplitPaneAcceptsMarkdownContentIntent()
         verifiesControlPlaneResponsesExposeContentContainers()
+        verifiesContentContainerEventsCaptureLifecycleAndRejections()
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
@@ -2314,6 +2316,47 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesPublishedStateMergePreservesContentContainers() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PublishedStateMerge-\(UUID().uuidString).md")
+        do {
+            try "## Merge notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("published state merge setup must create markdown file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let baseline = makeController().shellState
+        let splitResult: ShellStateMutationResult
+        do {
+            splitResult = try baseline.splittingPane(
+                "pane_1",
+                placement: .right,
+                contentIntent: .markdown(fileURL: fileURL, title: "Merge Notes")
+            )
+        } catch {
+            fail("published state merge setup must create markdown split: \(error)")
+        }
+        guard let paneSlotID = splitResult.paneID else {
+            fail("published state merge setup must return new PaneSlot id")
+        }
+
+        let merged = AlanShellPublishedStateMerger.merge(
+            authoritative: baseline,
+            incoming: splitResult.state
+        )
+        let mergedContentState = merged.contentStateProjection()
+
+        expect(
+            merged.paneSlots != nil && merged.contents != nil,
+            "published state merge must retain explicit content container records"
+        )
+        expect(
+            mergedContentState.contentMounted(in: paneSlotID)?.kind == .markdown,
+            "published state merge must not project markdown content back into terminal content"
+        )
+    }
+
     private static func verifiesPaneRebuildMutationsPreserveActivity() {
         let controller = makeController()
         let progress = progressActivity(
@@ -4251,6 +4294,164 @@ private enum ShellRuntimeMetadataTests {
                 && json.contains("\"pane_slot_id\"")
                 && json.contains("\"content_capabilities\""),
             "control-plane content response JSON must use stable content-container keys"
+        )
+    }
+
+    private static func verifiesContentContainerEventsCaptureLifecycleAndRejections() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Events-\(UUID().uuidString).md")
+        do {
+            try "## Event notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("content event setup must create a markdown file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let controller = makeController()
+        controller.controlPlane.publish(state: controller.shellState)
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(fileURL: fileURL, title: "Event Notes")
+        ) else {
+            fail("content event setup must create markdown content")
+        }
+        guard let markdownContent = controller.shellState
+            .contentStateProjection()
+            .contentMounted(in: markdownPaneID)
+        else {
+            fail("content event setup must expose markdown content")
+        }
+
+        let splitEvents = controlEvents(controller)
+        expect(
+            splitEvents.contains {
+                $0.type == "pane_slot.created"
+                    && $0.payload["pane_slot_id"] == .string(markdownPaneID)
+                    && $0.payload["content_id"] == .string(markdownContent.contentID)
+                    && $0.payload["content_kind"] == .string(ShellContentKind.markdown.rawValue)
+            },
+            "markdown split must emit PaneSlot creation event with mounted content"
+        )
+        expect(
+            splitEvents.contains {
+                $0.type == "content.created"
+                    && $0.payload["pane_slot_id"] == .string(markdownPaneID)
+                    && $0.payload["content_id"] == .string(markdownContent.contentID)
+                    && $0.payload["content_kind"] == .string(ShellContentKind.markdown.rawValue)
+            },
+            "markdown split must emit content creation event"
+        )
+
+        let rejectionResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-event-reject-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "\(markdownPaneID)",
+                  "text": "ignored"
+                }
+                """
+            )
+        )
+        expect(
+            rejectionResponse.applied == false
+                && rejectionResponse.errorCode == "unsupported_content",
+            "content event setup must reject terminal command for markdown content"
+        )
+        expect(
+            controlEvents(controller).contains {
+                $0.type == "content.command_rejected"
+                    && $0.payload["request_id"] == .string("content-event-reject-1")
+                    && $0.payload["command"] == .string("terminal.send_text")
+                    && $0.payload["pane_slot_id"] == .string(markdownPaneID)
+                    && $0.payload["content_id"] == .string(markdownContent.contentID)
+                    && $0.payload["content_kind"] == .string(ShellContentKind.markdown.rawValue)
+                    && $0.payload["error_code"] == .string("unsupported_content")
+            },
+            "unsupported content command must emit a rejected command event"
+        )
+
+        expect(
+            controller.closePane(paneID: markdownPaneID) == .closed,
+            "content event setup must close markdown PaneSlot"
+        )
+        let closeEvents = controlEvents(controller)
+        expect(
+            closeEvents.contains {
+                $0.type == "pane_slot.closed"
+                    && $0.payload["pane_slot_id"] == .string(markdownPaneID)
+                    && $0.payload["content_id"] == .string(markdownContent.contentID)
+            },
+            "closing markdown content must emit PaneSlot closure event"
+        )
+        expect(
+            closeEvents.contains {
+                $0.type == "content.closed"
+                    && $0.payload["pane_slot_id"] == .string(markdownPaneID)
+                    && $0.payload["content_id"] == .string(markdownContent.contentID)
+                    && $0.payload["content_kind"] == .string(ShellContentKind.markdown.rawValue)
+            },
+            "closing markdown content must emit content closure event"
+        )
+
+        let replacementController = makeController()
+        replacementController.controlPlane.publish(state: replacementController.shellState)
+        let baselineContentState = replacementController.shellState.contentStateProjection()
+        guard let originalSlot = baselineContentState.paneSlot(paneSlotID: "pane_1"),
+              let originalContent = baselineContentState.content(contentID: originalSlot.contentID)
+        else {
+            fail("replacement event setup must expose original terminal content")
+        }
+        let replacementContent = ShellContentInstance(
+            contentID: "content_replacement_markdown",
+            kind: .markdown,
+            title: "Replacement.md",
+            payload: .markdown(
+                ShellMarkdownContentPayload(
+                    fileURL: fileURL.standardizedFileURL.absoluteString,
+                    title: "Replacement.md"
+                )
+            ),
+            rendererState: ShellContentRendererState(phase: "ready", detail: fileURL.path)
+        )
+        let replacementSlot = ShellPaneSlot(
+            paneSlotID: originalSlot.paneSlotID,
+            tabID: originalSlot.tabID,
+            spaceID: originalSlot.spaceID,
+            contentID: replacementContent.contentID,
+            attention: originalSlot.attention
+        )
+        let replacementContentState = ShellContentStateSnapshot(
+            contractVersion: baselineContentState.contractVersion,
+            windowID: baselineContentState.windowID,
+            focusedSpaceID: baselineContentState.focusedSpaceID,
+            focusedTabID: baselineContentState.focusedTabID,
+            focusedPaneSlotID: baselineContentState.focusedPaneSlotID,
+            spaces: baselineContentState.spaces,
+            paneSlots: baselineContentState.paneSlots.map { paneSlot in
+                paneSlot.paneSlotID == originalSlot.paneSlotID ? replacementSlot : paneSlot
+            },
+            contents: baselineContentState.contents.filter {
+                $0.contentID != originalContent.contentID
+            } + [replacementContent]
+        )
+        guard let replacementState = replacementContentState.materializingShellState() else {
+            fail("replacement content state must materialize shell state")
+        }
+        replacementController.controlPlane.publish(state: replacementState)
+
+        expect(
+            controlEvents(replacementController).contains {
+                $0.type == "content.replaced"
+                    && $0.payload["pane_slot_id"] == .string(originalSlot.paneSlotID)
+                    && $0.payload["previous_content_id"] == .string(originalContent.contentID)
+                    && $0.payload["previous_content_kind"] == .string(ShellContentKind.terminal.rawValue)
+                    && $0.payload["current_content_id"] == .string(replacementContent.contentID)
+                    && $0.payload["current_content_kind"] == .string(ShellContentKind.markdown.rawValue)
+            },
+            "same PaneSlot content replacement must emit replacement event"
         )
     }
 

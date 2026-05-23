@@ -30,7 +30,7 @@
 - [x] 4.3 Extend shell control-plane DTOs and responses to expose `pane_slots`, `contents`, `pane_slot_id`, `content_id`, content capabilities, and content-aware mutation results.
 - [x] 4.4 Replace terminal text delivery with a terminal-specific command such as `terminal.send_text` that resolves PaneSlot targets to terminal ContentInstances before delivery.
 - [x] 4.5 Reject terminal-specific commands against non-terminal ContentInstances with stable unsupported-content errors and observable diagnostics.
-- [ ] 4.6 Emit shell events for PaneSlot creation, PaneSlot closure, content creation, content closure, content replacement, and content-specific command rejection.
+- [x] 4.6 Emit shell events for PaneSlot creation, PaneSlot closure, content creation, content closure, content replacement, and content-specific command rejection.
 - [ ] 4.7 Ensure workspace manifest updates for pin/live snapshots write content-aware restore payloads and do not dual-write terminal-only snapshots.
 
 ## 5. UI Integration

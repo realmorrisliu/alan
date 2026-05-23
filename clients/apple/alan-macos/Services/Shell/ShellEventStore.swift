@@ -76,6 +76,34 @@ final class AlanShellEventStore {
         )
     }
 
+    func recordContentCommandRejected(
+        requestID: String,
+        command: String,
+        spaceID: String?,
+        tabID: String?,
+        paneSlotID: String,
+        content: ShellContentInstance,
+        errorCode: String,
+        errorMessage: String
+    ) {
+        append(
+            type: "content.command_rejected",
+            spaceID: spaceID,
+            tabID: tabID,
+            paneID: paneSlotID,
+            payload: [
+                "request_id": .string(requestID),
+                "command": .string(command),
+                "pane_slot_id": .string(paneSlotID),
+                "content_id": .string(content.contentID),
+                "content_kind": .string(content.kind.rawValue),
+                "content_title": .string(content.title),
+                "error_code": .string(errorCode),
+                "error_message": .string(errorMessage)
+            ]
+        )
+    }
+
     func recordSplitEqualized(
         requestID: String?,
         spaceID: String?,
@@ -198,7 +226,9 @@ final class AlanShellEventStore {
                 paneID: currentState.focusedPaneID,
                 payload: [
                     "previous_pane_id": .string(previousState.focusedPaneID ?? ""),
-                    "current_pane_id": .string(currentState.focusedPaneID ?? "")
+                    "current_pane_id": .string(currentState.focusedPaneID ?? ""),
+                    "previous_pane_slot_id": .string(previousState.focusedPaneID ?? ""),
+                    "current_pane_slot_id": .string(currentState.focusedPaneID ?? "")
                 ]
             )
         }
@@ -242,6 +272,10 @@ final class AlanShellEventStore {
             currentState: currentState,
             commonTabIDs: previousTabs.intersection(currentTabs)
         )
+        recordContentContainerChanges(
+            previousState: previousState,
+            currentState: currentState
+        )
 
         let allPaneIDs = Set(previousPanesByID.keys).union(currentPanesByID.keys)
         for paneID in allPaneIDs.sorted() {
@@ -273,6 +307,144 @@ final class AlanShellEventStore {
                 )
             }
         }
+    }
+
+    private func recordContentContainerChanges(
+        previousState: ShellStateSnapshot,
+        currentState: ShellStateSnapshot
+    ) {
+        let previousContentState = previousState.contentStateProjection()
+        let currentContentState = currentState.contentStateProjection()
+        let previousPaneSlotsByID = Dictionary(
+            uniqueKeysWithValues: previousContentState.paneSlots.map { ($0.paneSlotID, $0) }
+        )
+        let currentPaneSlotsByID = Dictionary(
+            uniqueKeysWithValues: currentContentState.paneSlots.map { ($0.paneSlotID, $0) }
+        )
+        let previousContentsByID = Dictionary(
+            uniqueKeysWithValues: previousContentState.contents.map { ($0.contentID, $0) }
+        )
+        let currentContentsByID = Dictionary(
+            uniqueKeysWithValues: currentContentState.contents.map { ($0.contentID, $0) }
+        )
+        let previousPaneSlotIDs = Set(previousPaneSlotsByID.keys)
+        let currentPaneSlotIDs = Set(currentPaneSlotsByID.keys)
+        let previousContentIDs = Set(previousContentsByID.keys)
+        let currentContentIDs = Set(currentContentsByID.keys)
+
+        for paneSlotID in currentPaneSlotIDs.subtracting(previousPaneSlotIDs).sorted() {
+            guard let paneSlot = currentPaneSlotsByID[paneSlotID],
+                  let content = currentContentsByID[paneSlot.contentID]
+            else {
+                continue
+            }
+            append(
+                type: "pane_slot.created",
+                spaceID: paneSlot.spaceID,
+                tabID: paneSlot.tabID,
+                paneID: paneSlot.paneSlotID,
+                payload: paneSlotPayload(paneSlot, content: content)
+            )
+        }
+
+        for paneSlotID in previousPaneSlotIDs.subtracting(currentPaneSlotIDs).sorted() {
+            guard let paneSlot = previousPaneSlotsByID[paneSlotID],
+                  let content = previousContentsByID[paneSlot.contentID]
+            else {
+                continue
+            }
+            append(
+                type: "pane_slot.closed",
+                spaceID: paneSlot.spaceID,
+                tabID: paneSlot.tabID,
+                paneID: paneSlot.paneSlotID,
+                payload: paneSlotPayload(paneSlot, content: content)
+            )
+        }
+
+        for paneSlotID in previousPaneSlotIDs.intersection(currentPaneSlotIDs).sorted() {
+            guard let previousPaneSlot = previousPaneSlotsByID[paneSlotID],
+                  let currentPaneSlot = currentPaneSlotsByID[paneSlotID],
+                  previousPaneSlot.contentID != currentPaneSlot.contentID,
+                  let previousContent = previousContentsByID[previousPaneSlot.contentID],
+                  let currentContent = currentContentsByID[currentPaneSlot.contentID]
+            else {
+                continue
+            }
+            append(
+                type: "content.replaced",
+                spaceID: currentPaneSlot.spaceID,
+                tabID: currentPaneSlot.tabID,
+                paneID: currentPaneSlot.paneSlotID,
+                payload: [
+                    "pane_slot_id": .string(currentPaneSlot.paneSlotID),
+                    "previous_content_id": .string(previousContent.contentID),
+                    "previous_content_kind": .string(previousContent.kind.rawValue),
+                    "current_content_id": .string(currentContent.contentID),
+                    "current_content_kind": .string(currentContent.kind.rawValue),
+                    "current_content_title": .string(currentContent.title)
+                ]
+            )
+        }
+
+        for contentID in currentContentIDs.subtracting(previousContentIDs).sorted() {
+            guard let content = currentContentsByID[contentID] else { continue }
+            let paneSlot = currentContentState.paneSlots.first { $0.contentID == contentID }
+            append(
+                type: "content.created",
+                spaceID: paneSlot?.spaceID,
+                tabID: paneSlot?.tabID,
+                paneID: paneSlot?.paneSlotID,
+                payload: contentPayload(content, paneSlot: paneSlot)
+            )
+        }
+
+        for contentID in previousContentIDs.subtracting(currentContentIDs).sorted() {
+            guard let content = previousContentsByID[contentID] else { continue }
+            let paneSlot = previousContentState.paneSlots.first { $0.contentID == contentID }
+            append(
+                type: "content.closed",
+                spaceID: paneSlot?.spaceID,
+                tabID: paneSlot?.tabID,
+                paneID: paneSlot?.paneSlotID,
+                payload: contentPayload(content, paneSlot: paneSlot)
+            )
+        }
+    }
+
+    private func paneSlotPayload(
+        _ paneSlot: ShellPaneSlot,
+        content: ShellContentInstance
+    ) -> [String: AlanShellJSONValue] {
+        var payload = contentPayload(content, paneSlot: paneSlot)
+        payload["pane_slot_id"] = .string(paneSlot.paneSlotID)
+        payload["tab_id"] = .string(paneSlot.tabID)
+        payload["space_id"] = .string(paneSlot.spaceID)
+        payload["attention"] = .string(paneSlot.attention.rawValue)
+        return payload
+    }
+
+    private func contentPayload(
+        _ content: ShellContentInstance,
+        paneSlot: ShellPaneSlot?
+    ) -> [String: AlanShellJSONValue] {
+        var payload: [String: AlanShellJSONValue] = [
+            "content_id": .string(content.contentID),
+            "content_kind": .string(content.kind.rawValue),
+            "content_title": .string(content.title),
+            "content_lifecycle": .string(content.lifecycle.rawValue),
+            "content_capabilities": .array(content.capabilities.map { .string($0.rawValue) }),
+            "renderer_phase": .string(content.rendererState.phase)
+        ]
+        if let detail = content.rendererState.detail {
+            payload["renderer_detail"] = .string(detail)
+        }
+        if let paneSlot {
+            payload["pane_slot_id"] = .string(paneSlot.paneSlotID)
+            payload["tab_id"] = .string(paneSlot.tabID)
+            payload["space_id"] = .string(paneSlot.spaceID)
+        }
+        return payload
     }
 
     private func recordTabOrganizationChanges(
