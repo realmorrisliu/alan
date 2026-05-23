@@ -227,7 +227,7 @@ where
         resume_rollout_path: None,
         launch_root_dir,
         default_cwd_override,
-        agent_home_paths: None,
+        agent_home_paths: parent_agent_home_paths(parent),
         chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
     };
     let resolved_child_definition =
@@ -1304,9 +1304,20 @@ pub(super) fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) ->
 }
 
 fn parent_runtime_channel(parent: &RuntimeLoopState) -> crate::InstallChannel {
-    let Some(memory_dir) = parent.core_config.memory.workspace_dir.as_deref() else {
-        return crate::InstallChannel::detect_current();
-    };
+    parent_runtime_channel_from_memory(parent).unwrap_or_else(crate::InstallChannel::detect_current)
+}
+
+fn parent_agent_home_paths(parent: &RuntimeLoopState) -> Option<crate::AlanHomePaths> {
+    let channel = parent_runtime_channel_from_memory(parent)?;
+    let current_home_paths = crate::AlanHomePaths::detect()?;
+    Some(crate::AlanHomePaths::from_home_dir_for_channel(
+        &current_home_paths.home_dir,
+        channel,
+    ))
+}
+
+fn parent_runtime_channel_from_memory(parent: &RuntimeLoopState) -> Option<crate::InstallChannel> {
+    let memory_dir = parent.core_config.memory.workspace_dir.as_deref()?;
     if let Some(channel_dir) = memory_dir.parent()
         && channel_dir
             .parent()
@@ -1315,9 +1326,9 @@ fn parent_runtime_channel(parent: &RuntimeLoopState) -> crate::InstallChannel {
         && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
         && let Some(channel) = crate::InstallChannel::from_id(channel_id)
     {
-        return channel;
+        return Some(channel);
     }
-    crate::InstallChannel::detect_current()
+    None
 }
 
 pub(super) fn bound_workspace_root(state: &RuntimeLoopState) -> Option<PathBuf> {
@@ -1917,6 +1928,50 @@ Body
         assert!(!user_text.contains("Parent Conversation Snapshot"));
         assert!(!user_text.contains("Parent Plan Snapshot"));
         assert!(!user_text.contains("Parent Tool Results"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_preserves_parent_dev_channel_for_session_state() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state_with_capability_view(
+            &temp,
+            requests.clone(),
+            response.clone(),
+            crate::skills::ResolvedCapabilityView::default(),
+        );
+        let workspace_alan_dir = parent.workspace_root_dir.as_ref().unwrap().join(".alan");
+        parent.core_config.memory.workspace_dir =
+            Some(crate::workspace_runtime_memory_dir_from_alan_dir(
+                &workspace_alan_dir,
+                crate::InstallChannel::Dev,
+            ));
+        let root_dir = workspace_alan_dir.join("agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Memory];
+
+        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(RecordingProvider::new(
+                requests.clone(),
+                response.clone(),
+            )))
+        })
+        .await
+        .unwrap();
+        let result = child.join().await.unwrap();
+
+        let rollout_path = result.rollout_path.expect("child rollout path");
+        let dev_sessions_dir = crate::workspace_runtime_sessions_dir_from_alan_dir(
+            &workspace_alan_dir,
+            crate::InstallChannel::Dev,
+        );
+        let stable_sessions_dir = crate::workspace_runtime_sessions_dir_from_alan_dir(
+            &workspace_alan_dir,
+            crate::InstallChannel::Stable,
+        );
+        assert!(rollout_path.starts_with(dev_sessions_dir));
+        assert!(!rollout_path.starts_with(stable_sessions_dir));
     }
 
     #[tokio::test]
