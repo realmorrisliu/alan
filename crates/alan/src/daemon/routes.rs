@@ -3831,7 +3831,7 @@ Body
         let rollout_path = temp.path().join(rollout_name);
         let items = [
             alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
-                session_id: "runtime-non-utf8-read".to_string(),
+                session_id: "sess-read-non-utf8".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
