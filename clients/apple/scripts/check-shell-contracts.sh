@@ -571,6 +571,16 @@ require_pattern \
     "shell control-plane responses must expose content capabilities"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellEventStore.swift" \
+    "pane_slot.created" \
+    "shell events must expose PaneSlot lifecycle creation"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellEventStore.swift" \
+    "content.command_rejected" \
+    "shell events must expose rejected content-specific commands"
+
+require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
     "enum AlanShellLocalCommandExecutor" \
     "shell local command execution must live outside the socket server boundary"

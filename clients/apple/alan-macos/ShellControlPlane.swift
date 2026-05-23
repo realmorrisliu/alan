@@ -223,6 +223,28 @@ final class AlanShellControlPlane {
         )
     }
 
+    func recordContentCommandRejected(
+        requestID: String,
+        command: AlanShellControlCommandKind,
+        spaceID: String?,
+        tabID: String?,
+        paneSlotID: String,
+        content: ShellContentInstance,
+        errorCode: String,
+        errorMessage: String
+    ) {
+        eventStore.recordContentCommandRejected(
+            requestID: requestID,
+            command: command.rawValue,
+            spaceID: spaceID,
+            tabID: tabID,
+            paneSlotID: paneSlotID,
+            content: content,
+            errorCode: errorCode,
+            errorMessage: errorMessage
+        )
+    }
+
     func recordSplitEqualized(
         requestID: String?,
         spaceID: String?,
