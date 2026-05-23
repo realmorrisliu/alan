@@ -174,7 +174,7 @@ final class AlanShellControlPlane {
         let rows = eventStore.read(afterEventID: command.afterEventID, limit: command.limit)
         return AlanShellControlResponse(
             requestID: command.requestID,
-            contractVersion: "0.1",
+            contractVersion: ShellContentStateSnapshot.currentContractVersion,
             applied: true,
             state: nil,
             spaces: nil,

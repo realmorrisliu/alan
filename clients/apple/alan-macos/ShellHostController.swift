@@ -275,7 +275,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self?.handleControlPlaneCommand(command)
             ?? AlanShellControlResponse(
                 requestID: command.requestID,
-                contractVersion: "0.1",
+                contractVersion: ShellContentStateSnapshot.currentContractVersion,
                 applied: false,
                 state: nil,
                 spaces: nil,

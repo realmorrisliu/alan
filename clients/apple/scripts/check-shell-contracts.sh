@@ -556,6 +556,16 @@ require_pattern \
     "terminal.send_text responses must expose service delivery state"
 
 require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "paneSlots: \\[ShellPaneSlot\\]?" \
+    "shell control-plane responses must expose PaneSlot descriptors"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "contentCapabilities: \\[ShellContentCapability\\]?" \
+    "shell control-plane responses must expose content capabilities"
+
+require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
     "enum AlanShellLocalCommandExecutor" \
     "shell local command execution must live outside the socket server boundary"

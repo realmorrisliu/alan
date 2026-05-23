@@ -115,6 +115,65 @@ extension AlanShellControlCommand {
     }
 }
 
+struct AlanShellControlContentProjection {
+    let paneSlotID: String?
+    let contentID: String?
+    let kind: ShellContentKind?
+    let title: String?
+    let capabilities: [ShellContentCapability]?
+}
+
+extension ShellContentStateSnapshot {
+    func controlPlanePaneSlots(in tabID: String?) -> [ShellPaneSlot] {
+        guard let tabID else { return paneSlots }
+        return paneSlots.filter { $0.tabID == tabID }
+    }
+
+    func controlPlaneContents(in tabID: String?) -> [ShellContentInstance] {
+        let mountedContentIDs = Set(controlPlanePaneSlots(in: tabID).map(\.contentID))
+        return contents.filter { mountedContentIDs.contains($0.contentID) }
+    }
+
+    func controlPlaneContentProjection(
+        paneSlotID: String?,
+        contentID: String?
+    ) -> AlanShellControlContentProjection {
+        if let contentID,
+           let content = content(contentID: contentID)
+        {
+            let paneSlot = paneSlots.first { $0.contentID == contentID }
+            return AlanShellControlContentProjection(
+                paneSlotID: paneSlot?.paneSlotID,
+                contentID: content.contentID,
+                kind: content.kind,
+                title: content.title,
+                capabilities: content.capabilities
+            )
+        }
+
+        if let paneSlotID,
+           let paneSlot = paneSlot(paneSlotID: paneSlotID),
+           let content = content(contentID: paneSlot.contentID)
+        {
+            return AlanShellControlContentProjection(
+                paneSlotID: paneSlot.paneSlotID,
+                contentID: content.contentID,
+                kind: content.kind,
+                title: content.title,
+                capabilities: content.capabilities
+            )
+        }
+
+        return AlanShellControlContentProjection(
+            paneSlotID: paneSlotID,
+            contentID: contentID,
+            kind: nil,
+            title: nil,
+            capabilities: nil
+        )
+    }
+}
+
 struct AlanShellControlResponse: Codable {
     let requestID: String
     let contractVersion: String
@@ -123,17 +182,24 @@ struct AlanShellControlResponse: Codable {
     let spaces: [ShellSpace]?
     let tabs: [ShellTab]?
     let panes: [ShellPane]?
+    let paneSlots: [ShellPaneSlot]?
+    let contents: [ShellContentInstance]?
     let pane: ShellPane?
     let items: [AlanShellAttentionInboxItem]?
     let candidates: [AlanShellRoutingCandidate]?
     let events: [AlanShellEventEnvelope]?
     let focusedPaneID: String?
+    let focusedPaneSlotID: String?
     let spaceID: String?
     let sourceSpaceID: String?
     let targetSpaceID: String?
     let tabID: String?
     let paneID: String?
+    let paneSlotID: String?
     let contentID: String?
+    let contentKind: ShellContentKind?
+    let contentTitle: String?
+    let contentCapabilities: [ShellContentCapability]?
     let section: ShellTabOrganizationSection?
     let index: Int?
     let acceptedBytes: Int?
@@ -149,6 +215,8 @@ struct AlanShellControlResponse: Codable {
     let targetTabID: String?
     let previousFocusedPaneID: String?
     let currentFocusedPaneID: String?
+    let previousFocusedPaneSlotID: String?
+    let currentFocusedPaneSlotID: String?
     let splitDirection: ShellSplitDirection?
     let spatialDirection: ShellSpatialFocusDirection?
     let placement: ShellPaneSplitDirection?
@@ -164,17 +232,24 @@ struct AlanShellControlResponse: Codable {
         spaces: [ShellSpace]? = nil,
         tabs: [ShellTab]? = nil,
         panes: [ShellPane]? = nil,
+        paneSlots: [ShellPaneSlot]? = nil,
+        contents: [ShellContentInstance]? = nil,
         pane: ShellPane? = nil,
         items: [AlanShellAttentionInboxItem]? = nil,
         candidates: [AlanShellRoutingCandidate]? = nil,
         events: [AlanShellEventEnvelope]? = nil,
         focusedPaneID: String? = nil,
+        focusedPaneSlotID: String? = nil,
         spaceID: String? = nil,
         sourceSpaceID: String? = nil,
         targetSpaceID: String? = nil,
         tabID: String? = nil,
         paneID: String? = nil,
+        paneSlotID: String? = nil,
         contentID: String? = nil,
+        contentKind: ShellContentKind? = nil,
+        contentTitle: String? = nil,
+        contentCapabilities: [ShellContentCapability]? = nil,
         section: ShellTabOrganizationSection? = nil,
         index: Int? = nil,
         acceptedBytes: Int? = nil,
@@ -190,6 +265,8 @@ struct AlanShellControlResponse: Codable {
         targetTabID: String? = nil,
         previousFocusedPaneID: String? = nil,
         currentFocusedPaneID: String? = nil,
+        previousFocusedPaneSlotID: String? = nil,
+        currentFocusedPaneSlotID: String? = nil,
         splitDirection: ShellSplitDirection? = nil,
         spatialDirection: ShellSpatialFocusDirection? = nil,
         placement: ShellPaneSplitDirection? = nil,
@@ -204,17 +281,24 @@ struct AlanShellControlResponse: Codable {
         self.spaces = spaces
         self.tabs = tabs
         self.panes = panes
+        self.paneSlots = paneSlots
+        self.contents = contents
         self.pane = pane
         self.items = items
         self.candidates = candidates
         self.events = events
         self.focusedPaneID = focusedPaneID
+        self.focusedPaneSlotID = focusedPaneSlotID
         self.spaceID = spaceID
         self.sourceSpaceID = sourceSpaceID
         self.targetSpaceID = targetSpaceID
         self.tabID = tabID
         self.paneID = paneID
+        self.paneSlotID = paneSlotID
         self.contentID = contentID
+        self.contentKind = contentKind
+        self.contentTitle = contentTitle
+        self.contentCapabilities = contentCapabilities
         self.section = section
         self.index = index
         self.acceptedBytes = acceptedBytes
@@ -230,6 +314,8 @@ struct AlanShellControlResponse: Codable {
         self.targetTabID = targetTabID
         self.previousFocusedPaneID = previousFocusedPaneID
         self.currentFocusedPaneID = currentFocusedPaneID
+        self.previousFocusedPaneSlotID = previousFocusedPaneSlotID
+        self.currentFocusedPaneSlotID = currentFocusedPaneSlotID
         self.splitDirection = splitDirection
         self.spatialDirection = spatialDirection
         self.placement = placement
@@ -246,17 +332,24 @@ struct AlanShellControlResponse: Codable {
         case spaces
         case tabs
         case panes
+        case paneSlots = "pane_slots"
+        case contents
         case pane
         case items
         case candidates
         case events
         case focusedPaneID = "focused_pane_id"
+        case focusedPaneSlotID = "focused_pane_slot_id"
         case spaceID = "space_id"
         case sourceSpaceID = "source_space_id"
         case targetSpaceID = "target_space_id"
         case tabID = "tab_id"
         case paneID = "pane_id"
+        case paneSlotID = "pane_slot_id"
         case contentID = "content_id"
+        case contentKind = "content_kind"
+        case contentTitle = "content_title"
+        case contentCapabilities = "content_capabilities"
         case section
         case index
         case acceptedBytes = "accepted_bytes"
@@ -272,6 +365,8 @@ struct AlanShellControlResponse: Codable {
         case targetTabID = "target_tab_id"
         case previousFocusedPaneID = "previous_focused_pane_id"
         case currentFocusedPaneID = "current_focused_pane_id"
+        case previousFocusedPaneSlotID = "previous_focused_pane_slot_id"
+        case currentFocusedPaneSlotID = "current_focused_pane_slot_id"
         case splitDirection = "split_direction"
         case spatialDirection = "spatial_direction"
         case placement

@@ -107,6 +107,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningMarkdownTabCreatesReadOnlyContentDescriptor()
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesSplitPaneAcceptsMarkdownContentIntent()
+        verifiesControlPlaneResponsesExposeContentContainers()
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
@@ -1793,7 +1794,8 @@ private enum ShellRuntimeMetadataTests {
         expect(moveResponse.applied == true, "move_within_tab must apply to an adjacent target")
         expect(moveResponse.sourceTabID == moveResponse.targetTabID, "in-tab move must stay in one tab")
         expect(
-            moveResponse.mountedContentInstanceID == "pane_2",
+            moveResponse.mountedContentInstanceID
+                == ShellContentInstance.terminalContentID(forPaneID: "pane_2"),
             "movement response must report preserved mounted content identity"
         )
         expect(
@@ -3966,6 +3968,146 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.launchTarget == nil && controller.selectedPane?.process == nil,
             "markdown split intent must not create a terminal process for the new PaneSlot"
+        )
+    }
+
+    private static func verifiesControlPlaneResponsesExposeContentContainers() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ControlPlane-\(UUID().uuidString).md")
+        do {
+            try "## Control plane notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("control-plane content setup must create a markdown file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let controller = makeController()
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(fileURL: fileURL, title: "Notes")
+        ) else {
+            fail("control-plane setup must create markdown content")
+        }
+        guard let settingsPaneID = controller.splitPane(
+            paneID: markdownPaneID,
+            placement: .down,
+            contentIntent: .settings(title: "Settings")
+        ) else {
+            fail("control-plane setup must create settings content")
+        }
+        controller.focus(paneID: settingsPaneID)
+
+        let stateResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-state-1",
+                  "command": "state"
+                }
+                """
+            )
+        )
+        let statePaneSlotIDs = Set(stateResponse.paneSlots?.map(\.paneSlotID) ?? [])
+        let stateContentKinds = Set(stateResponse.contents?.map(\.kind) ?? [])
+        expect(
+            stateResponse.contractVersion == ShellContentStateSnapshot.currentContractVersion,
+            "control-plane state response must advertise the content-state contract"
+        )
+        expect(
+            statePaneSlotIDs.isSuperset(of: Set(["pane_1", markdownPaneID, settingsPaneID])),
+            "control-plane state response must expose PaneSlot descriptors"
+        )
+        expect(
+            stateContentKinds == [.terminal, .markdown, .settings],
+            "control-plane state response must expose mounted ContentInstances"
+        )
+        expect(
+            stateResponse.focusedPaneSlotID == settingsPaneID
+                && stateResponse.paneSlotID == settingsPaneID,
+            "control-plane state response must report focused PaneSlot identity"
+        )
+        expect(
+            stateResponse.contentKind == .settings
+                && stateResponse.contentCapabilities == [.settingsSurface],
+            "control-plane state response must expose focused content capabilities"
+        )
+
+        let snapshotResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-snapshot-1",
+                  "command": "pane.snapshot",
+                  "pane_id": "\(markdownPaneID)"
+                }
+                """
+            )
+        )
+        expect(
+            snapshotResponse.paneSlotID == markdownPaneID
+                && snapshotResponse.contentKind == .markdown
+                && snapshotResponse.contentTitle == "Notes",
+            "pane.snapshot response must project the PaneSlot's mounted content"
+        )
+        expect(
+            snapshotResponse.contentCapabilities == [.markdownReadOnlyViewer],
+            "pane.snapshot response must expose content capabilities"
+        )
+
+        let listResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-list-1",
+                  "command": "pane.list",
+                  "tab_id": "\(controller.selectedTabID ?? "")"
+                }
+                """
+            )
+        )
+        expect(
+            listResponse.paneSlots?.count == 3 && listResponse.contents?.count == 3,
+            "pane.list response must include tab-scoped content containers"
+        )
+
+        let splitResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-split-1",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "horizontal"
+                }
+                """
+            )
+        )
+        expect(splitResponse.applied == true, "pane.split content response setup must apply")
+        expect(
+            splitResponse.state != nil
+                && splitResponse.paneSlotID == splitResponse.paneID
+                && splitResponse.contentKind == .terminal,
+            "pane.split response must include resulting state and mounted content identity"
+        )
+        expect(
+            splitResponse.contentCapabilities?.contains(.terminalInput) == true,
+            "pane.split response must expose terminal content capabilities"
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(stateResponse),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            fail("control-plane content response must encode to JSON")
+        }
+        expect(
+            json.contains("\"pane_slots\"")
+                && json.contains("\"contents\"")
+                && json.contains("\"pane_slot_id\"")
+                && json.contains("\"content_capabilities\""),
+            "control-plane content response JSON must use stable content-container keys"
         )
     }
 
