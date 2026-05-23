@@ -20,6 +20,15 @@ describe("daemon binary resolution", () => {
     expect(resolved).toBe("alan");
   });
 
+  test("returns dev PATH fallback when alan-dev command is available", () => {
+    const resolved = resolveAlanBinaryFromCandidates(
+      ["alan-dev"],
+      () => false,
+      (command) => command === "alan-dev",
+    );
+    expect(resolved).toBe("alan-dev");
+  });
+
   test("ignores directory-like candidate and returns runnable file candidate", () => {
     const resolved = resolveAlanBinaryFromCandidates(
       ["/tmp/not-a-binary", "/tmp/alan-bin"],

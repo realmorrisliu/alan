@@ -47,6 +47,15 @@ enum AlanInstallChannel: Equatable {
         }
     }
 
+    var installChannelID: String {
+        switch self {
+        case .stable:
+            return "stable"
+        case .dev:
+            return "dev"
+        }
+    }
+
     var toolNames: [String] {
         [cliToolName, tuiToolName]
     }

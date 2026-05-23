@@ -18,6 +18,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesDevChannelUsesBundledDevBinary()
+        verifiesDevChannelPropagatesInstallChannelEnvironment()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesContentScopedHandleSurvivesPaneRemount()
@@ -180,6 +181,22 @@ private enum TerminalRuntimeServiceTests {
         expect(
             resolution.bootCommand.contains("alan-dev") && resolution.arguments == ["chat"],
             "dev channel boot command must use alan-dev"
+        )
+    }
+
+    private static func verifiesDevChannelPropagatesInstallChannelEnvironment() {
+        setenv("ALAN_INSTALL_CHANNEL", "dev", 1)
+        defer {
+            unsetenv("ALAN_INSTALL_CHANNEL")
+        }
+
+        let state = ShellStateSnapshot.bootstrapDefault()
+        let pane = state.panes[0]
+        let profile = AlanShellBootProfile.forPane(pane, shellState: state)
+
+        expect(
+            profile.environment["ALAN_INSTALL_CHANNEL"] == "dev",
+            "dev boot profile must propagate ALAN_INSTALL_CHANNEL to child processes"
         )
     }
 

@@ -355,8 +355,9 @@ impl JsonFileTaskStoreBackend {
 
     #[allow(dead_code)]
     pub fn default_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".alan").join("tasks").join(TASK_STORE_FILENAME))
+        alan_runtime::AlanHomePaths::detect()
+            .map(|paths| paths.alan_home_dir.join("tasks").join(TASK_STORE_FILENAME))
+            .context("Cannot determine home directory")
     }
 
     fn write_atomically(&self, content: &str) -> Result<()> {

@@ -1,9 +1,12 @@
 //! Workspace registry — persistent workspace registration.
 //!
-//! Maintains a `registry.json` at `~/.alan/registry.json` that tracks
+//! Maintains a `registry.json` under the active channel's alan home that tracks
 //! all known workspaces across the filesystem. Each workspace is identified
 //! by its canonical path, with a short hash ID and user-friendly alias.
 
+use alan_runtime::AlanHomePaths;
+#[cfg(test)]
+use alan_runtime::InstallChannel;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// Normalize a canonical workspace path to the workspace root.
 ///
 /// If the input points to a non-default `.alan` directory, this returns its parent
-/// as the workspace root. The default workspace `~/.alan` remains unchanged.
+/// as the workspace root. The active channel's default workspace remains unchanged.
 pub fn normalize_workspace_root_path(path: &Path) -> PathBuf {
     let is_alan_dir = path
         .file_name()
@@ -23,8 +26,8 @@ pub fn normalize_workspace_root_path(path: &Path) -> PathBuf {
         return path.to_path_buf();
     }
 
-    let is_default_workspace = dirs::home_dir()
-        .map(|home| path == home.join(".alan"))
+    let is_default_workspace = AlanHomePaths::detect()
+        .map(|paths| path == paths.alan_home_dir)
         .unwrap_or(false);
     if is_default_workspace {
         return path.to_path_buf();
@@ -35,7 +38,7 @@ pub fn normalize_workspace_root_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-/// The workspace registry, stored as `~/.alan/registry.json`.
+/// The workspace registry, stored in the active channel's alan home.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceRegistry {
     pub version: u32,
@@ -56,14 +59,21 @@ pub struct WorkspaceEntry {
 }
 
 impl WorkspaceRegistry {
+    #[cfg(test)]
     fn registry_path_from_home(home: &Path) -> PathBuf {
-        home.join(".alan").join("registry.json")
+        Self::registry_path_from_home_for_channel(home, InstallChannel::Stable)
+    }
+
+    #[cfg(test)]
+    fn registry_path_from_home_for_channel(home: &Path, channel: InstallChannel) -> PathBuf {
+        AlanHomePaths::from_home_dir_for_channel(home, channel).global_registry_path
     }
 
     /// Default registry file path.
     pub fn registry_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(Self::registry_path_from_home(&home))
+        AlanHomePaths::detect()
+            .map(|paths| paths.global_registry_path)
+            .context("Cannot determine home directory")
     }
 
     /// Load registry from disk, creating an empty one if it doesn't exist.
@@ -254,6 +264,20 @@ mod tests {
         // Different path produces different ID
         let other = generate_workspace_id(&PathBuf::from("/Users/test/other"));
         assert_ne!(id, other);
+    }
+
+    #[test]
+    fn test_registry_path_from_home_is_channel_scoped() {
+        let home = Path::new("/tmp/demo-home");
+
+        assert_eq!(
+            WorkspaceRegistry::registry_path_from_home(home),
+            Path::new("/tmp/demo-home/.alan/registry.json")
+        );
+        assert_eq!(
+            WorkspaceRegistry::registry_path_from_home_for_channel(home, InstallChannel::Dev),
+            Path::new("/tmp/demo-home/.alan-dev/registry.json")
+        );
     }
 
     #[test]

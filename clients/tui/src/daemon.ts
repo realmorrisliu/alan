@@ -7,8 +7,13 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  installChannelDescriptor,
+  resolveInstallChannel,
+  type InstallChannelId,
+} from "./install-channel.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -21,9 +26,11 @@ function pushLog(buffer: string[], line: string, max: number): void {
   }
 }
 
-function candidateAlanPaths(): string[] {
+function candidateAlanPaths(channel: InstallChannelId): string[] {
+  const descriptor = installChannelDescriptor(channel);
   const platform = process.platform;
   const exeSuffix = platform === "win32" ? ".exe" : "";
+  const commandName = `${descriptor.cliName}${exeSuffix}`;
   const scriptPath = process.argv[1] ? resolve(process.argv[1]) : null;
   const scriptDir = scriptPath ? dirname(scriptPath) : null;
 
@@ -31,23 +38,28 @@ function candidateAlanPaths(): string[] {
     // Explicit override
     process.env.ALAN_CLI_PATH,
     // Adjacent to the running TUI script (production install)
-    scriptDir ? join(scriptDir, `alan${exeSuffix}`) : undefined,
+    scriptDir ? join(scriptDir, commandName) : undefined,
     // Relative to this source file
-    join(__dirname, `../alan${exeSuffix}`),
-    join(__dirname, `alan${exeSuffix}`),
+    join(__dirname, `../${commandName}`),
+    join(__dirname, commandName),
     // Development builds from repo root
+    join(resolve(__dirname, "../../../"), `target/release/${commandName}`),
+    join(resolve(__dirname, "../../../"), `target/debug/${commandName}`),
+    join(process.cwd(), `target/release/${commandName}`),
+    join(process.cwd(), `target/debug/${commandName}`),
     join(resolve(__dirname, "../../../"), `target/release/alan${exeSuffix}`),
     join(resolve(__dirname, "../../../"), `target/debug/alan${exeSuffix}`),
     join(process.cwd(), `target/release/alan${exeSuffix}`),
     join(process.cwd(), `target/debug/alan${exeSuffix}`),
     // PATH fallback
+    descriptor.cliName,
     "alan",
   ];
 
   const unique = new Set<string>();
   for (const raw of candidates) {
     if (!raw) continue;
-    const candidate = raw === "alan" ? raw : resolve(raw);
+    const candidate = raw === "alan" || raw === descriptor.cliName ? raw : resolve(raw);
     if (!unique.has(candidate)) {
       unique.add(candidate);
     }
@@ -76,13 +88,17 @@ function isCommandAvailable(command: string): boolean {
   }
 }
 
+function isCommandCandidate(candidate: string): boolean {
+  return !isAbsolute(candidate) && !candidate.includes("/") && !candidate.includes("\\");
+}
+
 export function resolveAlanBinaryFromCandidates(
   candidates: string[],
   runnablePathCheck: (path: string) => boolean = isRunnableBinaryPath,
   commandAvailableCheck: (command: string) => boolean = isCommandAvailable,
 ): string | null {
   for (const candidate of candidates) {
-    if (candidate === "alan") {
+    if (isCommandCandidate(candidate)) {
       if (commandAvailableCheck(candidate)) {
         return candidate;
       }
@@ -150,6 +166,8 @@ export interface DaemonConfig {
   startupTimeout?: number;
   /** Verbose logging for troubleshooting. */
   verbose?: boolean;
+  /** Active install channel. */
+  installChannel?: InstallChannelId;
 }
 
 export interface DaemonStatus {
@@ -165,21 +183,26 @@ export class DaemonManager {
   private startedByTui = false;
   private logBuffer: string[] = [];
   private maxLogBuffer = 100;
+  private installChannel: InstallChannelId;
 
   constructor(config: DaemonConfig = {}) {
+    this.installChannel = config.installChannel ?? resolveInstallChannel();
+    const descriptor = installChannelDescriptor(this.installChannel);
+    const defaultUrl = new URL(descriptor.daemonUrl);
     this.config = {
-      port: config.port ?? 8090,
-      host: config.host ?? "127.0.0.1",
+      port: config.port ?? Number(defaultUrl.port || "80"),
+      host: config.host ?? defaultUrl.hostname,
       cwd: config.cwd ?? process.cwd(),
       env: config.env ?? {},
       startupTimeout: config.startupTimeout ?? 10000,
       verbose: config.verbose ?? false,
+      installChannel: this.installChannel,
     };
     this.status.url = `http://${this.config.host}:${this.config.port}`;
   }
 
   private async findAlanBinary(): Promise<string | null> {
-    return resolveAlanBinaryFromCandidates(candidateAlanPaths());
+    return resolveAlanBinaryFromCandidates(candidateAlanPaths(this.installChannel));
   }
 
   async isRunning(): Promise<boolean> {
@@ -232,6 +255,7 @@ export class DaemonManager {
     const env: Record<string, string> = {
       ...process.env,
       ...this.config.env,
+      ALAN_INSTALL_CHANNEL: this.installChannel,
       BIND_ADDRESS: `${this.config.host}:${this.config.port}`,
     };
 
@@ -290,6 +314,7 @@ export class DaemonManager {
     const env: Record<string, string> = {
       ...process.env,
       ...this.config.env,
+      ALAN_INSTALL_CHANNEL: this.installChannel,
       BIND_ADDRESS: `${this.config.host}:${this.config.port}`,
     };
 

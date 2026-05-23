@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::LazyLock;
 
+use crate::AlanHomePaths;
+
 // The shared OpenAi prefix is intentional here: this enum distinguishes
 // OpenAI API families, not unrelated providers.
 #[allow(clippy::enum_variant_names)]
@@ -126,7 +128,7 @@ pub fn default_model_slug(provider: ModelCatalogProvider) -> &'static str {
 
 impl ModelCatalog {
     pub fn load_with_overlays(workspace_root: Option<&Path>) -> anyhow::Result<Self> {
-        let global_overlay = dirs::home_dir().map(|home| home.join(".alan").join("models.toml"));
+        let global_overlay = AlanHomePaths::detect().map(|paths| paths.global_models_path);
         let workspace_overlay = workspace_root.map(|root| root.join(".alan").join("models.toml"));
         Self::load_with_overlay_paths(global_overlay.as_deref(), workspace_overlay.as_deref())
     }

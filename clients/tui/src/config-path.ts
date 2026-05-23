@@ -1,5 +1,10 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import {
+  installChannelDescriptor,
+  resolveInstallChannel,
+  type InstallChannelId,
+} from "./install-channel.js";
 
 function expandHomePath(path: string, homeDir: string): string {
   if (!path.startsWith("~/")) {
@@ -23,10 +28,18 @@ function dedupe(paths: string[]): string[] {
 export function resolveConfigPathCandidates(
   homeDir: string,
   env: NodeJS.ProcessEnv = process.env,
+  channel: InstallChannelId = resolveInstallChannel(env),
 ): string[] {
   // Offline first-run setup mirror of alan_runtime::AgentRootLayout.
   // Online flows should display daemon-returned canonical paths instead.
-  const canonicalPath = join(homeDir, ".alan", "agents", "default", "agent.toml");
+  const descriptor = installChannelDescriptor(channel);
+  const canonicalPath = join(
+    homeDir,
+    descriptor.alanHomeDirName,
+    "agents",
+    "default",
+    "agent.toml",
+  );
   const overrideRaw = env.ALAN_CONFIG_PATH?.trim();
   if (!overrideRaw) {
     return [canonicalPath];
@@ -36,8 +49,11 @@ export function resolveConfigPathCandidates(
   return dedupe([overridePath, canonicalPath]);
 }
 
-export function defaultHostConfigPath(homeDir: string): string {
-  return join(homeDir, ".alan", "host.toml");
+export function defaultHostConfigPath(
+  homeDir: string,
+  channel: InstallChannelId = resolveInstallChannel(),
+): string {
+  return join(homeDir, installChannelDescriptor(channel).alanHomeDirName, "host.toml");
 }
 
 export function resolveAgentdUrlOverride(env: NodeJS.ProcessEnv = process.env): string | null {

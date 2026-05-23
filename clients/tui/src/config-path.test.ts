@@ -74,6 +74,13 @@ describe("config path resolution", () => {
     expect(defaultHostConfigPath(home)).toBe(`${home}/.alan/host.toml`);
   });
 
+  test("dev channel uses isolated config and host paths", () => {
+    expect(resolveConfigPathCandidates(home, {}, "dev")).toEqual([
+      `${home}/.alan-dev/agents/default/agent.toml`,
+    ]);
+    expect(defaultHostConfigPath(home, "dev")).toBe(`${home}/.alan-dev/host.toml`);
+  });
+
   test("resolveAgentdUrlOverride trims non-empty overrides", () => {
     expect(
       resolveAgentdUrlOverride({

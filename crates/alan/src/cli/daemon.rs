@@ -2,13 +2,15 @@
 
 use crate::daemon::api_contract::paths;
 use crate::host_config::HostConfig;
+use alan_runtime::AlanHomePaths;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// PID file location: `~/.alan/daemon.pid`
+/// PID file location under the active channel's alan home.
 fn pid_file_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Cannot determine home directory")?;
-    Ok(home.join(".alan").join("daemon.pid"))
+    AlanHomePaths::detect()
+        .map(|paths| paths.global_daemon_pid_path)
+        .context("Cannot determine home directory")
 }
 
 /// Daemon URL (from env or default).

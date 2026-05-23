@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use url::Url;
 
+const INSTALL_CHANNEL_ENV: &str = "ALAN_INSTALL_CHANNEL";
 const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_AUTH_ORIGINATOR: &str = "codex_cli_rs";
@@ -39,7 +40,9 @@ impl ChatgptAuthConfig {
         let home_dir = dirs::home_dir()
             .ok_or_else(|| io::Error::other("Could not determine home directory"))?;
         Ok(Self::with_storage_path(
-            home_dir.join(".alan").join("auth.json"),
+            home_dir
+                .join(default_alan_home_dir_name())
+                .join("auth.json"),
         ))
     }
 
@@ -50,6 +53,32 @@ impl ChatgptAuthConfig {
             client_id: DEFAULT_CLIENT_ID.to_string(),
             browser_callback_port: DEFAULT_BROWSER_CALLBACK_PORT,
         }
+    }
+}
+
+fn default_alan_home_dir_name() -> &'static str {
+    if let Ok(channel) = std::env::var(INSTALL_CHANNEL_ENV) {
+        match channel.trim() {
+            "dev" => return ".alan-dev",
+            "stable" => return ".alan",
+            _ => {}
+        }
+    }
+
+    let argv0 = std::env::args_os().next();
+    let raw_executable_name = argv0
+        .as_deref()
+        .and_then(|path| std::path::Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let executable_name = raw_executable_name
+        .strip_suffix(".exe")
+        .unwrap_or(raw_executable_name);
+
+    if matches!(executable_name, "alan-dev" | "alan-dev-tui") {
+        ".alan-dev"
+    } else {
+        ".alan"
     }
 }
 
