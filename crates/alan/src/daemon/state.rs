@@ -850,12 +850,17 @@ impl AppState {
             .map(|e| e.workspace_alan_dir.clone()))
     }
 
-    /// Get sessions directory for a session by session ID
+    /// Get rollout read directories for a session by session ID.
     ///
-    /// This resolves to the active channel's generated sessions directory.
-    pub async fn get_sessions_dir(&self, session_id: &str) -> anyhow::Result<Option<PathBuf>> {
+    /// Stable reads from the generated stable directory plus the legacy
+    /// `.alan/sessions` directory. Dev only reads from the generated dev
+    /// directory.
+    pub async fn get_session_read_dirs(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Option<Vec<PathBuf>>> {
         let alan_dir = self.get_workspace_alan_dir(session_id).await?;
-        Ok(alan_dir.map(|p| self.workspace_session_write_dir(&p)))
+        Ok(alan_dir.map(|p| self.workspace_session_read_dirs(&p)))
     }
 
     pub fn resolve_skill_catalog_snapshot(

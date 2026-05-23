@@ -1516,27 +1516,30 @@ async fn latest_rollout_path_for_workspace(
     session_id: &str,
     _workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let sessions_dir = match state.get_sessions_dir(session_id).await.map_err(|err| {
-        warn!(
-            %session_id,
-            error = %err,
-            "Failed to recover sessions before resolving sessions directory"
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })? {
-        Some(dir) => dir,
+    let sessions_dirs = match state
+        .get_session_read_dirs(session_id)
+        .await
+        .map_err(|err| {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to recover sessions before resolving session read directories"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })? {
+        Some(dirs) => dirs,
         None => {
-            warn!(%session_id, "Session not found when looking up sessions directory");
+            warn!(%session_id, "Session not found when looking up session read directories");
             return Err(StatusCode::NOT_FOUND);
         }
     };
 
-    latest_rollout_path(&sessions_dir).map_err(|err| {
+    latest_rollout_path_in_dirs(&sessions_dirs).map_err(|err| {
         warn!(
             %session_id,
-            path = %sessions_dir.display(),
+            paths = ?sessions_dirs,
             error = %err,
-            "Failed to inspect sessions directory for history"
+            "Failed to inspect session read directories for history"
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })
@@ -2138,6 +2141,16 @@ fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>
     }
 
     Ok(latest.map(|(_, path)| path))
+}
+
+fn latest_rollout_path_in_dirs(sessions_dirs: &[PathBuf]) -> std::io::Result<Option<PathBuf>> {
+    for sessions_dir in sessions_dirs {
+        if let Some(path) = latest_rollout_path(sessions_dir)? {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
 }
 
 fn status_for_session_creation_error(err: &anyhow::Error) -> StatusCode {
@@ -3329,6 +3342,67 @@ Body
 
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "expected-from-stored");
+    }
+
+    #[tokio::test]
+    async fn get_session_history_falls_back_to_stable_legacy_sessions_dir() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
+
+        let legacy_sessions_dir = temp.path().join(".alan").join("sessions");
+        std::fs::create_dir_all(&legacy_sessions_dir).unwrap();
+        let rollout = legacy_sessions_dir.join("legacy-read.jsonl");
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "runtime-legacy-read".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+                reasoning_effort: None,
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some("loaded-from-stable-legacy".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-legacy-history".to_string(), entry);
+
+        let Json(resp) = get_session_history(
+            State(state.clone()),
+            Path("sess-legacy-history".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "loaded-from-stable-legacy");
+        let stored = state
+            .sessions
+            .read()
+            .await
+            .get("sess-legacy-history")
+            .and_then(|entry| entry.rollout_path.clone());
+        assert_eq!(stored, Some(rollout));
     }
 
     #[tokio::test]
@@ -5000,6 +5074,28 @@ Body
 
         let found = latest_rollout_path(&dir).unwrap().unwrap();
         assert_eq!(found, nested_latest);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn latest_rollout_path_in_dirs_uses_read_dir_priority() {
+        let dir = std::env::temp_dir().join(format!("agentd-routes-{}", uuid::Uuid::new_v4()));
+        let primary = dir.join("runtime").join("stable").join("sessions");
+        let fallback = dir.join("sessions");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(&fallback).unwrap();
+        let primary_rollout = primary.join("primary.jsonl");
+        let fallback_rollout = fallback.join("fallback.jsonl");
+
+        std::fs::write(&primary_rollout, "{}\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&fallback_rollout, "{}\n").unwrap();
+
+        let found = latest_rollout_path_in_dirs(&[primary, fallback])
+            .unwrap()
+            .unwrap();
+        assert_eq!(found, primary_rollout);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
