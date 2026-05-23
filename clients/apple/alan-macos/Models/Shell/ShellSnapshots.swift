@@ -159,6 +159,12 @@ enum ShellContentKind: String, Codable, CaseIterable {
     case settings
 }
 
+enum ShellContentIntent {
+    case terminal(launchTarget: ShellLaunchTarget, title: String?, workingDirectory: String?)
+    case markdown(fileURL: URL, title: String?)
+    case settings(title: String?)
+}
+
 enum ShellContentCapability: String, Codable, CaseIterable {
     case terminalInput = "terminal_input"
     case terminalSearch = "terminal_search"

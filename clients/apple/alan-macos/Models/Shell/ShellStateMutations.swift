@@ -19,6 +19,13 @@ struct ShellStateMutationResult {
     let paneID: String?
 }
 
+private struct ShellPreparedContentMount {
+    let pane: ShellPane
+    let paneSlot: ShellPaneSlot?
+    let content: ShellContentInstance?
+    let title: String
+}
+
 extension ShellStateSnapshot {
     private static func defaultShellWorkingDirectory() -> String {
         FileManager.default.homeDirectoryForCurrentUser.path
@@ -330,15 +337,19 @@ extension ShellStateSnapshot {
         )
     }
 
-    func openingTab(
-        launchTarget: ShellLaunchTarget,
+    func openingContentTab(
+        _ contentIntent: ShellContentIntent,
         in requestedSpaceID: String?,
-        title: String?,
-        workingDirectory: String?,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) throws -> ShellStateMutationResult {
+        if case .settings = contentIntent,
+           let existingSettingsResult = try focusingExistingSettingsContent()
+        {
+            return existingSettingsResult
+        }
+
         let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
         guard let targetSpaceID,
               let targetSpace = space(spaceID: targetSpaceID)
@@ -348,19 +359,23 @@ extension ShellStateSnapshot {
 
         let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
         let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
-        let pane = makeTerminalPane(
+        let prepared = makeContentMount(
+            contentIntent,
             paneID: paneID,
             tabID: tabID,
             spaceID: targetSpaceID,
-            launchTarget: launchTarget,
-            workingDirectory: workingDirectory ?? defaultWorkingDirectory,
-            summary: launchTarget == .alan ? "new alan tab scaffolded" : "new shell tab scaffolded",
+            defaultTerminalTitle: Self.defaultTabTitle(
+                for: contentIntent,
+                existingTabCount: targetSpace.tabs.count
+            ),
+            terminalSummary: Self.defaultTerminalSummary(for: contentIntent),
+            defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
         )
         let tab = ShellTab(
             tabID: tabID,
             kind: .terminal,
-            title: title ?? (launchTarget == .alan ? "alan \(targetSpace.tabs.count + 1)" : "Shell \(targetSpace.tabs.count + 1)"),
+            title: prepared.title,
             paneTree: ShellPaneTreeNode(
                 nodeID: "node_\(paneID)",
                 kind: .pane,
@@ -378,17 +393,41 @@ extension ShellStateSnapshot {
                 tabs: space.tabs + [tab]
             )
         }
-        let nextPanes = panes + [pane]
+        let nextPanes = panes + [prepared.pane]
 
         return ShellStateMutationResult(
             state: replacing(
                 spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
                 panes: nextPanes,
-                focusedPaneID: paneID
+                focusedPaneID: paneID,
+                additionalPaneSlots: [prepared.paneSlot].compactMap { $0 },
+                additionalContents: [prepared.content].compactMap { $0 }
             ),
             spaceID: targetSpaceID,
             tabID: tabID,
             paneID: paneID
+        )
+    }
+
+    func openingTab(
+        launchTarget: ShellLaunchTarget,
+        in requestedSpaceID: String?,
+        title: String?,
+        workingDirectory: String?,
+        reservedPaneIDs: Set<String> = [],
+        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
+        now: Date = .now
+    ) throws -> ShellStateMutationResult {
+        try openingContentTab(
+            .terminal(
+                launchTarget: launchTarget,
+                title: title,
+                workingDirectory: workingDirectory
+            ),
+            in: requestedSpaceID,
+            reservedPaneIDs: reservedPaneIDs,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
         )
     }
 
@@ -437,87 +476,11 @@ extension ShellStateSnapshot {
         reservedPaneIDs: Set<String> = [],
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
-        guard let targetSpaceID,
-              space(spaceID: targetSpaceID) != nil
-        else {
-            throw ShellStateMutationError.spaceNotFound
-        }
-
-        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
-        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
-        let contentID = ShellContentInstance.markdownContentID(forPaneSlotID: paneID)
-        let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
-        let resolvedTitle = Self.markdownTitle(for: resolvedURL, explicitTitle: title)
-        let pane = makeContentPlaceholderPane(
-            paneID: paneID,
-            tabID: tabID,
-            spaceID: targetSpaceID,
-            title: resolvedTitle,
-            summary: "markdown viewer ready",
+        try openingContentTab(
+            .markdown(fileURL: fileURL, title: title),
+            in: requestedSpaceID,
+            reservedPaneIDs: reservedPaneIDs,
             now: now
-        )
-        let tab = ShellTab(
-            tabID: tabID,
-            kind: .terminal,
-            title: resolvedTitle,
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(paneID)",
-                kind: .pane,
-                direction: nil,
-                paneID: paneID,
-                children: nil
-            )
-        )
-        let paneSlot = ShellPaneSlot(
-            paneSlotID: paneID,
-            tabID: tabID,
-            spaceID: targetSpaceID,
-            contentID: contentID,
-            attention: .active
-        )
-        let content = ShellContentInstance(
-            contentID: contentID,
-            kind: .markdown,
-            title: resolvedTitle,
-            payload: .markdown(
-                ShellMarkdownContentPayload(
-                    fileURL: resolvedURL.absoluteString,
-                    title: resolvedTitle
-                )
-            ),
-            rendererState: ShellContentRendererState(phase: "ready", detail: resolvedURL.path)
-        )
-        let nextSpaces = spaces.map { space in
-            guard space.spaceID == targetSpaceID else { return space }
-            return ShellSpace(
-                spaceID: space.spaceID,
-                title: space.title,
-                attention: space.attention,
-                tabs: space.tabs + [tab]
-            )
-        }
-        let nextPanes = panes + [pane]
-        let retained = retainedContentRecords(in: nextSpaces)
-        let nextPaneSlots = (retained.paneSlots ?? []) + [paneSlot]
-        let nextContents = (retained.contents ?? []) + [content]
-
-        return ShellStateMutationResult(
-            state: ShellStateSnapshot(
-                contractVersion: ShellContentStateSnapshot.currentContractVersion,
-                windowID: windowID,
-                focusedSpaceID: targetSpaceID,
-                focusedTabID: tabID,
-                focusedPaneID: paneID,
-                spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
-                panes: nextPanes,
-                paneSlots: nextPaneSlots,
-                contents: nextContents,
-                quickTerminal: quickTerminal
-            ),
-            spaceID: targetSpaceID,
-            tabID: tabID,
-            paneID: paneID
         )
     }
 
@@ -527,102 +490,11 @@ extension ShellStateSnapshot {
         reservedPaneIDs: Set<String> = [],
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        let resolvedTitle = Self.settingsTitle(explicitTitle: title)
-        let contentState = contentStateProjection()
-        if let existingPaneID = contentState.paneSlots.first(where: { paneSlot in
-            guard let content = contentState.content(contentID: paneSlot.contentID) else {
-                return false
-            }
-            return content.kind == .settings
-                && content.contentID == ShellContentInstance.settingsContentID
-                && content.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID
-        })?.paneSlotID,
-           pane(paneID: existingPaneID) != nil
-        {
-            return try focusingPane(existingPaneID)
-        }
-
-        let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
-        guard let targetSpaceID,
-              space(spaceID: targetSpaceID) != nil
-        else {
-            throw ShellStateMutationError.spaceNotFound
-        }
-
-        let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
-        let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
-        let pane = makeContentPlaceholderPane(
-            paneID: paneID,
-            tabID: tabID,
-            spaceID: targetSpaceID,
-            title: resolvedTitle,
-            summary: "settings surface ready",
+        try openingContentTab(
+            .settings(title: title),
+            in: requestedSpaceID,
+            reservedPaneIDs: reservedPaneIDs,
             now: now
-        )
-        let tab = ShellTab(
-            tabID: tabID,
-            kind: .terminal,
-            title: resolvedTitle,
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(paneID)",
-                kind: .pane,
-                direction: nil,
-                paneID: paneID,
-                children: nil
-            )
-        )
-        let paneSlot = ShellPaneSlot(
-            paneSlotID: paneID,
-            tabID: tabID,
-            spaceID: targetSpaceID,
-            contentID: ShellContentInstance.settingsContentID,
-            attention: .active
-        )
-        let content = ShellContentInstance(
-            contentID: ShellContentInstance.settingsContentID,
-            kind: .settings,
-            title: resolvedTitle,
-            payload: .settings(
-                ShellSettingsContentPayload(
-                    surfaceID: ShellContentInstance.settingsSurfaceID,
-                    title: resolvedTitle
-                )
-            ),
-            rendererState: ShellContentRendererState(
-                phase: "ready",
-                detail: ShellContentInstance.settingsSurfaceID
-            )
-        )
-        let nextSpaces = spaces.map { space in
-            guard space.spaceID == targetSpaceID else { return space }
-            return ShellSpace(
-                spaceID: space.spaceID,
-                title: space.title,
-                attention: space.attention,
-                tabs: space.tabs + [tab]
-            )
-        }
-        let nextPanes = panes + [pane]
-        let retained = retainedContentRecords(in: nextSpaces)
-        let nextPaneSlots = (retained.paneSlots ?? []) + [paneSlot]
-        let nextContents = (retained.contents ?? []) + [content]
-
-        return ShellStateMutationResult(
-            state: ShellStateSnapshot(
-                contractVersion: ShellContentStateSnapshot.currentContractVersion,
-                windowID: windowID,
-                focusedSpaceID: targetSpaceID,
-                focusedTabID: tabID,
-                focusedPaneID: paneID,
-                spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
-                panes: nextPanes,
-                paneSlots: nextPaneSlots,
-                contents: nextContents,
-                quickTerminal: quickTerminal
-            ),
-            spaceID: targetSpaceID,
-            tabID: tabID,
-            paneID: paneID
         )
     }
 
@@ -823,6 +695,7 @@ extension ShellStateSnapshot {
     func splittingPane(
         _ paneID: String,
         direction: ShellSplitDirection,
+        contentIntent: ShellContentIntent? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -830,6 +703,7 @@ extension ShellStateSnapshot {
         try splittingPane(
             paneID,
             placement: .defaultPlacement(for: direction),
+            contentIntent: contentIntent,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -839,6 +713,7 @@ extension ShellStateSnapshot {
     func splittingPane(
         _ paneID: String,
         placement: ShellPaneSplitDirection,
+        contentIntent: ShellContentIntent? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -848,19 +723,32 @@ extension ShellStateSnapshot {
         else {
             throw ShellStateMutationError.paneNotFound
         }
+        if case .some(.settings) = contentIntent,
+           let existingSettingsResult = try focusingExistingSettingsContent()
+        {
+            return existingSettingsResult
+        }
 
         let newPaneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
         let splitNodeID = nextID(
             prefix: "node",
             existing: spaces.flatMap(\.tabs).flatMap { $0.paneTree.nodeIDs }
         )
-        let newPane = makeTerminalPane(
+        let resolvedContentIntent =
+            contentIntent
+            ?? .terminal(
+                launchTarget: pane.resolvedLaunchTarget,
+                title: nil,
+                workingDirectory: pane.cwd
+            )
+        let prepared = makeContentMount(
+            resolvedContentIntent,
             paneID: newPaneID,
             tabID: pane.tabID,
             spaceID: pane.spaceID,
-            launchTarget: pane.resolvedLaunchTarget,
-            workingDirectory: pane.cwd ?? defaultWorkingDirectory,
-            summary: "new split scaffolded",
+            defaultTerminalTitle: Self.defaultViewportTitle(for: pane.resolvedLaunchTarget),
+            terminalSummary: "new split scaffolded",
+            defaultWorkingDirectory: pane.cwd ?? defaultWorkingDirectory,
             now: now
         )
         let updatedTab = ShellTab(
@@ -888,13 +776,15 @@ extension ShellStateSnapshot {
                 }
             )
         }
-        let nextPanes = panes + [newPane]
+        let nextPanes = panes + [prepared.pane]
 
         return ShellStateMutationResult(
             state: replacing(
                 spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
                 panes: nextPanes,
-                focusedPaneID: newPaneID
+                focusedPaneID: newPaneID,
+                additionalPaneSlots: [prepared.paneSlot].compactMap { $0 },
+                additionalContents: [prepared.content].compactMap { $0 }
             ),
             spaceID: pane.spaceID,
             tabID: pane.tabID,
@@ -1584,7 +1474,9 @@ extension ShellStateSnapshot {
     private func replacing(
         spaces: [ShellSpace],
         panes: [ShellPane],
-        focusedPaneID: String?
+        focusedPaneID: String?,
+        additionalPaneSlots: [ShellPaneSlot] = [],
+        additionalContents: [ShellContentInstance] = []
     ) -> ShellStateSnapshot {
         let resolvedFocusedPaneID =
             focusedPaneID.flatMap { candidate in
@@ -1594,17 +1486,23 @@ extension ShellStateSnapshot {
             panes.first(where: { $0.paneID == candidate })
         }
         let retained = retainedContentRecords(in: spaces)
+        let nextPaneSlots = (retained.paneSlots ?? []) + additionalPaneSlots
+        let nextContents = (retained.contents ?? []) + additionalContents
+        let nextContractVersion =
+            additionalPaneSlots.isEmpty && additionalContents.isEmpty
+            ? contractVersion
+            : ShellContentStateSnapshot.currentContractVersion
 
         return ShellStateSnapshot(
-            contractVersion: contractVersion,
+            contractVersion: nextContractVersion,
             windowID: windowID,
             focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
             focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
             spaces: spaces,
             panes: panes,
-            paneSlots: retained.paneSlots,
-            contents: retained.contents,
+            paneSlots: nextPaneSlots.isEmpty ? nil : nextPaneSlots,
+            contents: nextContents.isEmpty ? nil : nextContents,
             quickTerminal: quickTerminal
         )
     }
@@ -1667,6 +1565,129 @@ extension ShellStateSnapshot {
             ?? (existing.isEmpty ? 1 : existing.count + 1)
 
         return "\(prefix)_\(nextOrdinal)"
+    }
+
+    private func focusingExistingSettingsContent() throws -> ShellStateMutationResult? {
+        let contentState = contentStateProjection()
+        guard let existingPaneID = contentState.paneSlots.first(where: { paneSlot in
+            guard let content = contentState.content(contentID: paneSlot.contentID) else {
+                return false
+            }
+            return content.kind == .settings
+                && content.contentID == ShellContentInstance.settingsContentID
+                && content.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID
+        })?.paneSlotID,
+              pane(paneID: existingPaneID) != nil
+        else {
+            return nil
+        }
+
+        return try focusingPane(existingPaneID)
+    }
+
+    private func makeContentMount(
+        _ contentIntent: ShellContentIntent,
+        paneID: String,
+        tabID: String,
+        spaceID: String,
+        defaultTerminalTitle: String,
+        terminalSummary: String,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellPreparedContentMount {
+        switch contentIntent {
+        case .terminal(let launchTarget, let title, let workingDirectory):
+            let pane = makeTerminalPane(
+                paneID: paneID,
+                tabID: tabID,
+                spaceID: spaceID,
+                launchTarget: launchTarget,
+                workingDirectory: workingDirectory ?? defaultWorkingDirectory,
+                summary: terminalSummary,
+                now: now
+            )
+            return ShellPreparedContentMount(
+                pane: pane,
+                paneSlot: nil,
+                content: nil,
+                title: title ?? defaultTerminalTitle
+            )
+        case .markdown(let fileURL, let title):
+            let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
+            let resolvedTitle = Self.markdownTitle(for: resolvedURL, explicitTitle: title)
+            let contentID = ShellContentInstance.markdownContentID(forPaneSlotID: paneID)
+            let pane = makeContentPlaceholderPane(
+                paneID: paneID,
+                tabID: tabID,
+                spaceID: spaceID,
+                title: resolvedTitle,
+                summary: "markdown viewer ready",
+                now: now
+            )
+            let paneSlot = ShellPaneSlot(
+                paneSlotID: paneID,
+                tabID: tabID,
+                spaceID: spaceID,
+                contentID: contentID,
+                attention: .active
+            )
+            let content = ShellContentInstance(
+                contentID: contentID,
+                kind: .markdown,
+                title: resolvedTitle,
+                payload: .markdown(
+                    ShellMarkdownContentPayload(
+                        fileURL: resolvedURL.absoluteString,
+                        title: resolvedTitle
+                    )
+                ),
+                rendererState: ShellContentRendererState(phase: "ready", detail: resolvedURL.path)
+            )
+            return ShellPreparedContentMount(
+                pane: pane,
+                paneSlot: paneSlot,
+                content: content,
+                title: resolvedTitle
+            )
+        case .settings(let title):
+            let resolvedTitle = Self.settingsTitle(explicitTitle: title)
+            let pane = makeContentPlaceholderPane(
+                paneID: paneID,
+                tabID: tabID,
+                spaceID: spaceID,
+                title: resolvedTitle,
+                summary: "settings surface ready",
+                now: now
+            )
+            let paneSlot = ShellPaneSlot(
+                paneSlotID: paneID,
+                tabID: tabID,
+                spaceID: spaceID,
+                contentID: ShellContentInstance.settingsContentID,
+                attention: .active
+            )
+            let content = ShellContentInstance(
+                contentID: ShellContentInstance.settingsContentID,
+                kind: .settings,
+                title: resolvedTitle,
+                payload: .settings(
+                    ShellSettingsContentPayload(
+                        surfaceID: ShellContentInstance.settingsSurfaceID,
+                        title: resolvedTitle
+                    )
+                ),
+                rendererState: ShellContentRendererState(
+                    phase: "ready",
+                    detail: ShellContentInstance.settingsSurfaceID
+                )
+            )
+            return ShellPreparedContentMount(
+                pane: pane,
+                paneSlot: paneSlot,
+                content: content,
+                title: resolvedTitle
+            )
+        }
     }
 
     private func makeTerminalPane(
@@ -1748,6 +1769,37 @@ extension ShellStateSnapshot {
         case .alan:
             return "alan"
         }
+    }
+
+    private static func defaultTabTitle(
+        for contentIntent: ShellContentIntent,
+        existingTabCount: Int
+    ) -> String {
+        switch contentIntent {
+        case .terminal(let launchTarget, let title, _):
+            if let title {
+                return title
+            }
+            switch launchTarget {
+            case .alan:
+                return "alan \(existingTabCount + 1)"
+            case .shell:
+                return "Shell \(existingTabCount + 1)"
+            }
+        case .markdown(let fileURL, let title):
+            let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
+            return markdownTitle(for: resolvedURL, explicitTitle: title)
+        case .settings(let title):
+            return settingsTitle(explicitTitle: title)
+        }
+    }
+
+    private static func defaultTerminalSummary(for contentIntent: ShellContentIntent) -> String {
+        guard case .terminal(let launchTarget, _, _) = contentIntent else {
+            return "new shell tab scaffolded"
+        }
+
+        return launchTarget == .alan ? "new alan tab scaffolded" : "new shell tab scaffolded"
     }
 
     private static func markdownTitle(for fileURL: URL, explicitTitle: String?) -> String {
