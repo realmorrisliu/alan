@@ -37,6 +37,7 @@ pub struct ResolvedWorkspace {
 #[derive(Debug, Clone)]
 pub struct WorkspaceResolver {
     registry: WorkspaceRegistry,
+    alan_home_paths: alan_runtime::AlanHomePaths,
     default_workspace_dir: PathBuf,
 }
 
@@ -44,10 +45,14 @@ impl WorkspaceResolver {
     /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
-        let default_workspace_dir = canonicalize_existing_or_self(Self::default_workspace_dir()?);
+        let alan_home_paths =
+            alan_runtime::AlanHomePaths::detect().context("Cannot determine home directory")?;
+        let default_workspace_dir =
+            canonicalize_existing_or_self(alan_home_paths.alan_home_dir.clone());
 
         Ok(Self {
             registry,
+            alan_home_paths,
             default_workspace_dir,
         })
     }
@@ -55,8 +60,10 @@ impl WorkspaceResolver {
     /// Create with an explicit registry and default workspace directory.
     #[allow(dead_code)]
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
+        let alan_home_paths = alan_runtime::AlanHomePaths::from_alan_home_dir(&default_dir);
         Self {
             registry,
+            alan_home_paths,
             default_workspace_dir: canonicalize_existing_or_self(default_dir),
         }
     }
@@ -66,11 +73,16 @@ impl WorkspaceResolver {
         &self.default_workspace_dir
     }
 
-    fn install_channel(&self) -> alan_runtime::InstallChannel {
-        alan_runtime::AlanHomePaths::from_alan_home_dir(&self.default_workspace_dir).channel
+    pub fn alan_home_paths(&self) -> &alan_runtime::AlanHomePaths {
+        &self.alan_home_paths
+    }
+
+    pub fn install_channel(&self) -> alan_runtime::InstallChannel {
+        self.alan_home_paths.channel
     }
 
     /// Get the default workspace directory (`~/.alan/`)
+    #[allow(dead_code)]
     fn default_workspace_dir() -> Result<PathBuf> {
         alan_runtime::AlanHomePaths::detect()
             .map(|paths| paths.alan_home_dir)
@@ -1102,6 +1114,38 @@ mod tests {
         assert_eq!(
             resolver.workspace_memory_dir(&workspace),
             workspace.join(".alan/runtime/dev/memory")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_dev_channel_survives_canonicalized_home_symlink() {
+        let temp = TempDir::new().unwrap();
+        let physical_home = temp.path().join("physical-dev-home");
+        std::fs::create_dir_all(&physical_home).unwrap();
+        let dev_home_link = temp.path().join(".alan-dev");
+        std::os::unix::fs::symlink(&physical_home, &dev_home_link).unwrap();
+        let workspace = temp.path().join("workspace");
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, dev_home_link.clone());
+        let canonical_physical_home = std::fs::canonicalize(&physical_home).unwrap();
+
+        assert_eq!(
+            resolver.install_channel(),
+            alan_runtime::InstallChannel::Dev
+        );
+        assert_eq!(resolver.alan_home_dir(), canonical_physical_home.as_path());
+        assert_eq!(
+            resolver.alan_home_paths().alan_home_dir.as_path(),
+            dev_home_link.as_path()
+        );
+        assert_eq!(
+            resolver.workspace_sessions_dir(&workspace),
+            workspace.join(".alan/runtime/dev/sessions")
         );
     }
 }

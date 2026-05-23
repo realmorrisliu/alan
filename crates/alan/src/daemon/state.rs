@@ -684,6 +684,7 @@ impl AppState {
         runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(
             workspace_resolver.alan_home_dir(),
         ));
+        runtime_config.agent_home_paths = Some(workspace_resolver.alan_home_paths().clone());
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -710,8 +711,7 @@ impl AppState {
         ));
         let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
         runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(&alan_home));
-        runtime_config.agent_home_paths =
-            Some(alan_runtime::AlanHomePaths::from_alan_home_dir(&alan_home));
+        runtime_config.agent_home_paths = Some(workspace_resolver.alan_home_paths().clone());
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store = Arc::new(SessionStore::with_dir(
             alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
@@ -737,6 +737,7 @@ impl AppState {
         runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(
             workspace_resolver.alan_home_dir(),
         ));
+        runtime_config.agent_home_paths = Some(workspace_resolver.alan_home_paths().clone());
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -790,7 +791,7 @@ impl AppState {
             env_truthy(ENV_HOST_AUTH_EXTERNAL_TOKEN_HANDOFF_ENABLED),
         ));
         let connection_control = ConnectionControlState::new(
-            alan_runtime::AlanHomePaths::from_alan_home_dir(workspace_resolver.alan_home_dir()),
+            workspace_resolver.alan_home_paths().clone(),
             Arc::clone(&auth_control),
         );
         Self {
@@ -812,8 +813,7 @@ impl AppState {
     }
 
     fn install_channel(&self) -> alan_runtime::InstallChannel {
-        alan_runtime::AlanHomePaths::from_alan_home_dir(self.workspace_resolver.alan_home_dir())
-            .channel
+        self.workspace_resolver.install_channel()
     }
 
     fn workspace_session_write_dir(&self, workspace_alan_dir: &Path) -> PathBuf {
@@ -2517,6 +2517,25 @@ mod tests {
             task_store,
             1,
         )
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn app_state_install_channel_survives_canonicalized_home_symlink() {
+        let temp = TempDir::new().unwrap();
+        let physical_home = temp.path().join("physical-dev-home");
+        std::fs::create_dir_all(&physical_home).unwrap();
+        let dev_home_link = temp.path().join(".alan-dev");
+        std::os::unix::fs::symlink(&physical_home, &dev_home_link).unwrap();
+
+        let state = test_state_with_base_dir(&dev_home_link);
+        let workspace_alan_dir = temp.path().join("workspace").join(".alan");
+
+        assert_eq!(state.install_channel(), alan_runtime::InstallChannel::Dev);
+        assert_eq!(
+            state.workspace_session_write_dir(&workspace_alan_dir),
+            workspace_alan_dir.join("runtime/dev/sessions")
+        );
     }
 
     fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
