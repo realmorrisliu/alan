@@ -32,7 +32,7 @@ use serde::Serialize;
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex as StdMutex, atomic::AtomicBool},
     time::Duration,
 };
@@ -51,6 +51,12 @@ const DEFAULT_EVENT_BROADCAST_CAPACITY: usize = 256;
 const DEFAULT_EVENT_REPLAY_BUFFER_CAPACITY: usize = 1024;
 /// Actor tag for durable run transitions synthesized from runtime events.
 const RUNTIME_EVENT_ACTOR: &str = "runtime_event_bridge";
+
+fn auth_path_from_alan_home_dir(alan_home_dir: &Path) -> PathBuf {
+    let canonical_alan_home_dir =
+        std::fs::canonicalize(alan_home_dir).unwrap_or_else(|_| alan_home_dir.to_path_buf());
+    alan_runtime::AlanHomePaths::from_alan_home_dir(&canonical_alan_home_dir).global_auth_path
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -675,8 +681,9 @@ impl AppState {
         let workspace_resolver =
             Arc::new(WorkspaceResolver::new().expect("Failed to initialize workspace resolver"));
         let mut runtime_config = WorkspaceRuntimeConfig::from(loaded_config);
-        runtime_config.chatgpt_auth_storage_path =
-            Some(workspace_resolver.alan_home_dir().join("auth.json"));
+        runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(
+            workspace_resolver.alan_home_dir(),
+        ));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -702,8 +709,7 @@ impl AppState {
             alan_home.clone(),
         ));
         let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
-        runtime_config.chatgpt_auth_storage_path =
-            Some(workspace_resolver.alan_home_dir().join("auth.json"));
+        runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(&alan_home));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store = Arc::new(SessionStore::with_dir(
             alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
@@ -726,8 +732,9 @@ impl AppState {
         let workspace_resolver =
             Arc::new(WorkspaceResolver::new().expect("Failed to initialize workspace resolver"));
         let mut runtime_config = WorkspaceRuntimeConfig::from(config.clone());
-        runtime_config.chatgpt_auth_storage_path =
-            Some(workspace_resolver.alan_home_dir().join("auth.json"));
+        runtime_config.chatgpt_auth_storage_path = Some(auth_path_from_alan_home_dir(
+            workspace_resolver.alan_home_dir(),
+        ));
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store =
             Arc::new(SessionStore::new().expect("Failed to initialize session store"));
@@ -772,7 +779,7 @@ impl AppState {
         ttl_secs: u64,
     ) -> Self {
         let auth_config = alan_auth::ChatgptAuthConfig::with_storage_path(
-            workspace_resolver.alan_home_dir().join("auth.json"),
+            auth_path_from_alan_home_dir(workspace_resolver.alan_home_dir()),
         );
         let auth_manager = alan_auth::ChatgptAuthManager::new(auth_config)
             .expect("Failed to initialize ChatGPT auth");

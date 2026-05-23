@@ -1,10 +1,7 @@
-use alan_runtime::AlanHomePaths;
+use alan_runtime::{AlanHomePaths, InstallChannel};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-
-pub(crate) const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8090";
-pub(crate) const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8090";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HostConfig {
@@ -14,11 +11,7 @@ pub struct HostConfig {
 
 impl Default for HostConfig {
     fn default() -> Self {
-        let bind_address = default_bind_address();
-        Self {
-            daemon_url: Self::local_daemon_url_for_bind_address(&bind_address),
-            bind_address,
-        }
+        Self::default_for_channel(InstallChannel::Stable)
     }
 }
 
@@ -32,7 +25,8 @@ struct RawHostConfig {
 
 impl HostConfig {
     pub fn load() -> Result<Self> {
-        Self::load_with_path(Self::host_file_path())
+        let channel = InstallChannel::detect_current();
+        Self::load_with_path_for_channel(channel, Self::host_file_path())
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -52,6 +46,14 @@ impl HostConfig {
     #[cfg(test)]
     pub fn host_file_path_from_home(home: &Path) -> Option<PathBuf> {
         Some(AlanHomePaths::from_home_dir(home).global_host_config_path)
+    }
+
+    #[cfg(test)]
+    pub fn host_file_path_from_home_for_channel(
+        home: &Path,
+        channel: InstallChannel,
+    ) -> Option<PathBuf> {
+        Some(AlanHomePaths::from_home_dir_for_channel(home, channel).global_host_config_path)
     }
 
     pub fn resolve_bind_address() -> Result<String> {
@@ -78,14 +80,22 @@ impl HostConfig {
         format!("http://127.0.0.1:{port}")
     }
 
-    fn load_with_path(path: Option<PathBuf>) -> Result<Self> {
+    pub(crate) fn default_for_channel(channel: InstallChannel) -> Self {
+        let descriptor = channel.descriptor();
+        Self {
+            bind_address: descriptor.daemon_bind.to_string(),
+            daemon_url: descriptor.daemon_url.to_string(),
+        }
+    }
+
+    fn load_with_path_for_channel(channel: InstallChannel, path: Option<PathBuf>) -> Result<Self> {
         if let Some(path) = path
             && path.exists()
         {
             return Self::from_file(&path);
         }
 
-        Ok(Self::default())
+        Ok(Self::default_for_channel(channel))
     }
 
     fn from_raw(raw: RawHostConfig) -> Self {
@@ -123,9 +133,9 @@ impl HostConfig {
     ) -> String {
         match env_override {
             Some(daemon_url) => daemon_url,
-            None => config
-                .map(|config| config.daemon_url)
-                .unwrap_or_else(|_| default_daemon_url()),
+            None => config.map(|config| config.daemon_url).unwrap_or_else(|_| {
+                default_daemon_url_for_channel(InstallChannel::detect_current())
+            }),
         }
     }
 }
@@ -135,11 +145,14 @@ pub(crate) fn daemon_url_env_override() -> Option<String> {
 }
 
 fn default_bind_address() -> String {
-    DEFAULT_BIND_ADDRESS.to_string()
+    InstallChannel::detect_current()
+        .descriptor()
+        .daemon_bind
+        .to_string()
 }
 
-fn default_daemon_url() -> String {
-    DEFAULT_DAEMON_URL.to_string()
+fn default_daemon_url_for_channel(channel: InstallChannel) -> String {
+    channel.descriptor().daemon_url.to_string()
 }
 
 fn normalize_env_override(value: Option<String>) -> Option<String> {
@@ -156,6 +169,7 @@ fn normalize_env_override(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{HostConfig, normalize_env_override};
+    use alan_runtime::InstallChannel;
     use anyhow::anyhow;
     use tempfile::TempDir;
 
@@ -163,6 +177,16 @@ mod tests {
     fn test_host_file_path_from_home_uses_alan_home_root() {
         let path = HostConfig::host_file_path_from_home(std::path::Path::new("/tmp/demo")).unwrap();
         assert_eq!(path, std::path::Path::new("/tmp/demo/.alan/host.toml"));
+    }
+
+    #[test]
+    fn test_host_file_path_from_home_uses_dev_alan_home_root() {
+        let path = HostConfig::host_file_path_from_home_for_channel(
+            std::path::Path::new("/tmp/demo"),
+            InstallChannel::Dev,
+        )
+        .unwrap();
+        assert_eq!(path, std::path::Path::new("/tmp/demo/.alan-dev/host.toml"));
     }
 
     #[test]
@@ -199,6 +223,13 @@ daemon_url = "http://127.0.0.1:9000"
         let config = HostConfig::default();
         assert_eq!(config.bind_address, "0.0.0.0:8090");
         assert_eq!(config.daemon_url, "http://127.0.0.1:8090");
+    }
+
+    #[test]
+    fn test_host_config_dev_defaults_when_file_missing() {
+        let config = HostConfig::default_for_channel(InstallChannel::Dev);
+        assert_eq!(config.bind_address, "127.0.0.1:8091");
+        assert_eq!(config.daemon_url, "http://127.0.0.1:8091");
     }
 
     #[test]

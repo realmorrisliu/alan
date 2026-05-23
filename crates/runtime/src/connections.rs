@@ -12,7 +12,6 @@ const SECRET_STORE_BACKEND: &str = "alan_home_secret_store";
 const AMBIENT_BACKEND: &str = "ambient";
 const CONNECTIONS_FILE_NAME: &str = "connections.toml";
 const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
-const ALAN_HOME_DIR_NAME: &str = ".alan";
 const CREDENTIALS_DIR_NAME: &str = "credentials";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -640,7 +639,8 @@ fn secret_store_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf>
 
 fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomePaths> {
     validate_safe_absolute_path("alan home parent directory", &home_paths.home_dir)?;
-    let normalized = AlanHomePaths::from_home_dir(&home_paths.home_dir);
+    let normalized =
+        AlanHomePaths::from_home_dir_for_channel(&home_paths.home_dir, home_paths.channel);
     if normalized != *home_paths {
         anyhow::bail!(
             "invalid alan home layout; expected paths under {}",
@@ -658,6 +658,7 @@ fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomeP
         .alan_home_dir
         .file_name()
         .and_then(|value| value.to_str());
+    let expected_alan_home_name = normalized.channel.descriptor().alan_home_dir_name;
     let connections_name = normalized
         .global_connections_path
         .file_name()
@@ -666,7 +667,7 @@ fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomeP
         .global_credentials_dir
         .file_name()
         .and_then(|value| value.to_str());
-    if alan_home_name != Some(ALAN_HOME_DIR_NAME)
+    if alan_home_name != Some(expected_alan_home_name)
         || connections_name != Some(CONNECTIONS_FILE_NAME)
         || credentials_name != Some(CREDENTIALS_DIR_NAME)
     {
@@ -899,6 +900,60 @@ mod tests {
         assert_eq!(store.load("kimi").unwrap().as_deref(), Some("sk-test"));
         assert!(store.delete("kimi").unwrap());
         assert_eq!(store.load("kimi").unwrap(), None);
+    }
+
+    #[test]
+    fn secret_store_uses_dev_channel_credentials_dir() {
+        let temp = TempDir::new().unwrap();
+        let home_paths =
+            AlanHomePaths::from_home_dir_for_channel(temp.path(), crate::InstallChannel::Dev);
+        let store = SecretStore::from_home_paths(&home_paths).unwrap();
+
+        store.save("dev-profile", "sk-dev").unwrap();
+
+        assert!(
+            std::fs::read_to_string(temp.path().join(".alan-dev/credentials/secrets.toml"))
+                .unwrap()
+                .contains("sk-dev")
+        );
+        assert!(!temp.path().join(".alan/credentials/secrets.toml").exists());
+    }
+
+    #[test]
+    fn dev_connection_store_does_not_fall_back_to_stable_store() {
+        let temp = TempDir::new().unwrap();
+        let stable_paths = AlanHomePaths::from_home_dir(temp.path());
+        let dev_paths =
+            AlanHomePaths::from_home_dir_for_channel(temp.path(), crate::InstallChannel::Dev);
+        let stable_connections = ConnectionsFile {
+            default_profile: Some("stable-main".to_string()),
+            profiles: BTreeMap::from([(
+                "stable-main".to_string(),
+                ConnectionProfile {
+                    provider: LlmProvider::OpenAiResponses,
+                    label: Some("Stable".to_string()),
+                    credential_id: Some("stable-main".to_string()),
+                    created_at: default_profile_timestamp(),
+                    updated_at: default_profile_timestamp(),
+                    source: default_profile_source(),
+                    settings: BTreeMap::new(),
+                },
+            )]),
+            ..ConnectionsFile::default()
+        };
+        stable_connections
+            .save_to_home_paths(&stable_paths)
+            .expect("save stable connections");
+
+        let (dev_connections, dev_path) =
+            ConnectionsFile::load_from_home_paths(&dev_paths).expect("load dev connections");
+
+        assert_eq!(
+            dev_path.as_deref(),
+            Some(dev_paths.global_connections_path.as_path())
+        );
+        assert_eq!(dev_connections.default_profile, None);
+        assert!(dev_connections.profiles.is_empty());
     }
 
     #[test]

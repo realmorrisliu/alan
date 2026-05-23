@@ -15,6 +15,7 @@ mod agent_root;
 mod approval;
 mod config;
 mod connections;
+mod install_channel;
 mod llm;
 mod models;
 mod paths;
@@ -49,6 +50,7 @@ pub use connections::{
     ResolvedConnectionProfile, SecretStore, default_credential_backend, normalize_profile_settings,
     provider_catalog, sanitize_identifier, validate_profile_settings,
 };
+pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
     LlmProjection, ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,

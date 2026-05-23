@@ -10,6 +10,7 @@ import TextInput from "ink-text-input";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeCanonicalSetupFiles } from "./init-files.js";
+import { installChannelDescriptor, type InstallChannelId } from "./install-channel.js";
 import {
   ADVANCED_PROVIDER_CATALOG,
   browserLoginProfileIdForSetup,
@@ -38,6 +39,7 @@ interface InitWizardProps {
   onComplete: (completion: InitWizardCompletion) => void;
   agentConfigPath: string;
   hostConfigPath: string;
+  installChannel?: InstallChannelId;
 }
 
 type WizardStep = "welcome" | "service" | "advanced_provider" | "config" | "done";
@@ -61,8 +63,16 @@ function completionForSetup(option: ConfigurableSetupOption): InitWizardCompleti
   };
 }
 
-export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: InitWizardProps) {
-  const connectionsConfigPath = join(homedir(), ".alan", "connections.toml");
+export function InitWizard({
+  onComplete,
+  agentConfigPath,
+  hostConfigPath,
+  installChannel = "stable",
+}: InitWizardProps) {
+  const descriptor = installChannelDescriptor(installChannel);
+  const alanHomeDir = join(homedir(), descriptor.alanHomeDirName);
+  const globalPublicSkillsDir = join(homedir(), descriptor.globalSkillsParentDirName, "skills");
+  const connectionsConfigPath = join(alanHomeDir, "connections.toml");
   const [step, setStep] = useState<WizardStep>("welcome");
   const [selectedTarget, setSelectedTarget] = useState<ConfigurableSetupOption>(DEFAULT_TARGET);
   const [configReturnStep, setConfigReturnStep] = useState<ConfigReturnStep>("service");
@@ -89,10 +99,10 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
   };
 
   const saveConfig = (option: ConfigurableSetupOption, values: ConfigValues): boolean => {
-    const agentConfigContent = buildConfigContent(option, values);
+    const agentConfigContent = buildConfigContent(option, values, installChannel);
     const connectionsConfigContent = buildConnectionsContent(option, values);
     const setupSecret = buildSetupSecretMaterial(option, values);
-    const hostConfigContent = buildHostConfigContent();
+    const hostConfigContent = buildHostConfigContent(installChannel);
     try {
       const result = writeCanonicalSetupFiles({
         agentConfigPath,
@@ -100,10 +110,10 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
         connectionsConfigPath,
         connectionsConfigContent,
         credentialSecretPath: setupSecret
-          ? join(homedir(), ".alan", "credentials", `${setupSecret.credentialId}.secret`)
+          ? join(alanHomeDir, "credentials", `${setupSecret.credentialId}.secret`)
           : undefined,
         credentialSecretContent: setupSecret?.secret,
-        globalPublicSkillsDir: join(homedir(), ".agents", "skills"),
+        globalPublicSkillsDir,
         hostConfigPath,
         hostConfigContent,
       });
@@ -210,8 +220,8 @@ export function InitWizard({ onComplete, agentConfigPath, hostConfigPath }: Init
         <Text color="gray">
           alan will write the canonical agent config and, when host.toml is missing, create it so
           the daemon keeps the wizard's loopback default. It also prepares ~/.agents/skills/ as the
-          default zero-conversion public skill install directory. Existing host config is preserved.
-          Advanced / custom setup is still available.
+          default zero-conversion public skill install directory for this install channel. Existing
+          host config is preserved. Advanced / custom setup is still available.
         </Text>
         <Text> </Text>
         <Text color="gray">Press Enter to continue...</Text>

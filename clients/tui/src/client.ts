@@ -9,6 +9,7 @@
 import { WebSocket } from "ws";
 import { DaemonManager, getDaemon } from "./daemon.js";
 import { apiPaths } from "./generated/api-contract";
+import { installChannelDescriptor, resolveInstallChannel } from "./install-channel.js";
 import type {
   ClientCapabilities,
   ChildRunListResponse,
@@ -116,7 +117,7 @@ export class AlanClient {
 
   constructor(options: AlanClientOptions = {}) {
     this.options = {
-      url: options.url ?? "ws://127.0.0.1:8090",
+      url: options.url ?? installChannelDescriptor(resolveInstallChannel()).daemonWsUrl,
       autoManageDaemon: options.autoManageDaemon ?? true,
       verbose: options.verbose ?? false,
     };
@@ -138,7 +139,12 @@ export class AlanClient {
       return;
     }
 
-    this.daemon = getDaemon({ verbose: this.options.verbose });
+    const daemonUrl = new URL(this.baseUrl);
+    this.daemon = getDaemon({
+      host: daemonUrl.hostname,
+      port: Number(daemonUrl.port || "80"),
+      verbose: this.options.verbose,
+    });
     const status = await this.daemon.start();
 
     if (this.options.verbose) {

@@ -1,10 +1,10 @@
 ## 1. Channel Model And Path Resolution
 
 - [x] 1.1 Add a typed install-channel descriptor for `stable` and `dev` identities, including app name, bundle id, CLI/TUI names, alan home, global skill source, daemon defaults, and shell-control namespace.
-- [ ] 1.2 Thread channel selection into CLI, daemon, TUI, and macOS app startup before any config, auth, daemon, or runtime path is resolved.
-- [ ] 1.3 Update runtime alan-home path resolution so stable uses `~/.alan` and dev uses `~/.alan-dev` for host config, registry, agents, models, connections, credentials, sessions, memory, managed auth, and caches.
-- [ ] 1.4 Update agent-root layout resolution and writes so global roots are channel-scoped while workspace roots remain unchanged.
-- [ ] 1.5 Update global public skill discovery and install/update flows so stable uses `~/.agents/skills` and dev uses `~/.agents-dev/skills`.
+- [x] 1.2 Thread channel selection into CLI, daemon, TUI, and macOS app startup before any config, auth, daemon, or runtime path is resolved.
+- [x] 1.3 Update runtime alan-home path resolution so stable uses `~/.alan` and dev uses `~/.alan-dev` for host config, registry, agents, models, connections, credentials, sessions, memory, managed auth, and caches.
+- [x] 1.4 Update agent-root layout resolution and writes so global roots are channel-scoped while workspace roots remain unchanged.
+- [x] 1.5 Update global public skill discovery and install/update flows so stable uses `~/.agents/skills` and dev uses `~/.agents-dev/skills`.
 
 ## 2. macOS Packaging And Install Scripts
 
@@ -17,8 +17,8 @@
 
 ## 3. Daemon, TUI, And App Runtime Isolation
 
-- [ ] 3.1 Add distinct dev daemon/client defaults so `alan-dev` and `alan-dev-tui` do not connect to the stable daemon implicitly.
-- [ ] 3.2 Ensure missing dev connection/auth config produces onboarding or configuration-required state instead of falling back to stable credentials.
+- [x] 3.1 Add distinct dev daemon/client defaults so `alan-dev` and `alan-dev-tui` do not connect to the stable daemon implicitly.
+- [x] 3.2 Ensure missing dev connection/auth config produces onboarding or configuration-required state instead of falling back to stable credentials.
 - [ ] 3.3 Scope macOS singleton locks, support paths, log subsystems, capture-helper defaults, and diagnostics by channel.
 - [ ] 3.4 Scope shell-control socket and binding paths by channel so stable and dev commands cannot read each other's control files.
 - [ ] 3.5 Verify stable and dev apps can run side by side without activating, terminating, or hijacking each other's singleton state.

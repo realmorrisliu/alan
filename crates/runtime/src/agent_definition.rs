@@ -191,7 +191,7 @@ fn infer_workspace_root_from_alan_dir(alan_dir: Option<&Path>) -> Option<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AlanHomePaths, Config, skills::SkillOverride};
+    use crate::{AlanHomePaths, Config, InstallChannel, skills::SkillOverride};
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -533,6 +533,54 @@ enabled = false
                 .packages
                 .iter()
                 .any(|package| package.id == "skill:workspace-public-skill")
+        );
+    }
+
+    #[test]
+    fn resolved_agent_definition_uses_dev_public_skills_without_stable_fallback() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let workspace_root = temp.path().join("workspace");
+        let home_paths = AlanHomePaths::from_home_dir_for_channel(&home, InstallChannel::Dev);
+
+        create_public_skill(&home, "stable-only-skill", "Stable Only Skill");
+        let dev_skill_dir = home_paths.global_public_skills_dir.join("dev-public-skill");
+        std::fs::create_dir_all(&dev_skill_dir).unwrap();
+        std::fs::write(
+            dev_skill_dir.join("SKILL.md"),
+            r#"---
+name: Dev Public Skill
+description: dev public test skill
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        let mut config = WorkspaceRuntimeConfig::from(Config::default());
+        config.workspace_root_dir = Some(workspace_root.clone());
+        config.workspace_alan_dir = Some(workspace_root.join(".alan"));
+        config.agent_home_paths = Some(home_paths.clone());
+
+        let resolved = ResolvedAgentDefinition::from_runtime_config(&config).unwrap();
+
+        assert!(resolved.capability_view.package_dirs.iter().any(|dir| {
+            dir.path == home_paths.global_public_skills_dir && dir.scope == SkillScope::User
+        }));
+        assert!(
+            resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:dev-public-skill")
+        );
+        assert!(
+            !resolved
+                .capability_view
+                .packages
+                .iter()
+                .any(|package| package.id == "skill:stable-only-skill")
         );
     }
 

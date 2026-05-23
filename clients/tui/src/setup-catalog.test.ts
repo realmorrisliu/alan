@@ -173,7 +173,23 @@ describe("service-first setup catalog", () => {
     const rendered = buildHostConfigContent();
 
     expect(rendered).toContain("# alan Host Configuration");
-    expect(rendered).toContain('bind_address = "127.0.0.1:8090"');
+    expect(rendered).toContain('bind_address = "0.0.0.0:8090"');
     expect(rendered).toContain('daemon_url = "http://127.0.0.1:8090"');
+  });
+
+  test("dev host config content uses dev daemon defaults", () => {
+    const rendered = buildHostConfigContent("dev");
+
+    expect(rendered).toContain('bind_address = "127.0.0.1:8091"');
+    expect(rendered).toContain('daemon_url = "http://127.0.0.1:8091"');
+  });
+
+  test("dev agent config comments point at dev channel global paths", () => {
+    const option = requireServicePreset("chatgpt_codex");
+    const rendered = buildConfigContent(option, applySetupDefaults(DEFAULT_CONFIG, option), "dev");
+
+    expect(rendered).toContain("~/.alan-dev/connections.toml");
+    expect(rendered).toContain("~/.agents-dev/skills/");
+    expect(rendered).not.toContain("~/.alan/connections.toml");
   });
 });

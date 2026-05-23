@@ -75,7 +75,10 @@ import {
   type ShellRunStatus,
 } from "./summary-surfaces/runtime-state.js";
 import { SummaryHud } from "./summary-surfaces/hud-surface.js";
+import { installChannelDescriptor, resolveInstallChannel } from "./install-channel.js";
 
+const INSTALL_CHANNEL = resolveInstallChannel(process.env, process.argv[1]);
+const INSTALL_DESCRIPTOR = installChannelDescriptor(INSTALL_CHANNEL);
 const AGENTD_URL = resolveAgentdUrlOverride(process.env);
 const AUTO_MANAGE = !AGENTD_URL;
 const VERBOSE = process.env.ALAN_VERBOSE === "1";
@@ -91,16 +94,16 @@ function displayPath(path: string): string {
   return path.startsWith(homePrefix) ? `~/${path.slice(homePrefix.length)}` : path;
 }
 
-const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(homedir(), process.env);
+const CONFIG_PATH_CANDIDATES = resolveConfigPathCandidates(homedir(), process.env, INSTALL_CHANNEL);
 const CONFIG_PATH =
   selectExistingConfigPath(CONFIG_PATH_CANDIDATES, isExistingConfigFile) ??
   CONFIG_PATH_CANDIDATES[0];
-const HOST_CONFIG_PATH = defaultHostConfigPath(homedir());
+const HOST_CONFIG_PATH = defaultHostConfigPath(homedir(), INSTALL_CHANNEL);
 const CONFIG_PATH_HINT = CONFIG_PATH_CANDIDATES.map(displayPath).join(" -> ");
 
 const STARTUP_INFO = {
   mode: AGENTD_URL ? "remote" : ("embedded" as const),
-  url: AGENTD_URL || "ws://127.0.0.1:8090",
+  url: AGENTD_URL || INSTALL_DESCRIPTOR.daemonWsUrl,
 };
 
 const TUI_CLIENT_CAPABILITIES: ClientCapabilities = {
@@ -2626,6 +2629,7 @@ function App() {
         onComplete={handleSetupComplete}
         agentConfigPath={CONFIG_PATH}
         hostConfigPath={HOST_CONFIG_PATH}
+        installChannel={INSTALL_CHANNEL}
       />
     );
   }
