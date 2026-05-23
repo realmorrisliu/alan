@@ -26,21 +26,46 @@ private func temporaryDirectory(_ name: String) throws -> URL {
     return directory
 }
 
-private func makeResourceRoot() throws -> URL {
-    let appRoot = try temporaryDirectory("Alan.app")
+private func makeResourceRoot(channel: AlanInstallChannel = .stable) throws -> URL {
+    let appRoot = try temporaryDirectory(channel.ownedAppBundleNames[0])
     let root = appRoot
         .appendingPathComponent("Contents", isDirectory: true)
         .appendingPathComponent("Resources", isDirectory: true)
     let bin = root.appendingPathComponent("bin", isDirectory: true)
     try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
 
-    for tool in AlanCommandLineToolInstaller.toolNames {
+    for tool in channel.toolNames {
         let url = bin.appendingPathComponent(tool)
         try "#!/bin/sh\nexit 0\n".write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     }
 
     return root
+}
+
+private func testDevChannelInstallsDevToolNames() throws {
+    let resourceRoot = try makeResourceRoot(channel: .dev)
+    let targetDirectory = try temporaryDirectory("dev-target")
+
+    let records = try AlanCommandLineToolInstaller.install(
+        targetDirectory: targetDirectory,
+        resourceURL: resourceRoot,
+        channel: .dev
+    )
+
+    try require(records.map(\.tool) == ["alan-dev", "alan-dev-tui"], "dev installer must report dev tools")
+    for tool in AlanInstallChannel.dev.toolNames {
+        let target = targetDirectory.appendingPathComponent(tool)
+        let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)
+        try require(
+            destination.hasSuffix("/bin/\(tool)"),
+            "dev installer must link \(tool) to the embedded resource"
+        )
+    }
+    try require(
+        !FileManager.default.fileExists(atPath: targetDirectory.appendingPathComponent("alan").path),
+        "dev installer must not create stable alan link"
+    )
 }
 
 private func testInstallsSymlinks() throws {
@@ -185,14 +210,51 @@ private func testRejectsAlanHomeBinTarget() throws {
     }
 }
 
+private func testRejectsDevAlanHomeBinTarget() throws {
+    let resourceRoot = try makeResourceRoot(channel: .dev)
+    let targetDirectory = try temporaryDirectory("dev-home")
+        .appendingPathComponent(".alan-dev", isDirectory: true)
+        .appendingPathComponent("bin", isDirectory: true)
+
+    do {
+        _ = try AlanCommandLineToolInstaller.install(
+            targetDirectory: targetDirectory,
+            resourceURL: resourceRoot,
+            channel: .dev
+        )
+        throw TestFailure.message("dev installer must reject ~/.alan-dev/bin-style targets")
+    } catch let error as CocoaError where error.code == .fileWriteInvalidFileName {
+        _ = error
+        return
+    }
+}
+
+private func testChannelResolvesFromBundleIdentifier() throws {
+    try require(
+        AlanInstallChannel.fromBundleIdentifier("app.alanworks.macos") == .stable,
+        "stable bundle id must resolve to stable channel"
+    )
+    try require(
+        AlanInstallChannel.fromBundleIdentifier("app.alanworks.macos.dev") == .dev,
+        "dev bundle id must resolve to dev channel"
+    )
+    try require(
+        AlanInstallChannel.fromBundleIdentifier("example.invalid") == nil,
+        "unknown bundle id must not resolve to an install channel"
+    )
+}
+
 @main
 private enum TestRunner {
     static func main() throws {
         try testInstallsSymlinks()
+        try testDevChannelInstallsDevToolNames()
         try testSkipsNonAlanFiles()
         try testRejectsHomebrewPrefixTarget()
         try testSkipsWhenHomebrewAlreadyManagesLinks()
         try testReplacesLegacyLowercaseAppLinks()
         try testRejectsAlanHomeBinTarget()
+        try testRejectsDevAlanHomeBinTarget()
+        try testChannelResolvesFromBundleIdentifier()
     }
 }

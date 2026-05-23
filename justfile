@@ -54,7 +54,11 @@ build:
 
 # Install release Alan.app plus CLI/TUI locally
 install:
-    ./scripts/install.sh
+    ALAN_INSTALL_CHANNEL=stable ./scripts/install.sh
+
+# Install local-only Alan Dev.app plus alan-dev/alan-dev-tui
+install-dev:
+    ./scripts/install-dev.sh
 
 # Check release signing and notarization configuration without building
 release-check:
@@ -62,11 +66,15 @@ release-check:
 
 # Build, sign, notarize, staple, and archive the public macOS release app
 release:
-    ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
+    ALAN_INSTALL_CHANNEL=stable ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
 
 # Uninstall alan app and user-level CLI/TUI without removing ~/.alan data
 uninstall:
-    ./scripts/uninstall.sh
+    ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall.sh
+
+# Uninstall Alan Dev.app and dev command links without removing ~/.alan-dev data
+uninstall-dev:
+    ./scripts/uninstall-dev.sh
 
 # Clean artifacts
 clean:

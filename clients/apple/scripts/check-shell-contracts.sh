@@ -1871,6 +1871,11 @@ require_pattern \
     "Homebrew cask validation must check embedded CLI/TUI binary links"
 
 require_pattern \
+    "scripts/install-channel.sh" \
+    "Alan Dev\\.app" \
+    "dev channel install contract checks must cover the dev app bundle"
+
+require_pattern \
     "clients/apple/README.md" \
     "stable .*window_main.* identity" \
     "Apple client docs must describe the singleton primary shell identity"

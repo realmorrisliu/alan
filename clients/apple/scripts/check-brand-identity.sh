@@ -49,7 +49,16 @@ is_allowed_occurrence() {
         *"scripts/install.sh:"*"LEGACY_APP_TARGET"*|*"scripts/install.sh:"*"/alan.app/Contents/Resources/bin/"*)
             return 0
             ;;
+        *"scripts/install-channel.sh:"*"ALAN_LEGACY_APP_BUNDLE_NAME=\"alan.app\""*)
+            return 0
+            ;;
+        *"scripts/test-install-channel-descriptor.sh:"*"ALAN_LEGACY_APP_BUNDLE_NAME"*'"alan.app"'*)
+            return 0
+            ;;
         *"scripts/uninstall.sh:"*"LEGACY_APP_TARGET"*|*"scripts/uninstall.sh:"*"/alan.app/Contents/Resources/bin/"*)
+            return 0
+            ;;
+        *"AlanCommandLineToolInstaller.swift:"*"\"alan.app\""*)
             return 0
             ;;
         *"scripts/test-app-bundle-paths.sh:"*"alan.app"*)
@@ -61,7 +70,7 @@ is_allowed_occurrence() {
         *"clients/apple/scripts/test-command-line-tool-installer.swift:"*"/Applications/alan.app"*)
             return 0
             ;;
-        *"clients/apple/scripts/check-brand-identity.sh:"*"PATTERN="*)
+        *"clients/apple/scripts/check-brand-identity.sh:"*)
             return 0
             ;;
         *"github.com/realmorrisliu/Alan"*|*"git@github.com:realmorrisliu/Alan.git"*)

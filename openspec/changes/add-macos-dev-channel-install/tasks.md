@@ -1,6 +1,6 @@
 ## 1. Channel Model And Path Resolution
 
-- [ ] 1.1 Add a typed install-channel descriptor for `stable` and `dev` identities, including app name, bundle id, CLI/TUI names, alan home, global skill source, daemon defaults, and shell-control namespace.
+- [x] 1.1 Add a typed install-channel descriptor for `stable` and `dev` identities, including app name, bundle id, CLI/TUI names, alan home, global skill source, daemon defaults, and shell-control namespace.
 - [ ] 1.2 Thread channel selection into CLI, daemon, TUI, and macOS app startup before any config, auth, daemon, or runtime path is resolved.
 - [ ] 1.3 Update runtime alan-home path resolution so stable uses `~/.alan` and dev uses `~/.alan-dev` for host config, registry, agents, models, connections, credentials, sessions, memory, managed auth, and caches.
 - [ ] 1.4 Update agent-root layout resolution and writes so global roots are channel-scoped while workspace roots remain unchanged.
@@ -8,12 +8,12 @@
 
 ## 2. macOS Packaging And Install Scripts
 
-- [ ] 2.1 Make app assembly channel-aware without changing stable `Alan.app` output.
-- [ ] 2.2 Add dev app metadata/build overrides for `Alan Dev.app` and `app.alanworks.macos.dev`.
-- [ ] 2.3 Embed channel-appropriate CLI/TUI binaries as `alan`/`alan-tui` for stable and `alan-dev`/`alan-dev-tui` for dev.
-- [ ] 2.4 Add `just install-dev` and dev install script behavior that installs `Alan Dev.app` plus `alan-dev`/`alan-dev-tui` without touching stable artifacts.
-- [ ] 2.5 Add `just uninstall-dev` and dev uninstall behavior that removes only dev-owned app and command links while preserving `~/.alan-dev` data.
-- [ ] 2.6 Keep public release, Homebrew cask, and Sparkle publication paths stable-only.
+- [x] 2.1 Make app assembly channel-aware without changing stable `Alan.app` output.
+- [x] 2.2 Add dev app metadata/build overrides for `Alan Dev.app` and `app.alanworks.macos.dev`.
+- [x] 2.3 Embed channel-appropriate CLI/TUI binaries as `alan`/`alan-tui` for stable and `alan-dev`/`alan-dev-tui` for dev.
+- [x] 2.4 Add `just install-dev` and dev install script behavior that installs `Alan Dev.app` plus `alan-dev`/`alan-dev-tui` without touching stable artifacts.
+- [x] 2.5 Add `just uninstall-dev` and dev uninstall behavior that removes only dev-owned app and command links while preserving `~/.alan-dev` data.
+- [x] 2.6 Keep public release, Homebrew cask, and Sparkle publication paths stable-only.
 
 ## 3. Daemon, TUI, And App Runtime Isolation
 
@@ -31,15 +31,15 @@
 
 ## 5. Verification And Guardrails
 
-- [ ] 5.1 Add focused tests for channel descriptor values and channel-aware path resolution.
-- [ ] 5.2 Add packaging/install contract checks for `Alan Dev.app`, `alan-dev`, `alan-dev-tui`, and stable artifact preservation.
-- [ ] 5.3 Add guardrails or allowlists for dev-channel brand strings without weakening stable brand validation.
+- [x] 5.1 Add focused tests for channel descriptor values and channel-aware path resolution.
+- [x] 5.2 Add packaging/install contract checks for `Alan Dev.app`, `alan-dev`, `alan-dev-tui`, and stable artifact preservation.
+- [x] 5.3 Add guardrails or allowlists for dev-channel brand strings without weakening stable brand validation.
 - [ ] 5.4 Add tests for channel-scoped connection stores, managed auth stores, global public skills, daemon defaults, and shell-control paths.
 - [ ] 5.5 Run a documented side-by-side smoke with stable Alan installed while Alan Dev launches and writes only dev-channel state.
-- [ ] 5.6 Run `openspec validate add-macos-dev-channel-install --strict` and `openspec validate --all --strict`.
+- [x] 5.6 Run `openspec validate add-macos-dev-channel-install --strict` and `openspec validate --all --strict`.
 
 ## 6. Review And Archive Readiness
 
-- [ ] 6.1 Keep implementation commits scoped to this change and avoid mixing with unrelated macOS shell work.
-- [ ] 6.2 Before PR review, confirm public stable install, Homebrew, and Sparkle contracts remain unchanged.
+- [x] 6.1 Keep implementation commits scoped to this change and avoid mixing with unrelated macOS shell work.
+- [x] 6.2 Before PR review, confirm public stable install, Homebrew, and Sparkle contracts remain unchanged.
 - [ ] 6.3 After merge, archive the change and verify the delta specs are folded into long-lived `openspec/specs/` owners.

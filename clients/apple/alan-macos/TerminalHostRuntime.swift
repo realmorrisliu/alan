@@ -164,6 +164,8 @@ struct AlanCommandResolution: Equatable {
         environment: [String: String]
     ) -> AlanCommandResolution {
         let repoRoot = inferredAlanRepoRoot()
+        let channel = AlanInstallChannel.current(environment: environment)
+        let cliName = channel.cliToolName
 
         let envOverride = normalizedExecutablePath(
             environment["ALAN_SHELL_ALAN_PATH"],
@@ -175,9 +177,13 @@ struct AlanCommandResolution: Equatable {
         let repoRelease = repoRoot.flatMap {
             normalizedExecutablePath("\($0)/target/release/alan", fileManager: fileManager)
         }
-        let bundled = bundledAlanExecutablePath(environment: environment, fileManager: fileManager)
+        let bundled = bundledAlanExecutablePath(
+            channel: channel,
+            environment: environment,
+            fileManager: fileManager
+        )
         let pathBinary = searchPath(
-            executable: "alan",
+            executable: cliName,
             environment: environment,
             fileManager: fileManager
         )
@@ -205,7 +211,7 @@ struct AlanCommandResolution: Equatable {
             ),
             AlanCommandCandidate(
                 label: "PATH lookup",
-                path: pathBinary ?? "alan",
+                path: pathBinary ?? cliName,
                 isPresent: pathBinary != nil
             ),
         ]
@@ -216,6 +222,28 @@ struct AlanCommandResolution: Equatable {
                 executablePath: envOverride,
                 summary: "Launching alan from ALAN_SHELL_ALAN_PATH",
                 detail: envOverride,
+                repoRoot: repoRoot,
+                candidates: candidates
+            )
+        }
+
+        if channel == .dev, let bundled {
+            return directBinary(
+                strategy: .bundledResourceBinary,
+                executablePath: bundled.path,
+                summary: "Launching \(cliName) from the app bundle",
+                detail: bundled.path,
+                repoRoot: repoRoot,
+                candidates: candidates
+            )
+        }
+
+        if channel == .dev, let pathBinary {
+            return directBinary(
+                strategy: .pathBinary,
+                executablePath: pathBinary,
+                summary: "Launching \(cliName) from the current PATH",
+                detail: pathBinary,
                 repoRoot: repoRoot,
                 candidates: candidates
             )
@@ -247,7 +275,7 @@ struct AlanCommandResolution: Equatable {
             return directBinary(
                 strategy: .bundledResourceBinary,
                 executablePath: bundled.path,
-                summary: "Launching alan from the app bundle",
+                summary: "Launching \(cliName) from the app bundle",
                 detail: bundled.path,
                 repoRoot: repoRoot,
                 candidates: candidates
@@ -258,7 +286,7 @@ struct AlanCommandResolution: Equatable {
             return directBinary(
                 strategy: .pathBinary,
                 executablePath: pathBinary,
-                summary: "Launching alan from the current PATH",
+                summary: "Launching \(cliName) from the current PATH",
                 detail: pathBinary,
                 repoRoot: repoRoot,
                 candidates: candidates
@@ -269,17 +297,18 @@ struct AlanCommandResolution: Equatable {
             strategy: .shellLookup,
             executablePath: nil,
             launchPath: "/bin/zsh",
-            arguments: ["-lc", "alan chat"],
-            bootCommand: "alan chat",
-            surfaceCommand: "alan chat",
-            summary: "No direct alan binary found; falling back to shell PATH lookup",
-            detail: "Make sure `alan` is in PATH or set ALAN_SHELL_ALAN_PATH.",
+            arguments: ["-lc", "\(cliName) chat"],
+            bootCommand: "\(cliName) chat",
+            surfaceCommand: "\(cliName) chat",
+            summary: "No direct \(cliName) binary found; falling back to shell PATH lookup",
+            detail: "Make sure `\(cliName)` is in PATH or set ALAN_SHELL_ALAN_PATH.",
             repoRoot: repoRoot,
             candidates: candidates
         )
     }
 
     private static func bundledAlanExecutablePath(
+        channel: AlanInstallChannel,
         environment: [String: String],
         fileManager: FileManager
     ) -> URL? {
@@ -288,7 +317,7 @@ struct AlanCommandResolution: Equatable {
         } ?? Bundle.main.resourceURL
         guard let candidate = resourceRoot?
             .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent("alan")
+            .appendingPathComponent(channel.cliToolName)
         else {
             return nil
         }
