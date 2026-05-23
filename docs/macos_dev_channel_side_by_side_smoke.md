@@ -66,9 +66,10 @@ Observed result:
 ```text
 Dev channel side-by-side smoke passed.
   stable pid(s): 60215
-  dev pid(s): 49390
+  dev pid(s): 57051
+  dev pid(s) after duplicate launch: 57051
   frontmost before dev launch: com.apple.finder
-  frontmost after dev launch: app.alanworks.macos.dev
+  frontmost after dev launch: com.apple.finder
   dev shell-control: .../T/alan-dev-shell-control
   dev workspace state: .../alan-dev-channel-smoke-workspace.../.alan/runtime/dev
 ```

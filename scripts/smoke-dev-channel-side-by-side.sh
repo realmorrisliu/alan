@@ -152,6 +152,13 @@ fi
 [[ "$frontmost_after" != "$STABLE_BUNDLE_ID" ]] ||
     fail "launching Alan Dev activated stable Alan"
 
+info "Launching Alan Dev again to verify dev singleton reuse..."
+/usr/bin/open -g "$DEV_APP"
+sleep 2
+dev_pids_second="$(bundle_process_ids "$DEV_BUNDLE_ID")"
+[[ "$dev_pids_second" == "$dev_pids_after" ]] ||
+    fail "second Alan Dev launch changed dev PID set: before '$dev_pids_after', after '$dev_pids_second'"
+
 tmp_root="${TMPDIR:-/tmp}"
 tmp_root="${tmp_root%/}"
 stable_shell_dir="$tmp_root/alan-shell-control"
@@ -169,6 +176,7 @@ assert_no_stable_workspace_runtime_state "$workspace"
 info "Dev channel side-by-side smoke passed."
 info "  stable pid(s): $stable_pids_after"
 info "  dev pid(s): $dev_pids_after"
+info "  dev pid(s) after duplicate launch: $dev_pids_second"
 info "  frontmost before dev launch: $frontmost_before"
 info "  frontmost after dev launch: $frontmost_after"
 info "  dev shell-control: $dev_shell_dir"
