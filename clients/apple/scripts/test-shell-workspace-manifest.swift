@@ -15,6 +15,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMissingManifestCreatesDefaultWithoutMigratingShellState()
         try verifiesCorruptManifestIsQuarantined()
         try verifiesMaterializerPreservesEmptySelectedSpace()
+        try verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
         try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
@@ -127,6 +128,56 @@ private enum ShellWorkspaceManifestTests {
         expect(state.focusedTabID == nil, "selected empty space must not fabricate a tab selection")
         expect(state.focusedPaneID == nil, "selected empty space must not fabricate a pane selection")
         expect(state.panes.isEmpty, "selected empty space must not fabricate panes")
+    }
+
+    private static func verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs() throws {
+        let otherTab = makeContentTab(
+            tabID: "tab_other",
+            title: "Other",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/other/project",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_empty",
+            selectedTabID: nil,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_empty",
+                    title: "Empty",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    tabs: []
+                ),
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_other",
+                    title: "Other",
+                    order: 1,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    tabs: [otherTab]
+                ),
+            ]
+        )
+
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: manifest,
+            defaultWorkingDirectory: "/tmp",
+            now: referenceDate
+        )
+
+        expect(state.spaces.count == 2, "materializer must preserve empty and populated spaces")
+        expect(state.focusedSpaceID == "space_empty", "selected empty space must remain focused")
+        expect(state.focusedTabID == nil, "selected empty space must not focus another space's tab")
+        expect(state.focusedPaneID == nil, "selected empty space must not focus another space's pane")
+        expect(state.pane(paneID: "pane_tab_other") != nil, "other space panes must still materialize")
     }
 
     private static func verifiesPinnedSnapshotWinsOverLaterLiveSnapshot() throws {

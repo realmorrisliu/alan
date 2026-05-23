@@ -1226,10 +1226,10 @@ extension ShellContentStateSnapshot {
             return nil
         }
 
+        let existingSpaceIDs = Set(materializedSpaces.map(\.spaceID))
         let focusableSpaces = materializedSpaces.filter { !$0.tabs.isEmpty }
-        let validSpaceIDs = Set(focusableSpaces.map(\.spaceID))
         let resolvedFocusedSpaceID = focusedSpaceID.flatMap {
-            validSpaceIDs.contains($0) ? $0 : nil
+            existingSpaceIDs.contains($0) ? $0 : nil
         } ?? focusableSpaces.first?.spaceID ?? materializedSpaces.first?.spaceID
         let focusedSpace = resolvedFocusedSpaceID.flatMap { spaceID in
             materializedSpaces.first { $0.spaceID == spaceID }
@@ -1240,10 +1240,10 @@ extension ShellContentStateSnapshot {
         let focusedTab = resolvedFocusedTabID.flatMap { tabID in
             focusedSpace?.tabs.first { $0.tabID == tabID }
         }
-        let validPaneSlotIDs = Set(materializedPaneSlots.map(\.paneSlotID))
+        let focusedTabPaneIDs = Set(focusedTab?.paneTree.paneIDs ?? [])
         let resolvedFocusedPaneID = focusedPaneSlotID.flatMap {
-            validPaneSlotIDs.contains($0) ? $0 : nil
-        } ?? focusedTab?.paneTree.paneIDs.first ?? materializedPanes.first?.paneID
+            focusedTabPaneIDs.contains($0) ? $0 : nil
+        } ?? focusedTab?.paneTree.paneIDs.first
 
         return ShellStateSnapshot(
             contractVersion: Self.currentContractVersion,
