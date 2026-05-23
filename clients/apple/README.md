@@ -131,6 +131,7 @@ For screenshot-driven UI iteration on the native macOS app, use:
 ```bash
 zsh ./clients/apple/scripts/capture-alan-window.sh --list
 zsh ./clients/apple/scripts/capture-alan-window.sh --output .artifacts/alan-window.png
+zsh ./clients/apple/scripts/capture-alan-window.sh --channel dev --output .artifacts/alan-dev-window.png
 ```
 
 You can also target a specific running process:

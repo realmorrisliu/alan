@@ -549,9 +549,19 @@ struct AlanShellBootProfile: Equatable {
         let ghostty = GhosttyIntegrationStatus.discover()
         let command = AlanCommandResolution.resolve(for: pane.resolvedLaunchTarget)
         let installChannel = AlanInstallChannel.current()
-        let controlPlaneRoot = alanShellControlPlaneRootURL(windowID: shellState.windowID)
-        let controlPlaneSocket = alanShellControlPlaneSocketURL(windowID: shellState.windowID)
-        let bindingFile = alanShellBindingFileURL(windowID: shellState.windowID, paneID: pane.paneID)
+        let controlPlaneRoot = alanShellControlPlaneRootURL(
+            windowID: shellState.windowID,
+            channel: installChannel
+        )
+        let controlPlaneSocket = alanShellControlPlaneSocketURL(
+            windowID: shellState.windowID,
+            channel: installChannel
+        )
+        let bindingFile = alanShellBindingFileURL(
+            windowID: shellState.windowID,
+            paneID: pane.paneID,
+            channel: installChannel
+        )
 
         var environment: [String: String] = [
             "ALAN_INSTALL_CHANNEL": installChannel.installChannelID,

@@ -15,6 +15,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTreeMutations.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-workspace-manifest.swift" \
     -o "$TEST_BINARY"

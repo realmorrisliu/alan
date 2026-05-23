@@ -216,14 +216,15 @@ final class ShellQuickTerminalPeakPresenter {
 struct ShellWindowContext {
     let windowID: String
     let persistenceURL: URL
+    let installChannel: AlanInstallChannel
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
 
     var controlRootURL: URL {
-        alanShellControlPlaneRootURL(windowID: windowID)
+        alanShellControlPlaneRootURL(windowID: windowID, channel: installChannel)
     }
 
     var socketURL: URL {
-        alanShellControlPlaneSocketURL(windowID: windowID)
+        alanShellControlPlaneSocketURL(windowID: windowID, channel: installChannel)
     }
 
     var stateURL: URL {
@@ -237,14 +238,17 @@ struct ShellWindowContext {
     static func make(
         fileManager: FileManager = .default,
         windowID: String = "window_\(UUID().uuidString.lowercased())",
+        installChannel: AlanInstallChannel = .current(),
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
     ) -> ShellWindowContext {
         ShellWindowContext(
             windowID: windowID,
             persistenceURL: ShellStatePersistenceStore.defaultPersistenceURL(
                 windowID: windowID,
-                fileManager: fileManager
+                fileManager: fileManager,
+                channel: installChannel
             ),
+            installChannel: installChannel,
             terminalRuntimeRegistry: terminalRuntimeRegistry ?? TerminalRuntimeRegistry()
         )
     }
@@ -271,7 +275,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let terminalContentProjection: TerminalContentProjectionAdapter
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
-    lazy var controlPlane = AlanShellControlPlane(windowID: windowContext.windowID) { [weak self] command in
+    lazy var controlPlane = AlanShellControlPlane(
+        windowID: windowContext.windowID,
+        channel: windowContext.installChannel
+    ) { [weak self] command in
         self?.handleControlPlaneCommand(command)
             ?? AlanShellControlResponse(
                 requestID: command.requestID,
@@ -381,16 +388,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         defaultWorkingDirectory: String? = nil,
         now: Date = .now
     ) -> ShellHostController {
-        let usesStableWindowContext = startupMode == .restorePrevious || startupMode == .workspaceManifest
+        let installChannel = AlanInstallChannel.current()
+        let usesRestorableWindowContext = startupMode == .restorePrevious || startupMode == .workspaceManifest
         let resolvedWindowContext =
             windowContext
             ?? ShellStatePersistenceStore.restoredWindowContext(
                 fileManager: fileManager,
-                restorePrevious: startupMode == .restorePrevious
+                restorePrevious: startupMode == .restorePrevious,
+                channel: installChannel
             )
             ?? ShellStatePersistenceStore.defaultWindowContext(
                 fileManager: fileManager,
-                restorePrevious: usesStableWindowContext
+                restorePrevious: usesRestorableWindowContext,
+                channel: installChannel
             )
         let persistenceURL = resolvedWindowContext.persistenceURL
         let shellState: ShellStateSnapshot
@@ -409,7 +419,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             shellState =
                 ShellStatePersistenceStore.restoreShellState(
                     fileManager: fileManager,
-                    persistenceURL: persistenceURL
+                    persistenceURL: persistenceURL,
+                    channel: resolvedWindowContext.installChannel
                 )
                 ?? .bootstrapDefault(windowID: resolvedWindowContext.windowID)
             manifestStore = nil
@@ -424,7 +435,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 manifestURL: workspaceManifestURL
                     ?? ShellWorkspaceManifestStore.defaultManifestURL(
                         windowID: resolvedWindowContext.windowID,
-                        fileManager: fileManager
+                        fileManager: fileManager,
+                        channel: resolvedWindowContext.installChannel
                     )
             )
             let loadResult = try? store.loadOrCreateDefault(

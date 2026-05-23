@@ -19,6 +19,8 @@ private enum TerminalRuntimeServiceTests {
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesDevChannelUsesBundledDevBinary()
         verifiesDevChannelPropagatesInstallChannelEnvironment()
+        verifiesChannelScopedShellControlPaths()
+        verifiesDevBootProfileUsesDevShellControlNamespace()
         verifiesBootstrapReuseAndPaneHandleIdentity()
         verifiesPaneScopedHandleIsolation()
         verifiesContentScopedHandleSurvivesPaneRemount()
@@ -197,6 +199,71 @@ private enum TerminalRuntimeServiceTests {
         expect(
             profile.environment["ALAN_INSTALL_CHANNEL"] == "dev",
             "dev boot profile must propagate ALAN_INSTALL_CHANNEL to child processes"
+        )
+    }
+
+    private static func verifiesChannelScopedShellControlPaths() {
+        let stableRoot = alanShellControlPlaneRootURL(
+            windowID: "window_main",
+            channel: .stable
+        )
+        let devRoot = alanShellControlPlaneRootURL(
+            windowID: "window_main",
+            channel: .dev
+        )
+        let stableSocket = alanShellControlPlaneSocketURL(
+            windowID: "window_main",
+            channel: .stable
+        )
+        let devSocket = alanShellControlPlaneSocketURL(
+            windowID: "window_main",
+            channel: .dev
+        )
+        let stableBinding = alanShellBindingFileURL(
+            windowID: "window_main",
+            paneID: "pane_1",
+            channel: .stable
+        )
+        let devBinding = alanShellBindingFileURL(
+            windowID: "window_main",
+            paneID: "pane_1",
+            channel: .dev
+        )
+
+        expect(stableRoot != devRoot, "stable and dev shell-control roots must differ")
+        expect(stableSocket != devSocket, "stable and dev shell-control sockets must differ")
+        expect(stableBinding != devBinding, "stable and dev binding files must differ")
+        expect(
+            stableRoot.path.contains("/alan-shell-control/"),
+            "stable shell-control root must use the stable namespace"
+        )
+        expect(
+            devRoot.path.contains("/alan-dev-shell-control/"),
+            "dev shell-control root must use the dev namespace"
+        )
+    }
+
+    private static func verifiesDevBootProfileUsesDevShellControlNamespace() {
+        setenv("ALAN_INSTALL_CHANNEL", "dev", 1)
+        defer {
+            unsetenv("ALAN_INSTALL_CHANNEL")
+        }
+
+        let state = ShellStateSnapshot.bootstrapDefault()
+        let pane = state.panes[0]
+        let profile = AlanShellBootProfile.forPane(pane, shellState: state)
+
+        expect(
+            profile.environment["ALAN_SHELL_CONTROL_DIR"]?.contains("/alan-dev-shell-control/") == true,
+            "dev boot profile must expose the dev shell-control directory"
+        )
+        expect(
+            profile.environment["ALAN_SHELL_SOCKET"]?.contains("/alan-dev-shell-control/") == true,
+            "dev boot profile must expose the dev shell-control socket"
+        )
+        expect(
+            profile.environment["ALAN_SHELL_BINDING_FILE"]?.contains("/alan-dev-shell-control/") == true,
+            "dev boot profile must expose the dev binding file"
         )
     }
 

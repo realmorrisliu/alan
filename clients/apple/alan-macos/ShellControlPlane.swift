@@ -3,27 +3,30 @@ import Foundation
 #if os(macOS)
 func alanShellControlPlaneRootURL(
     windowID: String,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    channel: AlanInstallChannel = .current()
 ) -> URL {
     fileManager.temporaryDirectory
-        .appendingPathComponent("alan-shell-control", isDirectory: true)
+        .appendingPathComponent(channel.shellControlNamespace, isDirectory: true)
         .appendingPathComponent(windowID, isDirectory: true)
 }
 
 func alanShellControlPlaneSocketURL(
     windowID: String,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    channel: AlanInstallChannel = .current()
 ) -> URL {
-    alanShellControlPlaneRootURL(windowID: windowID, fileManager: fileManager)
+    alanShellControlPlaneRootURL(windowID: windowID, fileManager: fileManager, channel: channel)
         .appendingPathComponent("shell.sock")
 }
 
 func alanShellPaneSupportDirectoryURL(
     windowID: String,
     paneID: String,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    channel: AlanInstallChannel = .current()
 ) -> URL {
-    alanShellControlPlaneRootURL(windowID: windowID, fileManager: fileManager)
+    alanShellControlPlaneRootURL(windowID: windowID, fileManager: fileManager, channel: channel)
         .appendingPathComponent("panes", isDirectory: true)
         .appendingPathComponent(paneID, isDirectory: true)
 }
@@ -31,9 +34,15 @@ func alanShellPaneSupportDirectoryURL(
 func alanShellBindingFileURL(
     windowID: String,
     paneID: String,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    channel: AlanInstallChannel = .current()
 ) -> URL {
-    alanShellPaneSupportDirectoryURL(windowID: windowID, paneID: paneID, fileManager: fileManager)
+    alanShellPaneSupportDirectoryURL(
+        windowID: windowID,
+        paneID: paneID,
+        fileManager: fileManager,
+        channel: channel
+    )
         .appendingPathComponent("alan-binding.json")
 }
 
@@ -60,6 +69,7 @@ final class AlanShellControlPlane {
     init(
         windowID: String,
         fileManager: FileManager = .default,
+        channel: AlanInstallChannel = .current(),
         commandHandler: @escaping (AlanShellControlCommand) -> AlanShellControlResponse,
         stateAdoptionHandler: @escaping @MainActor (ShellStateSnapshot) -> Void,
         bindingProjectionHandler: @escaping @MainActor (String, ShellAlanBinding?) -> Void,
@@ -70,8 +80,16 @@ final class AlanShellControlPlane {
         self.encoder = JSONEncoder()
         self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         self.decoder = JSONDecoder()
-        self.rootURL = alanShellControlPlaneRootURL(windowID: windowID, fileManager: fileManager)
-        self.socketURL = alanShellControlPlaneSocketURL(windowID: windowID, fileManager: fileManager)
+        self.rootURL = alanShellControlPlaneRootURL(
+            windowID: windowID,
+            fileManager: fileManager,
+            channel: channel
+        )
+        self.socketURL = alanShellControlPlaneSocketURL(
+            windowID: windowID,
+            fileManager: fileManager,
+            channel: channel
+        )
         self.panesURL = rootURL.appendingPathComponent("panes", isDirectory: true)
         self.commandsURL = rootURL.appendingPathComponent("commands", isDirectory: true)
         self.resultsURL = rootURL.appendingPathComponent("results", isDirectory: true)
@@ -100,6 +118,7 @@ final class AlanShellControlPlane {
         self.filePoller = AlanShellControlFilePoller(
             windowID: windowID,
             fileManager: fileManager,
+            channel: channel,
             commandsURL: commandsURL,
             resultsURL: resultsURL,
             encoder: encoder,

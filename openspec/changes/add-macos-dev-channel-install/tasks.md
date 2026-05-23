@@ -19,8 +19,8 @@
 
 - [x] 3.1 Add distinct dev daemon/client defaults so `alan-dev` and `alan-dev-tui` do not connect to the stable daemon implicitly.
 - [x] 3.2 Ensure missing dev connection/auth config produces onboarding or configuration-required state instead of falling back to stable credentials.
-- [ ] 3.3 Scope macOS singleton locks, support paths, log subsystems, capture-helper defaults, and diagnostics by channel.
-- [ ] 3.4 Scope shell-control socket and binding paths by channel so stable and dev commands cannot read each other's control files.
+- [x] 3.3 Scope macOS singleton locks, support paths, log subsystems, capture-helper defaults, and diagnostics by channel.
+- [x] 3.4 Scope shell-control socket and binding paths by channel so stable and dev commands cannot read each other's control files.
 - [ ] 3.5 Verify stable and dev apps can run side by side without activating, terminating, or hijacking each other's singleton state.
 
 ## 4. Workspace Generated State
@@ -34,7 +34,7 @@
 - [x] 5.1 Add focused tests for channel descriptor values and channel-aware path resolution.
 - [x] 5.2 Add packaging/install contract checks for `Alan Dev.app`, `alan-dev`, `alan-dev-tui`, and stable artifact preservation.
 - [x] 5.3 Add guardrails or allowlists for dev-channel brand strings without weakening stable brand validation.
-- [ ] 5.4 Add tests for channel-scoped connection stores, managed auth stores, global public skills, daemon defaults, and shell-control paths.
+- [x] 5.4 Add tests for channel-scoped connection stores, managed auth stores, global public skills, daemon defaults, and shell-control paths.
 - [ ] 5.5 Run a documented side-by-side smoke with stable Alan installed while Alan Dev launches and writes only dev-channel state.
 - [x] 5.6 Run `openspec validate add-macos-dev-channel-install --strict` and `openspec validate --all --strict`.
 

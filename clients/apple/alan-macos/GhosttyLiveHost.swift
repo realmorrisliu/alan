@@ -14,7 +14,7 @@ final class AlanGhosttyLiveHost: NSObject {
     var onScrollbackUpdate: ((AlanTerminalScrollbackMetrics) -> Void)?
 
     private let logger = Logger(
-        subsystem: "app.alanworks.macos",
+        subsystem: AlanInstallChannel.current().logSubsystem,
         category: "GhosttyLiveHost"
     )
 

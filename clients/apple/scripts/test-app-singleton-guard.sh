@@ -10,6 +10,7 @@ TEST_BINARY="${BUILD_DIR}/app-singleton-guard-tests"
 mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/AlanAppSingletonGuard.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-app-singleton-guard.swift" \
     -o "$TEST_BINARY"
