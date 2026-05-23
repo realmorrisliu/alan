@@ -143,6 +143,13 @@ enum ShellCommandTargetResolver {
         else {
             return .shell(reason: "terminal_pane_unavailable")
         }
+        guard let mountedContentID = terminalContentIDIfAvailable(
+            for: pane,
+            in: state
+        )
+        else {
+            return .shell(reason: "terminal_content_unavailable")
+        }
 
         let runtime = runtimeState(paneID)
         switch command {
@@ -169,7 +176,7 @@ enum ShellCommandTargetResolver {
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
-                mountedContentID: pane.paneID
+                mountedContentID: mountedContentID
             )
         )
     }
@@ -736,7 +743,7 @@ private let standardActions: [ShellActionDescriptor] = [
         targetKind: .pane,
         defaultShortcut: ShellActionShortcut(key: "f", modifiers: [.command], context: .shell),
         effect: .disabledPlaceholder,
-        availability: focusedPaneAvailability
+        availability: terminalContentAvailability
     ),
     ShellActionDescriptor(
         id: .spaceSelectPrevious,
@@ -829,6 +836,46 @@ private func focusedPaneAvailability(
             ? .unavailable(reason: "No focused pane")
             : .available
     }
+}
+
+private func terminalContentAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    let paneID: String?
+    if case .contextPane(let contextPaneID) = target {
+        paneID = contextPaneID
+    } else {
+        paneID = state.focusedPaneID
+    }
+
+    guard let paneID else {
+        return .unavailable(reason: "No focused pane")
+    }
+    guard let pane = state.pane(paneID: paneID) else {
+        return .unavailable(reason: "Pane is not available")
+    }
+    guard terminalContentIDIfAvailable(for: pane, in: state) != nil else {
+        return .unavailable(reason: "Focused content is not a terminal")
+    }
+    return .available
+}
+
+private func terminalContentIDIfAvailable(
+    for pane: ShellPane,
+    in state: ShellStateSnapshot
+) -> String? {
+    if let mountedContent = state.contentStateProjection().contentMounted(in: pane.paneID) {
+        return mountedContent.kind == .terminal ? mountedContent.contentID : nil
+    }
+
+    if pane.isQuickTerminalPane,
+       state.quickTerminal?.paneID == pane.paneID
+    {
+        return pane.terminalContentID
+    }
+
+    return nil
 }
 
 private func splitPaneAvailability(

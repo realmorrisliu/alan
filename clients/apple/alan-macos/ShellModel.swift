@@ -482,6 +482,17 @@ func shellPaneTitleBarTitle(for pane: ShellPane) -> String {
     return "Terminal"
 }
 
+func shellContentTypeHint(for kind: ShellContentKind) -> String {
+    switch kind {
+    case .terminal:
+        return "Terminal"
+    case .markdown:
+        return "Document"
+    case .settings:
+        return "Settings"
+    }
+}
+
 func shellPaneActivityAccessoryLabel(for pane: ShellPane, now: Date? = nil) -> String? {
     guard let activity = pane.activity else { return nil }
     if let now, !activity.isFresh(at: now) {
@@ -824,16 +835,23 @@ private func shellIsCodingAgentActivity(_ activity: TerminalActivitySnapshot) ->
 func shellSidebarTabProjection(
     for tab: ShellTab,
     panes allPanes: [ShellPane],
+    contentState: ShellContentStateSnapshot? = nil,
     focusedPaneID: String?,
     focusedTabID: String?,
     now: Date? = nil
 ) -> ShellSidebarTabProjection {
     let panes = shellOrderedPanes(for: tab, panes: allPanes)
     let primaryPane = shellPrimaryPane(in: panes, focusedPaneID: focusedPaneID)
-    let title = shellSidebarTabTitle(for: tab, primaryPane: primaryPane)
+    let primaryContent = shellPrimaryContent(in: tab, contentState: contentState, focusedPaneID: focusedPaneID)
+    let title = shellSidebarTabTitle(for: tab, primaryPane: primaryPane, primaryContent: primaryContent)
     let isOwningTabFocused = focusedTabID == tab.tabID
 
     let activityCandidates = panes.enumerated().compactMap { index, pane -> TerminalActivitySnapshot? in
+        if let contentState,
+           contentState.contentMounted(in: pane.paneID)?.kind != .terminal
+        {
+            return nil
+        }
         guard let activity = pane.activity,
               activity.isSidebarWorthy(at: now, owningTabFocused: isOwningTabFocused)
         else { return nil }
@@ -859,7 +877,8 @@ func shellSidebarTabProjection(
         )
     }
 
-    let fallback = primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) }
+    let fallback = shellSidebarContentLine(for: primaryContent)
+        ?? primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) }
         ?? primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
         ?? shellFallbackTitle(for: tab.kind)
     return ShellSidebarTabProjection(
@@ -889,8 +908,36 @@ private func shellPrimaryPane(in panes: [ShellPane], focusedPaneID: String?) -> 
     return panes.first
 }
 
-private func shellSidebarTabTitle(for tab: ShellTab, primaryPane: ShellPane?) -> String {
-    shellDisplayTitle(
+private func shellPrimaryContent(
+    in tab: ShellTab,
+    contentState: ShellContentStateSnapshot?,
+    focusedPaneID: String?
+) -> ShellContentInstance? {
+    guard let contentState else { return nil }
+    if let focusedPaneID,
+       tab.contains(paneID: focusedPaneID),
+       let focusedContent = contentState.contentMounted(in: focusedPaneID)
+    {
+        return focusedContent
+    }
+
+    return tab.paneTree.paneIDs.lazy.compactMap {
+        contentState.contentMounted(in: $0)
+    }.first
+}
+
+private func shellSidebarTabTitle(
+    for tab: ShellTab,
+    primaryPane: ShellPane?,
+    primaryContent: ShellContentInstance?
+) -> String {
+    if let primaryContent,
+       primaryContent.kind != .terminal
+    {
+        return primaryContent.title
+    }
+
+    return shellDisplayTitle(
         rawTitle: tab.title ?? primaryPane?.viewport?.title,
         workingDirectoryName: primaryPane?.context?.workingDirectoryName,
         cwd: primaryPane?.cwd,
@@ -898,6 +945,16 @@ private func shellSidebarTabTitle(for tab: ShellTab, primaryPane: ShellPane?) ->
         launchTarget: primaryPane?.resolvedLaunchTarget ?? .shell,
         fallback: shellFallbackTitle(for: tab.kind)
     )
+}
+
+private func shellSidebarContentLine(for content: ShellContentInstance?) -> String? {
+    guard let content,
+          content.kind != .terminal
+    else {
+        return nil
+    }
+
+    return shellContentTypeHint(for: content.kind)
 }
 
 private func shellSidebarContextLine(for pane: ShellPane, title: String) -> String? {

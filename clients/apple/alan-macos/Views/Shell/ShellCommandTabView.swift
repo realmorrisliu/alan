@@ -110,14 +110,26 @@ private enum ShellCommandInputAction: CaseIterable {
         }
     }
 
+    var requiresTerminalContent: Bool {
+        switch self {
+        case .copyTerminalSelection, .pasteIntoTerminal, .searchTerminal,
+             .previousPrompt, .nextPrompt, .copyLastCommandOutput, .searchLastCommandOutput:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func resolve(
         _ rawValue: String,
+        terminalCommandsAvailable: Bool = false,
         semanticCommandsAvailable: Bool = false
     ) -> ShellCommandInputAction? {
         let normalized = normalizedCommand(rawValue)
         guard !normalized.isEmpty else { return nil }
         return allCases.first {
-            (!$0.requiresSemanticCommandBoundaries || semanticCommandsAvailable)
+            (!$0.requiresTerminalContent || terminalCommandsAvailable)
+                && (!$0.requiresSemanticCommandBoundaries || semanticCommandsAvailable)
                 && $0.aliases.contains(normalized)
         }
     }
@@ -193,7 +205,7 @@ struct ShellCommandTabView: View {
             TextField(
                 "",
                 text: $query,
-                prompt: Text("Ask alan...")
+                prompt: Text(commandPrompt)
                     .foregroundStyle(.secondary)
             )
             .textFieldStyle(.plain)
@@ -230,6 +242,7 @@ struct ShellCommandTabView: View {
     private func submit() {
         guard let action = ShellCommandInputAction.resolve(
             query,
+            terminalCommandsAvailable: host.focusedContentSupportsTerminalCommands,
             semanticCommandsAvailable: host.focusedPaneHasReliableSemanticCommands
         ) else {
             unresolvedMessage = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -270,13 +283,13 @@ struct ShellCommandTabView: View {
         case .zoomPane:
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.togglePaneZoom)
         case .movePaneLeft:
-            host.performShellAction(.paneMoveLeft)
+            host.moveSelectedPaneWithinTab(.left)
         case .movePaneRight:
-            host.performShellAction(.paneMoveRight)
+            host.moveSelectedPaneWithinTab(.right)
         case .movePaneUp:
-            host.performShellAction(.paneMoveUp)
+            host.moveSelectedPaneWithinTab(.up)
         case .movePaneDown:
-            host.performShellAction(.paneMoveDown)
+            host.moveSelectedPaneWithinTab(.down)
         case .closePane:
             host.performShellWorkspaceCommand(ShellWorkspaceCommand.closePane)
         case .closeTab:
@@ -339,6 +352,14 @@ struct ShellCommandTabView: View {
 
     private var commandInputAnimation: Animation? {
         reduceMotion ? nil : .easeOut(duration: 0.14)
+    }
+
+    private var commandPrompt: String {
+        let contentState = host.shellState.contentStateProjection()
+        guard let content = contentState.focusedContent else {
+            return "Command..."
+        }
+        return "Command for \(content.title) · \(shellContentTypeHint(for: content.kind))"
     }
 }
 

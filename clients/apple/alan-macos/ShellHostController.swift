@@ -541,6 +541,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         runtime(for: selectedPane?.paneID)
     }
 
+    var focusedContentSupportsTerminalCommands: Bool {
+        guard let focusedPaneID = shellState.focusedPaneID,
+              let pane = pane(paneID: focusedPaneID)
+        else {
+            return false
+        }
+        return paneSupportsTerminalCommands(pane, in: shellState.contentStateProjection())
+    }
+
     var attentionItems: [ShellAttentionItem] {
         let now = Date()
         return shellState.panes
@@ -606,14 +615,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func isPaneZoomed(_ paneID: String) -> Bool {
-        guard let pane = pane(paneID: paneID) else { return false }
-        return zoomedPaneIDByTabID[pane.tabID] == paneID
+        guard let tab = tab(containingPaneID: paneID) else { return false }
+        return zoomedPaneIDByTabID[tab.tabID] == paneID
     }
 
     func canZoomPane(_ paneID: String) -> Bool {
-        guard let pane = pane(paneID: paneID),
-              let tab = shellState.tab(tabID: pane.tabID)
-        else { return false }
+        guard let tab = tab(containingPaneID: paneID) else { return false }
         return tab.paneTree.paneIDs.count > 1
     }
 
@@ -629,21 +636,21 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func zoomPane(paneID: String) -> Bool {
         guard canZoomPane(paneID),
-              let pane = pane(paneID: paneID)
+              let tab = tab(containingPaneID: paneID)
         else {
             return false
         }
-        guard zoomedPaneIDByTabID[pane.tabID] != paneID else {
+        guard zoomedPaneIDByTabID[tab.tabID] != paneID else {
             return false
         }
         if shellState.focusedPaneID != paneID {
             focus(paneID: paneID)
         }
-        zoomedPaneIDByTabID[pane.tabID] = paneID
+        zoomedPaneIDByTabID[tab.tabID] = paneID
         controlPlane.recordZoomStateChanged(
             requestID: nil,
-            spaceID: pane.spaceID,
-            tabID: pane.tabID,
+            spaceID: shellState.contentStateProjection().paneSlot(paneSlotID: paneID)?.spaceID,
+            tabID: tab.tabID,
             paneID: paneID,
             zoomedPaneID: paneID
         )
@@ -791,9 +798,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         {
             return focusedPaneID
         }
+        let contentState = shellState.contentStateProjection()
         return tab.paneTree.paneIDs.first { paneID in
-            pane(paneID: paneID)?.tabID == tab.tabID
-        }
+            contentState.paneSlot(paneSlotID: paneID)?.tabID == tab.tabID
+        } ?? tab.paneTree.paneIDs.first
     }
 
     func requestCommandInput() {
@@ -811,11 +819,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func canRequestTerminalFocus(for paneID: String) -> Bool {
-        if shellState.contentStateProjection().contentMounted(in: paneID)?.kind == .terminal {
-            return true
-        }
-
-        return pane(paneID: paneID)?.isQuickTerminalPane == true
+        guard let pane = pane(paneID: paneID) else { return false }
+        return paneHasTerminalContent(pane, in: shellState.contentStateProjection())
     }
 
     @discardableResult
@@ -1554,6 +1559,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     var focusedPaneHasReliableSemanticCommands: Bool {
+        guard focusedContentSupportsTerminalCommands else { return false }
         guard let paneID = selectedPane?.paneID,
               paneID == terminalRuntime.paneID
         else {
@@ -1973,7 +1979,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         let contentState = state.contentStateProjection()
         let hydratedPanes = state.panes.map { pane in
-            guard contentState.contentMounted(in: pane.paneID)?.kind == .terminal else {
+            guard paneHasTerminalContent(pane, in: contentState, state: state) else {
                 return pane
             }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
@@ -2057,12 +2063,51 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func zoomedPaneID(in tab: ShellTab) -> String? {
         guard let paneID = zoomedPaneIDByTabID[tab.tabID],
               tab.paneTree.contains(paneID: paneID),
-              shellState.pane(paneID: paneID)?.tabID == tab.tabID,
               tab.paneTree.paneIDs.count > 1
         else {
             return nil
         }
         return paneID
+    }
+
+    private func paneSupportsTerminalCommands(
+        _ pane: ShellPane,
+        in contentState: ShellContentStateSnapshot,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        if let content = contentState.contentMounted(in: pane.paneID) {
+            return content.kind == .terminal
+                && content.capabilities.contains(.terminalInput)
+        }
+
+        return paneIsQuickTerminalContent(pane, state: state)
+    }
+
+    private func paneHasTerminalContent(
+        _ pane: ShellPane,
+        in contentState: ShellContentStateSnapshot,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        if let content = contentState.contentMounted(in: pane.paneID) {
+            return content.kind == .terminal
+        }
+
+        return paneIsQuickTerminalContent(pane, state: state)
+    }
+
+    private func paneIsQuickTerminalContent(
+        _ pane: ShellPane,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        let snapshot = state ?? shellState
+        return pane.isQuickTerminalPane
+            && snapshot.quickTerminal?.paneID == pane.paneID
+    }
+
+    private func tab(containingPaneID paneID: String) -> ShellTab? {
+        shellState.spaces
+            .flatMap(\.tabs)
+            .first { $0.contains(paneID: paneID) }
     }
 
     private func reconcilePaneZoomState() {

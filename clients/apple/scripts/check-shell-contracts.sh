@@ -1132,8 +1132,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "selectedPaneID: host\\.selectedPane\\?\\.paneID" \
-    "workspace view must render committed host pane selection"
+    "selectedPaneID: contentState\\.focusedPaneSlotID" \
+    "workspace view must render committed content PaneSlot selection"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
