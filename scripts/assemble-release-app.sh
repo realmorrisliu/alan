@@ -12,6 +12,7 @@ source "$SCRIPT_DIR/install-channel.sh"
 alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
+CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
@@ -118,7 +119,7 @@ require_signing_identity
 mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 
 printf 'Building release alan CLI for %s channel...\n' "$ALAN_CHANNEL_ID"
-cargo build --release -p alan
+cargo build --release -p alan --target-dir "$CARGO_TARGET_DIR"
 
 printf 'Building standalone %s...\n' "$ALAN_TUI_NAME"
 (
@@ -153,7 +154,7 @@ fi
 
 printf 'Embedding CLI and TUI into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
-cp "$REPO_ROOT/target/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+cp "$CARGO_TARGET_DIR/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 cp "$STAGING_DIR/$ALAN_TUI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
 chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
 

@@ -54,5 +54,8 @@ fi
 if ! alan_release_env_allowed_key ALAN_INSTALL_CHANNEL; then
     fail "release env allowlist must include ALAN_INSTALL_CHANNEL"
 fi
+if ! alan_release_env_allowed_key ALAN_CARGO_TARGET_DIR; then
+    fail "release env allowlist must include ALAN_CARGO_TARGET_DIR"
+fi
 
 printf 'Install channel descriptor checks passed.\n'
