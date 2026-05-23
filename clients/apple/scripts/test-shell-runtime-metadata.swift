@@ -38,6 +38,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningTerminalTabHonorsExplicitCwd()
         verifiesQuickTerminalShowCreatesAndReusesGlobalPane()
         verifiesQuickTerminalActionsAndControlCommandsShareControllerPath()
+        verifiesQuickTerminalTerminalCommandsStayRoutable()
         verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
         verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
         verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
@@ -1167,6 +1168,45 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !controller.terminalRuntimeRegistry.registeredPaneIDs.contains("quick_terminal_pane"),
             "close must release the quick terminal runtime through regular registry cleanup"
+        )
+    }
+
+    private static func verifiesQuickTerminalTerminalCommandsStayRoutable() {
+        let controller = makeController()
+        guard let quickPaneID = controller.showQuickTerminal() else {
+            fail("quick terminal setup must create the global pane")
+        }
+        let handle = fakeSurfaceHandle(for: quickPaneID, controller: controller)
+        handle.selectedText = "quick terminal selection"
+
+        let contextTarget = ShellTerminalCommandTarget(
+            paneID: quickPaneID,
+            tabID: ShellQuickTerminalSlot.globalTabID,
+            spaceID: ShellQuickTerminalSlot.globalSpaceID,
+            mountedContentID: ShellContentInstance.terminalContentID(forPaneID: quickPaneID)
+        )
+        expect(
+            controller.terminalCommandResolution(
+                for: .copySelection,
+                source: .contextMenu,
+                target: .contextPane(quickPaneID)
+            ) == .terminal(contextTarget),
+            "context-menu terminal commands must remain routable to the quick terminal pane"
+        )
+        expect(
+            controller.shellActionAvailability(.findOpen, target: .contextPane(quickPaneID)) == .available,
+            "terminal action availability must treat the quick terminal as terminal content"
+        )
+
+        controller.focus(paneID: quickPaneID)
+        expect(
+            controller.focusedContentSupportsTerminalCommands,
+            "command palette terminal gating must use the actual focused quick terminal pane"
+        )
+        expect(
+            controller.terminalCommandResolution(for: .copySelection, source: .commandUI)
+                == .terminal(contextTarget),
+            "focused quick terminal commands must not fall back to unrelated projected content"
         )
     }
 

@@ -143,9 +143,10 @@ enum ShellCommandTargetResolver {
         else {
             return .shell(reason: "terminal_pane_unavailable")
         }
-        let contentState = state.contentStateProjection()
-        guard let mountedContent = contentState.contentMounted(in: paneID),
-              mountedContent.kind == .terminal
+        guard let mountedContentID = terminalContentIDIfAvailable(
+            for: pane,
+            in: state
+        )
         else {
             return .shell(reason: "terminal_content_unavailable")
         }
@@ -175,7 +176,7 @@ enum ShellCommandTargetResolver {
                 paneID: pane.paneID,
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
-                mountedContentID: mountedContent.contentID
+                mountedContentID: mountedContentID
             )
         )
     }
@@ -851,13 +852,30 @@ private func terminalContentAvailability(
     guard let paneID else {
         return .unavailable(reason: "No focused pane")
     }
-    guard state.pane(paneID: paneID) != nil else {
+    guard let pane = state.pane(paneID: paneID) else {
         return .unavailable(reason: "Pane is not available")
     }
-    guard state.contentStateProjection().contentMounted(in: paneID)?.kind == .terminal else {
+    guard terminalContentIDIfAvailable(for: pane, in: state) != nil else {
         return .unavailable(reason: "Focused content is not a terminal")
     }
     return .available
+}
+
+private func terminalContentIDIfAvailable(
+    for pane: ShellPane,
+    in state: ShellStateSnapshot
+) -> String? {
+    if let mountedContent = state.contentStateProjection().contentMounted(in: pane.paneID) {
+        return mountedContent.kind == .terminal ? mountedContent.contentID : nil
+    }
+
+    if pane.isQuickTerminalPane,
+       state.quickTerminal?.paneID == pane.paneID
+    {
+        return pane.terminalContentID
+    }
+
+    return nil
 }
 
 private func splitPaneAvailability(

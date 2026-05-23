@@ -542,9 +542,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     var focusedContentSupportsTerminalCommands: Bool {
-        let content = shellState.contentStateProjection().focusedContent
-        return content?.kind == .terminal
-            && content?.capabilities.contains(.terminalInput) == true
+        guard let focusedPaneID = shellState.focusedPaneID,
+              let pane = pane(paneID: focusedPaneID)
+        else {
+            return false
+        }
+        return paneSupportsTerminalCommands(pane, in: shellState.contentStateProjection())
     }
 
     var attentionItems: [ShellAttentionItem] {
@@ -816,11 +819,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func canRequestTerminalFocus(for paneID: String) -> Bool {
-        if shellState.contentStateProjection().contentMounted(in: paneID)?.kind == .terminal {
-            return true
-        }
-
-        return pane(paneID: paneID)?.isQuickTerminalPane == true
+        guard let pane = pane(paneID: paneID) else { return false }
+        return paneHasTerminalContent(pane, in: shellState.contentStateProjection())
     }
 
     @discardableResult
@@ -1979,7 +1979,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         let contentState = state.contentStateProjection()
         let hydratedPanes = state.panes.map { pane in
-            guard contentState.contentMounted(in: pane.paneID)?.kind == .terminal else {
+            guard paneHasTerminalContent(pane, in: contentState, state: state) else {
                 return pane
             }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
@@ -2068,6 +2068,40 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return nil
         }
         return paneID
+    }
+
+    private func paneSupportsTerminalCommands(
+        _ pane: ShellPane,
+        in contentState: ShellContentStateSnapshot,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        if let content = contentState.contentMounted(in: pane.paneID) {
+            return content.kind == .terminal
+                && content.capabilities.contains(.terminalInput)
+        }
+
+        return paneIsQuickTerminalContent(pane, state: state)
+    }
+
+    private func paneHasTerminalContent(
+        _ pane: ShellPane,
+        in contentState: ShellContentStateSnapshot,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        if let content = contentState.contentMounted(in: pane.paneID) {
+            return content.kind == .terminal
+        }
+
+        return paneIsQuickTerminalContent(pane, state: state)
+    }
+
+    private func paneIsQuickTerminalContent(
+        _ pane: ShellPane,
+        state: ShellStateSnapshot? = nil
+    ) -> Bool {
+        let snapshot = state ?? shellState
+        return pane.isQuickTerminalPane
+            && snapshot.quickTerminal?.paneID == pane.paneID
     }
 
     private func tab(containingPaneID paneID: String) -> ShellTab? {
