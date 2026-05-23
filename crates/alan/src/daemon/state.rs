@@ -2324,7 +2324,7 @@ fn canonical_rollout_file_path(root: &std::path::Path, path: &std::path::Path) -
     }
 }
 
-fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
+pub(crate) fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
     let storage_key = alan_runtime::session_storage_key(session_id);
     let filename_matches = path
         .file_name()
