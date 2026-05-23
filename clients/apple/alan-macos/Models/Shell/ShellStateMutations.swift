@@ -315,7 +315,7 @@ extension ShellStateSnapshot {
         let focusedPane = focusedPaneID.flatMap { paneID in
             remainingPanes.first { $0.paneID == paneID }
         }
-        let retained = retainedContentRecords(in: remainingSpaces)
+        let retained = retainedContentRecords(in: remainingSpaces, panes: remainingPanes)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -526,7 +526,7 @@ extension ShellStateSnapshot {
             presentation: .visible,
             lastWorkingDirectory: resolvedWorkingDirectory
         )
-        let retained = retainedContentRecords(in: spaces)
+        let retained = retainedContentRecords(in: spaces, panes: nextPanes)
 
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
@@ -554,7 +554,7 @@ extension ShellStateSnapshot {
             throw ShellStateMutationError.paneNotFound
         }
 
-        let retained = retainedContentRecords(in: spaces)
+        let retained = retainedContentRecords(in: spaces, panes: panes)
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
                 contractVersion: contractVersion,
@@ -589,7 +589,7 @@ extension ShellStateSnapshot {
             focusedPaneID == quickTerminal.paneID
             ? nextPanes.first(where: { !$0.isQuickTerminalPane })?.paneID
             : focusedPaneID
-        let retained = retainedContentRecords(in: spaces)
+        let retained = retainedContentRecords(in: spaces, panes: nextPanes)
 
         return ShellStateMutationResult(
             state: ShellStateSnapshot(
@@ -670,7 +670,7 @@ extension ShellStateSnapshot {
             )
         }
 
-        let retained = retainedContentRecords(in: nextSpaces)
+        let retained = retainedContentRecords(in: nextSpaces, panes: nextPanes)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -1449,7 +1449,7 @@ extension ShellStateSnapshot {
         }
         let focusedSpaceID = focusedPane?.spaceID ?? targetSpaceAfterClose?.spaceID ?? nextSpaces.first?.spaceID
         let focusedTabID = focusedPane?.tabID
-        let retained = retainedContentRecords(in: nextSpaces)
+        let retained = retainedContentRecords(in: nextSpaces, panes: nextPanes)
         let nextState = ShellStateSnapshot(
             contractVersion: contractVersion,
             windowID: windowID,
@@ -1485,7 +1485,7 @@ extension ShellStateSnapshot {
         let focusedPane = resolvedFocusedPaneID.flatMap { candidate in
             panes.first(where: { $0.paneID == candidate })
         }
-        let retained = retainedContentRecords(in: spaces)
+        let retained = retainedContentRecords(in: spaces, panes: panes)
         let nextPaneSlots = (retained.paneSlots ?? []) + additionalPaneSlots
         let nextContents = (retained.contents ?? []) + additionalContents
         let nextContractVersion =
@@ -1507,12 +1507,27 @@ extension ShellStateSnapshot {
         )
     }
 
-    private func retainedContentRecords(in spaces: [ShellSpace]) -> (
+    private func retainedContentRecords(
+        in spaces: [ShellSpace],
+        panes sourcePanes: [ShellPane]
+    ) -> (
         paneSlots: [ShellPaneSlot]?,
         contents: [ShellContentInstance]?
     ) {
-        let activePaneSlotIDs = Set(spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs))
-        let retainedPaneSlots = (paneSlots ?? []).filter { activePaneSlotIDs.contains($0.paneSlotID) }
+        let paneSlotLocations = paneSlotLocations(in: spaces)
+        let panesByID = sourcePanes.reduce(into: [String: ShellPane]()) { panesByID, pane in
+            panesByID[pane.paneID] = pane
+        }
+        let retainedPaneSlots = (paneSlots ?? []).compactMap { paneSlot -> ShellPaneSlot? in
+            guard let location = paneSlotLocations[paneSlot.paneSlotID] else { return nil }
+            return ShellPaneSlot(
+                paneSlotID: paneSlot.paneSlotID,
+                tabID: location.tabID,
+                spaceID: location.spaceID,
+                contentID: paneSlot.contentID,
+                attention: panesByID[paneSlot.paneSlotID]?.attention ?? paneSlot.attention
+            )
+        }
         let retainedContentIDs = Set(retainedPaneSlots.map(\.contentID))
         let retainedContents = (contents ?? []).filter { retainedContentIDs.contains($0.contentID) }
 
@@ -1520,6 +1535,16 @@ extension ShellStateSnapshot {
             paneSlots: retainedPaneSlots.isEmpty ? nil : retainedPaneSlots,
             contents: retainedContents.isEmpty ? nil : retainedContents
         )
+    }
+
+    private func paneSlotLocations(in spaces: [ShellSpace]) -> [String: (spaceID: String, tabID: String)] {
+        spaces.reduce(into: [String: (spaceID: String, tabID: String)]()) { locationsByID, space in
+            for tab in space.tabs {
+                for paneSlotID in tab.paneTree.paneIDs {
+                    locationsByID[paneSlotID] = (spaceID: space.spaceID, tabID: tab.tabID)
+                }
+            }
+        }
     }
 
     private func rebuildingAttention(in spaces: [ShellSpace], panes: [ShellPane]) -> [ShellSpace] {
