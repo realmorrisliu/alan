@@ -307,6 +307,17 @@ private enum ShellWorkspaceManifestTests {
             snapshot.contents.first?.payload.terminal?.cwd == nil,
             "migration must preserve nil cwd so restore can resolve the default directory later"
         )
+
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: migrated,
+            defaultWorkingDirectory: "/default/project",
+            now: referenceDate
+        )
+        let pane = try requirePane("pane_tab_nil_cwd", in: state)
+        expect(
+            pane.cwd == "/default/project",
+            "content manifest restore must resolve nil terminal cwd to the workspace default directory"
+        )
     }
 
     private static func verifiesUnpinnedTabPruningUsesTtlAndActiveTask() throws {

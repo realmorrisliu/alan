@@ -625,11 +625,9 @@ struct ShellWorkspaceMaterializer {
                 paneSlots.append(contentsOf: snapshotPaneSlots)
                 contents.append(
                     contentsOf: restoreSnapshot.contents.map { content in
-                        ShellContentInstance(
-                            contentID: content.contentID,
-                            kind: content.kind,
-                            title: content.title,
-                            payload: content.payload
+                        restoredContentInstance(
+                            content,
+                            defaultWorkingDirectory: defaultWorkingDirectory
                         )
                     }
                 )
@@ -673,6 +671,33 @@ struct ShellWorkspaceMaterializer {
         )
 
         return contentState.materializingShellState()
+    }
+
+    private static func restoredContentInstance(
+        _ record: ShellContentRestoreRecord,
+        defaultWorkingDirectory: String
+    ) -> ShellContentInstance {
+        let payload: ShellContentPayload
+        if record.kind == .terminal,
+           let terminalPayload = record.payload.terminal
+        {
+            payload = .terminal(
+                ShellTerminalContentPayload(
+                    launchTarget: terminalPayload.launchTarget,
+                    cwd: terminalPayload.cwd ?? defaultWorkingDirectory,
+                    title: terminalPayload.title
+                )
+            )
+        } else {
+            payload = record.payload
+        }
+
+        return ShellContentInstance(
+            contentID: record.contentID,
+            kind: record.kind,
+            title: record.title,
+            payload: payload
+        )
     }
 
     static func materialize(
