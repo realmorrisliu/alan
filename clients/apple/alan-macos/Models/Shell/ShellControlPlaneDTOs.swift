@@ -138,9 +138,17 @@ extension ShellContentStateSnapshot {
         paneSlotID: String?,
         contentID: String?
     ) -> AlanShellControlContentProjection {
-        if let contentID,
-           let content = content(contentID: contentID)
-        {
+        if let contentID {
+            guard let content = content(contentID: contentID) else {
+                return AlanShellControlContentProjection(
+                    paneSlotID: nil,
+                    contentID: contentID,
+                    kind: nil,
+                    title: nil,
+                    capabilities: nil
+                )
+            }
+
             let paneSlot = paneSlots.first { $0.contentID == contentID }
             return AlanShellControlContentProjection(
                 paneSlotID: paneSlot?.paneSlotID,

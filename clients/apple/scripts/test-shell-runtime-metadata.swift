@@ -4095,6 +4095,36 @@ private enum ShellRuntimeMetadataTests {
             "pane.split response must expose terminal content capabilities"
         )
 
+        let invalidContentResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "content-invalid-1",
+                  "command": "terminal.send_text",
+                  "pane_id": "pane_1",
+                  "content_id": "content_missing",
+                  "text": "echo ignored"
+                }
+                """
+            )
+        )
+        expect(
+            invalidContentResponse.applied == false
+                && invalidContentResponse.errorCode == "content_not_found",
+            "terminal.send_text must reject an explicit unknown content_id"
+        )
+        expect(
+            invalidContentResponse.paneID == "pane_1"
+                && invalidContentResponse.contentID == "content_missing",
+            "unknown content_id response must preserve the requested ids"
+        )
+        expect(
+            invalidContentResponse.paneSlotID == nil
+                && invalidContentResponse.contentKind == nil
+                && invalidContentResponse.contentCapabilities == nil,
+            "unknown content_id response must not fall back to pane-slot content metadata"
+        )
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(stateResponse),
