@@ -7,7 +7,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   installChannelDescriptor,
@@ -88,13 +88,17 @@ function isCommandAvailable(command: string): boolean {
   }
 }
 
+function isCommandCandidate(candidate: string): boolean {
+  return !isAbsolute(candidate) && !candidate.includes("/") && !candidate.includes("\\");
+}
+
 export function resolveAlanBinaryFromCandidates(
   candidates: string[],
   runnablePathCheck: (path: string) => boolean = isRunnableBinaryPath,
   commandAvailableCheck: (command: string) => boolean = isCommandAvailable,
 ): string | null {
   for (const candidate of candidates) {
-    if (candidate === "alan") {
+    if (isCommandCandidate(candidate)) {
       if (commandAvailableCheck(candidate)) {
         return candidate;
       }
