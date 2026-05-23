@@ -704,18 +704,19 @@ extension ShellHostController {
 
         case .terminalSendText:
             let contentState = shellState.contentStateProjection()
+            let requestedPaneSlotID = command.paneSlotID ?? command.paneID
             let target: TerminalSendTextTarget?
             if let contentID = command.contentID {
                 target = contentState.terminalSendTextTarget(contentID: contentID)
-            } else if let paneID = command.paneID {
-                target = contentState.terminalSendTextTarget(paneSlotID: paneID)
+            } else if let requestedPaneSlotID {
+                target = contentState.terminalSendTextTarget(paneSlotID: requestedPaneSlotID)
             } else {
                 target = nil
             }
 
             guard let target else {
                 let errorCode: String
-                if command.contentID == nil && command.paneID == nil {
+                if command.contentID == nil && requestedPaneSlotID == nil {
                     errorCode = "terminal_target_required"
                 } else if command.contentID != nil {
                     errorCode = "content_not_found"
@@ -726,6 +727,7 @@ extension ShellHostController {
                     requestID: command.requestID,
                     applied: false,
                     paneID: command.paneID,
+                    paneSlotID: command.paneSlotID,
                     contentID: command.contentID,
                     errorCode: errorCode,
                     errorMessage: "terminal.send_text requires an existing terminal content target."

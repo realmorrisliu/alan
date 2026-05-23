@@ -557,6 +557,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "case paneSlotID = \"pane_slot_id\"" \
+    "terminal.send_text commands must accept PaneSlot convenience targets"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
     "paneSlots: \\[ShellPaneSlot\\]?" \
     "shell control-plane responses must expose PaneSlot descriptors"
 
@@ -594,6 +599,11 @@ require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "toTerminalContentID: target\\.content\\.contentID" \
     "terminal.send_text must use the registry delivery result"
+
+require_pattern \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "command\\.paneSlotID \\?\\? command\\.paneID" \
+    "terminal.send_text must resolve PaneSlot targets before terminal delivery"
 
 require_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \

@@ -28,8 +28,8 @@
 - [x] 4.1 Update tab and split creation paths to accept content intent while keeping New Terminal Tab as the default behavior.
 - [x] 4.2 Update split, focus, resize, equalize, PaneSlot lift, PaneSlot move, close PaneSlot, and close tab mutations to operate on content-agnostic PaneSlots.
 - [x] 4.3 Extend shell control-plane DTOs and responses to expose `pane_slots`, `contents`, `pane_slot_id`, `content_id`, content capabilities, and content-aware mutation results.
-- [ ] 4.4 Replace terminal text delivery with a terminal-specific command such as `terminal.send_text` that resolves PaneSlot targets to terminal ContentInstances before delivery.
-- [ ] 4.5 Reject terminal-specific commands against non-terminal ContentInstances with stable unsupported-content errors and observable diagnostics.
+- [x] 4.4 Replace terminal text delivery with a terminal-specific command such as `terminal.send_text` that resolves PaneSlot targets to terminal ContentInstances before delivery.
+- [x] 4.5 Reject terminal-specific commands against non-terminal ContentInstances with stable unsupported-content errors and observable diagnostics.
 - [ ] 4.6 Emit shell events for PaneSlot creation, PaneSlot closure, content creation, content closure, content replacement, and content-specific command rejection.
 - [ ] 4.7 Ensure workspace manifest updates for pin/live snapshots write content-aware restore payloads and do not dual-write terminal-only snapshots.
 
@@ -46,7 +46,7 @@
 - [ ] 6.1 Add focused shell model tests for v0.1-to-v0.2 migration, mixed content split mutation, and content-aware focus behavior.
 - [ ] 6.2 Add terminal runtime tests proving runtime continuity is keyed by `content_id` across PaneSlot move, tab move, view reattachment, and new-runtime creation after manifest restore.
 - [ ] 6.3 Add fake runtime service tests for `terminal.send_text`, `content_id` delivery, missing runtime errors, and queued delivery diagnostics.
-- [ ] 6.4 Add control-plane tests for `pane_slots` / `contents` query, content-aware split creation, `terminal.send_text` success, and non-terminal terminal-command rejection.
+- [x] 6.4 Add control-plane tests for `pane_slots` / `contents` query, content-aware split creation, `terminal.send_text` success, and non-terminal terminal-command rejection.
 - [ ] 6.5 Add workspace manifest migration and lifecycle tests for terminal-only pin snapshots, terminal-only live snapshots, mixed content pin/live snapshots, inactive unpinned Tab retirement finalization, and the rule that `shell-state-window_main.json` is not restore authority.
 - [ ] 6.6 Run the focused Apple shell contract scripts affected by model, control-plane, workspace manifest, and terminal-runtime changes.
 - [ ] 6.7 Run the macOS app build or document any local dependency blocker with the exact failing command.
