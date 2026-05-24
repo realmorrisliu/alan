@@ -31,6 +31,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleFinalizesAllTabContentsOnce()
         verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes()
         verifiesMovingLastPaneClosesSourceTabWithoutFinalizingMovedRuntime()
+        verifiesWorkspaceLifecycleRetirementFinalizesTerminalContentAndRejectsDelivery()
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -121,6 +122,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
         verifiesExplicitSpaceDeletionRemovesManifestSpace()
         verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges()
+        verifiesMixedContentPinAndLiveSnapshotsPersistContentPayloads()
         verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership()
         verifiesManifestActiveTaskProjection()
         print("Shell runtime metadata tests passed.")
@@ -1000,6 +1002,69 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.terminalRuntimeRegistry.registeredPaneIDs.contains("pane_1"),
             "moved PaneSlot must remain a terminal runtime target"
+        )
+    }
+
+    private static func verifiesWorkspaceLifecycleRetirementFinalizesTerminalContentAndRejectsDelivery() {
+        let controller = makeController()
+        let retainedHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        guard let retiredTabID = controller.openTerminalTab(title: "Retired") else {
+            fail("retirement setup must create a terminal tab")
+        }
+        guard let retiredPaneID = controller.shellState.panes(in: retiredTabID).first?.paneID,
+              let retiredContentID = controller.shellState
+                .contentStateProjection()
+                .contentMounted(in: retiredPaneID)?
+                .contentID
+        else {
+            fail("retirement setup must expose retired terminal content")
+        }
+        let retiredHandle = fakeSurfaceHandle(for: retiredPaneID, controller: controller)
+
+        do {
+            let prunedResult = try controller.shellState.closingTab(retiredTabID)
+            controller.applyMutationResult(prunedResult)
+        } catch {
+            fail("retirement setup must adopt a pruned shell state: \(error)")
+        }
+
+        expect(
+            retainedHandle.teardownCount == 0,
+            "workspace lifecycle retirement must preserve retained terminal runtimes"
+        )
+        expect(
+            retiredHandle.teardownCount == 1,
+            "workspace lifecycle retirement must finalize retired terminal content once"
+        )
+        expect(
+            controller.terminalRuntimeRegistry.registeredContentIDs.contains(retiredContentID) == false,
+            "retired terminal content must leave the runtime registry"
+        )
+
+        let delivery = controller.terminalRuntimeRegistry.sendText(
+            toTerminalContentID: retiredContentID,
+            text: "after retirement"
+        )
+        expect(
+            delivery.applied == false && delivery.code == .missingTarget,
+            "retired terminal content must not receive later runtime delivery"
+        )
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "retired-terminal-send-1",
+                  "command": "terminal.send_text",
+                  "content_id": "\(retiredContentID)",
+                  "text": "ignored"
+                }
+                """
+            )
+        )
+        expect(
+            response.applied == false && response.errorCode == "content_not_found",
+            "retired terminal content must not remain a control-plane delivery target"
         )
     }
 
@@ -5115,6 +5180,108 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesMixedContentPinAndLiveSnapshotsPersistContentPayloads() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Pinned-Mixed-\(UUID().uuidString).md")
+        do {
+            try "# Mixed pinned notes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            fail("mixed snapshot setup must create a markdown file: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let windowID = "manifest_mixed_pin_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 70)
+            )
+        )
+        controller.updateTerminalMetadata(metadata(title: "Pinned", cwd: "/pinned"), for: "pane_1")
+        guard let markdownPaneID = controller.splitPane(
+            paneID: "pane_1",
+            placement: .right,
+            contentIntent: .markdown(fileURL: fileURL, title: nil)
+        ) else {
+            fail("mixed snapshot setup must create a markdown split")
+        }
+        guard let settingsPaneID = controller.splitPane(
+            paneID: markdownPaneID,
+            placement: .down,
+            contentIntent: .settings(title: nil)
+        ) else {
+            fail("mixed snapshot setup must create a settings split")
+        }
+        expect(controller.pinTab(tabID: "tab_main"), "pin-tab must persist mixed content")
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let tab = savedManifest.spaces.flatMap(\.tabs).first(where: { $0.tabID == "tab_main" })
+        else {
+            fail("pin-tab must persist mixed content manifest")
+        }
+
+        expect(
+            rawManifestText(at: manifestURL)?.contains("\"panes\"") == false,
+            "mixed content manifest must not dual-write terminal-only panes"
+        )
+        expect(
+            tab.pinSnapshot?.paneTree.paneSlotIDs == ["pane_1", markdownPaneID, settingsPaneID],
+            "mixed pin snapshot must preserve terminal, markdown, and settings split order"
+        )
+        expect(
+            Set(tab.pinSnapshot?.contents.map(\.kind) ?? []) == Set([.terminal, .markdown, .settings]),
+            "mixed pin snapshot must persist every mounted content kind"
+        )
+        expect(
+            terminalPayload(in: tab.pinSnapshot, paneSlotID: "pane_1")?.cwd == "/pinned",
+            "mixed pin snapshot must persist terminal restore payload"
+        )
+        expect(
+            contentRecord(in: tab.pinSnapshot, paneSlotID: markdownPaneID)?
+                .payload.markdown?.fileURL == fileURL.standardizedFileURL.absoluteString,
+            "mixed pin snapshot must persist markdown file reference"
+        )
+        expect(
+            contentRecord(in: tab.pinSnapshot, paneSlotID: settingsPaneID)?
+                .payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
+            "mixed pin snapshot must persist settings surface identity"
+        )
+
+        controller.updateTerminalMetadata(metadata(title: "Moved", cwd: "/moved"), for: "pane_1")
+        guard let updatedManifest = decodeManifest(at: manifestURL),
+              let updatedTab = updatedManifest.spaces
+                .flatMap(\.tabs)
+                .first(where: { $0.tabID == "tab_main" })
+        else {
+            fail("metadata update must persist mixed live snapshot")
+        }
+
+        expect(
+            terminalPayload(in: updatedTab.pinSnapshot, paneSlotID: "pane_1")?.cwd == "/pinned",
+            "mixed pin snapshot must not drift after later terminal metadata updates"
+        )
+        expect(
+            terminalPayload(in: updatedTab.liveSnapshot, paneSlotID: "pane_1")?.cwd == "/moved",
+            "mixed live snapshot must track later terminal metadata updates"
+        )
+        expect(
+            contentRecord(in: updatedTab.liveSnapshot, paneSlotID: markdownPaneID)?
+                .payload.markdown?.fileURL == fileURL.standardizedFileURL.absoluteString,
+            "mixed live snapshot must retain markdown restore payload"
+        )
+        expect(
+            contentRecord(in: updatedTab.liveSnapshot, paneSlotID: settingsPaneID)?
+                .payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
+            "mixed live snapshot must retain settings restore payload"
+        )
+    }
+
     private static func verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership() {
         let windowID = "manifest_tab_org_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
@@ -5366,12 +5533,19 @@ private enum ShellRuntimeMetadataTests {
         in snapshot: ShellContentTabRestoreSnapshot?,
         paneSlotID: String
     ) -> ShellTerminalContentPayload? {
+        contentRecord(in: snapshot, paneSlotID: paneSlotID)?.payload.terminal
+    }
+
+    private static func contentRecord(
+        in snapshot: ShellContentTabRestoreSnapshot?,
+        paneSlotID: String
+    ) -> ShellContentRestoreRecord? {
         guard let snapshot,
               let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneSlotID })
         else {
             return nil
         }
-        return snapshot.contents.first { $0.contentID == paneSlot.contentID }?.payload.terminal
+        return snapshot.contents.first { $0.contentID == paneSlot.contentID }
     }
 
     private static func pane(

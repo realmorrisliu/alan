@@ -43,11 +43,11 @@
 
 ## 6. Verification And Archive Readiness
 
-- [ ] 6.1 Add focused shell model tests for v0.1-to-v0.2 migration, mixed content split mutation, and content-aware focus behavior.
-- [ ] 6.2 Add terminal runtime tests proving runtime continuity is keyed by `content_id` across PaneSlot move, tab move, view reattachment, and new-runtime creation after manifest restore.
-- [ ] 6.3 Add fake runtime service tests for `terminal.send_text`, `content_id` delivery, missing runtime errors, and queued delivery diagnostics.
+- [x] 6.1 Add focused shell model tests for v0.1-to-v0.2 migration, mixed content split mutation, and content-aware focus behavior.
+- [x] 6.2 Add terminal runtime tests proving runtime continuity is keyed by `content_id` across PaneSlot move, tab move, view reattachment, and new-runtime creation after manifest restore.
+- [x] 6.3 Add fake runtime service tests for `terminal.send_text`, `content_id` delivery, missing runtime errors, and queued delivery diagnostics.
 - [x] 6.4 Add control-plane tests for `pane_slots` / `contents` query, content-aware split creation, `terminal.send_text` success, and non-terminal terminal-command rejection.
-- [ ] 6.5 Add workspace manifest migration and lifecycle tests for terminal-only pin snapshots, terminal-only live snapshots, mixed content pin/live snapshots, inactive unpinned Tab retirement finalization, and the rule that `shell-state-window_main.json` is not restore authority.
+- [x] 6.5 Add workspace manifest migration and lifecycle tests for terminal-only pin snapshots, terminal-only live snapshots, mixed content pin/live snapshots, inactive unpinned Tab retirement finalization, and the rule that `shell-state-window_main.json` is not restore authority.
 - [x] 6.6 Run the focused Apple shell contract scripts affected by model, control-plane, workspace manifest, and terminal-runtime changes.
 - [x] 6.7 Run the macOS app build or document any local dependency blocker with the exact failing command.
 - [x] 6.8 Validate `generalize-macos-shell-content-containers` with `openspec validate generalize-macos-shell-content-containers --strict`.
