@@ -26,8 +26,63 @@ private extension ShellContentStateSnapshot {
     }
 }
 
+private extension ShellAutomationCommandResultCode {
+    init(_ deliveryCode: TerminalRuntimeDeliveryCode) {
+        switch deliveryCode {
+        case .accepted:
+            self = .accepted
+        case .queued:
+            self = .queued
+        case .rejected:
+            self = .rejected
+        case .missingTarget:
+            self = .missingTarget
+        case .unavailableRuntime:
+            self = .runtimeUnavailable
+        case .timeout:
+            self = .timeout
+        }
+    }
+}
+
 @MainActor
-extension ShellHostController {
+extension ShellHostController: ShellAutomationCommandHandling {
+    func performShellAutomationCommand(
+        _ command: ShellAutomationCommand
+    ) -> ShellAutomationCommandResult {
+        switch command {
+        case .createTab(let request):
+            return performAutomationCreateTab(request)
+        case .splitPane(let request):
+            return performAutomationSplitPane(request)
+        case .focusPane(let paneID):
+            return performAutomationFocusPane(paneID: paneID)
+        case .closePane(let paneID):
+            return performAutomationClosePane(paneID: paneID)
+        case .closeTab(let tabID):
+            return performAutomationCloseTab(tabID: tabID)
+        case .sendText(let request):
+            return performAutomationSendText(request, requestID: nil)
+        case .readPaneSummary(let paneID):
+            guard let summary = shellState.automationPaneSummary(paneID: paneID) else {
+                return automationMissingTarget(
+                    paneID: paneID,
+                    errorCode: "pane_not_found",
+                    errorMessage: "The requested pane does not exist."
+                )
+            }
+            return ShellAutomationCommandResult(
+                code: .accepted,
+                summary: summary,
+                spaceID: summary.spaceID,
+                tabID: summary.tabID,
+                paneID: summary.paneID
+            )
+        case .activateAttentionItem(let paneID):
+            return performAutomationFocusPane(paneID: paneID, requestTerminalFocus: true)
+        }
+    }
+
     func attentionInboxRows() -> [AlanShellAttentionInboxItem] {
         attentionItems.map { item in
             AlanShellAttentionInboxItem(
@@ -220,6 +275,249 @@ extension ShellHostController {
         )
     }
 
+    private func performAutomationCreateTab(
+        _ request: ShellAutomationCreateTabRequest
+    ) -> ShellAutomationCommandResult {
+        if let spaceID = request.spaceID,
+           shellState.space(spaceID: spaceID) == nil
+        {
+            return ShellAutomationCommandResult(
+                code: .missingTarget,
+                summary: nil,
+                spaceID: spaceID,
+                errorCode: "space_not_found",
+                errorMessage: "The requested space does not exist."
+            )
+        }
+
+        let tabID: String?
+        switch request.launchTarget {
+        case .shell:
+            tabID = openTerminalTab(
+                in: request.spaceID,
+                title: request.title,
+                workingDirectory: request.workingDirectory
+            )
+        case .alan:
+            tabID = openAlanTab(
+                in: request.spaceID,
+                title: request.title,
+                workingDirectory: request.workingDirectory
+            )
+        }
+
+        guard let tabID else {
+            return ShellAutomationCommandResult(
+                code: .missingTarget,
+                summary: nil,
+                spaceID: request.spaceID,
+                errorCode: "space_not_found",
+                errorMessage: "The requested space does not exist."
+            )
+        }
+
+        return automationAccepted(tabID: tabID, paneID: shellState.focusedPaneID)
+    }
+
+    private func performAutomationSplitPane(
+        _ request: ShellAutomationPaneSplitRequest
+    ) -> ShellAutomationCommandResult {
+        guard pane(paneID: request.paneID) != nil else {
+            return automationMissingTarget(
+                paneID: request.paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
+        guard let newPaneID = splitPane(paneID: request.paneID, placement: request.placement) else {
+            return automationMissingTarget(
+                paneID: request.paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
+        return automationAccepted(paneID: newPaneID)
+    }
+
+    private func performAutomationFocusPane(
+        paneID: String,
+        requestTerminalFocus: Bool = false
+    ) -> ShellAutomationCommandResult {
+        guard pane(paneID: paneID) != nil else {
+            return automationMissingTarget(
+                paneID: paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        }
+        focus(paneID: paneID)
+        let focusedContent = shellState.contentStateProjection()
+            .terminalSendTextTarget(paneSlotID: paneID)?
+            .content
+        if requestTerminalFocus,
+           focusedContent?.kind == .terminal
+        {
+            terminalRuntimeRegistry.requestFocus(for: paneID)
+        }
+        return automationAccepted(paneID: paneID)
+    }
+
+    private func performAutomationClosePane(paneID: String) -> ShellAutomationCommandResult {
+        switch closePane(paneID: paneID) {
+        case .closed:
+            return automationAccepted(paneID: shellState.focusedPaneID)
+        case .paneNotFound:
+            return automationMissingTarget(
+                paneID: paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        case .lastTab:
+            return ShellAutomationCommandResult(
+                code: .lastTab,
+                summary: nil,
+                paneID: paneID,
+                errorCode: "last_tab",
+                errorMessage: "alan terminal workspace must keep at least one pane open."
+            )
+        }
+    }
+
+    private func performAutomationCloseTab(tabID: String) -> ShellAutomationCommandResult {
+        switch closeTab(tabID: tabID) {
+        case .closed:
+            return automationAccepted(paneID: shellState.focusedPaneID)
+        case .tabNotFound:
+            return automationMissingTarget(
+                tabID: tabID,
+                errorCode: "tab_not_found",
+                errorMessage: "The requested tab does not exist."
+            )
+        case .lastTab:
+            return ShellAutomationCommandResult(
+                code: .lastTab,
+                summary: nil,
+                tabID: tabID,
+                errorCode: "last_tab",
+                errorMessage: "alan terminal workspace must keep at least one tab open."
+            )
+        }
+    }
+
+    private func performAutomationSendText(
+        _ request: ShellAutomationSendTextRequest,
+        requestID: String?
+    ) -> ShellAutomationCommandResult {
+        let contentState = shellState.contentStateProjection()
+        guard let target = contentState.terminalSendTextTarget(paneSlotID: request.paneID) else {
+            return automationMissingTarget(
+                paneID: request.paneID,
+                errorCode: "pane_not_found",
+                errorMessage: "terminal.send_text requires an existing terminal content target."
+            )
+        }
+
+        guard target.content.kind == .terminal else {
+            let errorCode = "unsupported_content"
+            let errorMessage = "terminal.send_text requires terminal content."
+            controlPlane.recordContentCommandRejected(
+                requestID: requestID ?? "automation-\(UUID().uuidString)",
+                command: .terminalSendText,
+                spaceID: target.paneSlot.spaceID,
+                tabID: target.paneSlot.tabID,
+                paneSlotID: target.paneSlot.paneSlotID,
+                content: target.content,
+                errorCode: errorCode,
+                errorMessage: errorMessage
+            )
+            return ShellAutomationCommandResult(
+                code: .unsupportedContent,
+                summary: nil,
+                spaceID: target.paneSlot.spaceID,
+                tabID: target.paneSlot.tabID,
+                paneID: target.paneSlot.paneSlotID,
+                errorCode: errorCode,
+                errorMessage: errorMessage
+            )
+        }
+
+        let delivery = terminalRuntimeRegistry.sendText(
+            toTerminalContentID: target.content.contentID,
+            text: request.text
+        )
+        controlPlane.recordTextDelivery(
+            requestID: requestID ?? "automation-\(UUID().uuidString)",
+            spaceID: target.paneSlot.spaceID,
+            tabID: target.paneSlot.tabID,
+            paneID: target.paneSlot.paneSlotID,
+            contentID: target.content.contentID,
+            delivery: delivery
+        )
+        return ShellAutomationCommandResult(
+            code: ShellAutomationCommandResultCode(delivery.code),
+            summary: shellState.automationPaneSummary(paneID: target.paneSlot.paneSlotID),
+            spaceID: target.paneSlot.spaceID,
+            tabID: target.paneSlot.tabID,
+            paneID: target.paneSlot.paneSlotID,
+            acceptedBytes: delivery.acceptedBytes,
+            deliveryCode: delivery.code.rawValue,
+            runtimePhase: delivery.runtimePhase,
+            errorCode: delivery.errorCode,
+            errorMessage: delivery.errorMessage
+        )
+    }
+
+    private func automationAccepted(
+        tabID: String? = nil,
+        paneID: String?
+    ) -> ShellAutomationCommandResult {
+        let summary = paneID.flatMap { shellState.automationPaneSummary(paneID: $0) }
+        return ShellAutomationCommandResult(
+            code: .accepted,
+            summary: summary,
+            spaceID: summary?.spaceID ?? shellState.focusedSpaceID,
+            tabID: tabID ?? summary?.tabID ?? shellState.focusedTabID,
+            paneID: paneID
+        )
+    }
+
+    private func automationMissingTarget(
+        tabID: String? = nil,
+        paneID: String? = nil,
+        errorCode: String,
+        errorMessage: String
+    ) -> ShellAutomationCommandResult {
+        ShellAutomationCommandResult(
+            code: .missingTarget,
+            summary: nil,
+            tabID: tabID,
+            paneID: paneID,
+            errorCode: errorCode,
+            errorMessage: errorMessage
+        )
+    }
+
+    private func controlResponse(
+        for result: ShellAutomationCommandResult,
+        requestID: String,
+        state: ShellStateSnapshot? = nil
+    ) -> AlanShellControlResponse {
+        response(
+            requestID: requestID,
+            applied: result.applied,
+            state: state,
+            spaceID: result.spaceID,
+            tabID: result.tabID,
+            paneID: result.paneID,
+            paneSlotID: result.paneID,
+            acceptedBytes: result.acceptedBytes,
+            deliveryCode: result.deliveryCode,
+            runtimePhase: result.runtimePhase,
+            errorCode: result.errorCode,
+            errorMessage: result.errorMessage
+        )
+    }
+
     func handleControlPlaneCommand(_ command: AlanShellControlCommand) -> AlanShellControlResponse {
         switch command.command {
         case .state:
@@ -273,26 +571,17 @@ extension ShellHostController {
             )
 
         case .tabOpen:
-            guard let tabID = openTerminalTab(
-                in: command.spaceID,
-                title: command.title,
-                workingDirectory: command.cwd
-            ) else {
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    spaceID: command.spaceID,
-                    errorCode: "space_not_found",
-                    errorMessage: "The requested space does not exist."
+            let result = performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .shell,
+                        spaceID: command.spaceID,
+                        title: command.title,
+                        workingDirectory: command.cwd
+                    )
                 )
-            }
-            return response(
-                requestID: command.requestID,
-                applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: tabID,
-                paneID: shellState.focusedPaneID
             )
+            return controlResponse(for: result, requestID: command.requestID)
 
         case .tabClose:
             guard let tabID = command.tabID else {
@@ -304,31 +593,8 @@ extension ShellHostController {
                 )
             }
 
-            switch closeTab(tabID: tabID) {
-            case .closed:
-                return response(
-                    requestID: command.requestID,
-                    applied: true,
-                    tabID: tabID,
-                    paneID: shellState.focusedPaneID
-                )
-            case .tabNotFound:
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    tabID: tabID,
-                    errorCode: "tab_not_found",
-                    errorMessage: "The requested tab does not exist."
-                )
-            case .lastTab:
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    tabID: tabID,
-                    errorCode: "last_tab",
-                    errorMessage: "alan terminal workspace must keep at least one tab open."
-                )
-            }
+            let result = performShellAutomationCommand(.closeTab(tabID: tabID))
+            return controlResponse(for: result, requestID: command.requestID)
 
         case .tabPin:
             let tabID = command.tabID ?? selectedTabID
@@ -530,23 +796,18 @@ extension ShellHostController {
                     errorMessage: "direction is required for pane.split."
                 )
             }
-            guard let newPaneID = splitPane(paneID: paneID, direction: direction) else {
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    paneID: paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
+            let result = performShellAutomationCommand(
+                .splitPane(
+                    ShellAutomationPaneSplitRequest(
+                        paneID: paneID,
+                        placement: .defaultPlacement(for: direction)
+                    )
                 )
-            }
-            return response(
+            )
+            return controlResponse(
+                for: result,
                 requestID: command.requestID,
-                applied: true,
-                state: shellState,
-                spaceID: shellState.focusedSpaceID,
-                tabID: shellState.focusedTabID,
-                paneID: newPaneID,
-                paneSlotID: newPaneID
+                state: result.applied ? shellState : nil
             )
 
         case .paneClose:
@@ -559,32 +820,8 @@ extension ShellHostController {
                 )
             }
 
-            switch closePane(paneID: paneID) {
-            case .closed:
-                return response(
-                    requestID: command.requestID,
-                    applied: true,
-                    spaceID: shellState.focusedSpaceID,
-                    tabID: shellState.focusedTabID,
-                    paneID: shellState.focusedPaneID
-                )
-            case .paneNotFound:
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    paneID: paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
-                )
-            case .lastTab:
-                return response(
-                    requestID: command.requestID,
-                    applied: false,
-                    paneID: paneID,
-                    errorCode: "last_tab",
-                    errorMessage: "alan terminal workspace must keep at least one pane open."
-                )
-            }
+            let result = performShellAutomationCommand(.closePane(paneID: paneID))
+            return controlResponse(for: result, requestID: command.requestID)
 
         case .paneLift:
             guard let paneID = command.paneID else {
@@ -666,26 +903,18 @@ extension ShellHostController {
             return handlePaneMoveWithinTabCommand(command)
 
         case .paneFocus:
-            guard let paneID = command.paneID,
-                  shellState.panes.contains(where: { $0.paneID == paneID })
-            else {
+            guard let paneID = command.paneID else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: command.paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
+                    errorCode: "pane_required",
+                    errorMessage: "pane_id is required."
                 )
             }
 
-            focus(paneID: paneID)
-            return response(
-                requestID: command.requestID,
-                applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: shellState.focusedTabID,
-                paneID: paneID
-            )
+            let result = performShellAutomationCommand(.focusPane(paneID: paneID))
+            return controlResponse(for: result, requestID: command.requestID)
 
         case .paneSpatialFocus:
             return handlePaneSpatialFocusCommand(command)
@@ -703,6 +932,23 @@ extension ShellHostController {
             return handlePaneUnzoomCommand(command)
 
         case .terminalSendText:
+            if command.contentID == nil {
+                guard let paneID = command.paneSlotID ?? command.paneID else {
+                    return response(
+                        requestID: command.requestID,
+                        applied: false,
+                        errorCode: "terminal_target_required",
+                        errorMessage: "terminal.send_text requires an existing terminal content target."
+                    )
+                }
+
+                let result = performAutomationSendText(
+                    ShellAutomationSendTextRequest(paneID: paneID, text: command.text ?? ""),
+                    requestID: command.requestID
+                )
+                return controlResponse(for: result, requestID: command.requestID)
+            }
+
             let contentState = shellState.contentStateProjection()
             let requestedPaneSlotID = command.paneSlotID ?? command.paneID
             let target: TerminalSendTextTarget?

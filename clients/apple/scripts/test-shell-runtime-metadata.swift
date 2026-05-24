@@ -35,6 +35,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
+        verifiesAutomationCommandsRouteThroughHostController()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
         verifiesQuickTerminalShowCreatesAndReusesGlobalPane()
@@ -1107,6 +1108,93 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/repo/app",
             "registry new-terminal action must inherit the focused pane runtime cwd"
+        )
+    }
+
+    private static func verifiesAutomationCommandsRouteThroughHostController() {
+        let controller = makeController()
+        let handler: ShellAutomationCommandHandling = controller
+
+        let createResult = handler.performShellAutomationCommand(
+            .createTab(
+                ShellAutomationCreateTabRequest(
+                    launchTarget: .shell,
+                    spaceID: controller.selectedSpaceID,
+                    title: "Automation",
+                    workingDirectory: "/automation/cwd"
+                )
+            )
+        )
+        guard let createdPaneID = createResult.paneID,
+              let createdTabID = createResult.tabID
+        else {
+            fail("automation create-tab command must return created tab and pane context")
+        }
+        expect(createResult.code == .accepted, "automation create-tab command must apply")
+        expect(
+            controller.selectedPane?.cwd == "/automation/cwd",
+            "automation create-tab command must route through host tab creation"
+        )
+
+        let splitResult = handler.performShellAutomationCommand(
+            .splitPane(ShellAutomationPaneSplitRequest(paneID: createdPaneID, placement: .right))
+        )
+        guard let splitPaneID = splitResult.paneID else {
+            fail("automation split command must return the new pane")
+        }
+        expect(splitResult.code == .accepted, "automation split command must apply")
+        expect(
+            controller.selectedPane?.paneID == splitPaneID,
+            "automation split command must route through host pane splitting"
+        )
+
+        let focusResult = handler.performShellAutomationCommand(.focusPane(paneID: createdPaneID))
+        expect(focusResult.code == .accepted, "automation focus command must apply")
+        expect(
+            controller.selectedPane?.paneID == createdPaneID,
+            "automation focus command must route through host focus"
+        )
+
+        let terminalHandle = fakeSurfaceHandle(for: createdPaneID, controller: controller)
+        let text = "printf automation\\n"
+        let sendResult = handler.performShellAutomationCommand(
+            .sendText(ShellAutomationSendTextRequest(paneID: createdPaneID, text: text))
+        )
+        expect(sendResult.code == .accepted, "automation send-text command must apply")
+        expect(
+            sendResult.acceptedBytes == text.lengthOfBytes(using: .utf8),
+            "automation send-text command must report accepted bytes"
+        )
+        expect(
+            terminalHandle.deliveredText == [text],
+            "automation send-text command must route through terminal runtime delivery"
+        )
+
+        let summaryResult = handler.performShellAutomationCommand(.readPaneSummary(paneID: createdPaneID))
+        expect(summaryResult.code == .accepted, "automation summary command must apply")
+        expect(
+            summaryResult.summary?.paneID == createdPaneID,
+            "automation summary command must return safe pane metadata"
+        )
+
+        let closePaneResult = handler.performShellAutomationCommand(.closePane(paneID: splitPaneID))
+        expect(closePaneResult.code == .accepted, "automation close-pane command must apply")
+        expect(
+            controller.pane(paneID: splitPaneID) == nil,
+            "automation close-pane command must route through host pane close"
+        )
+
+        let closeTabResult = handler.performShellAutomationCommand(.closeTab(tabID: createdTabID))
+        expect(closeTabResult.code == .accepted, "automation close-tab command must apply")
+        expect(
+            controller.shellState.tab(tabID: createdTabID) == nil,
+            "automation close-tab command must route through host tab close"
+        )
+
+        let missingResult = handler.performShellAutomationCommand(.focusPane(paneID: "missing"))
+        expect(
+            missingResult.code == .missingTarget && missingResult.errorCode == "pane_not_found",
+            "automation commands must preserve stable missing-target semantics"
         )
     }
 

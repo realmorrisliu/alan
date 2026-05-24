@@ -1222,17 +1222,35 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func performShellWorkspaceCommand(_ command: ShellWorkspaceCommand) -> Bool {
         switch command {
         case .newTerminalTab:
-            return openTerminalTab() != nil
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .shell,
+                        spaceID: nil,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .newAlanTab:
-            return openAlanTab() != nil
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .alan,
+                        spaceID: nil,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .splitLeft:
-            return splitFocusedPane(placement: .left) != nil
+            return performFocusedPaneSplit(placement: .left)
         case .splitRight:
-            return splitFocusedPane(placement: .right) != nil
+            return performFocusedPaneSplit(placement: .right)
         case .splitUp:
-            return splitFocusedPane(placement: .up) != nil
+            return performFocusedPaneSplit(placement: .up)
         case .splitDown:
-            return splitFocusedPane(placement: .down) != nil
+            return performFocusedPaneSplit(placement: .down)
         case .focusLeft:
             return focusAdjacentPane(direction: .left)
         case .focusRight:
@@ -1254,9 +1272,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .movePaneDown:
             return moveSelectedPaneWithinTab(.down)
         case .closePane:
-            return closeSelectedPane()
+            guard let paneID = selectedPane?.paneID else { return false }
+            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
         case .closeTab:
-            return closeSelectedTab()
+            guard let tabID = selectedTabID else { return false }
+            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
         case .quickTerminalToggle:
             return toggleQuickTerminal() != nil
         case .quickTerminalShow:
@@ -1268,6 +1288,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .quickTerminalClose:
             return closeQuickTerminal()
         }
+    }
+
+    @discardableResult
+    private func performFocusedPaneSplit(placement: ShellPaneSplitDirection) -> Bool {
+        guard let paneID = shellState.focusedPaneID else { return false }
+        return performShellAutomationCommand(
+            .splitPane(ShellAutomationPaneSplitRequest(paneID: paneID, placement: placement))
+        ).applied
     }
 
     func shellActionTitle(_ id: ShellActionID) -> String {
@@ -1314,18 +1342,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .workspaceCommand(let command):
             return performShellWorkspaceCommand(command)
         case .openTab(let launchTarget, let spaceID):
-            switch launchTarget {
-            case .shell:
-                return openTerminalTab(in: spaceID) != nil
-            case .alan:
-                return openAlanTab(in: spaceID) != nil
-            }
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: launchTarget,
+                        spaceID: spaceID,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .closeTab(let tabID):
-            guard let tabID else { return closeSelectedTab() }
-            return closeTab(tabID: tabID) == .closed
+            guard let tabID = tabID ?? selectedTabID else { return false }
+            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
         case .closePane(let paneID):
-            guard let paneID else { return closeSelectedPane() }
-            return closePane(paneID: paneID) == .closed
+            guard let paneID = paneID ?? selectedPane?.paneID else { return false }
+            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
         case .selectAdjacentTab(let offset):
             return selectAdjacentTab(offset: offset)
         case .selectAdjacentSpace(let offset):
