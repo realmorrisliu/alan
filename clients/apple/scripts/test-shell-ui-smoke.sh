@@ -179,7 +179,10 @@ case "$LAUNCH_MODE" in
 esac
 
 command -v plutil >/dev/null 2>&1 || fail "plutil is required for UI smoke"
-command -v xcodebuild >/dev/null 2>&1 || fail "xcodebuild is required for UI smoke"
+if [[ "$SKIP_BUILD" != "1" ]]; then
+    command -v xcodebuild >/dev/null 2>&1 \
+        || fail "xcodebuild is required to build the UI smoke app; pass --skip-build --app /path/to/Alan.app to reuse a built app"
+fi
 [[ -x "$CAPTURE" ]] || fail "missing capture helper: $CAPTURE"
 
 ghostty_ready=0
