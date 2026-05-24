@@ -123,7 +123,12 @@ pub struct SessionReducer {
 
 impl SessionReducer {
     pub fn apply_envelope(&mut self, envelope: EventEnvelope) {
-        match envelope.event {
+        let event = envelope.event;
+        if event_advances_past_pending_yield(&event) {
+            self.pending_yield = None;
+        }
+
+        match event {
             Event::TurnStarted {} => self.cells.push(HistoryCell::Status("turn started".into())),
             Event::TurnCompleted { summary } => {
                 self.cells.push(HistoryCell::Status(
@@ -235,6 +240,20 @@ impl SessionReducer {
             *preview = result_preview;
         }
     }
+}
+
+fn event_advances_past_pending_yield(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::TurnStarted { .. }
+            | Event::TurnCompleted { .. }
+            | Event::TextDelta { .. }
+            | Event::ThinkingDelta { .. }
+            | Event::ToolCallStarted { .. }
+            | Event::ToolCallCompleted { .. }
+            | Event::PlanUpdated { .. }
+            | Event::SessionRolledBack { .. }
+    )
 }
 
 impl PendingYieldCell {
@@ -579,5 +598,38 @@ mod tests {
         assert!(pending.resume_content("qa").is_err());
         let content = pending.resume_content("Production").unwrap();
         assert!(matches!(&content[0], ContentPart::Structured { data } if data["env"] == "prod"));
+    }
+
+    #[test]
+    fn runtime_progress_clears_stale_pending_yield() {
+        let mut reducer = SessionReducer::default();
+        reducer.apply_envelope(envelope(Event::Yield {
+            request_id: "r-1".into(),
+            kind: YieldKind::Confirmation,
+            payload: serde_json::json!({"message": "Approve?", "options": ["approve", "reject"]}),
+        }));
+        assert!(reducer.pending_yield.is_some());
+
+        reducer.apply_envelope(envelope(Event::TurnCompleted {
+            summary: Some("done".into()),
+        }));
+
+        assert!(reducer.pending_yield.is_none());
+    }
+
+    #[test]
+    fn recoverable_error_does_not_clear_pending_yield() {
+        let mut reducer = SessionReducer::default();
+        reducer.apply_envelope(envelope(Event::Yield {
+            request_id: "r-1".into(),
+            kind: YieldKind::Confirmation,
+            payload: serde_json::json!({"message": "Approve?", "options": ["approve", "reject"]}),
+        }));
+        reducer.apply_envelope(envelope(Event::Error {
+            message: "still waiting".into(),
+            recoverable: true,
+        }));
+
+        assert!(reducer.pending_yield.is_some());
     }
 }

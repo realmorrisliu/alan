@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 
 use crate::app::{AppEvent, SessionHydration};
 
@@ -261,33 +262,52 @@ pub fn spawn_event_stream(
     tx: tokio::sync::mpsc::Sender<AppEvent>,
 ) {
     tokio::spawn(async move {
-        match client.events(&session_id).await {
-            Ok(mut events) => {
-                while let Some(event) = events.next().await {
-                    match event {
-                        Ok(envelope) => {
-                            if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
-                                break;
-                            }
+        loop {
+            if !stream_events_once(&client, &session_id, &tx).await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+}
+
+async fn stream_events_once(
+    client: &DaemonClient,
+    session_id: &str,
+    tx: &tokio::sync::mpsc::Sender<AppEvent>,
+) -> bool {
+    match client.events(session_id).await {
+        Ok(mut events) => {
+            while let Some(event) = events.next().await {
+                match event {
+                    Ok(envelope) => {
+                        if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
+                            return false;
                         }
-                        Err(err) => {
-                            let _ = tx
-                                .send(AppEvent::Error(format!("event stream error: {err:#}")))
-                                .await;
-                            break;
-                        }
+                    }
+                    Err(err) => {
+                        return tx
+                            .send(AppEvent::Error(format!(
+                                "event stream error: {err:#}; reconnecting"
+                            )))
+                            .await
+                            .is_ok();
                     }
                 }
             }
-            Err(err) => {
-                let _ = tx
-                    .send(AppEvent::Error(format!(
-                        "event stream unavailable: {err:#}"
-                    )))
-                    .await;
-            }
+            tx.send(AppEvent::Status(
+                "event stream ended; reconnecting".to_string(),
+            ))
+            .await
+            .is_ok()
         }
-    });
+        Err(err) => tx
+            .send(AppEvent::Error(format!(
+                "event stream unavailable: {err:#}; reconnecting"
+            )))
+            .await
+            .is_ok(),
+    }
 }
 
 type ByteStream =

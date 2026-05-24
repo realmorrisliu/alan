@@ -71,7 +71,6 @@ pub struct TuiApp {
     pub composer: Composer,
     pub should_quit: bool,
     last_sequence: Option<u64>,
-    committed_scrollback: Vec<String>,
 }
 
 impl TuiApp {
@@ -82,7 +81,6 @@ impl TuiApp {
             composer: Composer::default(),
             should_quit: false,
             last_sequence: None,
-            committed_scrollback: Vec::new(),
         }
     }
 
@@ -153,8 +151,18 @@ impl TuiApp {
         for cell in removed {
             lines.extend(cell.render_lines(96));
         }
-        self.committed_scrollback.extend(lines.clone());
         lines
+    }
+
+    pub fn clear_pending_yield(&mut self, request_id: &str) {
+        if self
+            .reducer
+            .pending_yield
+            .as_ref()
+            .is_some_and(|pending| pending.request_id == request_id)
+        {
+            self.reducer.pending_yield = None;
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppAction> {
@@ -192,7 +200,6 @@ impl TuiApp {
             self.composer.set_text("");
             match pending.resume_content(&text) {
                 Ok(content) => {
-                    self.reducer.pending_yield = None;
                     return Some(AppAction::Resume {
                         request_id: pending.request_id,
                         content,
@@ -311,6 +318,36 @@ mod tests {
         assert!(app.history_cells().iter().any(|cell| {
             matches!(cell, HistoryCell::Error { message, recoverable: true } if message.contains("env must be one of"))
         }));
+    }
+
+    #[test]
+    fn valid_resume_submission_keeps_pending_yield_until_acknowledged() {
+        let mut app = app();
+        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
+            1,
+            alan_protocol::Event::Yield {
+                request_id: "r-1".into(),
+                kind: alan_protocol::YieldKind::Confirmation,
+                payload: serde_json::json!({
+                    "message": "Approve?",
+                    "options": ["approve", "reject"]
+                }),
+            },
+        ))));
+        app.composer.set_text("approve");
+
+        let action = app.dispatch(AppEvent::Terminal(TerminalEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(matches!(
+            action,
+            Some(AppAction::Resume { ref request_id, .. }) if request_id == "r-1"
+        ));
+        assert!(app.reducer.pending_yield.is_some());
+        app.clear_pending_yield("r-1");
+        assert!(app.reducer.pending_yield.is_none());
     }
 
     fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {

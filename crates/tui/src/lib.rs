@@ -40,6 +40,12 @@ impl RunConfig {
             require_interactive_terminal: true,
         }
     }
+
+    fn workspace_dir_for_session(&self) -> Result<PathBuf> {
+        self.workspace_dir.clone().map(Ok).unwrap_or_else(|| {
+            std::env::current_dir().context("failed to determine current directory")
+        })
+    }
 }
 
 /// Launch the daemon-backed terminal UI.
@@ -51,7 +57,7 @@ pub async fn run(config: RunConfig) -> Result<()> {
     let client = DaemonClient::new(config.base_url.clone(), config.endpoints.clone());
     let session = client
         .create_session(CreateSessionRequest {
-            workspace_dir: config.workspace_dir.clone(),
+            workspace_dir: Some(config.workspace_dir_for_session()?),
             agent_name: config.agent_name.clone(),
         })
         .await
@@ -117,6 +123,8 @@ pub async fn run(config: RunConfig) -> Result<()> {
                                 .await
                             {
                                 app.dispatch(AppEvent::Error(format!("resume failed: {err:#}")));
+                            } else {
+                                app.clear_pending_yield(&request_id);
                             }
                         }
                         app::AppAction::Interrupt => {
@@ -149,4 +157,85 @@ pub async fn run(config: RunConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct FakeEndpoints;
+
+    impl EndpointContract for FakeEndpoints {
+        fn health(&self) -> &'static str {
+            "/health"
+        }
+
+        fn sessions(&self) -> &'static str {
+            "/sessions"
+        }
+
+        fn session_read(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/read")
+        }
+
+        fn session_reconnect_snapshot(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/reconnect_snapshot")
+        }
+
+        fn session_history(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/history")
+        }
+
+        fn session_events_read(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/events/read")
+        }
+
+        fn session_events(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/events")
+        }
+
+        fn session_submit(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/submit")
+        }
+
+        fn session_resume(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/resume")
+        }
+
+        fn session_rollback(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/rollback")
+        }
+
+        fn session_compact(&self, session_id: &str) -> String {
+            format!("/sessions/{session_id}/compact")
+        }
+
+        fn connections_current(&self) -> &'static str {
+            "/connections/current"
+        }
+
+        fn skills_catalog(&self) -> &'static str {
+            "/skills/catalog"
+        }
+    }
+
+    #[test]
+    fn default_workspace_dir_uses_current_directory() {
+        let config = RunConfig::new("http://daemon", Arc::new(FakeEndpoints));
+        assert_eq!(
+            config.workspace_dir_for_session().unwrap(),
+            std::env::current_dir().unwrap()
+        );
+    }
+
+    #[test]
+    fn explicit_workspace_dir_overrides_current_directory() {
+        let mut config = RunConfig::new("http://daemon", Arc::new(FakeEndpoints));
+        config.workspace_dir = Some(PathBuf::from("/tmp/alan-explicit-workspace"));
+        assert_eq!(
+            config.workspace_dir_for_session().unwrap(),
+            PathBuf::from("/tmp/alan-explicit-workspace")
+        );
+    }
 }
