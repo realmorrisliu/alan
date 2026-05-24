@@ -33,7 +33,9 @@ reject_pattern() {
 
 require_pattern "justfile" "^install-dev:" "justfile must expose install-dev"
 require_pattern "justfile" "^uninstall-dev:" "justfile must expose uninstall-dev"
+require_pattern "justfile" "^dev-channel-smoke:" "justfile must expose dev-channel-smoke"
 require_pattern "scripts/assemble-release-app.sh" "ALAN_APP_BUNDLE_NAME" "assembly must use channel app bundle name"
+require_pattern "scripts/assemble-release-app.sh" "ALAN_CARGO_TARGET_DIR" "assembly must allow repo-local cargo target override"
 require_pattern "scripts/assemble-release-app.sh" 'PRODUCT_BUNDLE_IDENTIFIER="\$ALAN_BUNDLE_ID"' "assembly must override channel bundle id"
 require_pattern "scripts/assemble-release-app.sh" 'INFOPLIST_KEY_CFBundleDisplayName="\$ALAN_DISPLAY_NAME"' "assembly must override channel display name"
 require_pattern "scripts/assemble-release-app.sh" 'ALAN_TUI_BINARY_OUTFILE="\$STAGING_DIR/\$ALAN_TUI_NAME"' "assembly must build channel-named TUI"
@@ -42,6 +44,8 @@ require_pattern "scripts/install.sh" "ALAN_CLI_NAME" "install script must link c
 require_pattern "scripts/install.sh" "ALAN_TUI_NAME" "install script must link channel TUI name"
 require_pattern "scripts/uninstall.sh" "ALAN_CLI_NAME" "uninstall script must remove channel CLI name"
 require_pattern "scripts/uninstall.sh" "ALAN_TUI_NAME" "uninstall script must remove channel TUI name"
+require_pattern "scripts/smoke-dev-channel-side-by-side.sh" "app.alanworks.macos.dev" "side-by-side smoke must identify dev bundle id"
+require_pattern "scripts/smoke-dev-channel-side-by-side.sh" ".alan/runtime/dev" "side-by-side smoke must verify dev workspace runtime state"
 require_pattern "packaging/homebrew/Casks/alan.rb.template" "app \"Alan\\.app\"" "Homebrew cask must remain stable-only"
 require_pattern "packaging/homebrew/Casks/alan.rb.template" "target: \"alan\"" "Homebrew cask must keep stable CLI target"
 reject_pattern "packaging/homebrew/Casks/alan.rb.template" "Alan Dev|alan-dev" "Homebrew cask must not publish dev artifacts"

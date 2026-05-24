@@ -33,6 +33,7 @@ guarantees today.
 - [Testing Strategy](./testing_strategy.md)
 - [Live Provider Harness](./live_provider_harness.md)
 - [Live Runtime Smoke](./live_runtime_smoke.md)
+- [macOS Dev Channel Side-by-Side Smoke](./macos_dev_channel_side_by_side_smoke.md)
 
 Important current-vs-target pairs:
 

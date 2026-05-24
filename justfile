@@ -60,6 +60,10 @@ install:
 install-dev:
     ./scripts/install-dev.sh
 
+# Run local side-by-side smoke for stable Alan and Alan Dev
+dev-channel-smoke:
+    ./scripts/smoke-dev-channel-side-by-side.sh
+
 # Check release signing and notarization configuration without building
 release-check:
     ALAN_NOTARIZE=1 ./scripts/release-check.sh
