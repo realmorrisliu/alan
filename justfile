@@ -64,6 +64,10 @@ install-dev:
 dev-channel-smoke:
     ./scripts/smoke-dev-channel-side-by-side.sh
 
+# Run focused macOS shell automation command seam tests
+apple-shell-automation-seams:
+    bash clients/apple/scripts/test-shell-automation-command-seams.sh
+
 # Check release signing and notarization configuration without building
 release-check:
     ALAN_NOTARIZE=1 ./scripts/release-check.sh

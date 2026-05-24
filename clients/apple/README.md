@@ -195,6 +195,9 @@ xcodebuild \
 # Shell control-plane contract smoke
 bash clients/apple/scripts/check-shell-contracts.sh
 
+# Shell automation command seam tests
+just apple-shell-automation-seams
+
 # Apple source architecture maintainability report
 bash clients/apple/scripts/check-architecture-maintainability.sh
 
