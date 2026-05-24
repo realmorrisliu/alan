@@ -9,4 +9,6 @@
 - [x] 2.1 Add focused `test-shell-window-placement.swift` coverage for sidebar content points outside the draggable top chrome.
 - [x] 2.2 Run `clients/apple/scripts/test-shell-window-placement.sh`.
 - [x] 2.3 Run `openspec validate fix-macos-sidebar-window-drag-interference --strict`.
-- [ ] 2.4 Capture or request running-app visual acceptance confirming tab reorder no longer moves the Alan Dev window.
+- [x] 2.4 Capture or request running-app visual acceptance confirming tab reorder no longer moves the Alan Dev window.
+
+Visual acceptance: user confirmed on 2026-05-24 that Alan Dev tab dragging no longer moves the window.
