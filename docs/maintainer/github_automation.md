@@ -28,7 +28,6 @@ These must be configured in repository settings:
 - `Clippy Lint`
 - `Test Suite (ubuntu-latest, stable)`
 - `Documentation`
-- `TUI Lint / Test / Typecheck`
 
 3. Security settings
 - Enable Dependabot alerts.

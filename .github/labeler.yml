@@ -26,7 +26,8 @@ area/cli-daemon:
 area/tui:
   - changed-files:
       - any-glob-to-any-file:
-          - "clients/tui/**"
+          - "crates/tui/**"
+          - "docs/spec/alan_tui_ui_ux.md"
 
 area/docs:
   - changed-files:

@@ -40,6 +40,7 @@ reject_path "crates/alan/src/cli/ask.rs"
 reject_path "scripts/entitlements/alan-tui.entitlements"
 
 reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \
+    .github \
     Cargo.toml \
     crates \
     clients/apple \
@@ -48,11 +49,16 @@ reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \
     openspec/specs
 
 reject_pattern 'alan chat|alan ask' \
+    .github \
     crates \
     clients/apple \
     README.md \
     AGENTS.md \
     openspec/specs
+
+reject_pattern 'TUI Lint / Test / Typecheck|clients/tui|ALAN_TUI_PATH' \
+    .github \
+    docs/maintainer/github_automation.md
 
 reject_pattern 'ALAN_TUI_NAME|ALAN_TUI_BINARY_OUTFILE|alan-tui\.entitlements|clients/tui' \
     scripts/assemble-release-app.sh \

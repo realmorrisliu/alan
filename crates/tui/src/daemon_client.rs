@@ -266,7 +266,7 @@ pub fn spawn_event_stream(
                 while let Some(event) = events.next().await {
                     match event {
                         Ok(envelope) => {
-                            if tx.send(AppEvent::Daemon(envelope)).await.is_err() {
+                            if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
                                 break;
                             }
                         }

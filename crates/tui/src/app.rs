@@ -8,7 +8,7 @@ use crate::history::{HistoryCell, SessionReducer};
 #[derive(Debug)]
 pub enum AppEvent {
     Terminal(TerminalEvent),
-    Daemon(alan_protocol::EventEnvelope),
+    Daemon(Box<alan_protocol::EventEnvelope>),
     Hydrated(SessionHydration),
     Status(String),
     Error(String),
@@ -102,7 +102,7 @@ impl TuiApp {
             AppEvent::Terminal(_) => None,
             AppEvent::Daemon(envelope) => {
                 self.record_sequence_gap(&envelope);
-                self.reducer.apply_envelope(envelope);
+                self.reducer.apply_envelope(*envelope);
                 None
             }
             AppEvent::Hydrated(hydration) => {
@@ -255,8 +255,8 @@ mod tests {
     #[test]
     fn daemon_sequence_gap_becomes_warning_cell() {
         let mut app = app();
-        app.dispatch(AppEvent::Daemon(envelope(1)));
-        app.dispatch(AppEvent::Daemon(envelope(3)));
+        app.dispatch(AppEvent::Daemon(Box::new(envelope(1))));
+        app.dispatch(AppEvent::Daemon(Box::new(envelope(3))));
         assert!(app.history_cells().iter().any(|cell| {
             matches!(cell, HistoryCell::Warning(message) if message.contains("event stream gap"))
         }));
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn invalid_structured_input_keeps_pending_yield() {
         let mut app = app();
-        app.dispatch(AppEvent::Daemon(envelope_with_event(
+        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
             alan_protocol::Event::Yield {
                 request_id: "r-1".into(),
@@ -297,7 +297,7 @@ mod tests {
                     }]
                 }),
             },
-        )));
+        ))));
         app.composer.set_text("staging");
 
         let action = app.dispatch(AppEvent::Terminal(TerminalEvent::Key(KeyEvent::new(

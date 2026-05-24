@@ -302,10 +302,10 @@ just fmt         # Format code
 just lint        # Clippy lints
 just serve       # Run the daemon
 just build       # Release build
-just install     # Install signed release Alan.app and PATH-visible CLI/TUI links
+just install     # Install signed release Alan.app and PATH-visible CLI links
 just release-check # Check release signing/notarization setup without building
 just release     # Build, sign, notarize, staple, and archive the public macOS release app
-just uninstall   # Remove the local app install and alan-owned CLI/TUI links
+just uninstall   # Remove the local app install and alan-owned CLI links
 just clean       # Clean build artifacts
 just coverage    # Show coverage summary
 just coverage-detail    # Detailed coverage

@@ -1768,7 +1768,7 @@ require_pattern \
 reject_pattern \
     "scripts/install.sh" \
     "\\.alan/bin" \
-    "local install must not write CLI/TUI entries under ~/.alan/bin"
+    "local install must not write CLI entries under ~/.alan/bin"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
