@@ -1,13 +1,13 @@
 ## 1. Shared Command And Test Seams
 
 - [x] 1.1 Define shared shell command interfaces for create tab, split, focus, close, send text, read summary, and attention activation.
-- [ ] 1.2 Route existing shell controller, control-plane, menu, and command UI paths through the shared command interface where practical.
+- [x] 1.2 Route existing shell controller, control-plane, menu, and command UI paths through the shared command interface where practical.
 - [x] 1.3 Add fake shell controller/runtime fixtures for command, intent, and control-plane tests.
 - [x] 1.4 Add privacy-safe summary helpers for pane/tab/window metadata.
 
 ## 2. App Intents
 
-- [ ] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
+- [x] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
 - [ ] 2.2 Add intents for creating terminal tabs, creating alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
 - [ ] 2.3 Align intent success and failure results with shared shell command/control-plane result categories.
 - [ ] 2.4 Gate App Intent availability by supported macOS versions and document fallback behavior.
@@ -19,7 +19,7 @@
 - [x] 3.2 Add runtime service fake tests for text delivery, unavailable runtime, teardown, and metadata snapshots.
 - [x] 3.3 Add control-plane tests for query/mutation success, malformed requests, missing targets, runtime unavailable, timeout, and IO diagnostics.
 - [ ] 3.4 Add App Intent routing tests using fake shell state and fake runtime outcomes.
-- [ ] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
+- [x] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
 
 ## 4. UI Smoke And Documentation
 

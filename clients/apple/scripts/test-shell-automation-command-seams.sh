@@ -15,6 +15,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTreeMutations.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationCommand.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationEntities.swift" \
     "$REPO_ROOT/clients/apple/scripts/shell-automation-test-fixtures.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-automation-command-seams.swift" \
     -o "$TEST_BINARY"

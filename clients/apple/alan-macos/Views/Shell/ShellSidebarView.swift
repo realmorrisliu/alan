@@ -570,7 +570,7 @@ struct ShellSidebarView: View {
 
     private func focusPane(_ paneID: String, in tab: ShellTab) {
         host.select(tabID: tab.tabID)
-        host.focus(paneID: paneID)
+        _ = host.performShellAutomationCommand(.focusPane(paneID: paneID))
         host.refocusSelectedTerminalPane()
     }
 

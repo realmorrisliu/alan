@@ -62,6 +62,7 @@
 		000000000000000000000041 /* Services/Terminal/TerminalContentLifecycleAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */; };
 		000000000000000000000042 /* Services/Shell/ShellContentRenderingRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */; };
 		000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */; };
+		000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -133,6 +134,7 @@
 		000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentLifecycleAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellContentRenderingRegistry.swift; sourceTree = "<group>"; };
 		000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationCommand.swift; sourceTree = "<group>"; };
+		000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationEntities.swift; sourceTree = "<group>"; };
 		000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Console/AlanConsoleViewModel.swift; sourceTree = "<group>"; };
 		000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
 		000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
@@ -293,6 +295,7 @@
 				000000000000000000000124 /* Models/Shell/ShellStateMutations.swift */,
 				00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */,
 				000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */,
+				000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */,
 			);
 			name = Models/Shell;
 			sourceTree = "<group>";
@@ -474,6 +477,7 @@
 				000000000000000000000024 /* Models/Shell/ShellStateMutations.swift in Sources */,
 				00000000000000000000003E /* Models/Shell/ShellActionRegistry.swift in Sources */,
 				000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */,
+				000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */,
 				000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */,
 				000000000000000000000026 /* Services/Shell/ShellStatePersistenceStore.swift in Sources */,
 				000000000000000000000027 /* Services/Terminal/TerminalHostRuntimeReporter.swift in Sources */,

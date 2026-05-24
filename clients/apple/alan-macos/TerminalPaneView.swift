@@ -54,7 +54,16 @@ struct TerminalPaneView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(ShellPalette.mutedInk)
                     Button {
-                        _ = host.openTerminalTab(in: displaySpaceID)
+                        _ = host.performShellAutomationCommand(
+                            .createTab(
+                                ShellAutomationCreateTabRequest(
+                                    launchTarget: .shell,
+                                    spaceID: displaySpaceID,
+                                    title: nil,
+                                    workingDirectory: nil
+                                )
+                            )
+                        )
                     } label: {
                         Label("New Tab", systemImage: "plus")
                             .font(.system(size: 12, weight: .semibold))
@@ -588,7 +597,7 @@ private struct ShellPaneTreeLayoutView: View {
                 ).isAvailable
             },
             onFocusPane: {
-                host.focus(paneID: paneSlotID)
+                _ = host.performShellAutomationCommand(.focusPane(paneID: paneSlotID))
             },
             onToggleZoom: {
                 if host.isPaneZoomed(paneSlotID) {

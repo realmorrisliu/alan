@@ -1222,17 +1222,35 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func performShellWorkspaceCommand(_ command: ShellWorkspaceCommand) -> Bool {
         switch command {
         case .newTerminalTab:
-            return openTerminalTab() != nil
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .shell,
+                        spaceID: nil,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .newAlanTab:
-            return openAlanTab() != nil
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .alan,
+                        spaceID: nil,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .splitLeft:
-            return splitFocusedPane(placement: .left) != nil
+            return performShellAutomationSplitFromFocusedPane(.left)
         case .splitRight:
-            return splitFocusedPane(placement: .right) != nil
+            return performShellAutomationSplitFromFocusedPane(.right)
         case .splitUp:
-            return splitFocusedPane(placement: .up) != nil
+            return performShellAutomationSplitFromFocusedPane(.up)
         case .splitDown:
-            return splitFocusedPane(placement: .down) != nil
+            return performShellAutomationSplitFromFocusedPane(.down)
         case .focusLeft:
             return focusAdjacentPane(direction: .left)
         case .focusRight:
@@ -1254,9 +1272,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .movePaneDown:
             return moveSelectedPaneWithinTab(.down)
         case .closePane:
-            return closeSelectedPane()
+            guard let paneID = selectedPane?.paneID else { return false }
+            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
         case .closeTab:
-            return closeSelectedTab()
+            guard let tabID = selectedTabID else { return false }
+            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
         case .quickTerminalToggle:
             return toggleQuickTerminal() != nil
         case .quickTerminalShow:
@@ -1268,6 +1288,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .quickTerminalClose:
             return closeQuickTerminal()
         }
+    }
+
+    private func performShellAutomationSplitFromFocusedPane(
+        _ placement: ShellPaneSplitDirection
+    ) -> Bool {
+        guard let focusedPaneID = shellState.focusedPaneID else { return false }
+        return performShellAutomationCommand(
+            .splitPane(ShellAutomationPaneSplitRequest(paneID: focusedPaneID, placement: placement))
+        ).applied
     }
 
     func shellActionTitle(_ id: ShellActionID) -> String {
@@ -1314,18 +1343,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .workspaceCommand(let command):
             return performShellWorkspaceCommand(command)
         case .openTab(let launchTarget, let spaceID):
-            switch launchTarget {
-            case .shell:
-                return openTerminalTab(in: spaceID) != nil
-            case .alan:
-                return openAlanTab(in: spaceID) != nil
-            }
+            return performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: launchTarget,
+                        spaceID: spaceID,
+                        title: nil,
+                        workingDirectory: nil
+                    )
+                )
+            ).applied
         case .closeTab(let tabID):
-            guard let tabID else { return closeSelectedTab() }
-            return closeTab(tabID: tabID) == .closed
+            guard let tabID = tabID ?? selectedTabID else { return false }
+            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
         case .closePane(let paneID):
-            guard let paneID else { return closeSelectedPane() }
-            return closePane(paneID: paneID) == .closed
+            guard let paneID = paneID ?? selectedPane?.paneID else { return false }
+            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
         case .selectAdjacentTab(let offset):
             return selectAdjacentTab(offset: offset)
         case .selectAdjacentSpace(let offset):
@@ -2592,6 +2625,211 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return 2
         case .awaitingUser:
             return 3
+        }
+    }
+}
+
+extension ShellHostController: ShellAutomationCommandHandling {
+    func performShellAutomationCommand(
+        _ command: ShellAutomationCommand
+    ) -> ShellAutomationCommandResult {
+        switch command {
+        case .createTab(let request):
+            let tabID: String?
+            switch request.launchTarget {
+            case .shell:
+                tabID = openTerminalTab(
+                    in: request.spaceID,
+                    title: request.title,
+                    workingDirectory: request.workingDirectory
+                )
+            case .alan:
+                tabID = openAlanTab(
+                    in: request.spaceID,
+                    title: request.title,
+                    workingDirectory: request.workingDirectory
+                )
+            }
+            guard let tabID else {
+                return shellAutomationResult(
+                    code: .missingTarget,
+                    spaceID: request.spaceID,
+                    errorCode: "space_not_found",
+                    errorMessage: "The requested space does not exist."
+                )
+            }
+            return shellAutomationResult(
+                code: .accepted,
+                spaceID: shellState.focusedSpaceID,
+                tabID: tabID,
+                paneID: shellState.focusedPaneID
+            )
+
+        case .splitPane(let request):
+            guard pane(paneID: request.paneID) != nil else {
+                return shellAutomationMissingPaneResult(request.paneID)
+            }
+            guard let paneID = splitPane(paneID: request.paneID, placement: request.placement) else {
+                return shellAutomationMissingPaneResult(request.paneID)
+            }
+            return shellAutomationResult(
+                code: .accepted,
+                spaceID: shellState.focusedSpaceID,
+                tabID: shellState.focusedTabID,
+                paneID: paneID
+            )
+
+        case .focusPane(let paneID):
+            guard pane(paneID: paneID) != nil else {
+                return shellAutomationMissingPaneResult(paneID)
+            }
+            focus(paneID: paneID)
+            return shellAutomationResult(
+                code: .accepted,
+                spaceID: shellState.focusedSpaceID,
+                tabID: shellState.focusedTabID,
+                paneID: paneID
+            )
+
+        case .closePane(let paneID):
+            switch closePane(paneID: paneID) {
+            case .closed:
+                return shellAutomationResult(
+                    code: .accepted,
+                    spaceID: shellState.focusedSpaceID,
+                    tabID: shellState.focusedTabID,
+                    paneID: shellState.focusedPaneID
+                )
+            case .paneNotFound:
+                return shellAutomationMissingPaneResult(paneID)
+            case .lastTab:
+                return shellAutomationResult(
+                    code: .lastTab,
+                    paneID: paneID,
+                    errorCode: "last_tab",
+                    errorMessage: "alan terminal workspace must keep at least one pane open."
+                )
+            }
+
+        case .closeTab(let tabID):
+            switch closeTab(tabID: tabID) {
+            case .closed:
+                return shellAutomationResult(
+                    code: .accepted,
+                    tabID: tabID,
+                    paneID: shellState.focusedPaneID
+                )
+            case .tabNotFound:
+                return shellAutomationResult(
+                    code: .missingTarget,
+                    tabID: tabID,
+                    errorCode: "tab_not_found",
+                    errorMessage: "The requested tab does not exist."
+                )
+            case .lastTab:
+                return shellAutomationResult(
+                    code: .lastTab,
+                    tabID: tabID,
+                    errorCode: "last_tab",
+                    errorMessage: "alan terminal workspace must keep at least one tab open."
+                )
+            }
+
+        case .sendText(let request):
+            let delivery = terminalRuntimeRegistry.sendText(
+                to: request.paneID,
+                text: request.text
+            )
+            return shellAutomationResult(
+                code: shellAutomationResultCode(for: delivery),
+                paneID: request.paneID,
+                acceptedBytes: delivery.acceptedBytes,
+                deliveryCode: delivery.code.rawValue,
+                runtimePhase: delivery.runtimePhase,
+                errorCode: delivery.errorCode,
+                errorMessage: delivery.errorMessage
+            )
+
+        case .readPaneSummary(let paneID):
+            guard let summary = shellState.automationPaneSummary(paneID: paneID) else {
+                return shellAutomationMissingPaneResult(paneID)
+            }
+            return shellAutomationResult(
+                code: .accepted,
+                summary: summary,
+                spaceID: summary.spaceID,
+                tabID: summary.tabID,
+                paneID: summary.paneID
+            )
+
+        case .activateAttentionItem(let paneID):
+            guard pane(paneID: paneID) != nil else {
+                return shellAutomationMissingPaneResult(paneID)
+            }
+            focus(paneID: paneID, requestTerminalFocus: true)
+            return shellAutomationResult(
+                code: .accepted,
+                spaceID: shellState.focusedSpaceID,
+                tabID: shellState.focusedTabID,
+                paneID: paneID
+            )
+        }
+    }
+
+    private func shellAutomationMissingPaneResult(_ paneID: String) -> ShellAutomationCommandResult {
+        shellAutomationResult(
+            code: .missingTarget,
+            paneID: paneID,
+            errorCode: "pane_not_found",
+            errorMessage: "The requested pane does not exist."
+        )
+    }
+
+    private func shellAutomationResult(
+        code: ShellAutomationCommandResultCode,
+        summary: ShellAutomationPaneSummary? = nil,
+        spaceID: String? = nil,
+        tabID: String? = nil,
+        paneID: String? = nil,
+        acceptedBytes: Int? = nil,
+        deliveryCode: String? = nil,
+        runtimePhase: String? = nil,
+        errorCode: String? = nil,
+        errorMessage: String? = nil
+    ) -> ShellAutomationCommandResult {
+        let resolvedSummary = summary ?? paneID.flatMap {
+            shellState.automationPaneSummary(paneID: $0)
+        }
+        return ShellAutomationCommandResult(
+            code: code,
+            summary: resolvedSummary,
+            spaceID: spaceID ?? resolvedSummary?.spaceID,
+            tabID: tabID ?? resolvedSummary?.tabID,
+            paneID: paneID ?? resolvedSummary?.paneID,
+            acceptedBytes: acceptedBytes,
+            deliveryCode: deliveryCode,
+            runtimePhase: runtimePhase,
+            errorCode: errorCode,
+            errorMessage: errorMessage
+        )
+    }
+
+    private func shellAutomationResultCode(
+        for delivery: TerminalRuntimeDeliveryResult
+    ) -> ShellAutomationCommandResultCode {
+        switch delivery.code {
+        case .accepted:
+            return .accepted
+        case .queued:
+            return .queued
+        case .rejected:
+            return .rejected
+        case .missingTarget:
+            return .missingTarget
+        case .unavailableRuntime:
+            return .runtimeUnavailable
+        case .timeout:
+            return .timeout
         }
     }
 }
