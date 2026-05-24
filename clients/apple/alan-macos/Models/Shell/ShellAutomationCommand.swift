@@ -76,7 +76,7 @@ struct ShellAutomationCommandResult: Equatable {
     }
 
     var applied: Bool {
-        code == .accepted || code == .queued
+        code == .accepted
     }
 }
 
@@ -130,12 +130,12 @@ extension ShellStateSnapshot {
         return ShellAutomationPaneSummary(
             windowID: windowID,
             spaceID: pane.spaceID,
-            spaceTitle: safeDisplayTitle(space.title, fallback: "Space"),
+            spaceTitle: firstNonEmptyDisplayTitle([space.title], fallback: "Space"),
             tabID: pane.tabID,
-            tabTitle: safeDisplayTitle(tab.title, fallback: "Tab"),
+            tabTitle: firstNonEmptyDisplayTitle([tab.title], fallback: "Tab"),
             paneID: pane.paneID,
-            paneTitle: safeDisplayTitle(
-                pane.viewport?.title ?? pane.context?.displayName ?? pane.process?.program,
+            paneTitle: firstNonEmptyDisplayTitle(
+                [pane.viewport?.title, pane.context?.displayName, pane.process?.program],
                 fallback: "Pane"
             ),
             workingDirectory: pane.cwd,
@@ -145,10 +145,16 @@ extension ShellStateSnapshot {
         )
     }
 
-    private func safeDisplayTitle(_ value: String?, fallback: String) -> String {
-        guard let value else { return fallback }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
+    private func firstNonEmptyDisplayTitle(_ candidates: [String?], fallback: String) -> String {
+        for candidate in candidates {
+            guard let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !trimmed.isEmpty
+            else {
+                continue
+            }
+            return trimmed
+        }
+        return fallback
     }
 }
 #endif

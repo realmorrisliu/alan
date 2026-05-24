@@ -15,8 +15,10 @@ private enum ShellAutomationCommandSeamsTests {
     static func run() {
         verifiesCommandSurfaceCoversCoreAutomationActions()
         verifiesFakeHandlerRecordsCommandsAndReturnsConfiguredResults()
+        verifiesQueuedDeliveryDoesNotCountAsApplied()
         verifiesFakeRuntimeRecordsTextDelivery()
         verifiesPaneSummaryUsesSafeMetadata()
+        verifiesPaneSummaryFallsBackPastBlankTitles()
         verifiesMissingPaneSummaryReturnsNil()
         print("Shell automation command seam tests passed.")
     }
@@ -92,6 +94,21 @@ private enum ShellAutomationCommandSeamsTests {
         expect(result.summary == expectedSummary, "fake must return configured summary")
     }
 
+    private static func verifiesQueuedDeliveryDoesNotCountAsApplied() {
+        expect(
+            ShellAutomationCommandResult(code: .accepted, summary: nil).applied,
+            "accepted delivery must count as applied"
+        )
+        expect(
+            !ShellAutomationCommandResult(code: .queued, summary: nil).applied,
+            "queued delivery must not count as applied before runtime acceptance"
+        )
+        expect(
+            !ShellAutomationCommandResult(code: .rejected, summary: nil).applied,
+            "rejected delivery must not count as applied"
+        )
+    }
+
     private static func verifiesFakeRuntimeRecordsTextDelivery() {
         let request = ShellAutomationSendTextRequest(paneID: "pane_1", text: "pwd\n")
         let runtime = FakeShellAutomationTextRuntime(
@@ -108,6 +125,7 @@ private enum ShellAutomationCommandSeamsTests {
 
         expect(runtime.deliveredText == [request], "fake runtime must record text deliveries")
         expect(result.code == .queued, "fake runtime must preserve queued delivery status")
+        expect(!result.applied, "queued delivery must not count as applied")
         expect(result.acceptedBytes == 4, "fake runtime must preserve accepted byte count")
     }
 
@@ -136,6 +154,40 @@ private enum ShellAutomationCommandSeamsTests {
         )
     }
 
+    private static func verifiesPaneSummaryFallsBackPastBlankTitles() {
+        let displayState = stateWithPaneMetadata(
+            viewportTitle: "   ",
+            displayName: "Workspace shell",
+            processProgram: "zsh",
+            visibleExcerpt: "SECRET_TOKEN=abc123"
+        )
+
+        guard let displaySummary = displayState.automationPaneSummary(paneID: "pane_1") else {
+            fail("expected pane summary for display name fallback")
+        }
+
+        expect(
+            displaySummary.paneTitle == "Workspace shell",
+            "blank viewport title must fall back to display name"
+        )
+
+        let processState = stateWithPaneMetadata(
+            viewportTitle: "\n\t",
+            displayName: " ",
+            processProgram: "zsh",
+            visibleExcerpt: "SECRET_TOKEN=abc123"
+        )
+
+        guard let processSummary = processState.automationPaneSummary(paneID: "pane_1") else {
+            fail("expected pane summary for process fallback")
+        }
+
+        expect(
+            processSummary.paneTitle == "zsh",
+            "blank viewport and display titles must fall back to process program"
+        )
+    }
+
     private static func verifiesMissingPaneSummaryReturnsNil() {
         let state = ShellStateSnapshot.bootstrapDefault()
         expect(
@@ -145,6 +197,20 @@ private enum ShellAutomationCommandSeamsTests {
     }
 
     private static func stateWithVisibleExcerpt(_ visibleExcerpt: String) -> ShellStateSnapshot {
+        stateWithPaneMetadata(
+            viewportTitle: "Project shell",
+            displayName: nil,
+            processProgram: "zsh",
+            visibleExcerpt: visibleExcerpt
+        )
+    }
+
+    private static func stateWithPaneMetadata(
+        viewportTitle: String?,
+        displayName: String?,
+        processProgram: String,
+        visibleExcerpt: String
+    ) -> ShellStateSnapshot {
         let base = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/Users/morris/Developer/alan")
         let updatedPanes = base.panes.map { pane in
             ShellPane(
@@ -153,7 +219,10 @@ private enum ShellAutomationCommandSeamsTests {
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
                 cwd: pane.cwd,
-                process: ShellProcessBinding(program: "zsh", argvPreview: ["zsh", "-l"]),
+                process: ShellProcessBinding(
+                    program: processProgram,
+                    argvPreview: [processProgram, "-l"]
+                ),
                 attention: .awaitingUser,
                 context: ShellContextSnapshot(
                     workingDirectoryName: "alan",
@@ -164,11 +233,12 @@ private enum ShellAutomationCommandSeamsTests {
                     launchStrategy: "login_shell",
                     shellIntegrationSource: "alan",
                     processState: "running",
+                    displayName: displayName,
                     lastMetadataAt: nil,
                     lastCommandExitCode: nil
                 ),
                 viewport: ShellViewportSnapshot(
-                    title: "Project shell",
+                    title: viewportTitle,
                     summary: "ready",
                     visibleExcerpt: visibleExcerpt,
                     lastActivityAt: nil
