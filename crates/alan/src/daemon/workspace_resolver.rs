@@ -37,6 +37,7 @@ pub struct ResolvedWorkspace {
 #[derive(Debug, Clone)]
 pub struct WorkspaceResolver {
     registry: WorkspaceRegistry,
+    alan_home_paths: alan_runtime::AlanHomePaths,
     default_workspace_dir: PathBuf,
 }
 
@@ -44,10 +45,14 @@ impl WorkspaceResolver {
     /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
-        let default_workspace_dir = canonicalize_existing_or_self(Self::default_workspace_dir()?);
+        let alan_home_paths =
+            alan_runtime::AlanHomePaths::detect().context("Cannot determine home directory")?;
+        let default_workspace_dir =
+            canonicalize_existing_or_self(alan_home_paths.alan_home_dir.clone());
 
         Ok(Self {
             registry,
+            alan_home_paths,
             default_workspace_dir,
         })
     }
@@ -55,8 +60,10 @@ impl WorkspaceResolver {
     /// Create with an explicit registry and default workspace directory.
     #[allow(dead_code)]
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
+        let alan_home_paths = alan_runtime::AlanHomePaths::from_alan_home_dir(&default_dir);
         Self {
             registry,
+            alan_home_paths,
             default_workspace_dir: canonicalize_existing_or_self(default_dir),
         }
     }
@@ -66,7 +73,16 @@ impl WorkspaceResolver {
         &self.default_workspace_dir
     }
 
+    pub fn alan_home_paths(&self) -> &alan_runtime::AlanHomePaths {
+        &self.alan_home_paths
+    }
+
+    pub fn install_channel(&self) -> alan_runtime::InstallChannel {
+        self.alan_home_paths.channel
+    }
+
     /// Get the default workspace directory (`~/.alan/`)
+    #[allow(dead_code)]
     fn default_workspace_dir() -> Result<PathBuf> {
         alan_runtime::AlanHomePaths::detect()
             .map(|paths| paths.alan_home_dir)
@@ -250,16 +266,22 @@ impl WorkspaceResolver {
         }
     }
 
-    /// Get a specific workspace subdirectory (for example, `sessions`)
+    /// Get the channel-scoped generated workspace sessions directory.
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
-        alan_runtime::workspace_sessions_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
+        alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(
+            &self.workspace_alan_dir(workspace_path),
+            self.install_channel(),
+        )
     }
 
-    /// Get the workspace `memory` directory
+    /// Get the channel-scoped generated workspace memory directory.
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
-        alan_runtime::workspace_memory_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
+        alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(
+            &self.workspace_alan_dir(workspace_path),
+            self.install_channel(),
+        )
     }
 
     /// Get the workspace `persona` directory
@@ -332,8 +354,45 @@ impl WorkspaceResolver {
         let agents_dir = Self::ensure_fixed_child_dir(&alan_dir, "agents")?;
         let default_agent_dir = Self::ensure_fixed_child_dir(&agents_dir, "default")?;
         let _skills_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "skills")?;
-        let _sessions_dir = Self::ensure_fixed_child_dir(&alan_dir, "sessions")?;
-        let memory_dir = Self::ensure_fixed_child_dir(&alan_dir, "memory")?;
+        let channel = self.install_channel();
+        let sessions_dir =
+            alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel);
+        let memory_dir =
+            alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel);
+        std::fs::create_dir_all(&sessions_dir).with_context(|| {
+            format!(
+                "Failed to create workspace sessions directory: {}",
+                sessions_dir.display()
+            )
+        })?;
+        let sessions_dir = std::fs::canonicalize(&sessions_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize workspace sessions directory: {}",
+                sessions_dir.display()
+            )
+        })?;
+        ensure!(
+            sessions_dir.starts_with(&alan_dir),
+            "Workspace sessions directory must stay within workspace state directory: {}",
+            sessions_dir.display()
+        );
+        std::fs::create_dir_all(&memory_dir).with_context(|| {
+            format!(
+                "Failed to create workspace memory directory: {}",
+                memory_dir.display()
+            )
+        })?;
+        let memory_dir = std::fs::canonicalize(&memory_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize workspace memory directory: {}",
+                memory_dir.display()
+            )
+        })?;
+        ensure!(
+            memory_dir.starts_with(&alan_dir),
+            "Workspace memory directory must stay within workspace state directory: {}",
+            memory_dir.display()
+        );
         let persona_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "persona")?;
 
         alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
@@ -719,7 +778,8 @@ mod tests {
 
         assert_eq!(resolved.path, default_dir);
         assert_eq!(resolved.alan_dir, default_dir);
-        assert!(resolved.alan_dir.join("sessions").exists());
+        assert!(resolved.alan_dir.join("runtime/stable/sessions").exists());
+        assert!(!resolved.alan_dir.join("sessions").exists());
     }
 
     #[cfg(unix)]
@@ -780,7 +840,8 @@ mod tests {
 
         assert_eq!(resolved.path, expected_default_dir);
         assert_eq!(resolved.alan_dir, expected_default_dir);
-        assert!(resolved.alan_dir.join("sessions").exists());
+        assert!(resolved.alan_dir.join("runtime/stable/sessions").exists());
+        assert!(!resolved.alan_dir.join("sessions").exists());
     }
 
     #[test]
@@ -818,10 +879,26 @@ mod tests {
             .unwrap();
 
         assert!(resolved.alan_dir.exists());
-        assert!(resolved.alan_dir.join("sessions").exists());
-        assert!(resolved.alan_dir.join("memory/MEMORY.md").exists());
-        assert!(resolved.alan_dir.join("memory/USER.md").exists());
-        assert!(resolved.alan_dir.join("memory/handoffs/LATEST.md").exists());
+        assert!(resolved.alan_dir.join("runtime/stable/sessions").exists());
+        assert!(!resolved.alan_dir.join("sessions").exists());
+        assert!(
+            resolved
+                .alan_dir
+                .join("runtime/stable/memory/MEMORY.md")
+                .exists()
+        );
+        assert!(
+            resolved
+                .alan_dir
+                .join("runtime/stable/memory/USER.md")
+                .exists()
+        );
+        assert!(
+            resolved
+                .alan_dir
+                .join("runtime/stable/memory/handoffs/LATEST.md")
+                .exists()
+        );
         assert!(
             resolved
                 .alan_dir
@@ -928,11 +1005,11 @@ mod tests {
 
         assert_eq!(
             resolver.workspace_sessions_dir(&workspace),
-            workspace.join(".alan/sessions")
+            workspace.join(".alan/runtime/stable/sessions")
         );
         assert_eq!(
             resolver.workspace_memory_dir(&workspace),
-            workspace.join(".alan/memory")
+            workspace.join(".alan/runtime/stable/memory")
         );
         assert_eq!(
             resolver.workspace_persona_dir(&workspace),
@@ -1016,6 +1093,59 @@ mod tests {
             std::fs::canonicalize(&resolved.path).unwrap(),
             std::fs::canonicalize(temp.path().join("workspace")).unwrap()
         );
-        assert!(resolved.alan_dir.join("sessions").exists());
+        assert!(resolved.alan_dir.join("runtime/stable/sessions").exists());
+        assert!(!resolved.alan_dir.join("sessions").exists());
+    }
+
+    #[test]
+    fn test_workspace_dir_helpers_use_dev_runtime_namespace_for_dev_home() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+        let resolver = WorkspaceResolver::with_registry(registry, temp.path().join(".alan-dev"));
+
+        assert_eq!(
+            resolver.workspace_sessions_dir(&workspace),
+            workspace.join(".alan/runtime/dev/sessions")
+        );
+        assert_eq!(
+            resolver.workspace_memory_dir(&workspace),
+            workspace.join(".alan/runtime/dev/memory")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_dev_channel_survives_canonicalized_home_symlink() {
+        let temp = TempDir::new().unwrap();
+        let physical_home = temp.path().join("physical-dev-home");
+        std::fs::create_dir_all(&physical_home).unwrap();
+        let dev_home_link = temp.path().join(".alan-dev");
+        std::os::unix::fs::symlink(&physical_home, &dev_home_link).unwrap();
+        let workspace = temp.path().join("workspace");
+        let registry = WorkspaceRegistry {
+            version: 1,
+            workspaces: vec![],
+        };
+
+        let resolver = WorkspaceResolver::with_registry(registry, dev_home_link.clone());
+        let canonical_physical_home = std::fs::canonicalize(&physical_home).unwrap();
+
+        assert_eq!(
+            resolver.install_channel(),
+            alan_runtime::InstallChannel::Dev
+        );
+        assert_eq!(resolver.alan_home_dir(), canonical_physical_home.as_path());
+        assert_eq!(
+            resolver.alan_home_paths().alan_home_dir.as_path(),
+            dev_home_link.as_path()
+        );
+        assert_eq!(
+            resolver.workspace_sessions_dir(&workspace),
+            workspace.join(".alan/runtime/dev/sessions")
+        );
     }
 }

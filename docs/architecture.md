@@ -84,8 +84,11 @@ Workspace `.alan` contains both authored agent definition files and generated
 runtime state. The repository ignores workspace `.alan/*` by default, then
 explicitly allows authored roots under `.alan/agents/` and
 workspace model overlays like `.alan/models.toml` to remain source-controlled.
-Generated runtime files such as `.alan/sessions/` and `.alan/memory/` are local
-continuation/debugging state and stay ignored by default.
+Generated runtime files live under a channel namespace such as
+`.alan/runtime/stable/` or `.alan/runtime/dev/`; they are local
+continuation/debugging state and stay ignored by default. Stable Alan can still
+read legacy generated workspace state from `.alan/sessions/` and `.alan/memory/`
+for compatibility, but Alan Dev must not write those legacy stable paths.
 
 Overlay order is:
 
@@ -203,13 +206,26 @@ pub struct WorkspaceRuntimeConfig {
 │       ├── persona/
 │       ├── skills/
 │       └── policy.yaml
-├── memory/
-│   └── MEMORY.md           # long-term knowledge
-├── sessions/
-│   └── rollout-*.jsonl     # persisted rollout files
+├── runtime/
+│   ├── stable/
+│   │   ├── memory/
+│   │   │   └── MEMORY.md   # stable generated long-term knowledge
+│   │   ├── sessions/
+│   │   │   └── rollout-*.jsonl
+│   │   ├── cache/
+│   │   ├── shell-restore/
+│   │   ├── metadata/
+│   │   └── tmp/
+│   └── dev/
+│       ├── memory/
+│       ├── sessions/
+│       ├── cache/
+│       ├── shell-restore/
+│       ├── metadata/
+│       └── tmp/
 
-{workspace_root}/.alan/sessions/
-└── rollout-*.jsonl         # current + archived session rollouts
+{workspace_root}/.alan/sessions/      # legacy stable rollout location, read-compatible
+{workspace_root}/.alan/memory/        # legacy stable memory location, read-compatible
 ```
 
 Public skill install targets live alongside the alan state roots:

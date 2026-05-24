@@ -182,8 +182,16 @@ fn prepare_overlay_chain(temp: &TempDir) -> (AlanHomePaths, PathBuf, PathBuf, Pa
     let workspace_alan_dir = workspace_root.join(".alan");
     let home_paths = AlanHomePaths::from_home_dir(&home_dir);
 
-    std::fs::create_dir_all(workspace_alan_dir.join("sessions")).unwrap();
-    std::fs::create_dir_all(workspace_alan_dir.join("memory")).unwrap();
+    std::fs::create_dir_all(alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        &workspace_alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    ))
+    .unwrap();
+    std::fs::create_dir_all(alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        &workspace_alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    ))
+    .unwrap();
 
     write_agent_root(
         &home_paths.global_agent_root_dir,
@@ -462,7 +470,10 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
 async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
     let temp = TempDir::new().unwrap();
     let (home_paths, workspace_root, workspace_alan_dir, _) = prepare_overlay_chain(&temp);
-    let sessions_dir = workspace_alan_dir.join("sessions");
+    let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        &workspace_alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    );
 
     let session_id = "sess-overlay-base";
     let (_, first_requests) = run_turn(

@@ -42,6 +42,13 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 /// Initialize the workspace directory structure.
 /// Returns true if the .alan directory was newly created.
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
+    create_alan_directory_for_channel(alan_dir, alan_runtime::InstallChannel::detect_current())
+}
+
+fn create_alan_directory_for_channel(
+    alan_dir: &Path,
+    channel: alan_runtime::InstallChannel,
+) -> Result<bool> {
     let created = !alan_dir.exists();
     let alan_dir = ensure_workspace_alan_dir(alan_dir)?;
     let workspace_root = alan_dir
@@ -58,11 +65,11 @@ pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
     let _skills_dir = ensure_workspace_layout_dir(workspace_root, &default_root.skills_dir)?;
     let _sessions_dir = ensure_workspace_layout_dir(
         workspace_root,
-        &alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_dir),
+        &alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel),
     )?;
     let memory_dir = ensure_workspace_layout_dir(
         workspace_root,
-        &alan_runtime::workspace_memory_dir_from_alan_dir(&alan_dir),
+        &alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel),
     )?;
     let persona_dir = ensure_workspace_layout_dir(workspace_root, &default_root.persona_dir)?;
     let public_agents_dir = ensure_fixed_child_dir(workspace_root, ".agents")?;
@@ -228,9 +235,13 @@ mod tests {
                 .exists()
         );
         assert!(!alan_dir.join("agent").exists());
-        assert!(alan_dir.join("sessions").exists());
-        assert!(alan_dir.join("memory").exists());
-        assert!(alan_dir.join("memory/USER.md").exists());
+        let runtime_sessions_dir = alan_dir.join("runtime/stable/sessions");
+        let runtime_memory_dir = alan_dir.join("runtime/stable/memory");
+        assert!(runtime_sessions_dir.exists());
+        assert!(runtime_memory_dir.exists());
+        assert!(!alan_dir.join("sessions").exists());
+        assert!(!alan_dir.join("memory").exists());
+        assert!(runtime_memory_dir.join("USER.md").exists());
         assert!(
             alan_dir
                 .join("agents")
@@ -238,13 +249,13 @@ mod tests {
                 .join("persona")
                 .exists()
         );
-        assert!(alan_dir.join("memory/MEMORY.md").exists());
-        assert!(alan_dir.join("memory/handoffs/LATEST.md").exists());
-        assert!(alan_dir.join("memory/daily").exists());
-        assert!(alan_dir.join("memory/sessions").exists());
-        assert!(alan_dir.join("memory/working").exists());
-        assert!(alan_dir.join("memory/topics").exists());
-        assert!(alan_dir.join("memory/inbox").exists());
+        assert!(runtime_memory_dir.join("MEMORY.md").exists());
+        assert!(runtime_memory_dir.join("handoffs/LATEST.md").exists());
+        assert!(runtime_memory_dir.join("daily").exists());
+        assert!(runtime_memory_dir.join("sessions").exists());
+        assert!(runtime_memory_dir.join("working").exists());
+        assert!(runtime_memory_dir.join("topics").exists());
+        assert!(runtime_memory_dir.join("inbox").exists());
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
@@ -274,10 +285,12 @@ mod tests {
                 .exists()
         );
         assert!(!alan_dir.join("agent").exists());
-        assert!(alan_dir.join("sessions").exists());
-        assert!(alan_dir.join("memory/MEMORY.md").exists());
-        assert!(alan_dir.join("memory/USER.md").exists());
-        assert!(alan_dir.join("memory/handoffs/LATEST.md").exists());
+        let runtime_memory_dir = alan_dir.join("runtime/stable/memory");
+        assert!(alan_dir.join("runtime/stable/sessions").exists());
+        assert!(!alan_dir.join("sessions").exists());
+        assert!(runtime_memory_dir.join("MEMORY.md").exists());
+        assert!(runtime_memory_dir.join("USER.md").exists());
+        assert!(runtime_memory_dir.join("handoffs/LATEST.md").exists());
         assert!(tmp.path().join(".agents").join("skills").exists());
         assert!(
             alan_dir
@@ -314,7 +327,8 @@ mod tests {
 
         create_alan_directory(&alan_dir).unwrap();
 
-        let memory_content = std::fs::read_to_string(alan_dir.join("memory/MEMORY.md")).unwrap();
+        let memory_content =
+            std::fs::read_to_string(alan_dir.join("runtime/stable/memory/MEMORY.md")).unwrap();
         assert_eq!(memory_content, "# Memory\n");
     }
 
@@ -325,9 +339,11 @@ mod tests {
 
         create_alan_directory(&alan_dir).unwrap();
 
-        let user_content = std::fs::read_to_string(alan_dir.join("memory/USER.md")).unwrap();
+        let user_content =
+            std::fs::read_to_string(alan_dir.join("runtime/stable/memory/USER.md")).unwrap();
         let latest_handoff =
-            std::fs::read_to_string(alan_dir.join("memory/handoffs/LATEST.md")).unwrap();
+            std::fs::read_to_string(alan_dir.join("runtime/stable/memory/handoffs/LATEST.md"))
+                .unwrap();
 
         assert_eq!(user_content, "# User Memory\n");
         assert_eq!(latest_handoff, "# Latest Handoff\n");
@@ -361,17 +377,53 @@ mod tests {
         )
         .unwrap();
 
-        assert!(workspace_root.join(".alan").join("sessions").exists());
         assert!(
             workspace_root
                 .join(".alan")
+                .join("runtime")
+                .join("stable")
+                .join("sessions")
+                .exists()
+        );
+        assert!(
+            workspace_root
+                .join(".alan")
+                .join("runtime")
+                .join("stable")
                 .join("memory")
                 .join("MEMORY.md")
                 .exists()
         );
+        assert!(!workspace_root.join(".alan").join("sessions").exists());
+        assert!(!workspace_root.join(".alan").join("memory").exists());
         assert!(!workspace_root.join(".alan").join(".alan").exists());
         let registry = WorkspaceRegistry::load_from_path(&registry_path).unwrap();
         let entry = registry.find("repo-init").unwrap();
         assert_eq!(entry.path, std::fs::canonicalize(&workspace_root).unwrap());
+    }
+
+    #[test]
+    fn test_create_alan_directory_for_dev_uses_dev_runtime_namespace() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+
+        create_alan_directory_for_channel(&alan_dir, alan_runtime::InstallChannel::Dev).unwrap();
+
+        assert!(alan_dir.join("runtime/dev/sessions").exists());
+        assert!(alan_dir.join("runtime/dev/memory/MEMORY.md").exists());
+        assert!(!alan_dir.join("sessions").exists());
+        assert!(!alan_dir.join("memory").exists());
+    }
+
+    #[test]
+    fn test_create_alan_directory_stable_preserves_existing_legacy_memory() {
+        let tmp = TempDir::new().unwrap();
+        let alan_dir = tmp.path().join(".alan");
+        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+
+        create_alan_directory_for_channel(&alan_dir, alan_runtime::InstallChannel::Stable).unwrap();
+
+        assert!(alan_dir.join("memory/MEMORY.md").exists());
+        assert!(!alan_dir.join("runtime/stable/memory/MEMORY.md").exists());
     }
 }

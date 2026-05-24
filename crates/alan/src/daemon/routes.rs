@@ -28,7 +28,9 @@ use tracing::{debug, info, warn};
 
 use super::api_contract::paths;
 use super::remote_control::{RemoteRequestContext, required_scope_for_op};
-use super::state::{AppState, CreateSessionFromRolloutOptions, SessionPlanSnapshot};
+use super::state::{
+    AppState, CreateSessionFromRolloutOptions, SessionPlanSnapshot, rollout_path_matches_session,
+};
 use super::task_store::{
     RunCheckpointRecord, RunResumeAction, RunStatus, ScheduleItemRecord, ScheduleStatus,
     ScheduleTriggerType,
@@ -1249,19 +1251,15 @@ pub async fn fork_session(
     let effective_partial_stream_recovery_mode =
         partial_stream_recovery_mode.unwrap_or(source_partial_stream_recovery_mode);
 
-    let rollout_path = if let Some(path) = stored_rollout_path {
-        if path.exists() {
-            Some(path)
-        } else {
-            latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id)
-                .await
-                .map_err(status_error_response)?
-        }
-    } else {
-        latest_rollout_path_for_workspace(&state, &session_id, &source_workspace_id)
-            .await
-            .map_err(status_error_response)?
-    };
+    let rollout_path = resolve_rollout_path_for_session(
+        &state,
+        &session_id,
+        &source_workspace_id,
+        stored_rollout_path,
+        "fork",
+    )
+    .await
+    .map_err(status_error_response)?;
 
     let Some(rollout_path) = rollout_path else {
         return Err(status_error_response(StatusCode::CONFLICT));
@@ -1398,9 +1396,17 @@ async fn resolve_rollout_path_for_session(
     read_surface: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
     let rollout_path = if let Some(path) = stored_rollout_path {
-        if path.exists() {
+        if path.exists() && rollout_path_matches_session(&path, session_id) {
             Some(path)
         } else {
+            if path.exists() {
+                warn!(
+                    %session_id,
+                    %workspace_id,
+                    path = %path.display(),
+                    "Stored rollout path does not match session id; looking for session-matched rollout"
+                );
+            }
             let refreshed =
                 latest_rollout_path_for_workspace(state, session_id, workspace_id).await?;
             state
@@ -1442,36 +1448,25 @@ async fn best_effort_latest_compaction_attempt_for_reconnect(
     workspace_id: &str,
     rollout_path: Option<PathBuf>,
 ) -> Option<CompactionAttemptSnapshot> {
-    let resolved_rollout_path = match rollout_path {
-        Some(path) if path.exists() => Some(path),
-        Some(_) | None => {
-            match latest_rollout_path_for_workspace(state, session_id, workspace_id).await {
-                Ok(path) => path,
-                Err(status) => {
-                    warn!(
-                        %session_id,
-                        %workspace_id,
-                        ?status,
-                        "Failed to inspect rollout path for reconnect compaction fallback"
-                    );
-                    return None;
-                }
+    let items = match load_rollout_items_for_session(
+        state,
+        session_id,
+        workspace_id,
+        rollout_path,
+        "reconnect compaction fallback",
+    )
+    .await
+    {
+        Ok((_, items)) => items,
+        Err(status) => {
+            if status != StatusCode::NOT_FOUND {
+                warn!(
+                    %session_id,
+                    %workspace_id,
+                    ?status,
+                    "Failed to load rollout for reconnect compaction fallback"
+                );
             }
-        }
-    };
-
-    let rollout_path = resolved_rollout_path?;
-
-    let items = match RolloutRecorder::load_history(&rollout_path).await {
-        Ok(items) => items,
-        Err(err) => {
-            warn!(
-                %session_id,
-                %workspace_id,
-                path = %rollout_path.display(),
-                error = %err,
-                "Failed to read rollout history for reconnect compaction fallback"
-            );
             return None;
         }
     };
@@ -1516,27 +1511,30 @@ async fn latest_rollout_path_for_workspace(
     session_id: &str,
     _workspace_id: &str,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let sessions_dir = match state.get_sessions_dir(session_id).await.map_err(|err| {
-        warn!(
-            %session_id,
-            error = %err,
-            "Failed to recover sessions before resolving sessions directory"
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })? {
-        Some(dir) => dir,
+    let sessions_dirs = match state
+        .get_session_read_dirs(session_id)
+        .await
+        .map_err(|err| {
+            warn!(
+                %session_id,
+                error = %err,
+                "Failed to recover sessions before resolving session read directories"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })? {
+        Some(dirs) => dirs,
         None => {
-            warn!(%session_id, "Session not found when looking up sessions directory");
+            warn!(%session_id, "Session not found when looking up session read directories");
             return Err(StatusCode::NOT_FOUND);
         }
     };
 
-    latest_rollout_path(&sessions_dir).map_err(|err| {
+    latest_rollout_path_in_dirs(&sessions_dirs, session_id).map_err(|err| {
         warn!(
             %session_id,
-            path = %sessions_dir.display(),
+            paths = ?sessions_dirs,
             error = %err,
-            "Failed to inspect sessions directory for history"
+            "Failed to inspect session read directories for history"
         );
         StatusCode::INTERNAL_SERVER_ERROR
     })
@@ -2069,7 +2067,10 @@ fn stream_resume_failed_envelope(session_id: &str, error_message: String) -> Eve
     }
 }
 
-fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>> {
+fn latest_rollout_path(
+    sessions_dir: &FsPath,
+    session_id: &str,
+) -> std::io::Result<Option<PathBuf>> {
     if !sessions_dir.exists() {
         return Ok(None);
     }
@@ -2123,6 +2124,9 @@ fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>
             if !is_jsonl {
                 continue;
             }
+            if !rollout_path_matches_session(&path, session_id) {
+                continue;
+            }
 
             let modified = entry
                 .metadata()
@@ -2138,6 +2142,19 @@ fn latest_rollout_path(sessions_dir: &FsPath) -> std::io::Result<Option<PathBuf>
     }
 
     Ok(latest.map(|(_, path)| path))
+}
+
+fn latest_rollout_path_in_dirs(
+    sessions_dirs: &[PathBuf],
+    session_id: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    for sessions_dir in sessions_dirs {
+        if let Some(path) = latest_rollout_path(sessions_dir, session_id)? {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
 }
 
 fn status_for_session_creation_error(err: &anyhow::Error) -> StatusCode {
@@ -2474,6 +2491,39 @@ mod tests {
         session_entry_with_replay_capacity(workspace_path, 32)
     }
 
+    fn write_history_rollout(path: &std::path::Path, session_id: &str, content: &str) {
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: session_id.to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+                reasoning_effort: None,
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some(content.to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(
+            path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+    }
+
     fn create_test_skill(workspace_path: &std::path::Path, skill_name: &str) {
         let skill_dir = workspace_path
             .join(".alan/agents/default/skills")
@@ -2536,7 +2586,10 @@ Body
             parent_session_id.to_string(),
             format!("child-session-{child_run_id}"),
             Some("/tmp/alan-child-route-workspace".to_string()),
-            Some("/tmp/alan-child-route-workspace/.alan/sessions/child.jsonl".to_string()),
+            Some(
+                "/tmp/alan-child-route-workspace/.alan/runtime/stable/sessions/child.jsonl"
+                    .to_string(),
+            ),
             Some("repo-coding".to_string()),
         )
     }
@@ -2564,12 +2617,20 @@ Body
         let workspace_path = base_dir.join("workspace");
         let alan_dir = workspace_path.join(".alan");
         std::fs::create_dir_all(alan_dir.join("agents/default/skills")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("sessions")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
+        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&memory_dir).unwrap();
         std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
-        std::fs::write(alan_dir.join("memory").join("MEMORY.md"), "# Memory\n").unwrap();
+        std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
-        let guard = SessionsDirPermissionGuard::new(alan_dir.join("sessions"));
+        let guard = SessionsDirPermissionGuard::new(sessions_dir);
         (workspace_path, guard)
     }
 
@@ -3250,7 +3311,7 @@ Body
 
         let old_items = [
             alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
-                session_id: "runtime-old".to_string(),
+                session_id: "sess-history".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
@@ -3318,6 +3379,149 @@ Body
 
         assert_eq!(resp.messages.len(), 1);
         assert_eq!(resp.messages[0].content, "expected-from-stored");
+    }
+
+    #[tokio::test]
+    async fn get_session_history_falls_back_to_stable_legacy_sessions_dir() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
+
+        let legacy_sessions_dir = temp.path().join(".alan").join("sessions");
+        std::fs::create_dir_all(&legacy_sessions_dir).unwrap();
+        let rollout = legacy_sessions_dir.join("legacy-read.jsonl");
+        let items = [
+            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+                session_id: "sess-legacy-history".to_string(),
+                started_at: "2026-02-23T00:00:00Z".to_string(),
+                cwd: ".".to_string(),
+                model: "test-model".to_string(),
+                reasoning_effort: None,
+            }),
+            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some("loaded-from-stable-legacy".to_string()),
+                tool_name: None,
+                message: None,
+                timestamp: "2026-02-23T00:00:01Z".to_string(),
+            }),
+        ];
+        std::fs::write(
+            &rollout,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-legacy-history".to_string(), entry);
+
+        let Json(resp) = get_session_history(
+            State(state.clone()),
+            Path("sess-legacy-history".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "loaded-from-stable-legacy");
+        let stored = state
+            .sessions
+            .read()
+            .await
+            .get("sess-legacy-history")
+            .and_then(|entry| entry.rollout_path.clone());
+        assert_eq!(stored, Some(rollout));
+    }
+
+    #[tokio::test]
+    async fn get_session_history_fallback_matches_requested_session_across_read_dirs() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (entry, _submission_rx) = session_entry(temp.path());
+
+        let stable_runtime_sessions_dir = temp
+            .path()
+            .join(".alan")
+            .join("runtime")
+            .join("stable")
+            .join("sessions");
+        let legacy_sessions_dir = temp.path().join(".alan").join("sessions");
+        let unrelated = stable_runtime_sessions_dir.join("rollout-20260223-other-session.jsonl");
+        let target = legacy_sessions_dir.join("rollout-20260223-sess-fallback-target.jsonl");
+        write_history_rollout(&unrelated, "other-session", "wrong-stable-session");
+        write_history_rollout(&target, "sess-fallback-target", "target-from-legacy");
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fallback-target".to_string(), entry);
+
+        let Json(resp) = get_session_history(
+            State(state.clone()),
+            Path("sess-fallback-target".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "target-from-legacy");
+        let stored = state
+            .sessions
+            .read()
+            .await
+            .get("sess-fallback-target")
+            .and_then(|entry| entry.rollout_path.clone());
+        assert_eq!(stored, Some(target));
+    }
+
+    #[tokio::test]
+    async fn get_session_history_ignores_stored_rollout_for_another_session() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
+
+        let sessions_dir = temp
+            .path()
+            .join(".alan")
+            .join("runtime")
+            .join("stable")
+            .join("sessions");
+        let unrelated = sessions_dir.join("rollout-20260223-other-session.jsonl");
+        let target = sessions_dir.join("rollout-20260223-sess-stored-target.jsonl");
+        write_history_rollout(&unrelated, "other-session", "wrong-stored-session");
+        write_history_rollout(&target, "sess-stored-target", "target-from-session-match");
+        entry.rollout_path = Some(unrelated);
+
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-stored-target".to_string(), entry);
+
+        let Json(resp) =
+            get_session_history(State(state.clone()), Path("sess-stored-target".to_string()))
+                .await
+                .unwrap();
+
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "target-from-session-match");
+        let stored = state
+            .sessions
+            .read()
+            .await
+            .get("sess-stored-target")
+            .and_then(|entry| entry.rollout_path.clone());
+        assert_eq!(stored, Some(target));
     }
 
     #[tokio::test]
@@ -3487,7 +3691,7 @@ Body
         let rollout = temp.path().join("read.jsonl");
         let items = [
             alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
-                session_id: "runtime-read".to_string(),
+                session_id: "sess-read".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
@@ -3627,7 +3831,7 @@ Body
         let rollout_path = temp.path().join(rollout_name);
         let items = [
             alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
-                session_id: "runtime-non-utf8-read".to_string(),
+                session_id: "sess-read-non-utf8".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
@@ -4565,6 +4769,54 @@ Body
     }
 
     #[tokio::test]
+    async fn fork_session_ignores_stored_rollout_for_another_session() {
+        let state = test_state();
+        let temp = tempfile::TempDir::new().unwrap();
+        let (mut entry, _submission_rx) = session_entry(temp.path());
+        let sessions_dir = temp
+            .path()
+            .join(".alan")
+            .join("runtime")
+            .join("stable")
+            .join("sessions");
+        let unrelated = sessions_dir.join("rollout-20260316-other-session.jsonl");
+        let target = sessions_dir.join("rollout-20260316-sess-fork-target.jsonl");
+        write_history_rollout(&unrelated, "other-session", "wrong-fork-source");
+        write_history_rollout(&target, "sess-fork-target", "target-fork-source");
+        entry.rollout_path = Some(unrelated);
+        state
+            .sessions
+            .write()
+            .await
+            .insert("sess-fork-target".to_string(), entry);
+
+        let Json(resp) = fork_session(
+            State(state.clone()),
+            Path("sess-fork-target".to_string()),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .await
+        .unwrap();
+
+        let Json(history) = get_session_history(State(state), Path(resp.session_id))
+            .await
+            .unwrap();
+        assert!(
+            history
+                .messages
+                .iter()
+                .any(|message| message.content == "target-fork-source")
+        );
+        assert!(
+            history
+                .messages
+                .iter()
+                .all(|message| message.content != "wrong-fork-source")
+        );
+    }
+
+    #[tokio::test]
     async fn fork_session_explicit_reasoning_effort_overrides_source_metadata() {
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
@@ -4964,12 +5216,12 @@ Body
         let newer = dir.join("b.jsonl");
         let other = dir.join("ignore.txt");
 
-        std::fs::write(&older, "{}\n").unwrap();
+        write_history_rollout(&older, "sess-latest", "older");
         std::thread::sleep(std::time::Duration::from_millis(10));
-        std::fs::write(&newer, "{}\n").unwrap();
+        write_history_rollout(&newer, "sess-latest", "newer");
         std::fs::write(&other, "x").unwrap();
 
-        let found = latest_rollout_path(&dir).unwrap().unwrap();
+        let found = latest_rollout_path(&dir, "sess-latest").unwrap().unwrap();
         assert_eq!(found, newer);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -4983,12 +5235,34 @@ Body
         let top = dir.join("a.jsonl");
         let nested_latest = nested.join("b.jsonl");
 
-        std::fs::write(&top, "{}\n").unwrap();
+        write_history_rollout(&top, "sess-nested", "top");
         std::thread::sleep(std::time::Duration::from_millis(10));
-        std::fs::write(&nested_latest, "{}\n").unwrap();
+        write_history_rollout(&nested_latest, "sess-nested", "nested");
 
-        let found = latest_rollout_path(&dir).unwrap().unwrap();
+        let found = latest_rollout_path(&dir, "sess-nested").unwrap().unwrap();
         assert_eq!(found, nested_latest);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn latest_rollout_path_in_dirs_uses_read_dir_priority() {
+        let dir = std::env::temp_dir().join(format!("agentd-routes-{}", uuid::Uuid::new_v4()));
+        let primary = dir.join("runtime").join("stable").join("sessions");
+        let fallback = dir.join("sessions");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(&fallback).unwrap();
+        let primary_rollout = primary.join("primary.jsonl");
+        let fallback_rollout = fallback.join("fallback.jsonl");
+
+        write_history_rollout(&primary_rollout, "sess-priority", "primary");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        write_history_rollout(&fallback_rollout, "sess-priority", "fallback");
+
+        let found = latest_rollout_path_in_dirs(&[primary, fallback], "sess-priority")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found, primary_rollout);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

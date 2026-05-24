@@ -148,10 +148,7 @@ pub(crate) fn build_turn_recall_bundle(
             if trimmed.is_empty() {
                 return None;
             }
-            let relative_path = path
-                .strip_prefix(memory_dir)
-                .map(|value| format!(".alan/memory/{}", value.display()))
-                .unwrap_or_else(|_| path.display().to_string());
+            let relative_path = format_relative_memory_path(memory_dir, &path);
             Some(format!(
                 "### {relative_path}\n{}\n",
                 truncate_chars(trimmed, MAX_FILE_RECALL_CHARS)
@@ -168,6 +165,24 @@ pub(crate) fn build_turn_recall_bundle(
 Selected turn-relevant pure-text memory based on the current user request. Treat this as runtime-routed recall, not raw speculative search.\n\n{}",
         sections.join("\n")
     ))
+}
+
+fn format_relative_memory_path(memory_dir: &Path, path: &Path) -> String {
+    path.strip_prefix(memory_dir)
+        .map(|relative| {
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            if let Some(channel_dir) = memory_dir.parent()
+                && channel_dir
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "runtime")
+                && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
+            {
+                return format!(".alan/runtime/{channel_id}/memory/{relative}");
+            }
+            format!(".alan/memory/{relative}")
+        })
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 fn path_is_within_canonical_root(path: &Path, canonical_memory_root: &Path) -> bool {

@@ -401,11 +401,11 @@ parent tape:
     "child_run": {
       "session_id": "child-session-id",
       "child_run_id": "child-run-id",
-      "rollout_path": ".alan/sessions/child-rollout.jsonl"
+      "rollout_path": ".alan/runtime/<channel>/sessions/child-rollout.jsonl"
     },
     "output_ref": {
       "session_id": "child-session-id",
-      "rollout_path": ".alan/sessions/child-rollout.jsonl",
+      "rollout_path": ".alan/runtime/<channel>/sessions/child-rollout.jsonl",
       "field": "output_text"
     },
     "structured_output": {
@@ -547,7 +547,7 @@ resolved capability view:
 
 | Skill      | Purpose                                                       |
 | ---------- | ------------------------------------------------------------- |
-| **memory** | Persistent pure-text memory across sessions (`{workspace_alan_dir}/memory/`) |
+| **memory** | Persistent pure-text memory across sessions (`{workspace_alan_dir}/runtime/<channel>/memory/`; stable can read legacy `{workspace_alan_dir}/memory/`) |
 | **plan**   | Structured execution plans for complex tasks (`.alan/plans/`) |
 | **repo-coding** | First-party bounded repo-local coding package for steward-owned child execution |
 | **alan-shell-control** | Native alan terminal shell layout and pane control |

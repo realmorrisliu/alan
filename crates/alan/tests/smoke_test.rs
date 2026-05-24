@@ -907,7 +907,10 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
     let temp_workspace = TempDir::new().expect("temp workspace");
     let workspace_root = temp_workspace.path().join("workspace");
     let workspace_alan_dir = workspace_root.join(".alan");
-    let memory_dir = workspace_alan_dir.join("memory");
+    let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        &workspace_alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    );
     fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
     alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)
         .expect("initialize workspace memory layout");
@@ -988,7 +991,7 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
         "expected runtime recall bundle to be appended for identity recall questions"
     );
     assert!(
-        system_prompt.contains(".alan/memory/USER.md"),
+        system_prompt.contains(".alan/runtime/stable/memory/USER.md"),
         "expected runtime recall bundle to cite USER.md"
     );
     assert!(
@@ -1064,8 +1067,14 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         .await
         .expect("shutdown first runtime");
 
-    let latest_handoff =
-        fs::read_to_string(workspace_alan_dir.join("memory/handoffs/LATEST.md")).unwrap();
+    let latest_handoff = fs::read_to_string(
+        alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &workspace_alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        )
+        .join("handoffs/LATEST.md"),
+    )
+    .unwrap();
     assert!(
         latest_handoff.contains(continuity_marker),
         "expected latest handoff to preserve the continuity marker"
@@ -1136,6 +1145,6 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
         .expect("expected recorded runtime recall prompt");
     assert!(system_prompt.contains("## Runtime Recall Bundle"));
-    assert!(system_prompt.contains(".alan/memory/handoffs/LATEST.md"));
+    assert!(system_prompt.contains(".alan/runtime/stable/memory/handoffs/LATEST.md"));
     assert!(system_prompt.contains(continuity_marker));
 }

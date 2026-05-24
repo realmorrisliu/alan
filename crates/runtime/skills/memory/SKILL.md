@@ -30,13 +30,15 @@ For the active target contract, see `docs/spec/pure_text_memory_contract.md`.
 
 ## Memory Layout
 
-All memory files live under the active workspace alan state directory's `memory/` folder.
+Generated memory files live under the active workspace alan state directory's
+channel-scoped runtime memory folder.
 
 Examples:
 
 ```text
-repo workspace:    .alan/memory/
-default workspace: memory/
+repo workspace:    .alan/runtime/<channel>/memory/
+stable legacy:     .alan/memory/
+default workspace: runtime/<channel>/memory/
 ```
 
 Layout:

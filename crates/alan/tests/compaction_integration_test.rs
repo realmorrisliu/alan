@@ -201,7 +201,8 @@ fn absolute_memory_note_path(memory_dir: &FsPath, attempt: &MemoryFlushAttemptSn
         .as_deref()
         .expect("expected output_path for successful memory flush");
     let relative = std::path::Path::new(output_path)
-        .strip_prefix(".alan/memory/")
+        .strip_prefix(".alan/runtime/stable/memory/")
+        .or_else(|_| std::path::Path::new(output_path).strip_prefix(".alan/memory/"))
         .unwrap_or_else(|_| std::path::Path::new(output_path));
     memory_dir.join(relative)
 }
@@ -213,10 +214,17 @@ fn base_config() -> Config {
 fn prepare_workspace(temp: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
     let workspace_root = temp.path().join("workspace");
     let alan_dir = workspace_root.join(".alan");
-    let sessions_dir = alan_dir.join("sessions");
+    let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        &alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    );
+    let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        &alan_dir,
+        alan_runtime::InstallChannel::Stable,
+    );
     std::fs::create_dir_all(alan_dir.join("skills")).unwrap();
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    alan_runtime::prompts::ensure_workspace_memory_layout_at(&alan_dir.join("memory")).unwrap();
+    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
     std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
     (workspace_root, alan_dir, sessions_dir)
 }
@@ -339,7 +347,10 @@ impl CompactionHarness {
     ) -> Self {
         let temp = TempDir::new().unwrap();
         let (workspace_root, alan_dir, sessions_dir) = prepare_workspace(&temp);
-        let memory_dir = alan_dir.join("memory");
+        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+            &alan_dir,
+            alan_runtime::InstallChannel::Stable,
+        );
         let app_state =
             AppState::with_alan_home(base_config(), temp.path().join("daemon-home").join(".alan"))
                 .unwrap();
@@ -875,12 +886,9 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
         compaction_attempt.memory_flush_attempt_id.as_deref(),
         Some(flush_attempt.attempt_id.as_str())
     );
-    assert!(
-        flush_attempt
-            .output_path
-            .as_deref()
-            .is_some_and(|path| path.starts_with(".alan/memory/daily/") && path.ends_with(".md"))
-    );
+    assert!(flush_attempt.output_path.as_deref().is_some_and(|path| {
+        path.starts_with(".alan/runtime/stable/memory/daily/") && path.ends_with(".md")
+    }));
 
     let surfaces = harness
         .collect_auto_compaction_surfaces(compaction_attempt, Some(flush_attempt))

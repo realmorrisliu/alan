@@ -124,10 +124,7 @@ fn append_prompt_section(prompt: &mut String, section: &str) {
 
 fn infer_workspace_root_from_config(config: &Config) -> Option<PathBuf> {
     let path = config.memory.workspace_dir.as_deref()?;
-    Some(normalize_workspace_root(match path.file_name() {
-        Some(name) if name == std::ffi::OsStr::new("memory") => path.parent()?.parent()?,
-        _ => path,
-    }))
+    infer_workspace_root_from_memory_dir(path).or_else(|| Some(normalize_workspace_root(path)))
 }
 
 fn resolved_workspace_memory_dir(config: &Config, workspace_dir: Option<&Path>) -> Option<PathBuf> {
@@ -136,8 +133,35 @@ fn resolved_workspace_memory_dir(config: &Config, workspace_dir: Option<&Path>) 
     }
 
     workspace_dir
-        .map(|path| crate::workspace_memory_dir(normalize_workspace_root(path).as_path()))
+        .map(|path| {
+            let workspace_root = normalize_workspace_root(path);
+            crate::workspace_memory_dir_for_channel_from_alan_dir(
+                &crate::workspace_alan_dir(workspace_root.as_path()),
+                crate::InstallChannel::detect_current(),
+            )
+        })
         .or_else(|| config.memory.workspace_dir.clone())
+}
+
+fn infer_workspace_root_from_memory_dir(path: &Path) -> Option<PathBuf> {
+    if path.file_name()? != std::ffi::OsStr::new("memory") {
+        return None;
+    }
+    let parent = path.parent()?;
+    if parent.file_name()? == std::ffi::OsStr::new(".alan") {
+        return parent.parent().map(Path::to_path_buf);
+    }
+    if parent
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == std::ffi::OsStr::new("runtime"))
+    {
+        let alan_dir = parent.parent()?.parent()?;
+        if alan_dir.file_name()? == std::ffi::OsStr::new(".alan") {
+            return alan_dir.parent().map(Path::to_path_buf);
+        }
+    }
+    None
 }
 
 fn normalize_workspace_root(path: &Path) -> PathBuf {

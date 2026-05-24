@@ -501,15 +501,23 @@ fn snapshot_output_path(memory_dir: &Path, note_path: &Path) -> String {
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| *name == "memory")
-        .and_then(|_| memory_dir.parent())
-        .and_then(|parent| parent.file_name().and_then(|name| name.to_str()))
-        .filter(|name| *name == ".alan")
-        .and_then(|_| note_path.strip_prefix(memory_dir).ok())
-        .map(|relative_path| {
-            format!(
-                ".alan/memory/{}",
-                relative_path.to_string_lossy().replace('\\', "/")
-            )
+        .and_then(|_| {
+            let relative_path = note_path.strip_prefix(memory_dir).ok()?;
+            let relative_path = relative_path.to_string_lossy().replace('\\', "/");
+            let parent = memory_dir.parent()?;
+            if parent.file_name().and_then(|name| name.to_str()) == Some(".alan") {
+                return Some(format!(".alan/memory/{relative_path}"));
+            }
+            if parent
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some("runtime")
+                && let Some(channel_id) = parent.file_name().and_then(|name| name.to_str())
+            {
+                return Some(format!(".alan/runtime/{channel_id}/memory/{relative_path}"));
+            }
+            None
         });
 
     relative_daily_note.unwrap_or_else(|| note_path.to_string_lossy().to_string())
@@ -617,6 +625,16 @@ mod tests {
         assert_eq!(
             snapshot_output_path(&memory_dir, &note_path),
             ".alan/memory/daily/2026-03-18.md"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_output_path_preserves_channel_runtime_memory_path() {
+        let memory_dir = PathBuf::from("/tmp/ws/.alan/runtime/dev/memory");
+        let note_path = memory_dir.join("daily/2026-03-18.md");
+        assert_eq!(
+            snapshot_output_path(&memory_dir, &note_path),
+            ".alan/runtime/dev/memory/daily/2026-03-18.md"
         );
     }
 

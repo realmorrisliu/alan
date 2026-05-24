@@ -159,7 +159,7 @@ fn test_child_run_record(child_run_id: &str, parent_session_id: &str) -> ChildRu
         parent_session_id.to_string(),
         format!("child-session-{child_run_id}"),
         Some("/tmp/alan-delegated-parent".to_string()),
-        Some("/tmp/alan-delegated-parent/.alan/sessions/child.jsonl".to_string()),
+        Some("/tmp/alan-delegated-parent/.alan/runtime/stable/sessions/child.jsonl".to_string()),
         Some("repo-coding".to_string()),
     )
 }
