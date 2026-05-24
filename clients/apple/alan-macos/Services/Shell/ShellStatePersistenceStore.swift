@@ -176,9 +176,7 @@ struct ShellStatePersistenceStore {
         fileManager: FileManager,
         channel: AlanInstallChannel
     ) -> URL {
-        let appSupportURL =
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
+        let appSupportURL = alanMacApplicationSupportDirectory(fileManager: fileManager)
         return appSupportURL.appendingPathComponent(
             channel.applicationSupportDirectoryName,
             isDirectory: true
@@ -193,9 +191,7 @@ struct ShellStatePersistenceStore {
             return []
         }
 
-        let appSupportURL =
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
+        let appSupportURL = alanMacApplicationSupportDirectory(fileManager: fileManager)
         return [
             appSupportURL.appendingPathComponent("AlanNative", isDirectory: true),
         ]

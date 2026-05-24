@@ -1547,8 +1547,8 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
-    "window\\.isMovableByWindowBackground = true" \
-    "hidden-titlebar shell windows must make non-interactive background regions draggable"
+    "window\\.isMovableByWindowBackground = false" \
+    "hidden-titlebar shell windows must keep tab and space controls out of the implicit window drag region"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \

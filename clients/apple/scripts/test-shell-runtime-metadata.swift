@@ -121,6 +121,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesContentContainerEventsCaptureLifecycleAndRejections()
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesChannelScopedSupportStatePaths()
+        verifiesSmokeEnvironmentPathOverrides()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
@@ -5151,6 +5152,32 @@ private enum ShellRuntimeMetadataTests {
         expect(
             devManifest.path.contains("/alan-macos-dev/"),
             "dev shell manifest path must be under alan-macos-dev"
+        )
+    }
+
+    private static func verifiesSmokeEnvironmentPathOverrides() {
+        let supportOverride = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan smoke support", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let supportDirectory = alanMacApplicationSupportDirectory(
+            environment: [
+                "ALAN_MACOS_APPLICATION_SUPPORT_DIR": " \(supportOverride.path) "
+            ]
+        )
+        expect(
+            supportDirectory.path == supportOverride.path,
+            "app support directory override must trim and expand a smoke path"
+        )
+
+        let namespace = alanShellControlNamespace(
+            channel: .dev,
+            environment: [
+                "ALAN_SHELL_CONTROL_NAMESPACE": " smoke namespace/with spaces "
+            ]
+        )
+        expect(
+            namespace == "smoke-namespace-with-spaces",
+            "shell control namespace override must be sanitized for filesystem use"
         )
     }
 

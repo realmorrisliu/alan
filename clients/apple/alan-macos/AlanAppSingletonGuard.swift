@@ -102,8 +102,7 @@ final class AlanAppSingletonGuard {
     ) throws -> URL {
         let appSupportURL =
             applicationSupportDirectory
-            ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
+            ?? alanMacApplicationSupportDirectory(fileManager: fileManager)
         let lockDirectory = appSupportURL
             .appendingPathComponent(channel.applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("SingletonLocks", isDirectory: true)

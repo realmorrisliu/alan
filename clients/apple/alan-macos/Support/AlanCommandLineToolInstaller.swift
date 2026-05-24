@@ -1,6 +1,21 @@
 import Foundation
 
 #if os(macOS)
+func alanMacApplicationSupportDirectory(
+    fileManager: FileManager = .default,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> URL {
+    if let override = environment["ALAN_MACOS_APPLICATION_SUPPORT_DIR"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+        !override.isEmpty
+    {
+        return URL(fileURLWithPath: NSString(string: override).expandingTildeInPath, isDirectory: true)
+    }
+
+    return fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        ?? fileManager.temporaryDirectory
+}
+
 enum AlanInstallChannel: Equatable {
     case stable
     case dev

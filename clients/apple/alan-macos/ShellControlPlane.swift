@@ -1,13 +1,39 @@
 import Foundation
 
 #if os(macOS)
+func alanShellControlNamespace(
+    channel: AlanInstallChannel = .current(),
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> String {
+    guard let override = environment["ALAN_SHELL_CONTROL_NAMESPACE"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+        !override.isEmpty
+    else {
+        return channel.shellControlNamespace
+    }
+
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+    let sanitized = String(
+        override.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+    )
+    .trimmingCharacters(in: CharacterSet(charactersIn: "-_."))
+
+    return sanitized.isEmpty ? channel.shellControlNamespace : sanitized
+}
+
 func alanShellControlPlaneRootURL(
     windowID: String,
     fileManager: FileManager = .default,
-    channel: AlanInstallChannel = .current()
+    channel: AlanInstallChannel = .current(),
+    environment: [String: String] = ProcessInfo.processInfo.environment
 ) -> URL {
     fileManager.temporaryDirectory
-        .appendingPathComponent(channel.shellControlNamespace, isDirectory: true)
+        .appendingPathComponent(
+            alanShellControlNamespace(channel: channel, environment: environment),
+            isDirectory: true
+        )
         .appendingPathComponent(windowID, isDirectory: true)
 }
 

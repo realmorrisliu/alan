@@ -130,10 +130,7 @@ struct ShellWorkspaceManifestStore {
         fileManager: FileManager = .default,
         channel: AlanInstallChannel = .current()
     ) -> URL {
-        let applicationSupportURL = fileManager.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? fileManager.temporaryDirectory
+        let applicationSupportURL = alanMacApplicationSupportDirectory(fileManager: fileManager)
         return applicationSupportURL
             .appendingPathComponent(channel.applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("shell-workspace-\(sanitizedWindowID(windowID)).json")

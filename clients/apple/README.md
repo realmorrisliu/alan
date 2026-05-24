@@ -143,6 +143,48 @@ zsh ./clients/apple/scripts/capture-alan-window.sh --pid 12345 --output .artifac
 The helper uses ScreenCaptureKit, so it may require Screen Recording permission
 for your terminal on first use.
 
+### Shell UI Smoke
+
+For a repeatable shell UI smoke flow, use:
+
+```bash
+just apple-shell-ui-smoke
+```
+
+The smoke command builds `alan-macos` into repo-local DerivedData, launches a
+controlled app instance with isolated runtime directories and a stable zsh shell
+environment, then captures screenshots under
+`debug/artifacts/apple-shell-ui-smoke/`. Because the current macOS project links
+Ghostty at build time, prepare the ignored local Ghostty links first:
+
+```bash
+./clients/apple/scripts/setup-local-ghosttykit.sh
+```
+
+The default flow does not require Accessibility permission: it launches the app,
+drives space creation, tab creation, split creation, and terminal input through
+alan's shell control plane, then captures the controlled smoke window. When
+Accessibility is available for `osascript`/System Events, the script also
+captures command UI, keyboard space/tab switching, and pane-scoped Find. To
+require those UI-scripting steps, run:
+
+```bash
+ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE=1 just apple-shell-ui-smoke
+```
+
+When local Ghostty artifacts are prepared, the smoke also captures basic
+terminal input using only static smoke text. To require terminal-specific steps,
+run:
+
+```bash
+ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 just apple-shell-ui-smoke
+```
+
+The smoke artifacts are generated from the controlled smoke window only; the
+script builds with a dedicated smoke bundle identifier, uses the dev install
+channel plus per-run shell control and Application Support paths, and does not
+capture arbitrary existing terminal windows or log terminal content.
+
 ## Current Features (v0.1)
 
 ### Desktop (macOS)
@@ -202,6 +244,9 @@ just apple-shell-automation-seams
 # Skips when local Ghostty links are absent; set ALAN_REQUIRE_GHOSTTY_INTEGRATION=1
 # to make missing artifacts fail the command.
 just apple-shell-ghostty-integration
+
+# Shell UI smoke screenshots
+just apple-shell-ui-smoke
 
 # Apple source architecture maintainability report
 bash clients/apple/scripts/check-architecture-maintainability.sh
