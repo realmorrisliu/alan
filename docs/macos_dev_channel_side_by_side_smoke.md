@@ -11,11 +11,15 @@ It covers the OpenSpec side-by-side boundary:
 
 1. stable and dev apps are identifiable by distinct bundle identifiers;
 2. launching Alan Dev does not terminate or replace the stable Alan process;
-3. repeated Alan Dev launches reuse the dev singleton instead of creating a
-   second dev process;
-4. dev shell-control state uses the `alan-dev-shell-control` namespace;
-5. `alan-dev init` writes workspace runtime state under `.alan/runtime/dev/`
-   and does not create legacy stable `.alan/sessions` or `.alan/memory` paths.
+3. repeated Alan Dev launches activate and reuse the dev singleton instead of
+   creating a second dev process;
+4. repeated stable Alan launches activate and reuse the stable singleton while
+   Alan Dev is running;
+5. dev shell-control state is created for the current run in the
+   `alan-dev-shell-control` namespace;
+6. `alan-dev init` writes the current smoke workspace to the dev registry and
+   writes workspace runtime state under `.alan/runtime/dev/` without creating
+   legacy stable `.alan/sessions` or `.alan/memory` paths.
 
 ## Prerequisites
 
@@ -57,21 +61,33 @@ The script uses LaunchServices and System Events, so run it in an interactive
 macOS user session. In sandboxed automation, allow the command to run outside
 the sandbox.
 
+Quit any already-running `Alan Dev.app` before running the smoke. The script
+starts Alan Dev from a clean dev-app state so shell-control namespace checks
+prove the current launch created the dev namespace rather than reusing stale
+temporary files from an earlier run. Stable `Alan.app` may already be running;
+if not, the smoke starts it.
+
 ## Latest Local Evidence
 
-Last run: 2026-05-23.
+Last run: 2026-05-24.
 
 Observed result:
 
 ```text
 Dev channel side-by-side smoke passed.
   stable pid(s): 60215
-  dev pid(s): 57051
-  dev pid(s) after duplicate launch: 57051
+  dev pid(s): 10528
+  dev pid(s) after duplicate launch: 10528
+  stable pid(s) after duplicate launch: 60215
   frontmost before dev launch: com.apple.finder
   frontmost after dev launch: com.apple.finder
-  dev shell-control: .../T/alan-dev-shell-control
-  dev workspace state: .../alan-dev-channel-smoke-workspace.../.alan/runtime/dev
+  frontmost before duplicate dev launch: com.apple.finder
+  frontmost after duplicate dev launch: app.alanworks.macos.dev
+  frontmost before duplicate stable launch: com.apple.finder
+  frontmost after duplicate stable launch: app.alanworks.macos
+  dev shell-control: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-shell-control
+  dev registry: /Users/morris/.alan-dev/registry.json
+  dev workspace state: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-channel-smoke-workspace.V6XdvX/.alan/runtime/dev
 ```
 
 Additional install evidence from the same run:
