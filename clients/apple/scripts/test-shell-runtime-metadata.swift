@@ -115,6 +115,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesSplitPaneAcceptsMarkdownContentIntent()
         verifiesControlPlaneResponsesExposeContentContainers()
+        verifiesControlPlaneSendTextPreservesExplicitTerminalContentIdentity()
         verifiesControlPlanePropagatesRuntimeDeliveryFailures()
         verifiesControlFilePollerHandlesMalformedCommandFiles()
         verifiesControlFilePollerReportsResultWriteDiagnostics()
@@ -4674,6 +4675,88 @@ private enum ShellRuntimeMetadataTests {
             deliveries.count == 2
                 && deliveries.allSatisfy { $0.0 == terminalContentID },
             "control-plane delivery failures must still target the resolved terminal content"
+        )
+    }
+
+    private static func verifiesControlPlaneSendTextPreservesExplicitTerminalContentIdentity() {
+        let windowID = "content_delivery_\(UUID().uuidString)"
+        let baselineState = ShellStateSnapshot.bootstrapDefault(
+            windowID: windowID,
+            workingDirectory: "/tmp"
+        )
+        let baselineContentState = baselineState.contentStateProjection()
+        guard let originalSlot = baselineContentState.paneSlot(paneSlotID: "pane_1"),
+              let originalContent = baselineContentState.content(contentID: originalSlot.contentID),
+              let pane = baselineState.pane(paneID: "pane_1")
+        else {
+            fail("explicit content delivery setup must expose a terminal pane")
+        }
+
+        let explicitContentID = "content_terminal_explicit_target"
+        let explicitSlot = ShellPaneSlot(
+            paneSlotID: originalSlot.paneSlotID,
+            tabID: originalSlot.tabID,
+            spaceID: originalSlot.spaceID,
+            contentID: explicitContentID,
+            attention: originalSlot.attention
+        )
+        let explicitContent = ShellContentInstance.projectingTerminalPane(
+            pane,
+            contentID: explicitContentID
+        )
+        let explicitContentState = ShellContentStateSnapshot(
+            contractVersion: baselineContentState.contractVersion,
+            windowID: baselineContentState.windowID,
+            focusedSpaceID: baselineContentState.focusedSpaceID,
+            focusedTabID: baselineContentState.focusedTabID,
+            focusedPaneSlotID: baselineContentState.focusedPaneSlotID,
+            spaces: baselineContentState.spaces,
+            paneSlots: baselineContentState.paneSlots.map { paneSlot in
+                paneSlot.paneSlotID == originalSlot.paneSlotID ? explicitSlot : paneSlot
+            },
+            contents: baselineContentState.contents.filter {
+                $0.contentID != originalContent.contentID
+            } + [explicitContent]
+        )
+        guard let shellState = explicitContentState.materializingShellState() else {
+            fail("explicit terminal content state must materialize")
+        }
+
+        var deliveries: [(String, String)] = []
+        let registry = TerminalRuntimeRegistry(
+            runtimeService: FakeAlanTerminalRuntimeService(),
+            mockDeliveryHandler: { contentID, text in
+                deliveries.append((contentID, text))
+                return .accepted(byteCount: text.lengthOfBytes(using: .utf8))
+            }
+        )
+        let controller = makeController(shellState: shellState, terminalRuntimeRegistry: registry)
+
+        let text = "echo explicit-content"
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-explicit-content-send-1",
+                  "command": "terminal.send_text",
+                  "content_id": "\(explicitContentID)",
+                  "text": "\(text)"
+                }
+                """
+            )
+        )
+
+        expect(
+            response.applied == true
+                && response.contentID == explicitContentID
+                && response.paneSlotID == "pane_1",
+            "terminal.send_text must accept explicit terminal content_id targets"
+        )
+        expect(
+            deliveries.count == 1
+                && deliveries[0].0 == explicitContentID
+                && deliveries[0].1 == text,
+            "terminal.send_text delivery must preserve explicit content_id instead of deriving from pane slot"
         )
     }
 

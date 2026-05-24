@@ -26,7 +26,14 @@ struct ShellAutomationPaneSplitRequest: Equatable {
 
 struct ShellAutomationSendTextRequest: Equatable {
     let paneID: String
+    let terminalContentID: String?
     let text: String
+
+    init(paneID: String, terminalContentID: String? = nil, text: String) {
+        self.paneID = paneID
+        self.terminalContentID = terminalContentID
+        self.text = text
+    }
 }
 
 enum ShellAutomationCommandResultCode: String, Codable, Equatable {

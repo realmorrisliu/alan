@@ -2736,10 +2736,18 @@ extension ShellHostController: ShellAutomationCommandHandling {
             }
 
         case .sendText(let request):
-            let delivery = terminalRuntimeRegistry.sendText(
-                to: request.paneID,
-                text: request.text
-            )
+            let delivery: TerminalRuntimeDeliveryResult
+            if let terminalContentID = request.terminalContentID {
+                delivery = terminalRuntimeRegistry.sendText(
+                    toTerminalContentID: terminalContentID,
+                    text: request.text
+                )
+            } else {
+                delivery = terminalRuntimeRegistry.sendText(
+                    to: request.paneID,
+                    text: request.text
+                )
+            }
             return shellAutomationResult(
                 code: shellAutomationResultCode(for: delivery),
                 paneID: request.paneID,

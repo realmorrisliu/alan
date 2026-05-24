@@ -5,12 +5,20 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 DERIVED_DATA="${ALAN_UI_SMOKE_DERIVED_DATA:-$REPO_ROOT/debug/DerivedData/apple-shell-ui-smoke}"
 OUTPUT_DIR="${ALAN_UI_SMOKE_OUTPUT_DIR:-$REPO_ROOT/debug/artifacts/apple-shell-ui-smoke}"
+DEFAULT_APP_HOME="${HOME:-/Users/${USER:-$(id -un)}}"
+DEFAULT_APP_PATH="$DEFAULT_APP_HOME/Applications/Alan Dev.app"
+DEFAULT_BUILT_APP_PATH="$DERIVED_DATA/Build/Products/Debug/Alan.app"
+DEFAULT_APP_EXECUTABLE="$DEFAULT_APP_PATH/Contents/MacOS/Alan Dev"
 CUSTOM_SMOKE_TMPDIR=0
 CUSTOM_CONTROL_NAMESPACE=0
 CUSTOM_APP_SUPPORT_DIR=0
+CUSTOM_APP_PATH=0
+CUSTOM_APP_EXECUTABLE=0
 [[ -n "${ALAN_UI_SMOKE_TMPDIR:-}" ]] && CUSTOM_SMOKE_TMPDIR=1
 [[ -n "${ALAN_SHELL_CONTROL_NAMESPACE:-}" ]] && CUSTOM_CONTROL_NAMESPACE=1
 [[ -n "${ALAN_UI_SMOKE_APP_SUPPORT_DIR:-}" ]] && CUSTOM_APP_SUPPORT_DIR=1
+[[ -n "${ALAN_UI_SMOKE_APP_PATH:-}" ]] && CUSTOM_APP_PATH=1
+[[ -n "${ALAN_UI_SMOKE_APP_EXECUTABLE:-}" ]] && CUSTOM_APP_EXECUTABLE=1
 SMOKE_TMPDIR="${ALAN_UI_SMOKE_TMPDIR:-$OUTPUT_DIR/tmp}"
 SYSTEM_TMPDIR="${ALAN_UI_SMOKE_SYSTEM_TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}")}"
 LAUNCH_MODE="${ALAN_UI_SMOKE_LAUNCH_MODE:-open}"
@@ -50,19 +58,19 @@ CONTROL_ROOT="${CONTROL_TMPDIR%/}/$CONTROL_NAMESPACE/window_main"
 COMMANDS_DIR="$CONTROL_ROOT/commands"
 RESULTS_DIR="$CONTROL_ROOT/results"
 STATE_PATH="$CONTROL_ROOT/state.json"
-APP_PATH="${ALAN_UI_SMOKE_APP_PATH:-$DERIVED_DATA/Build/Products/Debug/Alan.app}"
-APP_EXECUTABLE="${ALAN_UI_SMOKE_APP_EXECUTABLE:-$APP_PATH/Contents/MacOS/Alan}"
+APP_PATH="${ALAN_UI_SMOKE_APP_PATH:-$DEFAULT_APP_PATH}"
+APP_EXECUTABLE="${ALAN_UI_SMOKE_APP_EXECUTABLE:-$DEFAULT_APP_EXECUTABLE}"
 CAPTURE="$REPO_ROOT/clients/apple/scripts/capture-alan-window.sh"
 TIMEOUT_SECONDS="${ALAN_UI_SMOKE_TIMEOUT_SECONDS:-20}"
 CAPTURE_TIMEOUT_SECONDS="${ALAN_UI_SMOKE_CAPTURE_TIMEOUT_SECONDS:-6}"
-SKIP_BUILD="${ALAN_UI_SMOKE_SKIP_BUILD:-0}"
+SKIP_BUILD="${ALAN_UI_SMOKE_SKIP_BUILD:-1}"
 KEEP_RUNNING="${ALAN_UI_SMOKE_KEEP_RUNNING:-0}"
 KEEP_RUNTIME_TMP="${ALAN_UI_SMOKE_KEEP_RUNTIME_TMP:-0}"
 RUN_TERMINAL_STEPS="${ALAN_UI_SMOKE_TERMINAL_STEPS:-auto}"
 UI_SCRIPTING_STEPS="${ALAN_UI_SMOKE_UI_SCRIPTING_STEPS:-auto}"
 REQUIRE_TERMINAL_STEPS="${ALAN_REQUIRE_TERMINAL_UI_SMOKE:-0}"
 REQUIRE_UI_SCRIPTING_STEPS="${ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE:-0}"
-SMOKE_BUNDLE_ID="${ALAN_UI_SMOKE_BUNDLE_ID:-app.alanworks.macos.ui-smoke}"
+SMOKE_BUNDLE_ID="${ALAN_UI_SMOKE_BUNDLE_ID:-}"
 SMOKE_DISPLAY_NAME="${ALAN_UI_SMOKE_DISPLAY_NAME:-Alan UI Smoke}"
 SMOKE_HOME="$OUTPUT_DIR/home"
 MANIFEST_PATH="$OUTPUT_DIR/manifest.txt"
@@ -85,7 +93,7 @@ usage() {
 Usage: clients/apple/scripts/test-shell-ui-smoke.sh [options]
 
 Options:
-  --skip-build                Reuse ALAN_UI_SMOKE_APP_PATH or the repo-local Debug build.
+  --skip-build                Reuse ALAN_UI_SMOKE_APP_PATH or the installed Alan Dev app.
   --app <path>                Launch this alan-macos.app bundle.
   --output-dir <path>         Write screenshots and the manifest here.
   --keep-running              Leave the launched app running after the smoke flow.
@@ -94,6 +102,8 @@ Options:
   --help                      Show this help text.
 
 Environment:
+  ALAN_UI_SMOKE_SKIP_BUILD=0 builds and launches the repo-local Debug Alan.app.
+
   ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 makes terminal-specific smoke steps fail
   when local Ghostty artifacts are missing or terminal delivery is unavailable.
 
@@ -127,7 +137,10 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || fail "missing value after --app"
             APP_PATH="$1"
-            APP_EXECUTABLE="${ALAN_UI_SMOKE_APP_EXECUTABLE:-$APP_PATH/Contents/MacOS/Alan}"
+            CUSTOM_APP_PATH=1
+            if [[ "$CUSTOM_APP_EXECUTABLE" != "1" ]]; then
+                APP_EXECUTABLE=""
+            fi
             ;;
         --output-dir)
             shift
@@ -159,6 +172,54 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+resolve_app_path() {
+    if [[ "$CUSTOM_APP_PATH" == "1" ]]; then
+        return
+    fi
+    if [[ "$SKIP_BUILD" == "1" ]]; then
+        APP_PATH="$DEFAULT_APP_PATH"
+    else
+        APP_PATH="$DEFAULT_BUILT_APP_PATH"
+    fi
+}
+
+bundle_identifier_for() {
+    local app_path="$1"
+    plutil -extract CFBundleIdentifier raw -o - "$app_path/Contents/Info.plist" 2>/dev/null || true
+}
+
+executable_name_for() {
+    local app_path="$1"
+    local executable
+    executable=$(plutil -extract CFBundleExecutable raw -o - "$app_path/Contents/Info.plist" 2>/dev/null || true)
+    if [[ -n "$executable" ]]; then
+        printf '%s\n' "$executable"
+        return
+    fi
+    if [[ "$(basename "$app_path")" == "Alan Dev.app" ]]; then
+        printf 'Alan Dev\n'
+    else
+        printf 'Alan\n'
+    fi
+}
+
+resolve_app_executable() {
+    if [[ "$CUSTOM_APP_EXECUTABLE" == "1" ]]; then
+        return
+    fi
+    APP_EXECUTABLE="$APP_PATH/Contents/MacOS/$(executable_name_for "$APP_PATH")"
+}
+
+resolve_smoke_bundle_id() {
+    if [[ -n "$SMOKE_BUNDLE_ID" ]]; then
+        return
+    fi
+    if [[ "$SKIP_BUILD" == "1" ]]; then
+        SMOKE_BUNDLE_ID="$(bundle_identifier_for "$APP_PATH")"
+    fi
+    SMOKE_BUNDLE_ID="${SMOKE_BUNDLE_ID:-app.alanworks.macos.ui-smoke}"
+}
+
 case "$RUN_TERMINAL_STEPS" in
     auto|always|never) ;;
     *) fail "--terminal-steps must be auto, always, or never" ;;
@@ -178,7 +239,10 @@ case "$LAUNCH_MODE" in
     *) fail "ALAN_UI_SMOKE_LAUNCH_MODE must be open or direct" ;;
 esac
 
+resolve_app_path
 command -v plutil >/dev/null 2>&1 || fail "plutil is required for UI smoke"
+resolve_app_executable
+resolve_smoke_bundle_id
 if [[ "$SKIP_BUILD" != "1" ]]; then
     command -v xcodebuild >/dev/null 2>&1 \
         || fail "xcodebuild is required to build the UI smoke app; pass --skip-build --app /path/to/Alan.app to reuse a built app"
@@ -192,6 +256,10 @@ fi
 
 if [[ "$SKIP_BUILD" != "1" && "$ghostty_ready" != "1" ]]; then
     fail "Ghostty artifacts are required to build alan-macos for UI smoke; run clients/apple/scripts/setup-local-ghosttykit.sh or pass --skip-build --app /path/to/alan-macos.app"
+fi
+
+if [[ "$SKIP_BUILD" == "1" && "$CUSTOM_APP_PATH" != "1" && ! -d "$APP_PATH" ]]; then
+    fail "installed Alan Dev app not found: $APP_PATH; run just install-dev first"
 fi
 
 mkdir -p "$OUTPUT_DIR"
@@ -301,10 +369,13 @@ clear_launch_env() {
 
 find_app_pid() {
     /bin/ps -axo pid=,command= | awk -v executable="$APP_EXECUTABLE" '
+        BEGIN {
+            target = tolower(executable)
+        }
         {
             pid = $1
             sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", $0)
-            if (index($0, executable) == 1) {
+            if (index(tolower($0), target) == 1) {
                 print pid
             }
         }

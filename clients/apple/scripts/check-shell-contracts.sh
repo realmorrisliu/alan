@@ -622,8 +622,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
-    "toTerminalContentID: target\\.content\\.contentID" \
-    "terminal.send_text must use the registry delivery result"
+    "terminalContentID: target\\.content\\.contentID" \
+    "terminal.send_text must preserve the resolved terminal content target"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "toTerminalContentID: terminalContentID" \
+    "shared terminal.send_text commands must use explicit content targets when present"
 
 require_pattern \
     "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
@@ -1874,6 +1879,26 @@ require_pattern \
     "scripts/install-channel.sh" \
     "Alan Dev\\.app" \
     "dev channel install contract checks must cover the dev app bundle"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'DEFAULT_APP_HOME="\$\{HOME:-/Users/\$\{USER:-\$\(id -un\)\}\}"' \
+    "UI smoke must derive the installed Alan Dev app root from HOME like install-dev"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'DEFAULT_APP_PATH="\$DEFAULT_APP_HOME/Applications/Alan Dev\.app"' \
+    "UI smoke must default to the installed Alan Dev app for local repeatability"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    "DEFAULT_APP_EXECUTABLE=.*Alan Dev" \
+    "UI smoke must default to the Alan Dev executable instead of the temporary release executable"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'ALAN_UI_SMOKE_APP_PATH:-\$DEFAULT_APP_PATH' \
+    "UI smoke must keep an app bundle override for CI and one-off built app validation"
 
 require_pattern \
     "clients/apple/README.md" \
