@@ -68,6 +68,10 @@ dev-channel-smoke:
 apple-shell-automation-seams:
     bash clients/apple/scripts/test-shell-automation-command-seams.sh
 
+# Run Ghostty-backed macOS shell integration checks when local artifacts are prepared
+apple-shell-ghostty-integration:
+    bash clients/apple/scripts/test-shell-ghostty-integration.sh
+
 # Check release signing and notarization configuration without building
 release-check:
     ALAN_NOTARIZE=1 ./scripts/release-check.sh
