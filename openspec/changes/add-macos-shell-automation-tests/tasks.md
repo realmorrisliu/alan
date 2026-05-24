@@ -19,7 +19,7 @@
 - [ ] 3.2 Add runtime service fake tests for text delivery, unavailable runtime, teardown, and metadata snapshots.
 - [ ] 3.3 Add control-plane tests for query/mutation success, malformed requests, missing targets, runtime unavailable, timeout, and IO diagnostics.
 - [ ] 3.4 Add App Intent routing tests using fake shell state and fake runtime outcomes.
-- [ ] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
+- [x] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
 
 ## 4. UI Smoke And Documentation
 

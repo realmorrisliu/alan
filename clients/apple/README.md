@@ -198,6 +198,11 @@ bash clients/apple/scripts/check-shell-contracts.sh
 # Shell automation command seam tests
 just apple-shell-automation-seams
 
+# Ghostty-backed shell integration lane.
+# Skips when local Ghostty links are absent; set ALAN_REQUIRE_GHOSTTY_INTEGRATION=1
+# to make missing artifacts fail the command.
+just apple-shell-ghostty-integration
+
 # Apple source architecture maintainability report
 bash clients/apple/scripts/check-architecture-maintainability.sh
 
