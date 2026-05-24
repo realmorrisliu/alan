@@ -7,7 +7,7 @@
 
 ## 2. App Intents
 
-- [ ] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
+- [x] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
 - [ ] 2.2 Add intents for creating terminal tabs, creating alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
 - [ ] 2.3 Align intent success and failure results with shared shell command/control-plane result categories.
 - [ ] 2.4 Gate App Intent availability by supported macOS versions and document fallback behavior.

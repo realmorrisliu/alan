@@ -4,15 +4,13 @@ import Foundation
 @main
 struct ShellAutomationCommandSeamsTestRunner {
     static func main() async {
-        await MainActor.run {
-            ShellAutomationCommandSeamsTests.run()
-        }
+        await ShellAutomationCommandSeamsTests.run()
     }
 }
 
 @MainActor
 private enum ShellAutomationCommandSeamsTests {
-    static func run() {
+    static func run() async {
         verifiesCommandSurfaceCoversCoreAutomationActions()
         verifiesFakeHandlerRecordsCommandsAndReturnsConfiguredResults()
         verifiesQueuedDeliveryDoesNotCountAsApplied()
@@ -20,6 +18,8 @@ private enum ShellAutomationCommandSeamsTests {
         verifiesPaneSummaryUsesSafeMetadata()
         verifiesPaneSummaryFallsBackPastBlankTitles()
         verifiesMissingPaneSummaryReturnsNil()
+        verifiesAppEntityProjectionUsesSafeDisplayNames()
+        await verifiesAppEntityQueriesReadActiveSnapshotState()
         print("Shell automation command seam tests passed.")
     }
 
@@ -194,6 +194,94 @@ private enum ShellAutomationCommandSeamsTests {
             state.automationPaneSummary(paneID: "missing") == nil,
             "missing pane summary must be nil"
         )
+    }
+
+    private static func verifiesAppEntityProjectionUsesSafeDisplayNames() {
+        let secretExcerpt = "SECRET_TOKEN=abc123"
+        let state = stateWithVisibleExcerpt(secretExcerpt)
+
+        let projection = ShellAutomationAppEntitySnapshot.projecting(state)
+
+        expect(
+            projection.windows.map(\.id) == ["window_main"],
+            "window entity must use the stable shell window identifier"
+        )
+        expect(
+            projection.spaces.map(\.id) == ["space_main"],
+            "space entity must use the stable shell space identifier"
+        )
+        expect(
+            projection.tabs.map(\.id) == ["tab_main"],
+            "tab entity must use the stable shell tab identifier"
+        )
+        expect(
+            projection.panes.map(\.id) == ["pane_1"],
+            "pane entity must use the stable shell pane identifier"
+        )
+
+        guard let pane = projection.panes.first else {
+            fail("expected pane entity")
+        }
+        expect(pane.displayTitle == "Project shell", "pane entity must use a user-facing title")
+        expect(pane.spaceTitle == "Terminal", "pane entity must retain display-safe space context")
+        expect(pane.tabTitle == "Shell", "pane entity must retain display-safe tab context")
+        expect(
+            pane.displaySubtitle?.contains("/Users/morris/Developer/alan") == true,
+            "pane entity subtitle must include safe cwd metadata"
+        )
+        expect(
+            pane.displaySubtitle?.contains(secretExcerpt) != true,
+            "pane entity subtitle must not expose terminal visible excerpts"
+        )
+        expect(
+            pane.displayTitle.contains("pane_1") == false,
+            "pane entity display title must not expose raw pane IDs"
+        )
+
+        guard let attentionItem = projection.attentionItems.first else {
+            fail("expected attention item entity")
+        }
+        expect(
+            attentionItem.id == "attention:pane_1",
+            "attention item must have a stable identifier derived from its owning pane"
+        )
+        expect(
+            attentionItem.displayTitle == "Project shell",
+            "attention item must use the owning pane's user-facing title"
+        )
+        expect(
+            attentionItem.displaySubtitle?.contains(secretExcerpt) != true,
+            "attention item display text must not expose terminal visible excerpts"
+        )
+    }
+
+    private static func verifiesAppEntityQueriesReadActiveSnapshotState() async {
+        let state = stateWithVisibleExcerpt("SECRET_TOKEN=abc123")
+        ShellAutomationEntityStore.install(snapshotProvider: { state })
+        defer { ShellAutomationEntityStore.reset() }
+
+        do {
+            let spaces = try await AlanShellSpaceQuery().suggestedEntities()
+            expect(spaces.map(\.id) == ["space_main"], "space query must return active window spaces")
+
+            let tabs = try await AlanShellTabQuery().suggestedEntities()
+            expect(tabs.map(\.id) == ["tab_main"], "tab query must return active window tabs")
+
+            let panes = try await AlanShellPaneQuery().entities(for: ["pane_1", "missing"])
+            expect(panes.map(\.id) == ["pane_1"], "pane query must ignore missing pane IDs")
+
+            let attentionItems = try await AlanShellAttentionItemQuery().suggestedEntities()
+            expect(
+                attentionItems.map(\.paneID) == ["pane_1"],
+                "attention query must return non-idle panes as attention items"
+            )
+
+            ShellAutomationEntityStore.install(snapshotProvider: { nil })
+            let windows = try await AlanShellWindowQuery().suggestedEntities()
+            expect(windows.isEmpty, "window query must return empty when no shell state is active")
+        } catch {
+            fail("entity query failed: \(error)")
+        }
     }
 
     private static func stateWithVisibleExcerpt(_ visibleExcerpt: String) -> ShellStateSnapshot {
