@@ -22,6 +22,7 @@ private enum ShellAutomationCommandSeamsTests {
         await verifiesAppEntityQueriesReadActiveSnapshotState()
         verifiesAppIntentRoutingUsesFakeCommandHandler()
         verifiesAppIntentOutcomeAlignsWithCommandResultCategories()
+        verifiesAppIntentFailureOutcomesThrow()
         verifiesAppIntentDialogRedactsSubmittedTextAndRawTargets()
         verifiesAppIntentAvailabilityDocumentsFallback()
         print("Shell automation command seam tests passed.")
@@ -426,6 +427,61 @@ private enum ShellAutomationCommandSeamsTests {
             unavailable.dialog.contains("runtime"),
             "runtime-unavailable dialog must explain the category"
         )
+    }
+
+    private static func verifiesAppIntentFailureOutcomesThrow() {
+        let accepted = ShellAutomationIntentOutcome(
+            command: .focusPane(paneID: "pane_1"),
+            result: ShellAutomationCommandResult(code: .accepted, summary: sampleSummary())
+        )
+        do {
+            try accepted.requireSuccessfulIntentResult()
+        } catch {
+            fail("accepted intent outcome must not throw: \(error)")
+        }
+
+        let queued = ShellAutomationIntentOutcome(
+            command: .sendText(ShellAutomationSendTextRequest(paneID: "pane_1", text: "pwd\n")),
+            result: ShellAutomationCommandResult(
+                code: .queued,
+                summary: nil,
+                paneID: "pane_1",
+                acceptedBytes: 4,
+                deliveryCode: "queued"
+            )
+        )
+        expectIntentFailure(queued, code: .queued, messageFragment: "queued")
+
+        let missing = ShellAutomationIntentOutcome(
+            command: .focusPane(paneID: "pane_missing"),
+            result: ShellAutomationCommandResult(
+                code: .missingTarget,
+                summary: nil,
+                paneID: "pane_missing",
+                errorCode: "pane_not_found",
+                errorMessage: "The requested pane does not exist."
+            )
+        )
+        expectIntentFailure(missing, code: .missingTarget, messageFragment: "target")
+    }
+
+    private static func expectIntentFailure(
+        _ outcome: ShellAutomationIntentOutcome,
+        code: ShellAutomationCommandResultCode,
+        messageFragment: String
+    ) {
+        do {
+            try outcome.requireSuccessfulIntentResult()
+            fail("non-success intent outcome \(code.rawValue) must throw")
+        } catch let error as ShellAutomationIntentError {
+            expect(error.code == code, "intent error must preserve the command result code")
+            expect(
+                error.errorDescription?.contains(messageFragment) == true,
+                "intent error must expose the safe failure dialog"
+            )
+        } catch {
+            fail("intent outcome must throw ShellAutomationIntentError, got \(error)")
+        }
     }
 
     private static func verifiesAppIntentDialogRedactsSubmittedTextAndRawTargets() {

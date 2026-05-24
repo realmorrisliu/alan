@@ -32,7 +32,7 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
             resolvedHost?.shellState
         })
         ShellAutomationIntentStore.install(
-            commandHandler: resolvedHost as? ShellAutomationCommandHandling
+            commandHandler: resolvedHost
         )
         #endif
         host = resolvedHost

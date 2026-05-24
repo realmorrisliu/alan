@@ -27,6 +27,12 @@ struct ShellAutomationIntentOutcome: Equatable, Sendable {
         dialog = ShellAutomationIntentOutcome.dialog(for: command, result: result)
     }
 
+    func requireSuccessfulIntentResult() throws {
+        guard code == .accepted else {
+            throw ShellAutomationIntentError(code: code, dialog: dialog)
+        }
+    }
+
     private static func dialog(
         for command: ShellAutomationCommand,
         result: ShellAutomationCommandResult
@@ -92,6 +98,15 @@ struct ShellAutomationIntentOutcome: Equatable, Sendable {
         let byteSuffix = result?.acceptedBytes.map { " (\($0) bytes)" } ?? ""
         let codeSuffix = result?.deliveryCode.map { " [\($0)]" } ?? ""
         return "\(prefix)\(byteSuffix)\(codeSuffix)."
+    }
+}
+
+struct ShellAutomationIntentError: LocalizedError, Equatable {
+    let code: ShellAutomationCommandResultCode
+    let dialog: String
+
+    var errorDescription: String? {
+        dialog
     }
 }
 
@@ -244,7 +259,7 @@ struct AlanCreateTerminalTabIntent: AppIntent {
             title: tabTitle,
             workingDirectory: workingDirectory
         )
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -268,7 +283,7 @@ struct AlanCreateAlanTabIntent: AppIntent {
             title: tabTitle,
             workingDirectory: workingDirectory
         )
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -288,7 +303,7 @@ struct AlanSplitPaneIntent: AppIntent {
             pane,
             direction: direction.shellDirection
         )
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -302,7 +317,7 @@ struct AlanFocusPaneIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.focusPane(pane)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -316,7 +331,7 @@ struct AlanClosePaneIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.closePane(pane)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -330,7 +345,7 @@ struct AlanCloseTabIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.closeTab(tab)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -347,7 +362,7 @@ struct AlanSendTextToPaneIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.sendText(text, to: pane)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -361,7 +376,7 @@ struct AlanReadPaneSummaryIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.readPaneSummary(for: pane)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
 }
 
@@ -375,8 +390,16 @@ struct AlanOpenAttentionItemIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.openAttentionItem(item)
-        return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
+        return try shellAutomationIntentResult(outcome)
     }
+}
+
+@available(macOS 13.0, *)
+private func shellAutomationIntentResult(
+    _ outcome: ShellAutomationIntentOutcome
+) throws -> some IntentResult & ProvidesDialog {
+    try outcome.requireSuccessfulIntentResult()
+    return .result(dialog: shellAutomationIntentDialog(outcome.dialog))
 }
 
 private func shellAutomationIntentDialog(_ text: String) -> IntentDialog {
