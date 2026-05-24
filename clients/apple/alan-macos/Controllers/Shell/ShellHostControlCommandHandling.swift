@@ -842,6 +842,7 @@ extension ShellHostController {
                 .sendText(
                     ShellAutomationSendTextRequest(
                         paneID: target.paneSlot.paneSlotID,
+                        terminalContentID: target.content.contentID,
                         text: command.text ?? ""
                     )
                 )
@@ -864,11 +865,11 @@ extension ShellHostController {
                 paneID: target.paneSlot.paneSlotID,
                 paneSlotID: target.paneSlot.paneSlotID,
                 contentID: target.content.contentID,
-                acceptedBytes: result.acceptedBytes,
-                deliveryCode: result.deliveryCode,
-                runtimePhase: result.runtimePhase,
-                errorCode: result.errorCode,
-                errorMessage: result.errorMessage
+                acceptedBytes: delivery.acceptedBytes,
+                deliveryCode: delivery.code.rawValue,
+                runtimePhase: delivery.runtimePhase,
+                errorCode: delivery.errorCode,
+                errorMessage: delivery.errorMessage
             )
 
         case .agentActivity:

@@ -72,7 +72,7 @@ apple-shell-automation-seams:
 apple-shell-ghostty-integration:
     bash clients/apple/scripts/test-shell-ghostty-integration.sh
 
-# Run repeatable macOS shell UI smoke with screenshots
+# Run repeatable macOS shell UI smoke against the installed Alan Dev app
 apple-shell-ui-smoke:
     bash clients/apple/scripts/test-shell-ui-smoke.sh
 

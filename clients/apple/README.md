@@ -151,11 +151,23 @@ For a repeatable shell UI smoke flow, use:
 just apple-shell-ui-smoke
 ```
 
-The smoke command builds `alan-macos` into repo-local DerivedData, launches a
-controlled app instance with isolated runtime directories and a stable zsh shell
-environment, then captures screenshots under
-`debug/artifacts/apple-shell-ui-smoke/`. Because the current macOS project links
-Ghostty at build time, prepare the ignored local Ghostty links first:
+The smoke command launches the installed dev-channel app at
+`~/Applications/Alan Dev.app` by default, using isolated runtime directories and
+a stable zsh shell environment, then captures screenshots under
+`debug/artifacts/apple-shell-ui-smoke/`. Install or refresh that app first:
+
+```bash
+just install-dev
+```
+
+To force a repo-local Debug build instead, run:
+
+```bash
+ALAN_UI_SMOKE_SKIP_BUILD=0 just apple-shell-ui-smoke
+```
+
+Because the current macOS project links Ghostty at build time, prepare the
+ignored local Ghostty links before using that build mode:
 
 ```bash
 ./clients/apple/scripts/setup-local-ghosttykit.sh
@@ -181,9 +193,9 @@ ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 just apple-shell-ui-smoke
 ```
 
 The smoke artifacts are generated from the controlled smoke window only; the
-script builds with a dedicated smoke bundle identifier, uses the dev install
-channel plus per-run shell control and Application Support paths, and does not
-capture arbitrary existing terminal windows or log terminal content.
+script uses the dev install channel plus per-run shell control and Application
+Support paths, and does not capture arbitrary existing terminal windows or log
+terminal content.
 
 ## Current Features (v0.1)
 
@@ -246,6 +258,9 @@ just apple-shell-automation-seams
 just apple-shell-ghostty-integration
 
 # Shell UI smoke screenshots
+# Defaults to the installed dev-channel app at ~/Applications/Alan Dev.app.
+# Run `just install-dev` first; set ALAN_UI_SMOKE_SKIP_BUILD=0 to build a
+# repo-local Debug Alan.app instead.
 just apple-shell-ui-smoke
 
 # Apple source architecture maintainability report
