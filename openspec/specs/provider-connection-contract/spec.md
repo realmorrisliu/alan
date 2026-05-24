@@ -129,8 +129,10 @@ Credential kinds are logical classes: `managed_oauth`, `secret_string`, and
 alan SHALL store non-secret connection metadata separately from secret-bearing
 credentials and managed login state.
 
-V1 non-secret metadata lives in `~/.alan/connections.toml` with this logical
-shape:
+V1 non-secret metadata lives in the active install channel's `connections.toml`
+with this logical shape. The stable channel stores it at
+`~/.alan/connections.toml`; the dev channel stores it at
+`~/.alan-dev/connections.toml`.
 
 ```toml
 version = 1
@@ -158,7 +160,8 @@ Rules:
 - `connections.toml` stores profile and credential metadata only.
 - Secret-bearing credentials live in a host-managed store outside `agent.toml`.
 - Managed ChatGPT login state remains outside `connections.toml`.
-- Existing ChatGPT managed login uses the managed auth store under alan home.
+- Existing ChatGPT managed login uses the managed auth store under the active
+  alan home.
 - `secret_string` credentials use a host-managed secret store with file
   permissions equivalent to `0600` unless replaced by a stronger host backend
   such as keychain or keyring.

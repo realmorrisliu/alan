@@ -130,8 +130,10 @@ Compatibility tiers:
 
 - Tier 1 portable runtime compatibility discovers and runs public skill
   directories centered on `SKILL.md`, including optional `bin/`, `scripts/`,
-  `references/`, and `assets/`, under `~/.agents/skills/`,
-  `<workspace>/.agents/skills/`, and alan `AgentRoot` `skills/` directories.
+  `references/`, and `assets/`, under the channel-selected global public skill
+  source, `<workspace>/.agents/skills/`, and alan `AgentRoot` `skills/`
+  directories. The stable global public skill source is `~/.agents/skills/`;
+  the dev global public skill source is `~/.agents-dev/skills/`.
 - Tier 2 compatibility metadata may consume public metadata such as
   `agents/openai.yaml` for UI-facing metadata or policy hints like
   `allow_implicit_invocation`; unknown fields remain fail-open.

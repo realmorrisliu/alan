@@ -13,14 +13,14 @@ alan SHALL store every default and named agent definition root under an `agents`
 directory. The default agent root SHALL be named `default`.
 
 #### Scenario: Default roots use the reserved default directory
-- **WHEN** alan resolves default agent roots for an alan home and a workspace
-- **THEN** the global default root is `~/.alan/agents/default/`
+- **WHEN** alan resolves default agent roots for the active alan home and a workspace
+- **THEN** the global default root is `<alan-home>/agents/default/`
 - **AND** the workspace default root is `<workspace>/.alan/agents/default/`
-- **AND** alan does not include `~/.alan/agent/` or `<workspace>/.alan/agent/` in the resolved roots
+- **AND** alan does not include `<alan-home>/agent/` or `<workspace>/.alan/agent/` in the resolved roots
 
 #### Scenario: Named roots remain under agents by name
-- **WHEN** alan resolves a named agent root for `reviewer`
-- **THEN** the global named root is `~/.alan/agents/reviewer/`
+- **WHEN** alan resolves a named agent root for `reviewer` in the active alan home
+- **THEN** the global named root is `<alan-home>/agents/reviewer/`
 - **AND** the workspace named root is `<workspace>/.alan/agents/reviewer/`
 
 ### Requirement: Default agent name semantics
@@ -31,7 +31,7 @@ Omitting `agent_name` SHALL select the same agent definition as explicitly provi
 #### Scenario: Omitted agent name selects default
 - **WHEN** a session, CLI command, or daemon request omits `agent_name`
 - **THEN** alan resolves only the default agent root chain
-- **AND** the root chain is `~/.alan/agents/default/ -> <workspace>/.alan/agents/default/` when both scopes exist
+- **AND** the root chain is `<alan-home>/agents/default/ -> <workspace>/.alan/agents/default/` when both scopes exist
 
 #### Scenario: Explicit default selects default
 - **WHEN** a session, CLI command, or daemon request sets `agent_name` to `default`
@@ -49,9 +49,9 @@ roots after them, preserving the existing precedence model with updated paths.
 
 #### Scenario: Named workspace session resolves default then named roots
 - **WHEN** alan resolves `agent_name = "reviewer"` for a workspace session
-- **THEN** the root order is `~/.alan/agents/default/`
+- **THEN** the root order is `<alan-home>/agents/default/`
 - **AND** then `<workspace>/.alan/agents/default/`
-- **AND** then `~/.alan/agents/reviewer/`
+- **AND** then `<alan-home>/agents/reviewer/`
 - **AND** then `<workspace>/.alan/agents/reviewer/`
 
 #### Scenario: Missing scopes are skipped without changing relative precedence
@@ -65,8 +65,8 @@ assets from the resolved canonical roots only.
 
 #### Scenario: Default config path changes
 - **WHEN** alan loads the default global agent-facing config without `ALAN_CONFIG_PATH`
-- **THEN** the default config path is `~/.alan/agents/default/agent.toml`
-- **AND** `~/.alan/agent/agent.toml` is not read
+- **THEN** the default config path is `<alan-home>/agents/default/agent.toml`
+- **AND** `<alan-home>/agent/agent.toml` is not read
 
 #### Scenario: Workspace default assets load from new root
 - **WHEN** a workspace default root contains `persona/`, `skills/`, or `policy.yaml`
@@ -85,8 +85,8 @@ skill files under `.alan/agents/default/`.
 
 #### Scenario: Global setup writes default agent config
 - **WHEN** setup or connection commands create the global default agent config
-- **THEN** they write `~/.alan/agents/default/agent.toml`
-- **AND** they do not create `~/.alan/agent/agent.toml`
+- **THEN** they write `<alan-home>/agents/default/agent.toml`
+- **AND** they do not create `<alan-home>/agent/agent.toml`
 
 #### Scenario: Workspace default writes use agents default
 - **WHEN** workspace-scoped APIs or commands write default agent persona, policy, skill overrides, or skill packages
