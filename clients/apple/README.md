@@ -244,13 +244,23 @@ The client uses the existing `/api/v1/sessions/*` compatibility layer:
 xcodebuild \
   -project clients/apple/alan-macos.xcodeproj \
   -scheme alan-macos \
-  -destination 'generic/platform=macOS' build
+  -configuration Debug \
+  -destination 'generic/platform=macOS' \
+  -derivedDataPath debug/xcode-derived/alan-macos-build \
+  build
 
 # Shell control-plane contract smoke
 bash clients/apple/scripts/check-shell-contracts.sh
 
+# Focused shell tests: model, fake runtime, control-plane, and App Intent routing.
+# This target does not require real Ghostty artifacts.
+just apple-shell-focused-tests
+
 # Shell automation command seam tests
 just apple-shell-automation-seams
+
+# App Intents metadata review after building alan-macos with the command above.
+just apple-shell-app-intents-metadata
 
 # Ghostty-backed shell integration lane.
 # Skips when local Ghostty links are absent; set ALAN_REQUIRE_GHOSTTY_INTEGRATION=1

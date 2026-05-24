@@ -64,9 +64,18 @@ install-dev:
 dev-channel-smoke:
     ./scripts/smoke-dev-channel-side-by-side.sh
 
+# Run focused macOS shell tests that do not require real Ghostty artifacts
+apple-shell-focused-tests:
+    bash clients/apple/scripts/test-shell-automation-command-seams.sh
+    bash clients/apple/scripts/test-shell-runtime-metadata.sh
+
 # Run focused macOS shell automation command seam tests
 apple-shell-automation-seams:
     bash clients/apple/scripts/test-shell-automation-command-seams.sh
+
+# Review generated App Intents metadata from a built alan-macos app
+apple-shell-app-intents-metadata:
+    bash clients/apple/scripts/check-shell-app-intents-metadata.sh
 
 # Run Ghostty-backed macOS shell integration checks when local artifacts are prepared
 apple-shell-ghostty-integration:

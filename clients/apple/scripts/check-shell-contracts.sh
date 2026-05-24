@@ -1901,6 +1901,26 @@ require_pattern \
     "UI smoke must keep an app bundle override for CI and one-off built app validation"
 
 require_pattern \
+    "justfile" \
+    "^apple-shell-focused-tests:" \
+    "focused Apple shell tests must have a single everyday just target"
+
+require_pattern \
+    "justfile" \
+    "test-shell-runtime-metadata\\.sh" \
+    "focused Apple shell tests must include runtime and control-plane metadata coverage"
+
+require_pattern \
+    "clients/apple/scripts/check-shell-app-intents-metadata.sh" \
+    "AlanCreateTerminalTabIntent" \
+    "App Intent metadata review must cover generated Shortcuts action names"
+
+require_pattern \
+    "clients/apple/README.md" \
+    "just apple-shell-focused-tests" \
+    "Apple README must document the aggregate focused shell test target"
+
+require_pattern \
     "clients/apple/README.md" \
     "stable .*window_main.* identity" \
     "Apple client docs must describe the singleton primary shell identity"
