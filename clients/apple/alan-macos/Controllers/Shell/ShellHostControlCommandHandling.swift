@@ -220,6 +220,41 @@ extension ShellHostController {
         )
     }
 
+    func terminalDeliveryResult(
+        from result: ShellAutomationCommandResult
+    ) -> TerminalRuntimeDeliveryResult {
+        let code = result.deliveryCode.flatMap(TerminalRuntimeDeliveryCode.init(rawValue:))
+            ?? terminalDeliveryCode(for: result.code)
+        return TerminalRuntimeDeliveryResult(
+            code: code,
+            acceptedBytes: result.acceptedBytes ?? 0,
+            runtimePhase: result.runtimePhase,
+            errorCode: result.errorCode,
+            errorMessage: result.errorMessage
+        )
+    }
+
+    private func terminalDeliveryCode(
+        for code: ShellAutomationCommandResultCode
+    ) -> TerminalRuntimeDeliveryCode {
+        switch code {
+        case .accepted:
+            return .accepted
+        case .queued:
+            return .queued
+        case .rejected:
+            return .rejected
+        case .missingTarget:
+            return .missingTarget
+        case .runtimeUnavailable:
+            return .unavailableRuntime
+        case .timeout:
+            return .timeout
+        case .invalidRequest, .unsupportedContent, .lastPane, .lastTab:
+            return .rejected
+        }
+    }
+
     func handleControlPlaneCommand(_ command: AlanShellControlCommand) -> AlanShellControlResponse {
         switch command.command {
         case .state:
@@ -273,25 +308,31 @@ extension ShellHostController {
             )
 
         case .tabOpen:
-            guard let tabID = openTerminalTab(
-                in: command.spaceID,
-                title: command.title,
-                workingDirectory: command.cwd
-            ) else {
+            let result = performShellAutomationCommand(
+                .createTab(
+                    ShellAutomationCreateTabRequest(
+                        launchTarget: .shell,
+                        spaceID: command.spaceID,
+                        title: command.title,
+                        workingDirectory: command.cwd
+                    )
+                )
+            )
+            guard result.applied else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
-                    spaceID: command.spaceID,
-                    errorCode: "space_not_found",
-                    errorMessage: "The requested space does not exist."
+                    spaceID: result.spaceID ?? command.spaceID,
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
                 )
             }
             return response(
                 requestID: command.requestID,
                 applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: tabID,
-                paneID: shellState.focusedPaneID
+                spaceID: result.spaceID,
+                tabID: result.tabID,
+                paneID: result.paneID
             )
 
         case .tabClose:
@@ -304,29 +345,39 @@ extension ShellHostController {
                 )
             }
 
-            switch closeTab(tabID: tabID) {
-            case .closed:
+            let result = performShellAutomationCommand(.closeTab(tabID: tabID))
+            switch result.code {
+            case .accepted:
                 return response(
                     requestID: command.requestID,
                     applied: true,
-                    tabID: tabID,
-                    paneID: shellState.focusedPaneID
+                    tabID: result.tabID ?? tabID,
+                    paneID: result.paneID
                 )
-            case .tabNotFound:
+            case .missingTarget:
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     tabID: tabID,
-                    errorCode: "tab_not_found",
-                    errorMessage: "The requested tab does not exist."
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
                 )
             case .lastTab:
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     tabID: tabID,
-                    errorCode: "last_tab",
-                    errorMessage: "alan terminal workspace must keep at least one tab open."
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
+                )
+            case .queued, .rejected, .invalidRequest, .unsupportedContent, .runtimeUnavailable,
+                    .timeout, .lastPane:
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    tabID: tabID,
+                    errorCode: result.errorCode ?? result.code.rawValue,
+                    errorMessage: result.errorMessage
                 )
             }
 
@@ -530,13 +581,23 @@ extension ShellHostController {
                     errorMessage: "direction is required for pane.split."
                 )
             }
-            guard let newPaneID = splitPane(paneID: paneID, direction: direction) else {
+            let result = performShellAutomationCommand(
+                .splitPane(
+                    ShellAutomationPaneSplitRequest(
+                        paneID: paneID,
+                        placement: .defaultPlacement(for: direction)
+                    )
+                )
+            )
+            guard result.applied,
+                  let newPaneID = result.paneID
+            else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
                 )
             }
             return response(
@@ -559,30 +620,40 @@ extension ShellHostController {
                 )
             }
 
-            switch closePane(paneID: paneID) {
-            case .closed:
+            let result = performShellAutomationCommand(.closePane(paneID: paneID))
+            switch result.code {
+            case .accepted:
                 return response(
                     requestID: command.requestID,
                     applied: true,
-                    spaceID: shellState.focusedSpaceID,
-                    tabID: shellState.focusedTabID,
-                    paneID: shellState.focusedPaneID
+                    spaceID: result.spaceID,
+                    tabID: result.tabID,
+                    paneID: result.paneID
                 )
-            case .paneNotFound:
+            case .missingTarget:
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: paneID,
-                    errorCode: "pane_not_found",
-                    errorMessage: "The requested pane does not exist."
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
                 )
             case .lastTab:
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: paneID,
-                    errorCode: "last_tab",
-                    errorMessage: "alan terminal workspace must keep at least one pane open."
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage
+                )
+            case .queued, .rejected, .invalidRequest, .unsupportedContent, .runtimeUnavailable,
+                    .timeout, .lastPane:
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: result.errorCode ?? result.code.rawValue,
+                    errorMessage: result.errorMessage
                 )
             }
 
@@ -666,25 +737,32 @@ extension ShellHostController {
             return handlePaneMoveWithinTabCommand(command)
 
         case .paneFocus:
-            guard let paneID = command.paneID,
-                  shellState.panes.contains(where: { $0.paneID == paneID })
-            else {
+            guard let paneID = command.paneID else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     paneID: command.paneID,
+                    errorCode: "pane_required",
+                    errorMessage: "pane_id is required."
+                )
+            }
+
+            let result = performShellAutomationCommand(.focusPane(paneID: paneID))
+            guard result.applied else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
                     errorCode: "pane_not_found",
                     errorMessage: "The requested pane does not exist."
                 )
             }
-
-            focus(paneID: paneID)
             return response(
                 requestID: command.requestID,
                 applied: true,
-                spaceID: shellState.focusedSpaceID,
-                tabID: shellState.focusedTabID,
-                paneID: paneID
+                spaceID: result.spaceID,
+                tabID: result.tabID,
+                paneID: result.paneID
             )
 
         case .paneSpatialFocus:
@@ -760,11 +838,15 @@ extension ShellHostController {
                 )
             }
 
-            let text = command.text ?? ""
-            let delivery = terminalRuntimeRegistry.sendText(
-                toTerminalContentID: target.content.contentID,
-                text: text
+            let result = performShellAutomationCommand(
+                .sendText(
+                    ShellAutomationSendTextRequest(
+                        paneID: target.paneSlot.paneSlotID,
+                        text: command.text ?? ""
+                    )
+                )
             )
+            let delivery = terminalDeliveryResult(from: result)
             controlPlane.recordTextDelivery(
                 requestID: command.requestID,
                 spaceID: target.paneSlot.spaceID,
@@ -776,17 +858,17 @@ extension ShellHostController {
 
             return response(
                 requestID: command.requestID,
-                applied: delivery.applied,
+                applied: result.applied,
                 spaceID: target.paneSlot.spaceID,
                 tabID: target.paneSlot.tabID,
                 paneID: target.paneSlot.paneSlotID,
                 paneSlotID: target.paneSlot.paneSlotID,
                 contentID: target.content.contentID,
-                acceptedBytes: delivery.acceptedBytes,
-                deliveryCode: delivery.code.rawValue,
-                runtimePhase: delivery.runtimePhase,
-                errorCode: delivery.errorCode,
-                errorMessage: delivery.errorMessage
+                acceptedBytes: result.acceptedBytes,
+                deliveryCode: result.deliveryCode,
+                runtimePhase: result.runtimePhase,
+                errorCode: result.errorCode,
+                errorMessage: result.errorMessage
             )
 
         case .agentActivity:

@@ -33,6 +33,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesMovingLastPaneClosesSourceTabWithoutFinalizingMovedRuntime()
         verifiesWorkspaceLifecycleRetirementFinalizesTerminalContentAndRejectsDelivery()
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
+        verifiesShellHostControllerRoutesSharedAutomationCommands()
+        verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -1082,6 +1084,117 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.terminalRuntimeRegistry.registeredPaneIDs.isEmpty,
             "shutdown must clear terminal runtime registry state"
+        )
+    }
+
+    private static func verifiesShellHostControllerRoutesSharedAutomationCommands() {
+        let controller = makeController()
+        let handler: ShellAutomationCommandHandling = controller
+
+        let split = handler.performShellAutomationCommand(
+            .splitPane(ShellAutomationPaneSplitRequest(paneID: "pane_1", placement: .right))
+        )
+
+        guard split.code == .accepted,
+              let splitPaneID = split.paneID,
+              controller.pane(paneID: splitPaneID) != nil
+        else {
+            fail("shared split command must create and return the new pane")
+        }
+
+        let summary = handler.performShellAutomationCommand(.readPaneSummary(paneID: splitPaneID))
+        expect(
+            summary.code == .accepted && summary.summary?.paneID == splitPaneID,
+            "shared read-summary command must return safe pane metadata"
+        )
+
+        let focus = handler.performShellAutomationCommand(.focusPane(paneID: "pane_1"))
+        expect(
+            focus.code == .accepted && controller.shellState.focusedPaneID == "pane_1",
+            "shared focus command must update controller focus"
+        )
+
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let send = handler.performShellAutomationCommand(
+            .sendText(ShellAutomationSendTextRequest(paneID: "pane_1", text: "pwd\n"))
+        )
+        expect(
+            send.code == .accepted && send.deliveryCode == "accepted" && send.acceptedBytes == 4,
+            "shared send-text command must expose runtime delivery semantics"
+        )
+        expect(handle.deliveredText == ["pwd\n"], "shared send-text command must reach runtime")
+
+        let close = handler.performShellAutomationCommand(.closePane(paneID: splitPaneID))
+        expect(
+            close.code == .accepted && controller.pane(paneID: splitPaneID) == nil,
+            "shared close-pane command must close the target pane"
+        )
+
+        let missing = handler.performShellAutomationCommand(.focusPane(paneID: "missing"))
+        expect(
+            missing.code == .missingTarget && !missing.applied,
+            "shared command handler must report missing targets with stable semantics"
+        )
+    }
+
+    private static func verifiesControlPlaneRoutesSharedAutomationCommandSemantics() {
+        let controller = makeController()
+
+        let split = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "automation-split-1",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "vertical"
+                }
+                """
+            )
+        )
+        guard split.applied == true,
+              let splitPaneID = split.paneID,
+              controller.pane(paneID: splitPaneID) != nil
+        else {
+            fail("control-plane split must use accepted shared command semantics")
+        }
+
+        let missingFocus = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "automation-focus-missing-1",
+                  "command": "pane.focus",
+                  "pane_id": "missing"
+                }
+                """
+            )
+        )
+        expect(
+            missingFocus.applied == false && missingFocus.errorCode == "pane_not_found",
+            "control-plane focus must report shared missing-target semantics"
+        )
+
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let send = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "automation-send-1",
+                  "command": "terminal.send_text",
+                  "pane_id": "pane_1",
+                  "text": "pwd\\n"
+                }
+                """
+            )
+        )
+        expect(
+            send.applied == true && send.deliveryCode == "accepted" && send.acceptedBytes == 4,
+            "control-plane send_text must expose shared runtime delivery semantics"
+        )
+        expect(
+            handle.deliveredText == ["pwd\n"],
+            "control-plane send_text must route through the shared runtime command path"
         )
     }
 
