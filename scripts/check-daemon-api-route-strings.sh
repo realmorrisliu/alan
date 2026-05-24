@@ -9,9 +9,8 @@ files=(
   "crates/alan/src/daemon/routes.rs"
   "crates/alan/src/daemon/relay.rs"
   "crates/alan/src/daemon/remote_control.rs"
-  "crates/alan/src/cli/ask.rs"
   "crates/alan/src/cli/daemon.rs"
-  "clients/tui/src/client.ts"
+  "crates/tui/src/daemon_client.rs"
 )
 
 violations=0
@@ -30,7 +29,7 @@ done
 
 if [[ "$violations" -ne 0 ]]; then
   echo
-  echo "Use crates/alan/src/daemon/api_contract.rs or generated apiPaths helpers instead."
+  echo "Use crates/alan/src/daemon/api_contract.rs endpoint helpers instead."
   exit 1
 fi
 

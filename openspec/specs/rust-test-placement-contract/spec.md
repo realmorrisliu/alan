@@ -71,7 +71,7 @@ Scope rules:
 - This contract defines where Rust tests live.
 - It does not define every subsystem's test strategy, coverage target,
   provider-harness policy, or full CI matrix ownership.
-- Non-Rust clients such as `clients/tui/` and `clients/apple/` are outside this
+- Non-Rust clients such as `clients/apple/` are outside this
   contract unless a future OpenSpec owner adopts similar placement rules.
 - Existing inline tests are not required to move in one cutover.
 - Production APIs must not become `pub` or `pub(crate)` only to satisfy test

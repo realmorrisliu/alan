@@ -86,7 +86,7 @@ blindly.
 Use pane snapshots to answer questions like:
 
 1. What is happening in this pane right now?
-2. Is this pane running `alan-tui`, a shell, or some other process?
+2. Is this pane running bare `alan`, a shell, or some other process?
 3. Is the pane waiting on the user?
 4. Is the pane likely the correct destination for the next action?
 

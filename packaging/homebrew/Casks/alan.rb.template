@@ -10,7 +10,6 @@ cask "alan" do
 
   app "Alan.app"
   binary "#{appdir}/Alan.app/Contents/Resources/bin/alan", target: "alan"
-  binary "#{appdir}/Alan.app/Contents/Resources/bin/alan-tui", target: "alan-tui"
 
   zap trash: [
     "~/Library/Application Support/alan-macos",

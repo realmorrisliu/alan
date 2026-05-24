@@ -47,7 +47,7 @@ body:
         - OS:
         - rustc:
         - cargo:
-        - bun (if TUI-related):
+        - alan --version / commit:
     validations:
       required: true
 

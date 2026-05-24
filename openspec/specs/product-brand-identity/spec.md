@@ -98,7 +98,7 @@ identifiers.
 #### Scenario: Command or system identifier is displayed
 - **WHEN** docs, help text, scripts, tests, paths, package metadata, or terminal
   output refer to literal command syntax or machine identifiers
-- **THEN** they may use lowercase identifiers such as `alan`, `alan-tui`,
+- **THEN** they may use lowercase identifiers such as `alan`,
   `~/.alan`, `app.alanworks.macos`, and `alan-macos`
 - **AND** they do not imply those lowercase identifiers are the app's
   user-visible brand spelling
@@ -138,5 +138,5 @@ The product SHALL keep `Alan` as the public product brand while allowing
 
 #### Scenario: Brand validation runs
 - **WHEN** brand validation scans active source, scripts, docs, project metadata, and active OpenSpec changes
-- **THEN** it allows `Alan Dev`, `alan-dev`, `alan-dev-tui`, `~/.alan-dev`, `~/.agents-dev/skills`, and `app.alanworks.macos.dev` only in dev-channel contexts
+- **THEN** it allows `Alan Dev`, `alan-dev`, `~/.alan-dev`, `~/.agents-dev/skills`, and `app.alanworks.macos.dev` only in dev-channel contexts
 - **AND** it continues to reject obsolete product names and unallowlisted lowercase user-visible app branding

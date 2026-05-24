@@ -4,8 +4,6 @@
 //! - `alan daemon start` — run the workspace daemon
 //! - `alan init` — initialize a workspace
 //! - `alan workspace` — manage workspaces
-//! - `alan chat` — interactive TUI (spawns Bun TUI)
-//! - `alan ask` — one-shot question
 
 mod cli;
 mod daemon;
@@ -13,11 +11,11 @@ mod host_config;
 pub mod registry;
 mod skill_catalog;
 
-use alan::OutputMode;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -65,34 +63,6 @@ enum Commands {
         #[command(subcommand)]
         action: SkillsAction,
     },
-    /// Interactive chat (launches TUI)
-    Chat,
-    /// Ask a one-shot question
-    Ask {
-        /// The question to ask
-        question: String,
-        /// Workspace directory (defaults to current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Output mode: text (human), json (NDJSON for agents), quiet (script)
-        #[arg(long, value_enum, default_value_t = OutputMode::Text)]
-        output: OutputMode,
-        /// Show thinking/reasoning in text mode
-        #[arg(long)]
-        thinking: bool,
-        /// Timeout in seconds
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
-        /// Force streaming generation path for this session
-        #[arg(long, conflicts_with = "no_stream")]
-        stream: bool,
-        /// Force non-streaming generation path for this session
-        #[arg(long = "no-stream", conflicts_with = "stream")]
-        no_stream: bool,
-        /// Partial stream recovery behavior for interrupted visible output
-        #[arg(long = "partial-stream-recovery", value_parser = ["continue_once", "off"])]
-        partial_stream_recovery: Option<String>,
-    },
     /// Control a local `alan shell` host via IPC
     Shell {
         #[command(subcommand)]
@@ -114,11 +84,7 @@ enum DaemonAction {
     Status,
     /// Emit the daemon API contract for generated clients
     #[command(name = "api-contract", hide = true)]
-    ApiContract {
-        /// Emit TypeScript endpoint helpers instead of JSON
-        #[arg(long)]
-        typescript: bool,
-    },
+    ApiContract,
 }
 
 #[derive(Subcommand)]
@@ -855,18 +821,11 @@ async fn main() -> Result<()> {
             DaemonAction::Status => {
                 cli::daemon::daemon_status().await?;
             }
-            DaemonAction::ApiContract { typescript } => {
-                if typescript {
-                    print!(
-                        "{}",
-                        daemon::api_contract::render_typescript_endpoint_helpers()
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&daemon::api_contract::endpoint_manifest())?
-                    );
-                }
+            DaemonAction::ApiContract => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&daemon::api_contract::endpoint_manifest())?
+                );
             }
         },
         Some(Commands::Init { path, name, silent }) => {
@@ -975,48 +934,6 @@ async fn main() -> Result<()> {
                 )?;
             }
         },
-        Some(Commands::Chat) => {
-            preflight_chat_agent_config()?;
-            cli::chat::run_chat(agent_name.as_deref()).await?;
-        }
-        Some(Commands::Ask {
-            question,
-            workspace,
-            output,
-            thinking,
-            timeout,
-            stream,
-            no_stream,
-            partial_stream_recovery,
-        }) => {
-            let streaming_mode = if stream {
-                Some(alan_runtime::StreamingMode::On)
-            } else if no_stream {
-                Some(alan_runtime::StreamingMode::Off)
-            } else {
-                None
-            };
-            let partial_stream_recovery_mode =
-                partial_stream_recovery.as_deref().map(|mode| match mode {
-                    "continue_once" => alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
-                    "off" => alan_runtime::PartialStreamRecoveryMode::Off,
-                    _ => unreachable!("validated by clap value_parser"),
-                });
-            let code = cli::ask::run_ask(
-                &question,
-                cli::ask::AskOptions {
-                    workspace,
-                    mode: output,
-                    show_thinking: thinking,
-                    timeout_secs: timeout,
-                    agent_name,
-                    streaming_mode,
-                    partial_stream_recovery_mode,
-                },
-            )
-            .await;
-            std::process::exit(code);
-        }
         Some(Commands::Shell { action }) => match action {
             ShellAction::State { target } => {
                 cli::shell::run_shell_state(shell_target_options(target))?;
@@ -1218,27 +1135,92 @@ async fn main() -> Result<()> {
             }
         },
         None => {
-            // Default: launch chat (TUI)
-            preflight_chat_agent_config()?;
-            cli::chat::run_chat(agent_name.as_deref()).await?;
+            if !alan_tui::terminal::is_interactive_terminal() {
+                anyhow::bail!("{}", alan_tui::terminal::terminal_capability_error());
+            }
+            let mut config = prepare_tui_config(agent_name).await?;
+            config.require_interactive_terminal = false;
+            alan_tui::run(config).await?;
         }
     }
 
     Ok(())
 }
 
-fn preflight_chat_agent_config() -> Result<()> {
+async fn prepare_tui_config(agent_name: Option<String>) -> Result<alan_tui::RunConfig> {
+    let endpoints = Arc::new(AlanEndpointContract);
     let agentd_url_override = host_config::daemon_url_env_override();
-    if should_preflight_chat_agent_config(agentd_url_override.as_deref()) {
+
+    let base_url = if let Some(remote_url) = agentd_url_override {
+        let client =
+            alan_tui::daemon_client::DaemonClient::new(remote_url.clone(), endpoints.clone());
+        client.health().await?;
+        remote_url
+    } else {
         cli::load_agent_config_with_notice()?;
-    }
-    Ok(())
+        cli::daemon::ensure_daemon_running_with_state().await?;
+        cli::daemon::daemon_url()
+    };
+
+    let mut config = alan_tui::RunConfig::new(base_url, endpoints);
+    config.agent_name = agent_name;
+    Ok(config)
 }
 
-fn should_preflight_chat_agent_config(agentd_url_override: Option<&str>) -> bool {
-    match agentd_url_override {
-        Some(url) => url.trim().is_empty(),
-        None => true,
+#[derive(Debug)]
+struct AlanEndpointContract;
+
+impl alan_tui::daemon_client::EndpointContract for AlanEndpointContract {
+    fn health(&self) -> &'static str {
+        daemon::api_contract::paths::HEALTH
+    }
+
+    fn sessions(&self) -> &'static str {
+        daemon::api_contract::paths::sessions()
+    }
+
+    fn session_read(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_read(session_id)
+    }
+
+    fn session_reconnect_snapshot(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_reconnect_snapshot(session_id)
+    }
+
+    fn session_history(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_history(session_id)
+    }
+
+    fn session_events_read(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_events_read(session_id)
+    }
+
+    fn session_events(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_events(session_id)
+    }
+
+    fn session_submit(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_submit(session_id)
+    }
+
+    fn session_resume(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_resume(session_id)
+    }
+
+    fn session_rollback(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_rollback(session_id)
+    }
+
+    fn session_compact(&self, session_id: &str) -> String {
+        daemon::api_contract::paths::session_compact(session_id)
+    }
+
+    fn connections_current(&self) -> &'static str {
+        daemon::api_contract::paths::CONNECTIONS_CURRENT
+    }
+
+    fn skills_catalog(&self) -> &'static str {
+        daemon::api_contract::paths::SKILLS_CATALOG
     }
 }
 
@@ -1267,22 +1249,17 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::should_preflight_chat_agent_config;
+    use super::AlanEndpointContract;
+    use alan_tui::daemon_client::EndpointContract;
 
     #[test]
-    fn test_chat_preflight_runs_without_remote_daemon_override() {
-        assert!(should_preflight_chat_agent_config(None));
-    }
-
-    #[test]
-    fn test_chat_preflight_skips_with_remote_daemon_override() {
-        assert!(!should_preflight_chat_agent_config(Some(
-            "http://remote-agentd:8090"
-        )));
-    }
-
-    #[test]
-    fn test_chat_preflight_treats_blank_override_as_local_mode() {
-        assert!(should_preflight_chat_agent_config(Some("   ")));
+    fn endpoint_contract_uses_daemon_api_contract_paths() {
+        let endpoints = AlanEndpointContract;
+        assert_eq!(endpoints.health(), "/health");
+        assert_eq!(endpoints.sessions(), "/api/v1/sessions");
+        assert_eq!(
+            endpoints.session_submit("session/id"),
+            "/api/v1/sessions/session%2Fid/submit"
+        );
     }
 }

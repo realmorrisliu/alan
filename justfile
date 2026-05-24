@@ -52,11 +52,11 @@ serve:
 build:
     cargo build --release
 
-# Install release Alan.app plus CLI/TUI locally
+# Install release Alan.app plus CLI locally
 install:
     ALAN_INSTALL_CHANNEL=stable ./scripts/install.sh
 
-# Install local-only Alan Dev.app plus alan-dev/alan-dev-tui
+# Install local-only Alan Dev.app plus alan-dev
 install-dev:
     ./scripts/install-dev.sh
 
@@ -93,7 +93,7 @@ release-check:
 release:
     ALAN_INSTALL_CHANNEL=stable ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
 
-# Uninstall alan app and user-level CLI/TUI without removing ~/.alan data
+# Uninstall alan app and user-level CLI without removing ~/.alan data
 uninstall:
     ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall.sh
 

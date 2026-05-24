@@ -26,12 +26,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-TUI changes should also run:
+Rust TUI changes should also run:
 
 ```bash
-cd clients/tui
-bun install
-bun run lint
+cargo test -p alan-terminal-ui
 ```
 
 ## Branch and Commit Conventions
@@ -63,4 +61,3 @@ Use the PR template and keep the change set reviewable.
 ## Good First Contributions
 
 Look for issues labeled `good first issue` or `help wanted`.
-

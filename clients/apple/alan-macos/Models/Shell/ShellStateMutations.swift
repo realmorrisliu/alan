@@ -1790,7 +1790,7 @@ extension ShellStateSnapshot {
                 argvPreview: ["-l"]
             )
         case .alan:
-            return ShellProcessBinding(program: "alan-tui", argvPreview: ["alan", "chat"])
+            return ShellProcessBinding(program: "alan", argvPreview: ["alan"])
         }
     }
 
@@ -1916,7 +1916,7 @@ extension ShellStateSnapshot {
                 spaceID: "space_alan_app",
                 launchTarget: .alan,
                 cwd: "/Users/morris/Developer/Alan",
-                process: ShellProcessBinding(program: "alan-tui", argvPreview: ["alan", "chat"]),
+                process: ShellProcessBinding(program: "alan", argvPreview: ["alan"]),
                 attention: .awaitingUser,
                 context: ShellContextSnapshot(
                     workingDirectoryName: "alan",

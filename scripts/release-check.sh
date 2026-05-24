@@ -50,7 +50,7 @@ check_signing_identity() {
 
 printf 'Release env: %s\n' "${ALAN_RELEASE_ENV_FILE_RESOLVED:-none}"
 
-for command in cargo bun xcodebuild codesign ditto shasum security xcrun; do
+for command in cargo xcodebuild codesign ditto shasum security xcrun; do
     check_command "$command"
 done
 

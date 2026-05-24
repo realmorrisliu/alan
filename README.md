@@ -64,8 +64,8 @@ the primary user-facing hosting abstraction.
 ┌─────────────────────────────────────────────────────────────┐
 │                        Clients                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
-│  │   TUI    │  │  alan    │  │   API    │                   │
-│  │  (Bun)   │  │   ask    │  │ (HTTP/WS)│                   │
+│  │   TUI    │  │  macOS   │  │   API    │                   │
+│  │  (Rust)  │  │ (SwiftUI)│  │ (HTTP/WS)│                   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘                  │
 └───────┼─────────────┼─────────────┼─────────────────────────┘
         │             │             │
@@ -109,9 +109,9 @@ alan/
 │   ├── llm/          # LLM provider adapters (ChatGPT/Codex, OpenAI, Gemini, Anthropic, OpenRouter)
 │   ├── runtime/      # Core runtime: tape, session, agent loop, skills, SWE-bench tooling
 │   ├── tools/        # Builtin tool implementations
-│   └── alan/         # Unified CLI & daemon (ask, chat, workspace, daemon)
+│   ├── tui/          # Rust inline terminal UI
+│   └── alan/         # Unified CLI & daemon (workspace, shell, daemon)
 ├── clients/
-│   ├── tui/          # Terminal UI (Bun + TypeScript)
 │   └── apple/        # Native Apple client (SwiftUI, macOS/iOS)
 └── docs/             # Architecture, contracts, maintainer notes, testing strategy
 ```
@@ -148,7 +148,6 @@ alan/
 - **WebSocket + HTTP API**: Real-time session communication plus connection, skill catalog, and relay control surfaces
 - **Shell Control Surface**: `alan shell` IPC commands expose native shell state, spaces, tabs, panes, attention, routing, and events
 - **Context Compaction**: Automatic summarization when context grows large
-- **One-Shot Ask**: `alan ask` for non-interactive queries with text/json/quiet output modes
 - **Thinking Support**: Optional reasoning/thinking display with canonical named effort control
 - **Session Rollback**: Undo last N turns within a session
 
@@ -175,7 +174,7 @@ Notes:
   selected model supports named effort.
 - Existing `thinking_budget_tokens` config is rejected; replace it with the
   closest supported `model_reasoning_effort` value.
-- `alan ask --thinking` controls whether thinking deltas are shown in text-mode CLI output.
+- The Rust TUI and daemon event APIs surface thinking deltas when the selected provider emits them.
 
 ---
 
@@ -200,8 +199,7 @@ just build
 ### Installation
 
 The supported macOS distribution is app-first. The signed `Alan.app` bundle
-contains the `alan` CLI and `alan-tui` executable under
-`Contents/Resources/bin`.
+contains the `alan` command under `Contents/Resources/bin`.
 
 ```bash
 # Normal user install
@@ -242,14 +240,14 @@ APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
 creates or refreshes the notary keychain profile automatically before
 submitting the release artifact.
 
-Homebrew links the embedded `alan` and `alan-tui` binaries into its prefix.
+Homebrew links the embedded `alan` binary into its prefix.
 When installing `Alan.app` directly, use **Tools > Install Command Line
 Tools...** in the app to create PATH-visible symlinks. `~/.alan/bin` is not a
 supported install location.
 
 ### Configuration
 
-The recommended setup path is launching `alan chat` or `alan-tui` and using the
+The recommended setup path is launching bare `alan` and using the
 first-run wizard. The wizard starts with user-facing service presets such as
 ChatGPT/Codex login, OpenAI API Platform, OpenRouter, Kimi Coding, DeepSeek,
 Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
@@ -471,16 +469,8 @@ alan connection set-secret openai-main
 alan connection default set chatgpt-main
 alan connection test chatgpt-main
 
-# Interactive chat (launches TUI)
-alan chat
-
-# One-shot question
-alan ask "What does this project do?"
-alan ask "Explain main.rs" --workspace ./my-project
-alan ask "Summarize" --output json      # NDJSON for automation
-alan ask "Summarize" --output quiet     # text only at end
-alan ask "Think step by step" --thinking --timeout 60
-# ask defaults to autonomous governance profile
+# Interactive Rust TUI
+alan
 
 # Inspect resolved skills, packages, package exports, and availability
 alan skills list

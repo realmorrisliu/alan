@@ -109,27 +109,26 @@ has_homebrew_managed_tool_links() {
     [[ -d /usr/local/Homebrew ]] && prefixes+=("/usr/local")
 
     for prefix in "${prefixes[@]}"; do
-        for tool in "$ALAN_CLI_NAME" "$ALAN_TUI_NAME"; do
-            link="$prefix/bin/$tool"
-            if [[ ! -L "$link" ]]; then
-                continue
-            fi
-            target="$(readlink "$link")"
+        tool="$ALAN_CLI_NAME"
+        link="$prefix/bin/$tool"
+        if [[ ! -L "$link" ]]; then
+            continue
+        fi
+        target="$(readlink "$link")"
+        case "$target" in
+            *"/$ALAN_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
+                printf '%s\n' "$link"
+                return 0
+                ;;
+        esac
+        if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
             case "$target" in
-                *"/$ALAN_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
+                *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
                     printf '%s\n' "$link"
                     return 0
                     ;;
             esac
-            if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
-                case "$target" in
-                    *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
-                        printf '%s\n' "$link"
-                        return 0
-                        ;;
-                esac
-            fi
-        done
+        fi
     done
 
     return 1
@@ -180,7 +179,7 @@ if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_
     rm -rf "$LEGACY_APP_TARGET"
 fi
 
-printf 'Linking CLI and TUI into %s...\n' "$CLI_INSTALL_DIR"
+printf 'Linking CLI into %s...\n' "$CLI_INSTALL_DIR"
 if is_homebrew_prefix_target "$CLI_INSTALL_DIR"; then
     printf 'error: %s is inside a Homebrew prefix.\n' "$CLI_INSTALL_DIR" >&2
     printf '       use the Homebrew cask for Homebrew-managed links, or set ALAN_CLI_INSTALL_DIR to a non-Homebrew PATH directory.\n' >&2
@@ -193,12 +192,10 @@ if homebrew_link="$(has_homebrew_managed_tool_links)"; then
 fi
 mkdir -p "$CLI_INSTALL_DIR"
 link_tool "$ALAN_CLI_NAME"
-link_tool "$ALAN_TUI_NAME"
 
 printf '\n%s installed:\n' "$ALAN_DISPLAY_NAME"
 printf '  app: %s\n' "$APP_TARGET"
 printf '  cli: %s/%s -> %s/Contents/Resources/bin/%s\n' "$CLI_INSTALL_DIR" "$ALAN_CLI_NAME" "$APP_TARGET" "$ALAN_CLI_NAME"
-printf '  tui: %s/%s -> %s/Contents/Resources/bin/%s\n' "$CLI_INSTALL_DIR" "$ALAN_TUI_NAME" "$APP_TARGET" "$ALAN_TUI_NAME"
 
 if [[ "$APP_WAS_RUNNING" -eq 1 ]]; then
     printf '\n%s was running during install. It was not stopped or relaunched; restart it manually to use the newly installed app.\n' "$ALAN_APP_BUNDLE_NAME"

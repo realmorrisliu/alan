@@ -7,6 +7,7 @@ members = [
     "crates/runtime",
     "crates/runtime/skills/swebench/tooling",
     "crates/tools",
+    "crates/tui",
     "crates/alan",
 ]
 
@@ -27,6 +28,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 jsonschema = "0.46"
+bytes = "1"
 
 # Error handling
 anyhow = "1.0"
@@ -80,6 +82,10 @@ dirs = "6.0"
 # Terminal utilities
 terminal_size = "0.4"
 textwrap = "0.16"
+crossterm = "0.29"
+ratatui = "0.29"
+unicode-width = "0.2"
+vt100 = "0.15"
 
 # Testing
 tempfile = "3"
@@ -105,3 +111,4 @@ alan-llm = { path = "crates/llm" }
 alan-runtime = { path = "crates/runtime" }
 alan-swebench-tooling = { path = "crates/runtime/skills/swebench/tooling" }
 alan-tools = { path = "crates/tools" }
+alan-terminal-ui = { path = "crates/tui" }

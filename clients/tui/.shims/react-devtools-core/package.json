@@ -1,6 +1,0 @@
-{
-  "name": "react-devtools-core",
-  "version": "0.0.0-shim",
-  "type": "module",
-  "main": "index.js"
-}

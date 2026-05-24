@@ -134,20 +134,12 @@ Operational model:
 
 ---
 
-## Type Sharing and Compatibility
+## Protocol Sharing and Compatibility
 
-Script: `scripts/generate-ts-types.sh`
-
-Generated artifacts:
-
-- `clients/tui/src/generated/types.ts`
-- `clients/tui/src/generated/event-map.ts`
-
-Notes:
-
-- Generated types include both protocol core events and client compatibility event sets.
-- TypeScript `EventType` may be a superset; Rust `alan_protocol` remains the protocol source of truth.
-- Clients may keep compatibility branches for legacy fields, but new features should align with `text_delta`, `thinking_delta`, and `yield`.
+Rust protocol crates are the source of truth for shipped daemon clients.
+The Rust TUI consumes `alan_protocol` events directly and uses the daemon API
+contract helpers for route construction. Client compatibility checks live in
+Rust contract tests instead of generated TypeScript files.
 
 ---
 
@@ -158,16 +150,15 @@ Notes:
 1. Update `crates/protocol/src/event.rs` first.
 2. Update contract tests: `crates/alan/tests/event_contract_test.rs`.
 3. Update sequence tests: `crates/alan/tests/event_sequence_validation_test.rs`.
-4. Update client handlers (TUI / ask / Apple).
-5. Regenerate types: `./scripts/generate-ts-types.sh`.
-6. Run tests: `cargo test --workspace`.
+4. Update client handlers (Rust TUI / Apple).
+5. Run tests: `cargo test --workspace`.
 
 ### When adding or changing an Op
 
 1. Update `crates/protocol/src/op.rs` first.
 2. Update daemon routing/submission tests.
 3. Update client submission payloads.
-4. Run full tests and regenerate types.
+4. Run full tests.
 
 ### When changing a provider adapter or provider capability declaration
 
@@ -192,10 +183,8 @@ Notes:
 - name: Run event sequence tests
   run: cargo test -p alan --test event_sequence_validation_test
 
-- name: Verify generated TS types are up to date
-  run: |
-    ./scripts/generate-ts-types.sh
-    git diff --exit-code clients/tui/src/generated/
+- name: Run Rust TUI tests
+  run: cargo test -p alan-terminal-ui
 ```
 
 ---
@@ -206,4 +195,4 @@ To avoid protocol mismatch, follow "contract first, compatibility second":
 
 1. Protocol source of truth: `alan_protocol + alan_runtime::tape`
 2. Behavior source of truth: contract tests + sequence tests
-3. Frontend sync mechanism: generated types + CI verification
+3. Frontend sync mechanism: Rust protocol types + CI verification

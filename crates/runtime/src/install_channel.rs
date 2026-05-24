@@ -31,8 +31,6 @@ pub struct InstallChannelDescriptor {
     pub bundle_identifier: &'static str,
     /// CLI executable/link name.
     pub cli_name: &'static str,
-    /// TUI executable/link name.
-    pub tui_name: &'static str,
     /// Channel root under the user's home directory.
     pub alan_home: &'static str,
     /// Alan home directory name, relative to the user's home directory.
@@ -97,8 +95,8 @@ impl InstallChannel {
             .unwrap_or(name);
         let name = name.strip_suffix(".exe").unwrap_or(name);
         match name {
-            "alan" | "alan-tui" => Some(Self::Stable),
-            "alan-dev" | "alan-dev-tui" => Some(Self::Dev),
+            "alan" => Some(Self::Stable),
+            "alan-dev" => Some(Self::Dev),
             _ => None,
         }
     }
@@ -112,7 +110,6 @@ impl InstallChannel {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
-                tui_name: "alan-tui",
                 alan_home: "~/.alan",
                 alan_home_dir_name: ".alan",
                 global_skills_dir: "~/.agents/skills",
@@ -127,7 +124,6 @@ impl InstallChannel {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
-                tui_name: "alan-dev-tui",
                 alan_home: "~/.alan-dev",
                 alan_home_dir_name: ".alan-dev",
                 global_skills_dir: "~/.agents-dev/skills",
@@ -158,7 +154,6 @@ mod tests {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
-                tui_name: "alan-tui",
                 alan_home: "~/.alan",
                 alan_home_dir_name: ".alan",
                 global_skills_dir: "~/.agents/skills",
@@ -180,7 +175,6 @@ mod tests {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
-                tui_name: "alan-dev-tui",
                 alan_home: "~/.alan-dev",
                 alan_home_dir_name: ".alan-dev",
                 global_skills_dir: "~/.agents-dev/skills",
@@ -209,7 +203,7 @@ mod tests {
             Some(InstallChannel::Dev)
         );
         assert_eq!(
-            InstallChannel::from_executable_name("/Applications/Alan Dev.app/alan-dev-tui"),
+            InstallChannel::from_executable_name("/Applications/Alan Dev.app/alan-dev"),
             Some(InstallChannel::Dev)
         );
     }
@@ -229,7 +223,7 @@ mod tests {
     #[test]
     fn executable_name_falls_back_to_stable() {
         assert_eq!(
-            InstallChannel::detect_from_env_and_executable(None, Some("alan-dev-tui")),
+            InstallChannel::detect_from_env_and_executable(None, Some("alan-dev")),
             InstallChannel::Dev
         );
         assert_eq!(

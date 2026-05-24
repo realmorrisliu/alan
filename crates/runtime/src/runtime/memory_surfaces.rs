@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn truncate_memory_text_keeps_markdown_lines_and_marks_source() {
-        let text = "### Top-level directories\n- crates/runtime has the runtime code\n- clients/tui has the terminal UI\n- docs/spec has contracts\n";
+        let text = "### Top-level directories\n- crates/runtime has the runtime code\n- crates/tui has the terminal UI\n- docs/spec has contracts\n";
 
         let truncated = truncate_memory_text(text, 96, "rollout /tmp/rollout.jsonl");
 

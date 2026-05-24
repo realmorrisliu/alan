@@ -53,7 +53,7 @@ private func testDevChannelInstallsDevToolNames() throws {
         channel: .dev
     )
 
-    try require(records.map(\.tool) == ["alan-dev", "alan-dev-tui"], "dev installer must report dev tools")
+    try require(records.map(\.tool) == ["alan-dev"], "dev installer must report dev tool")
     for tool in AlanInstallChannel.dev.toolNames {
         let target = targetDirectory.appendingPathComponent(tool)
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)
@@ -77,7 +77,7 @@ private func testInstallsSymlinks() throws {
         resourceURL: resourceRoot
     )
 
-    try require(records.count == 2, "installer must report both tools")
+    try require(records.count == 1, "installer must report alan")
     for tool in AlanCommandLineToolInstaller.toolNames {
         let target = targetDirectory.appendingPathComponent(tool)
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)
@@ -144,7 +144,7 @@ private func testSkipsWhenHomebrewAlreadyManagesLinks() throws {
         homebrewPrefixes: [homebrewPrefix.path]
     )
 
-    try require(records.count == 2, "installer must report both tools")
+    try require(records.count == 1, "installer must report alan")
     for record in records {
         guard case .skipped(let reason) = record.status else {
             throw TestFailure.message("installer must skip when Homebrew already owns links")
@@ -181,7 +181,7 @@ private func testReplacesLegacyLowercaseAppLinks() throws {
         resourceURL: resourceRoot
     )
 
-    try require(records.count == 2, "installer must report both tools")
+    try require(records.count == 1, "installer must report alan")
     for tool in AlanCommandLineToolInstaller.toolNames {
         let target = targetDirectory.appendingPathComponent(tool)
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)

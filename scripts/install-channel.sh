@@ -10,7 +10,6 @@ alan_install_channel_load() {
             ALAN_DISPLAY_NAME="Alan"
             ALAN_BUNDLE_ID="app.alanworks.macos"
             ALAN_CLI_NAME="alan"
-            ALAN_TUI_NAME="alan-tui"
             ALAN_HOME_DISPLAY="~/.alan"
             ALAN_GLOBAL_SKILLS_DIR_DISPLAY="~/.agents/skills"
             ALAN_DAEMON_BIND="0.0.0.0:8090"
@@ -24,7 +23,6 @@ alan_install_channel_load() {
             ALAN_DISPLAY_NAME="Alan Dev"
             ALAN_BUNDLE_ID="app.alanworks.macos.dev"
             ALAN_CLI_NAME="alan-dev"
-            ALAN_TUI_NAME="alan-dev-tui"
             ALAN_HOME_DISPLAY="~/.alan-dev"
             ALAN_GLOBAL_SKILLS_DIR_DISPLAY="~/.agents-dev/skills"
             ALAN_DAEMON_BIND="127.0.0.1:8091"
@@ -43,7 +41,6 @@ alan_install_channel_load() {
     export ALAN_DISPLAY_NAME
     export ALAN_BUNDLE_ID
     export ALAN_CLI_NAME
-    export ALAN_TUI_NAME
     export ALAN_HOME_DISPLAY
     export ALAN_GLOBAL_SKILLS_DIR_DISPLAY
     export ALAN_DAEMON_BIND

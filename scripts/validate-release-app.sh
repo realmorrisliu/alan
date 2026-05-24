@@ -20,7 +20,6 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME}"
 MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_CLI_NAME"
-TUI_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_TUI_NAME"
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -42,18 +41,6 @@ require_developer_id_signature() {
     fi
     if ! printf '%s\n' "$details" | grep -q 'Authority=Developer ID Application'; then
         fail "Developer ID Application signature is required for $path"
-    fi
-}
-
-require_entitlement() {
-    local path="$1"
-    local entitlement="$2"
-    local entitlements
-
-    entitlements="$(codesign -d --entitlements :- "$path" 2>/dev/null)" ||
-        fail "codesign could not inspect entitlements for $path"
-    if ! printf '%s\n' "$entitlements" | grep -q "$entitlement"; then
-        fail "required entitlement $entitlement is missing from $path"
     fi
 }
 
@@ -101,8 +88,14 @@ require_manifest_checksum() {
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
 require_executable "$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
 require_executable "$ALAN_BIN"
-require_executable "$TUI_BIN"
 [[ -f "$MANIFEST" ]] || fail "package manifest not found: $MANIFEST"
+if [[ -e "$APP_BUNDLE/Contents/Resources/bin/alan-tui" ||
+    -e "$APP_BUNDLE/Contents/Resources/bin/alan-dev-tui" ]]; then
+    fail "release app must not embed a standalone alan-tui binary"
+fi
+if grep -Eq 'alan(-dev)?-tui' "$MANIFEST"; then
+    fail "package manifest must not record a standalone alan-tui binary"
+fi
 
 grep -q "\"install_channel\": \"$ALAN_CHANNEL_ID\"" "$MANIFEST" ||
     fail "manifest does not record $ALAN_CHANNEL_ID install channel"
@@ -112,8 +105,6 @@ grep -q "\"bundle_identifier\": \"$ALAN_BUNDLE_ID\"" "$MANIFEST" ||
     fail "manifest does not record $ALAN_BUNDLE_ID bundle id"
 grep -q "\"path\": \"Contents/Resources/bin/$ALAN_CLI_NAME\"" "$MANIFEST" ||
     fail "manifest does not record embedded $ALAN_CLI_NAME path"
-grep -q "\"path\": \"Contents/Resources/bin/$ALAN_TUI_NAME\"" "$MANIFEST" ||
-    fail "manifest does not record embedded $ALAN_TUI_NAME path"
 
 manifest_version="$(manifest_value "version")"
 repo_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
@@ -122,11 +113,8 @@ if [[ "$manifest_version" != "$repo_version" ]]; then
     fail "manifest version $manifest_version does not match Cargo.toml version $repo_version"
 fi
 require_manifest_checksum "$ALAN_CLI_NAME" "$ALAN_BIN"
-require_manifest_checksum "$ALAN_TUI_NAME" "$TUI_BIN"
 
 require_developer_id_signature "$ALAN_BIN"
-require_developer_id_signature "$TUI_BIN"
-require_entitlement "$TUI_BIN" "com.apple.security.cs.allow-jit"
 require_developer_id_signature "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE" >/dev/null
 

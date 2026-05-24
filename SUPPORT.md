@@ -18,6 +18,6 @@ For security concerns:
 
 When asking for help, include:
 
-- Environment details (OS, Rust/Bun versions)
+- Environment details (OS and Rust version)
 - Relevant commands and logs
 - Minimal reproduction steps

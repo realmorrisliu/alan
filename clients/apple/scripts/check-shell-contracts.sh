@@ -1768,7 +1768,7 @@ require_pattern \
 reject_pattern \
     "scripts/install.sh" \
     "\\.alan/bin" \
-    "local install must not write CLI/TUI entries under ~/.alan/bin"
+    "local install must not write CLI entries under ~/.alan/bin"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
@@ -1820,20 +1820,10 @@ require_pattern \
     "Recording signed embedded binary checksums" \
     "release assembly must record manifest checksums after embedded binaries are signed"
 
-require_pattern \
-    "scripts/entitlements/alan-tui.entitlements" \
-    "com\\.apple\\.security\\.cs\\.allow-jit" \
-    "standalone alan-tui must declare the hardened-runtime JIT entitlement it needs to launch"
-
-require_pattern \
-    "scripts/assemble-release-app.sh" \
-    "alan-tui\\.entitlements" \
-    "release assembly must sign alan-tui with its dedicated hardened-runtime entitlements"
-
-require_pattern \
+reject_pattern \
     "scripts/validate-release-app.sh" \
-    "com\\.apple\\.security\\.cs\\.allow-jit" \
-    "release app validation must verify alan-tui hardened-runtime launch entitlements"
+    "allow-jit|alan-tui\\.entitlements" \
+    "release app validation must not require standalone TUI launch entitlements"
 
 require_pattern \
     "scripts/release-env.sh" \
@@ -1872,8 +1862,8 @@ require_pattern \
 
 require_pattern \
     "scripts/validate-homebrew-cask.sh" \
-    "Contents/Resources/bin/alan-tui" \
-    "Homebrew cask validation must check embedded CLI/TUI binary links"
+    "Contents/Resources/bin/alan" \
+    "Homebrew cask validation must check the embedded alan binary link"
 
 require_pattern \
     "scripts/install-channel.sh" \
