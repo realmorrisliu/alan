@@ -50,6 +50,7 @@ struct ShellAutomationCommandResult: Equatable {
     let paneID: String?
     let acceptedBytes: Int?
     let deliveryCode: String?
+    let runtimePhase: String?
     let errorCode: String?
     let errorMessage: String?
 
@@ -61,6 +62,7 @@ struct ShellAutomationCommandResult: Equatable {
         paneID: String? = nil,
         acceptedBytes: Int? = nil,
         deliveryCode: String? = nil,
+        runtimePhase: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) {
@@ -71,6 +73,7 @@ struct ShellAutomationCommandResult: Equatable {
         self.paneID = paneID
         self.acceptedBytes = acceptedBytes
         self.deliveryCode = deliveryCode
+        self.runtimePhase = runtimePhase
         self.errorCode = errorCode
         self.errorMessage = errorMessage
     }
