@@ -1,9 +1,9 @@
 ## Context
 
 Alan 当前已经有 app-first 的 macOS 发布链路：`just release` 构建 Release
-`Alan.app`，嵌入 release CLI/TUI，使用 Developer ID 签名，可选公证并输出
+`Alan.app`，嵌入 release CLI，使用 Developer ID 签名，可选公证并输出
 `alan-<version>-macos.zip`。Homebrew cask 模板已经假定 zip 来自 GitHub
-Releases，并从 app bundle 内链接 `alan` 和 `alan-tui`。
+Releases，并从 app bundle 内链接 `alan`。
 
 缺口在直接下载安装路径：非 Homebrew 用户拿到 `Alan.app` 后，后续版本只能手动
 检查 GitHub 或重新下载安装。用户已经确定 `alanworks.app` 会作为产品网站域名，

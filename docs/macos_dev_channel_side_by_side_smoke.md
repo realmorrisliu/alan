@@ -93,10 +93,8 @@ Dev channel side-by-side smoke passed.
 Additional install evidence from the same run:
 
 - stable remained installed as `$HOME/Applications/Alan.app`;
-- stable command links remained `/usr/local/bin/alan` and
-  `/usr/local/bin/alan-tui`;
+- stable command link remained `/usr/local/bin/alan`;
 - dev installed as `$HOME/Applications/Alan Dev.app`;
-- dev command links were installed as `$HOME/.local/bin/alan-dev` and
-  `$HOME/.local/bin/alan-dev-tui`;
+- dev command link was installed as `$HOME/.local/bin/alan-dev`;
 - `Alan Dev.app` reported bundle id `app.alanworks.macos.dev` and display name
   `Alan Dev`.

@@ -109,8 +109,7 @@ Without that override, the macOS terminal workspace resolves alan in this order:
 5. `alan` from the current `PATH`
 
 The app bundle is also the command-line distribution unit. Homebrew cask
-installs link `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui`
-into the Homebrew prefix. For a direct app install, use **Tools > Install
+installs link `Contents/Resources/bin/alan` into the Homebrew prefix. For a direct app install, use **Tools > Install
 Command Line Tools...** in the app to create PATH-visible symlinks. The app does
 not silently modify shell startup files or use `~/.alan/bin`.
 

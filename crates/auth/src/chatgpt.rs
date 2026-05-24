@@ -75,7 +75,7 @@ fn default_alan_home_dir_name() -> &'static str {
         .strip_suffix(".exe")
         .unwrap_or(raw_executable_name);
 
-    if matches!(executable_name, "alan-dev" | "alan-dev-tui") {
+    if matches!(executable_name, "alan-dev") {
         ".alan-dev"
     } else {
         ".alan"

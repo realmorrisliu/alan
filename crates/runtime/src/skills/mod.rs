@@ -631,20 +631,25 @@ Body
     }
 
     #[test]
-    fn test_builtin_package_contract_matches_tui_setup_catalog() {
-        let setup_catalog = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../clients/tui/src/setup-catalog.ts"),
-        )
-        .unwrap();
-        for package_id in [
-            BUILTIN_MEMORY_PACKAGE_ID,
-            BUILTIN_PLAN_PACKAGE_ID,
-            BUILTIN_SHELL_CONTROL_PACKAGE_ID,
-            BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
-        ] {
-            assert!(!setup_catalog.contains(package_id));
+    fn test_builtin_package_assets_do_not_use_legacy_always_active() {
+        fn assert_dir_does_not_contain(dir: &Dir<'static>, needle: &str) {
+            for entry in dir.entries() {
+                match entry {
+                    DirEntry::Dir(dir) => assert_dir_does_not_contain(dir, needle),
+                    DirEntry::File(file) => {
+                        let contents = file.contents_utf8().unwrap_or_default();
+                        assert!(
+                            !contents.contains(needle),
+                            "{} contains legacy marker {needle}",
+                            file.path().display()
+                        );
+                    }
+                }
+            }
         }
-        assert!(!setup_catalog.contains("always_active"));
+
+        for asset in BUILTIN_PACKAGE_ASSETS {
+            assert_dir_does_not_contain(asset.dir, "always_active");
+        }
     }
 }

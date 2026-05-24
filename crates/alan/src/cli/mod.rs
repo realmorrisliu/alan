@@ -1,5 +1,3 @@
-pub mod ask;
-pub mod chat;
 pub mod connection;
 pub mod daemon;
 pub mod init;

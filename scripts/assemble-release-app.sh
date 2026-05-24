@@ -18,7 +18,6 @@ STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
-TUI_ENTITLEMENTS="$REPO_ROOT/scripts/entitlements/alan-tui.entitlements"
 SIGNING_IDENTITY="${ALAN_DEVELOPER_ID_APPLICATION:-${ALAN_SIGNING_IDENTITY:-}}"
 NOTARIZE="${ALAN_NOTARIZE:-0}"
 CREATE_ARCHIVE="${ALAN_CREATE_RELEASE_ARCHIVE:-$NOTARIZE}"
@@ -89,22 +88,11 @@ sign_path() {
     codesign "${args[@]}" "$path"
 }
 
-sign_path_with_entitlements() {
-    local path="$1"
-    local entitlements="$2"
-    local args=(--force --options runtime --entitlements "$entitlements" --sign "$SIGNING_IDENTITY")
-    if [[ "$SIGNING_IDENTITY" != "-" ]]; then
-        args+=(--timestamp)
-    fi
-    codesign "${args[@]}" "$path"
-}
-
 if ! alan_install_channel_is_stable && [[ "$NOTARIZE" == "1" || "$CREATE_ARCHIVE" == "1" ]]; then
     fail "Dev channel builds are local-only and cannot create public release archives or notarization submissions."
 fi
 
 require_command cargo
-require_command bun
 require_command xcodebuild
 require_command codesign
 require_command ditto
@@ -114,21 +102,10 @@ if [[ "$SIGNING_IDENTITY" != "-" ]]; then
 fi
 require_signing_identity
 
-[[ -f "$TUI_ENTITLEMENTS" ]] || fail "alan-tui entitlements file not found: $TUI_ENTITLEMENTS"
-
 mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 
-printf 'Building release alan CLI for %s channel...\n' "$ALAN_CHANNEL_ID"
+printf 'Building release alan binary for %s channel...\n' "$ALAN_CHANNEL_ID"
 cargo build --release -p alan --target-dir "$CARGO_TARGET_DIR"
-
-printf 'Building standalone %s...\n' "$ALAN_TUI_NAME"
-(
-    cd "$REPO_ROOT/clients/tui"
-    bun install --frozen-lockfile 2>/dev/null || bun install
-    bun run build:js
-    ALAN_TUI_BINARY_OUTFILE="$STAGING_DIR/$ALAN_TUI_NAME" bun run build:standalone
-)
-chmod +x "$STAGING_DIR/$ALAN_TUI_NAME"
 
 if [[ -e "$APP_BUNDLE" ]]; then
     printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
@@ -152,20 +129,17 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
     fail "Release build did not produce $APP_BUNDLE"
 fi
 
-printf 'Embedding CLI and TUI into %s...\n' "$ALAN_APP_BUNDLE_NAME"
+printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
 cp "$CARGO_TARGET_DIR/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
-cp "$STAGING_DIR/$ALAN_TUI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
-chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME" "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME"
+chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
-sign_path_with_entitlements "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME" "$TUI_ENTITLEMENTS"
 
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
-TUI_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_TUI_NAME")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
@@ -181,10 +155,6 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$ALAN_CLI_NAME")": {
       "path": "Contents/Resources/bin/$(json_escape "$ALAN_CLI_NAME")",
       "sha256": "$(json_escape "$ALAN_SHA")"
-    },
-    "$(json_escape "$ALAN_TUI_NAME")": {
-      "path": "Contents/Resources/bin/$(json_escape "$ALAN_TUI_NAME")",
-      "sha256": "$(json_escape "$TUI_SHA")"
     }
   }
 }

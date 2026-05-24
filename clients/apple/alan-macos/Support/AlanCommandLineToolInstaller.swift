@@ -53,15 +53,6 @@ enum AlanInstallChannel: Equatable {
         }
     }
 
-    var tuiToolName: String {
-        switch self {
-        case .stable:
-            return "alan-tui"
-        case .dev:
-            return "alan-dev-tui"
-        }
-    }
-
     var installChannelID: String {
         switch self {
         case .stable:
@@ -103,7 +94,7 @@ enum AlanInstallChannel: Equatable {
     }
 
     var toolNames: [String] {
-        [cliToolName, tuiToolName]
+        [cliToolName]
     }
 
     var ownedAppBundleNames: [String] {

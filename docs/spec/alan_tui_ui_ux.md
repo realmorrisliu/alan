@@ -2,7 +2,7 @@
 
 This path is not the authoritative contract source.
 
-The TypeScript/Bun/Ink TUI contract is superseded by the Rust inline TUI
+The former standalone terminal UI contract is superseded by the Rust inline TUI
 OpenSpec change.
 
 Authoritative OpenSpec owners:

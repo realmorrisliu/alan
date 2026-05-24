@@ -65,35 +65,37 @@ contract metadata.
   endpoint contract
 
 ### Requirement: Generated Client Endpoint Helpers
-The repository SHALL generate or verify TypeScript client endpoint helpers from
-the daemon endpoint contract, and the TUI daemon client SHALL use those helpers
-for API path construction.
+The repository SHALL generate or verify client endpoint helpers from the daemon
+endpoint contract for shipped daemon clients. The Rust TUI daemon client SHALL
+use the shared Rust endpoint contract or generated Rust helpers for API path
+construction.
 
 #### Scenario: generated endpoint helper is current
 - **WHEN** the daemon endpoint contract changes
-- **THEN** the generated TypeScript endpoint helper changes deterministically or
-  a drift check fails
+- **THEN** generated endpoint helpers or contract snapshots for shipped daemon
+  clients change deterministically or a drift check fails
 
-#### Scenario: TUI client avoids raw daemon route construction
-- **WHEN** the TUI daemon client calls a supported API endpoint
-- **THEN** it constructs the path through the generated endpoint helper rather
-  than embedding a raw `/api/v1/...` string
+#### Scenario: Rust TUI client avoids raw daemon route construction
+- **WHEN** the Rust TUI daemon client calls a supported API endpoint
+- **THEN** it constructs the path through the Rust endpoint contract/helper
+  surface rather than embedding a raw `/api/v1/...` string
 
 ### Requirement: Protocol And Payload Drift Checks
-The repository SHALL replace static hand-written generated TypeScript protocol
-files with a real generated or schema-checked surface for protocol event types
-and selected daemon API payloads.
+The repository SHALL keep protocol event types and selected daemon API payloads
+schema-checked or generated for shipped daemon clients, including the Rust TUI.
+The drift surface SHALL be based on alan's Rust protocol and daemon API
+contracts.
 
 #### Scenario: protocol event list drifts
 - **WHEN** the Rust protocol event enum adds, removes, or renames a serialized
-  event type
-- **THEN** the TypeScript generated or checked protocol surface detects the
-  difference
+  event type used by shipped daemon clients
+- **THEN** the generated, schema-checked, or snapshot-checked client protocol
+  surface detects the difference
 
 #### Scenario: selected daemon payload drifts
-- **WHEN** a selected daemon API response shape changes in Rust
-- **THEN** the TypeScript generated or checked payload surface detects the
-  difference
+- **WHEN** a selected daemon API response shape used by the Rust TUI changes in Rust
+- **THEN** the Rust TUI client contract checks or generated payload surface
+  detects the difference
 
 ### Requirement: Public Route Compatibility
 The first implementation SHALL preserve existing public daemon route paths unless

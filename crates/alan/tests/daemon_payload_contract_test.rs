@@ -1,4 +1,4 @@
-//! Snapshot-style checks for selected daemon payload fields mirrored by TUI types.
+//! Snapshot-style checks for selected daemon payload fields consumed by the Rust TUI.
 
 use alan::daemon::connection_control::{ConnectionCredentialStatusKind, ConnectionProfileSummary};
 use alan::daemon::connection_routes::{
@@ -12,68 +12,55 @@ use alan_protocol::GovernanceConfig;
 use alan_runtime::runtime::ChildRunRecord;
 use alan_runtime::{CredentialKind, LlmProvider, PartialStreamRecoveryMode, StreamingMode};
 use chrono::Utc;
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 #[test]
-fn tui_types_cover_selected_daemon_payload_fields() {
-    let types_source = std::fs::read_to_string(tui_types_path()).expect("TUI types are readable");
+fn rust_tui_create_session_payload_accepts_daemon_response() {
+    let payload = serde_json::to_value(sample_create_session_response()).unwrap();
+    let decoded: alan_tui::daemon_client::CreateSession = serde_json::from_value(payload).unwrap();
 
-    assert_interface_covers_value(
-        &types_source,
-        "CreateSessionResponse",
-        &sample_create_session_response(),
-    );
-    assert_interface_covers_value(
-        &types_source,
-        "ForkSessionResponse",
-        &sample_fork_session_response(),
-    );
-    assert_interface_covers_value(
-        &types_source,
-        "SessionListItem",
-        &sample_session_list_item(),
-    );
-    assert_interface_covers_value(
-        &types_source,
+    assert_eq!(decoded.session_id, "sess-1");
+    assert_eq!(decoded.profile_id.as_deref(), Some("chatgpt-main"));
+    assert_eq!(decoded.resolved_model.as_deref(), Some("gpt-5.3-codex"));
+    assert!(decoded.provider.is_some());
+    assert!(decoded.durability.is_some());
+}
+
+#[test]
+fn selected_dynamic_tui_payloads_remain_json_objects() {
+    assert_payload_is_json_object("ForkSessionResponse", &sample_fork_session_response());
+    assert_payload_is_json_object("SessionListItem", &sample_session_list_item());
+    assert_payload_is_json_object(
         "SessionListResponse",
         &SessionListResponse {
             sessions: vec![sample_session_list_item()],
         },
     );
-    assert_interface_covers_value(
-        &types_source,
-        "SessionReadResponse",
-        &sample_session_read_response(),
-    );
-    assert_interface_covers_value(&types_source, "ChildRunRecord", &sample_child_run_record());
-    assert_interface_covers_value(
-        &types_source,
+    assert_payload_is_json_object("SessionReadResponse", &sample_session_read_response());
+    assert_payload_is_json_object("ChildRunRecord", &sample_child_run_record());
+    assert_payload_is_json_object(
         "ChildRunListResponse",
         &ChildRunListResponse {
             child_runs: vec![sample_child_run_record()],
         },
     );
-    assert_interface_covers_value(
-        &types_source,
+    assert_payload_is_json_object(
         "ChildRunResponse",
         &ChildRunResponse {
             child_run: sample_child_run_record(),
         },
     );
-    assert_interface_covers_value(
-        &types_source,
+    assert_payload_is_json_object(
         "ConnectionCatalogResponse",
         &ConnectionCatalogResponse {
             providers: vec![sample_provider_descriptor()],
         },
     );
-    assert_interface_covers_value(
-        &types_source,
+    assert_payload_is_json_object(
         "ConnectionProfileSummary",
         &sample_connection_profile_summary(),
     );
-    assert_interface_covers_value(
-        &types_source,
+    assert_payload_is_json_object(
         "ConnectionListResponse",
         &ConnectionListResponse {
             default_profile: Some("chatgpt-main".to_string()),
@@ -82,40 +69,12 @@ fn tui_types_cover_selected_daemon_payload_fields() {
     );
 }
 
-fn assert_interface_covers_value<T: serde::Serialize>(
-    types_source: &str,
-    interface_name: &str,
-    value: &T,
-) {
-    let interface = interface_block(types_source, interface_name);
+fn assert_payload_is_json_object<T: serde::Serialize>(name: &str, value: &T) {
     let value = serde_json::to_value(value).expect("payload serializes to JSON");
-    let object = value.as_object().expect("payload serializes to an object");
-    for key in object.keys() {
-        assert!(
-            interface.contains(&format!("{key}:")) || interface.contains(&format!("{key}?:")),
-            "TUI interface {interface_name} is missing daemon payload field `{key}`"
-        );
-    }
-}
-
-fn interface_block<'a>(source: &'a str, interface_name: &str) -> &'a str {
-    let start_marker = format!("export interface {interface_name} {{");
-    let start = source
-        .find(&start_marker)
-        .unwrap_or_else(|| panic!("missing TUI interface {interface_name}"));
-    let rest = &source[start..];
-    let end = rest
-        .find("\n}")
-        .unwrap_or_else(|| panic!("unterminated TUI interface {interface_name}"));
-    &rest[..end]
-}
-
-fn tui_types_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("alan crate lives under workspace/crates/alan")
-        .join("clients/tui/src/types.ts")
+    assert!(
+        value.as_object().is_some_and(|object| !object.is_empty()),
+        "{name} must serialize to a non-empty JSON object for dynamic Rust TUI readers"
+    );
 }
 
 fn sample_create_session_response() -> CreateSessionResponse {

@@ -43,7 +43,6 @@ remove_alan_link() {
 }
 
 remove_alan_link "$ALAN_CLI_NAME"
-remove_alan_link "$ALAN_TUI_NAME"
 rm -rf "$APP_TARGET"
 if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     rm -rf "$LEGACY_APP_TARGET"

@@ -423,27 +423,26 @@ the supported local app workflow. The repository MUST NOT require or preserve a
 
 ### Requirement: Release packaging has focused validation
 The Apple client SHALL provide focused validation for the release app package,
-embedded CLI/TUI binaries, Developer ID signatures, and publication readiness
+embedded CLI binary, Developer ID signatures, and publication readiness
 when distribution packaging changes.
 
 #### Scenario: Release app layout is checked
 - **WHEN** release packaging implementation is ready for review
 - **THEN** focused checks verify `Alan.app` was built in Release configuration
-- **AND** focused checks verify embedded `Contents/Resources/bin/alan` and `Contents/Resources/bin/alan-tui` exist and are executable
-- **AND** focused checks verify the embedded binaries are the release binaries from the current build
-- **AND** focused checks verify the package manifest SHA-256 values are recorded after embedded binary signing and match the delivered embedded binaries
+- **AND** focused checks verify embedded `Contents/Resources/bin/alan` exists and is executable
+- **AND** focused checks verify the embedded binary is the release binary from the current build
+- **AND** focused checks verify the package manifest SHA-256 value is recorded after embedded binary signing and matches the delivered embedded binary
 
 #### Scenario: Signatures are checked
 - **WHEN** release packaging implementation is ready for review
-- **THEN** focused checks verify the embedded CLI and TUI are signed with the configured Developer ID Application identity
-- **AND** focused checks verify the embedded TUI includes the hardened-runtime entitlement required by its standalone runtime
+- **THEN** focused checks verify the embedded CLI is signed with the configured Developer ID Application identity
 - **AND** focused checks verify the app bundle is signed after embedded binaries are in place
 - **AND** focused checks fail if ad-hoc signatures are used for local install or release artifacts
 
 #### Scenario: Publication readiness is checked
 - **WHEN** an artifact is intended for Homebrew cask or direct public download
 - **THEN** focused checks verify notarization and stapling completed successfully
-- **AND** focused checks verify the cask metadata links the embedded CLI and TUI from the installed app bundle
+- **AND** focused checks verify the cask metadata links the embedded CLI from the installed app bundle
 
 ### Requirement: macOS shell documentation uses OpenSpec as the contract source
 The macOS shell build and verification contract SHALL prevent active macOS
@@ -623,20 +622,20 @@ preservation.
 
 ### Requirement: Dev channel packaging has focused validation
 The Apple client build/test contract SHALL include focused checks for dev
-channel app metadata, embedded tools, signing, install targets, and ownership
+channel app metadata, embedded CLI, signing, install targets, and ownership
 guards when dev channel packaging changes.
 
 #### Scenario: Dev app layout is checked
 - **WHEN** dev channel packaging implementation is ready for review
 - **THEN** focused checks verify `Alan Dev.app` is built
 - **AND** focused checks verify the bundle identifier is `app.alanworks.macos.dev`
-- **AND** focused checks verify embedded `Contents/Resources/bin/alan-dev` and `Contents/Resources/bin/alan-dev-tui` exist and are executable
+- **AND** focused checks verify embedded `Contents/Resources/bin/alan-dev` exists and is executable
 - **AND** focused checks verify stable `Alan.app` packaging remains unchanged
 
 #### Scenario: Dev install ownership is checked
 - **WHEN** dev channel local install checks run
-- **THEN** they verify the install creates or refreshes `Alan Dev.app`, `alan-dev`, and `alan-dev-tui`
-- **AND** they verify the install does not overwrite `Alan.app`, `alan`, or `alan-tui`
+- **THEN** they verify the install creates or refreshes `Alan Dev.app` and `alan-dev`
+- **AND** they verify the install does not overwrite `Alan.app` or `alan`
 - **AND** they verify dev uninstall does not remove stable app or stable command-line links
 
 #### Scenario: Dev signing is checked

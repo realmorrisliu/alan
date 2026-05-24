@@ -1,14 +1,14 @@
 # alan-app-distribution Specification
 
 ## Purpose
-Defines Alan's macOS app-first distribution contract, including bundled CLI/TUI
+Defines Alan's macOS app-first distribution contract, including the bundled CLI
 artifacts, Developer ID signing, notarization, Homebrew cask behavior, local
 install flow, and deprecated install paths.
 
 ## Requirements
 ### Requirement: Alan.app is the primary macOS distribution artifact
 Alan SHALL distribute macOS releases as an app-first package where `Alan.app`
-contains the GUI app executable plus release CLI/TUI executables embedded under
+contains the GUI app executable plus the release CLI executable embedded under
 `Contents/Resources/bin`.
 
 #### Scenario: Release app is assembled
@@ -16,17 +16,17 @@ contains the GUI app executable plus release CLI/TUI executables embedded under
 - **THEN** the package contains `Alan.app`
 - **AND** the bundle contains the app executable at `Contents/MacOS/alan`
 - **AND** the bundle contains the CLI at `Contents/Resources/bin/alan`
-- **AND** the bundle contains the TUI at `Contents/Resources/bin/alan-tui`
+- **AND** the bundle does not contain a standalone `alan-tui` executable
 
 #### Scenario: Version cohesion is verified
 - **WHEN** a release package is validated
-- **THEN** verification confirms the app, embedded CLI, and embedded TUI came from the same source revision or release version
-- **AND** assembly records SHA-256 checksums after embedded CLI and TUI signing
-- **AND** verification recomputes the delivered embedded CLI and TUI SHA-256 checksums and compares them with the package manifest
-- **AND** verification fails if the app bundle contains stale CLI/TUI binaries from an earlier assembly
+- **THEN** verification confirms the app and embedded CLI came from the same source revision or release version
+- **AND** assembly records SHA-256 checksums after embedded CLI signing
+- **AND** verification recomputes the delivered embedded CLI SHA-256 checksum and compares it with the package manifest
+- **AND** verification fails if the app bundle contains stale CLI binaries from an earlier assembly
 
 ### Requirement: Distribution signing uses Developer ID
-macOS release packaging SHALL sign the embedded CLI, embedded TUI, and app bundle
+macOS release packaging SHALL sign the embedded CLI and app bundle
 with a configured Developer ID Application identity. Ad-hoc signing MUST NOT be
 used as a supported local install or distribution fallback.
 
@@ -38,8 +38,6 @@ used as a supported local install or distribution fallback.
 #### Scenario: Bundle is signed
 - **WHEN** release assembly signs the package
 - **THEN** the embedded `alan` binary is signed before the app bundle is signed
-- **AND** the embedded `alan-tui` binary is signed before the app bundle is signed
-- **AND** the embedded `alan-tui` binary includes the hardened-runtime entitlement it needs to launch its standalone runtime
 - **AND** the app bundle is signed after all embedded executables and resources are in their final bundle locations
 - **AND** signing uses hardened runtime and timestamp options required for Developer ID distribution
 
@@ -59,44 +57,44 @@ notarized and stapled before publication.
 - **AND** the local install may skip notarization when no publish artifact is produced
 - **AND** the local install output states whether notarization was skipped or completed
 
-### Requirement: Direct app installs can explicitly install CLI and TUI
+### Requirement: Direct app installs can explicitly install the CLI
 Alan for macOS SHALL provide an explicit direct-install action that creates
-PATH-visible `alan` and `alan-tui` entries from the embedded app resources when
+PATH-visible `alan` entries from the embedded app resources when
 Homebrew has not already provided authoritative binary links.
 
 #### Scenario: Direct app install action is invoked
 - **WHEN** a user invokes the direct app command-line tools install action
-- **THEN** the app creates or refreshes `alan` and `alan-tui` symlinks that point at `Contents/Resources/bin`
+- **THEN** the app creates or refreshes an `alan` symlink that points at `Contents/Resources/bin`
 - **AND** the target directory is a user-visible PATH directory such as `/usr/local/bin` or a user-selected override
 - **AND** the app does not write into `~/.alan/bin`
 - **AND** the app does not modify shell startup files
 
 #### Scenario: User file would be overwritten
-- **WHEN** the direct-install action finds a non-alan-owned file at a target CLI/TUI path
+- **WHEN** the direct-install action finds a non-alan-owned file at the target CLI path
 - **THEN** the action does not overwrite that file
-- **AND** the app reports the skipped CLI/TUI install with an actionable path
+- **AND** the app reports the skipped CLI install with an actionable path
 
 #### Scenario: Homebrew links are present
-- **WHEN** the app detects Homebrew-managed `alan` and `alan-tui` links for the installed app
+- **WHEN** the app detects a Homebrew-managed `alan` link for the installed app
 - **THEN** the app treats Homebrew as the authoritative binary installer
 - **AND** the app does not attempt to modify Homebrew's linked binaries
 - **AND** the app does not create duplicate direct-install links in another PATH directory
 
 #### Scenario: App launches directly
 - **WHEN** a user launches `Alan.app` directly
-- **THEN** the app does not silently install CLI/TUI entries
+- **THEN** the app does not silently install CLI entries
 - **AND** the app remains usable even when command-line tools have not been installed
 
 ### Requirement: Homebrew cask installs app and binaries from one artifact
 The Homebrew distribution SHALL use a cask that installs `Alan.app` and exposes
-the embedded CLI/TUI binaries from inside the installed app bundle.
+the embedded CLI binary from inside the installed app bundle.
 
 #### Scenario: Cask installs alan
 - **WHEN** a user installs the Homebrew cask for alan
 - **THEN** Homebrew installs `Alan.app`
 - **AND** Homebrew links `Alan.app/Contents/Resources/bin/alan` as `alan`
-- **AND** Homebrew links `Alan.app/Contents/Resources/bin/alan-tui` as `alan-tui`
-- **AND** the cask does not require a separate formula to provide the CLI or TUI
+- **AND** Homebrew does not link a standalone `alan-tui` binary
+- **AND** the cask does not require a separate formula to provide the CLI
 
 #### Scenario: Cask documentation is shown
 - **WHEN** install documentation describes the Homebrew path
@@ -104,17 +102,16 @@ the embedded CLI/TUI binaries from inside the installed app bundle.
 - **AND** it only describes `brew install alan` as equivalent when the selected tap has no formula/cask token ambiguity
 
 ### Requirement: just install performs local release installation
-`just install` SHALL install the release-shaped signed app/CLI/TUI package
+`just install` SHALL install the release-shaped signed app/CLI package
 locally without killing, launching, or restarting the macOS app.
 
 #### Scenario: Local install runs
 - **WHEN** a developer runs `just install`
 - **THEN** the command builds the release CLI
-- **AND** the command builds the release standalone TUI
 - **AND** the command builds and assembles release `Alan.app`
 - **AND** the command installs the app into a user-level app directory
-- **AND** the command installs or refreshes CLI/TUI symlinks in a configurable PATH directory
-- **AND** the command does not install CLI/TUI entries under `~/.alan/bin`
+- **AND** the command installs or refreshes the CLI symlink in a configurable PATH directory
+- **AND** the command does not install CLI entries under `~/.alan/bin`
 
 #### Scenario: App is already running
 - **WHEN** `just install` runs while `Alan.app` is already running
@@ -123,13 +120,13 @@ locally without killing, launching, or restarting the macOS app.
 - **AND** the install process reports that the user should restart the app manually to use the newly installed version
 
 ### Requirement: ~/.alan/bin is not a distribution path
-Alan SHALL NOT install, refresh, document, or resolve `alan` or `alan-tui`
+Alan SHALL NOT install, refresh, document, or resolve `alan`
 through `~/.alan/bin` as part of macOS app distribution, Homebrew cask
 distribution, direct app command-line tool installation, or `just install`.
 
 #### Scenario: Install paths are inspected
 - **WHEN** local install scripts, direct app install actions, Homebrew cask metadata, and macOS command resolution paths are inspected
-- **THEN** they do not use `~/.alan/bin` as a CLI/TUI install target
+- **THEN** they do not use `~/.alan/bin` as a CLI install target
 - **AND** they do not present `~/.alan/bin` as a PATH setup recommendation
 
 ### Requirement: just app is removed
@@ -156,14 +153,14 @@ while the dev channel SHALL be a local-only development install identity.
 - **WHEN** the stable macOS install channel is assembled or installed
 - **THEN** the app bundle is `Alan.app`
 - **AND** the bundle identifier is `app.alanworks.macos`
-- **AND** the embedded command-line tools are exposed as `alan` and `alan-tui`
+- **AND** the embedded command-line tool is exposed as `alan`
 - **AND** the channel uses `~/.alan` as its default alan home
 
 #### Scenario: Dev channel identity is inspected
 - **WHEN** the dev macOS install channel is assembled or installed
 - **THEN** the app bundle is `Alan Dev.app`
 - **AND** the bundle identifier is `app.alanworks.macos.dev`
-- **AND** the embedded command-line tools are exposed as `alan-dev` and `alan-dev-tui`
+- **AND** the embedded command-line tool is exposed as `alan-dev`
 - **AND** the channel uses `~/.alan-dev` as its default alan home
 
 ### Requirement: Dev install does not overwrite stable install
@@ -173,16 +170,16 @@ modifying the stable app bundle, stable command-line links, or stable alan home.
 #### Scenario: Dev local install runs
 - **WHEN** a developer runs the dev local install workflow
 - **THEN** the workflow installs `Alan Dev.app` into the configured user-level app directory
-- **AND** the workflow installs or refreshes only `alan-dev` and `alan-dev-tui` links
+- **AND** the workflow installs or refreshes only the `alan-dev` link
 - **AND** it does not replace `Alan.app`
-- **AND** it does not replace `alan` or `alan-tui`
+- **AND** it does not replace `alan`
 - **AND** it does not write generated data under `~/.alan`
 
 #### Scenario: Dev local uninstall runs
 - **WHEN** a developer runs the dev local uninstall workflow
 - **THEN** the workflow removes `Alan Dev.app` when it is owned by the dev install
-- **AND** it removes `alan-dev` and `alan-dev-tui` links when they point at the dev app bundle
-- **AND** it leaves `Alan.app`, `alan`, `alan-tui`, and `~/.alan` untouched
+- **AND** it removes the `alan-dev` link when it points at the dev app bundle
+- **AND** it leaves `Alan.app`, `alan`, and `~/.alan` untouched
 - **AND** it leaves `~/.alan-dev` intact unless a future explicit data-removal command is added
 
 ### Requirement: Dev channel remains local-only in V1

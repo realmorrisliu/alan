@@ -224,6 +224,13 @@ alan/
 │   │   └── src/
 │   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
 │   │
+│   ├── tui/                   # Rust inline terminal UI linked into alan
+│   │   └── src/
+│   │       ├── lib.rs         # TUI run loop entrypoint
+│   │       ├── daemon_client.rs # Daemon HTTP/event client
+│   │       ├── history.rs     # Event reducer and transcript cells
+│   │       └── terminal.rs    # Crossterm/Ratatui terminal session
+│   │
 │   ├── skill-tools/           # Shared authoring/eval helper tooling
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -243,8 +250,6 @@ alan/
 │           │   ├── skills.rs  # `alan skills` inspection commands
 │           │   ├── skill_authoring.rs # `alan skills init/validate/eval`
 │           │   ├── workspace.rs # `alan workspace` commands
-│           │   ├── chat.rs    # `alan chat` command (launches TUI)
-│           │   ├── ask.rs     # `alan ask` command
 │           │   ├── shell.rs   # `alan shell` control commands
 │           │   └── daemon.rs  # Daemon control commands
 │           ├── daemon/        # HTTP/WebSocket server
@@ -268,7 +273,6 @@ alan/
 │           └── skill_catalog.rs # Resolved skill catalog snapshots
 │
 └── clients/
-    ├── tui/                   # Terminal UI (Bun + TypeScript + Ink)
     └── apple/                 # Native Apple client (SwiftUI, macOS/iOS)
 ```
 
@@ -410,9 +414,6 @@ BIND_ADDRESS=0.0.0.0:8090
 
 # CLI daemon endpoint override
 ALAN_AGENTD_URL=http://127.0.0.1:8090
-
-# Optional custom TUI bundle path for `alan chat`
-ALAN_TUI_PATH=/absolute/path/to/alan-tui.js
 ```
 
 Additional host-only environment variables exist for remote access, relay mode,
@@ -887,11 +888,10 @@ ALAN_DEVELOPER_ID_APPLICATION="Developer ID Application: Example (TEAMID)" just 
 
 # Run
 alan
-alan-tui
 ```
 
-The signed `Alan.app` bundle embeds both command-line tools under
-`Contents/Resources/bin`. Homebrew links those embedded tools into its prefix.
+The signed `Alan.app` bundle embeds the `alan` command under
+`Contents/Resources/bin`. Homebrew links that embedded tool into its prefix.
 For a direct app install, use **Tools > Install Command Line Tools...** in the
 app to create PATH-visible symlinks. `~/.alan/bin` is not a supported
 distribution path.

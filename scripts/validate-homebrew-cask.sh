@@ -18,13 +18,15 @@ grep -Eq '^[[:space:]]*app "Alan\.app"' "$CASK_PATH" ||
     fail "cask must install Alan.app"
 grep -Eq 'Alan\.app/Contents/Resources/bin/alan", target: "alan"' "$CASK_PATH" ||
     fail "cask must link embedded alan binary"
-grep -Eq 'Alan\.app/Contents/Resources/bin/alan-tui", target: "alan-tui"' "$CASK_PATH" ||
-    fail "cask must link embedded alan-tui binary"
 grep -Eq 'brew install --cask alan|--cask alan' "$REPO_ROOT/packaging/homebrew/README.md" ||
     fail "Homebrew docs must use brew install --cask alan"
 
+if grep -Eq 'alan-tui|alan-dev-tui' "$CASK_PATH"; then
+    fail "cask must not link a standalone alan-tui binary"
+fi
+
 if grep -Eq 'formula "alan"|depends_on formula:' "$CASK_PATH"; then
-    fail "cask must not depend on a separate alan formula for CLI/TUI"
+    fail "cask must not depend on a separate alan formula for CLI"
 fi
 
 printf 'Homebrew cask template validation passed: %s\n' "$CASK_PATH"

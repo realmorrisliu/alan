@@ -10,10 +10,7 @@ use alan_protocol::{
     CompactionRequestMetadata, CompactionResult, CompactionTrigger, Event, EventEnvelope,
     MemoryFlushAttemptSnapshot, MemoryFlushResult,
 };
-use std::{
-    path::Path,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Simulated client event handler behavior.
 /// Mirrors the practical event handling logic in clients (TUI/ask).
@@ -209,29 +206,24 @@ fn contract_turn_must_emit_complete_event_sequence() {
 }
 
 #[test]
-fn generated_tui_event_surface_covers_protocol_event_types() {
-    let event_types = representative_protocol_event_types();
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("alan crate lives under workspace/crates/alan");
-    let generated_types =
-        std::fs::read_to_string(workspace_root.join("clients/tui/src/generated/types.ts"))
-            .expect("generated types should be readable");
-    let generated_event_map =
-        std::fs::read_to_string(workspace_root.join("clients/tui/src/generated/event-map.ts"))
-            .expect("generated event map should be readable");
+fn rust_tui_reducer_covers_representative_protocol_event_types() {
+    let events = representative_protocol_events();
+    let event_count = events.len();
+    let mut reducer = alan_tui::history::SessionReducer::default();
 
-    for event_type in event_types {
-        assert!(
-            generated_types.contains(&format!("\"{event_type}\"")),
-            "generated types.ts is missing protocol event type `{event_type}`"
-        );
-        assert!(
-            generated_event_map.contains(&format!("{event_type}:")),
-            "generated event-map.ts is missing handler for protocol event type `{event_type}`"
-        );
+    for event in events {
+        reducer.apply_envelope(create_test_envelope(event));
     }
+
+    assert_eq!(
+        reducer.cells.len(),
+        event_count - 1,
+        "tool completion updates the existing tool cell; every other representative event should render"
+    );
+    assert!(
+        reducer.pending_yield.is_some(),
+        "Yield events must surface as pending input in the Rust TUI"
+    );
 }
 
 fn create_test_envelope(event: Event) -> EventEnvelope {
@@ -248,20 +240,6 @@ fn create_test_envelope(event: Event) -> EventEnvelope {
             .as_millis() as u64,
         event,
     }
-}
-
-fn representative_protocol_event_types() -> Vec<String> {
-    representative_protocol_events()
-        .into_iter()
-        .map(|event| {
-            serde_json::to_value(event)
-                .expect("event serializes")
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .expect("serialized event has type")
-                .to_string()
-        })
-        .collect()
 }
 
 fn representative_protocol_events() -> Vec<Event> {
