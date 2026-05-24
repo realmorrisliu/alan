@@ -960,6 +960,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             updateSnapshot(lastDelivery: result)
             return result
         }
+        guard isSurfaceReady else {
+            let result = TerminalRuntimeDeliveryResult.unavailable(
+                errorMessage: "The requested pane is not ready to receive terminal input.",
+                runtimePhase: currentSnapshot.runtimePhase
+            )
+            updateSnapshot(lastDelivery: result)
+            return result
+        }
         deliveredText.append(text)
         let result = deliveryResult
             ?? .accepted(
