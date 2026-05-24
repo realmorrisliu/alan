@@ -41,4 +41,4 @@
 - [x] 6.1 Review App Intent names, display representations, and privacy behavior in Shortcuts/Spotlight where available.
 - [x] 6.2 Confirm tests are layered so everyday checks do not require real Ghostty artifacts.
 - [x] 6.3 Before archive, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 6.4 Archive the OpenSpec change after implementation is merged.
+- [x] 6.4 Archive the OpenSpec change after implementation is merged.
