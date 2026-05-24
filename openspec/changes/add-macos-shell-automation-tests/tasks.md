@@ -1,9 +1,9 @@
 ## 1. Shared Command And Test Seams
 
-- [ ] 1.1 Define shared shell command interfaces for create tab, split, focus, close, send text, read summary, and attention activation.
+- [x] 1.1 Define shared shell command interfaces for create tab, split, focus, close, send text, read summary, and attention activation.
 - [ ] 1.2 Route existing shell controller, control-plane, menu, and command UI paths through the shared command interface where practical.
-- [ ] 1.3 Add fake shell controller/runtime fixtures for command, intent, and control-plane tests.
-- [ ] 1.4 Add privacy-safe summary helpers for pane/tab/window metadata.
+- [x] 1.3 Add fake shell controller/runtime fixtures for command, intent, and control-plane tests.
+- [x] 1.4 Add privacy-safe summary helpers for pane/tab/window metadata.
 
 ## 2. App Intents
 
