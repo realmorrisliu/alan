@@ -31,6 +31,9 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
         ShellAutomationEntityStore.install(snapshotProvider: { [weak resolvedHost] in
             resolvedHost?.shellState
         })
+        ShellAutomationIntentStore.install(
+            commandHandler: resolvedHost as? ShellAutomationCommandHandling
+        )
         #endif
         host = resolvedHost
         quickTerminalPeakWindow = peakWindow

@@ -8,17 +8,17 @@
 ## 2. App Intents
 
 - [x] 2.1 Add App Entity types and queries for shell windows, spaces, tabs, panes, and attention items.
-- [ ] 2.2 Add intents for creating terminal tabs, creating alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
-- [ ] 2.3 Align intent success and failure results with shared shell command/control-plane result categories.
-- [ ] 2.4 Gate App Intent availability by supported macOS versions and document fallback behavior.
-- [ ] 2.5 Verify secure-input and privacy restrictions in intent summaries and logs.
+- [x] 2.2 Add intents for creating terminal tabs, creating alan tabs, splitting panes, focusing panes, closing panes/tabs, sending text, reading pane summaries, and opening attention items.
+- [x] 2.3 Align intent success and failure results with shared shell command/control-plane result categories.
+- [x] 2.4 Gate App Intent availability by supported macOS versions and document fallback behavior.
+- [x] 2.5 Verify secure-input and privacy restrictions in intent summaries and logs.
 
 ## 3. Focused Tests
 
 - [x] 3.1 Add Apple-client unit tests for shell model mutations, split/focus/close behavior, and privacy-safe summaries.
 - [x] 3.2 Add runtime service fake tests for text delivery, unavailable runtime, teardown, and metadata snapshots.
 - [x] 3.3 Add control-plane tests for query/mutation success, malformed requests, missing targets, runtime unavailable, timeout, and IO diagnostics.
-- [ ] 3.4 Add App Intent routing tests using fake shell state and fake runtime outcomes.
+- [x] 3.4 Add App Intent routing tests using fake shell state and fake runtime outcomes.
 - [x] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
 
 ## 4. UI Smoke And Documentation

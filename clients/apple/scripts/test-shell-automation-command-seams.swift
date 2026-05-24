@@ -20,6 +20,10 @@ private enum ShellAutomationCommandSeamsTests {
         verifiesMissingPaneSummaryReturnsNil()
         verifiesAppEntityProjectionUsesSafeDisplayNames()
         await verifiesAppEntityQueriesReadActiveSnapshotState()
+        verifiesAppIntentRoutingUsesFakeCommandHandler()
+        verifiesAppIntentOutcomeAlignsWithCommandResultCategories()
+        verifiesAppIntentDialogRedactsSubmittedTextAndRawTargets()
+        verifiesAppIntentAvailabilityDocumentsFallback()
         print("Shell automation command seam tests passed.")
     }
 
@@ -305,6 +309,189 @@ private enum ShellAutomationCommandSeamsTests {
         } catch {
             fail("entity query failed: \(error)")
         }
+    }
+
+    private static func verifiesAppIntentRoutingUsesFakeCommandHandler() {
+        let summary = sampleSummary()
+        let pane = AlanShellPaneEntity(summary: summary, isFocused: true)
+        let attentionItem = AlanShellAttentionItemEntity(pane: pane)
+        let handler = FakeShellAutomationCommandHandler { command in
+            switch command {
+            case .createTab:
+                return ShellAutomationCommandResult(
+                    code: .accepted,
+                    summary: summary,
+                    spaceID: summary.spaceID,
+                    tabID: summary.tabID,
+                    paneID: summary.paneID
+                )
+            case .sendText:
+                return ShellAutomationCommandResult(
+                    code: .queued,
+                    summary: nil,
+                    paneID: summary.paneID,
+                    acceptedBytes: 11,
+                    deliveryCode: "queued"
+                )
+            default:
+                return ShellAutomationCommandResult(code: .accepted, summary: summary)
+            }
+        }
+
+        ShellAutomationIntentStore.install(commandHandler: handler)
+        defer { ShellAutomationIntentStore.reset() }
+
+        _ = ShellAutomationIntentRouter.createTerminalTab(
+            spaceID: "space_main",
+            title: "Shell",
+            workingDirectory: "/Users/morris/Developer/alan"
+        )
+        _ = ShellAutomationIntentRouter.createAlanTab(spaceID: "space_main", title: "alan")
+        _ = ShellAutomationIntentRouter.splitPane(pane, direction: .right)
+        _ = ShellAutomationIntentRouter.focusPane(pane)
+        _ = ShellAutomationIntentRouter.closePane(pane)
+        _ = ShellAutomationIntentRouter.closeTab(AlanShellTabEntity(
+            id: summary.tabID,
+            windowID: summary.windowID,
+            spaceID: summary.spaceID,
+            spaceTitle: summary.spaceTitle,
+            displayTitle: summary.tabTitle,
+            displaySubtitle: nil,
+            kind: ShellTabKind.terminal.rawValue,
+            isPinned: false,
+            isFocused: true
+        ))
+        _ = ShellAutomationIntentRouter.sendText("pwd\n", to: pane)
+        _ = ShellAutomationIntentRouter.readPaneSummary(for: pane)
+        _ = ShellAutomationIntentRouter.openAttentionItem(attentionItem)
+
+        expect(
+            handler.recordedCommands == [
+                .createTab(ShellAutomationCreateTabRequest(
+                    launchTarget: .shell,
+                    spaceID: "space_main",
+                    title: "Shell",
+                    workingDirectory: "/Users/morris/Developer/alan"
+                )),
+                .createTab(ShellAutomationCreateTabRequest(
+                    launchTarget: .alan,
+                    spaceID: "space_main",
+                    title: "alan",
+                    workingDirectory: nil
+                )),
+                .splitPane(ShellAutomationPaneSplitRequest(paneID: summary.paneID, placement: .right)),
+                .focusPane(paneID: summary.paneID),
+                .closePane(paneID: summary.paneID),
+                .closeTab(tabID: summary.tabID),
+                .sendText(ShellAutomationSendTextRequest(paneID: summary.paneID, text: "pwd\n")),
+                .readPaneSummary(paneID: summary.paneID),
+                .activateAttentionItem(paneID: summary.paneID),
+            ],
+            "App Intent router must call the shared shell automation command surface"
+        )
+    }
+
+    private static func verifiesAppIntentOutcomeAlignsWithCommandResultCategories() {
+        let missing = ShellAutomationIntentOutcome(
+            command: .focusPane(paneID: "pane_missing"),
+            result: ShellAutomationCommandResult(
+                code: .missingTarget,
+                summary: nil,
+                paneID: "pane_missing",
+                errorCode: "missing_target",
+                errorMessage: "Missing pane"
+            )
+        )
+        expect(missing.code == .missingTarget, "intent outcome must preserve missing-target code")
+        expect(missing.dialog.contains("target"), "missing-target dialog must explain the category")
+
+        let unavailable = ShellAutomationIntentOutcome(
+            command: .sendText(ShellAutomationSendTextRequest(
+                paneID: "pane_1",
+                text: "printf secret\n"
+            )),
+            result: ShellAutomationCommandResult(
+                code: .runtimeUnavailable,
+                summary: nil,
+                paneID: "pane_1",
+                errorCode: "runtime_unavailable",
+                errorMessage: "Runtime unavailable"
+            )
+        )
+        expect(
+            unavailable.code == .runtimeUnavailable,
+            "intent outcome must preserve runtime-unavailable code"
+        )
+        expect(
+            unavailable.dialog.contains("runtime"),
+            "runtime-unavailable dialog must explain the category"
+        )
+    }
+
+    private static func verifiesAppIntentDialogRedactsSubmittedTextAndRawTargets() {
+        let secretText = "SECRET_TOKEN=abc123\n"
+        let outcome = ShellAutomationIntentOutcome(
+            command: .sendText(ShellAutomationSendTextRequest(
+                paneID: "pane_secret",
+                text: secretText
+            )),
+            result: ShellAutomationCommandResult(
+                code: .queued,
+                summary: nil,
+                paneID: "pane_secret",
+                acceptedBytes: secretText.utf8.count,
+                deliveryCode: "queued"
+            )
+        )
+
+        expect(outcome.code == .queued, "intent outcome must preserve queued delivery")
+        expect(outcome.dialog.contains("queued"), "intent outcome must report queued delivery")
+        expect(
+            !outcome.dialog.contains(secretText.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "intent dialog must not echo submitted text"
+        )
+        expect(!outcome.dialog.contains("pane_secret"), "intent dialog must not expose raw pane IDs")
+
+        let summary = sampleSummary()
+        let summaryOutcome = ShellAutomationIntentOutcome(
+            command: .readPaneSummary(paneID: summary.paneID),
+            result: ShellAutomationCommandResult(code: .accepted, summary: summary)
+        )
+        expect(
+            !summaryOutcome.dialog.contains(summary.paneID),
+            "summary dialog must not expose raw pane IDs"
+        )
+        expect(
+            summaryOutcome.dialog.contains(summary.paneTitle),
+            "summary dialog must include display-safe pane metadata"
+        )
+    }
+
+    private static func verifiesAppIntentAvailabilityDocumentsFallback() {
+        expect(
+            ShellAutomationIntentAvailability.minimumSupportedMacOS == "macOS 13.0",
+            "App Intent availability must declare the supported macOS floor"
+        )
+        expect(
+            ShellAutomationIntentAvailability.fallbackDescription.contains("control plane"),
+            "App Intent fallback documentation must point to the control plane"
+        )
+    }
+
+    private static func sampleSummary() -> ShellAutomationPaneSummary {
+        ShellAutomationPaneSummary(
+            windowID: "window_main",
+            spaceID: "space_main",
+            spaceTitle: "Terminal",
+            tabID: "tab_main",
+            tabTitle: "Shell",
+            paneID: "pane_1",
+            paneTitle: "Project shell",
+            workingDirectory: "/Users/morris/Developer/alan",
+            processProgram: "zsh",
+            processState: "running",
+            attention: .awaitingUser
+        )
     }
 
     private static func stateWithVisibleExcerpt(_ visibleExcerpt: String) -> ShellStateSnapshot {
