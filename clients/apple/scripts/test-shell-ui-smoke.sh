@@ -14,7 +14,29 @@ CUSTOM_APP_SUPPORT_DIR=0
 SMOKE_TMPDIR="${ALAN_UI_SMOKE_TMPDIR:-$OUTPUT_DIR/tmp}"
 SYSTEM_TMPDIR="${ALAN_UI_SMOKE_SYSTEM_TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}")}"
 LAUNCH_MODE="${ALAN_UI_SMOKE_LAUNCH_MODE:-open}"
-CONTROL_NAMESPACE="${ALAN_SHELL_CONTROL_NAMESPACE:-alan-ui-smoke-shell-control-$$}"
+DEFAULT_CONTROL_NAMESPACE="alan-ui-smoke-shell-control-$$"
+CHANNEL_CONTROL_NAMESPACE="alan-dev-shell-control"
+sanitize_control_namespace() {
+    local raw="$1"
+    local trimmed
+    local sanitized
+    trimmed=$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    if [[ -z "$trimmed" ]]; then
+        printf '%s\n' "$CHANNEL_CONTROL_NAMESPACE"
+        return
+    fi
+
+    sanitized=$(
+        printf '%s' "$trimmed" \
+            | sed -e 's/[^[:alnum:]_.-]/-/g' -e 's/^[-_.]*//' -e 's/[-_.]*$//'
+    )
+    if [[ -z "$sanitized" ]]; then
+        printf '%s\n' "$CHANNEL_CONTROL_NAMESPACE"
+    else
+        printf '%s\n' "$sanitized"
+    fi
+}
+CONTROL_NAMESPACE="$(sanitize_control_namespace "${ALAN_SHELL_CONTROL_NAMESPACE:-$DEFAULT_CONTROL_NAMESPACE}")"
 SMOKE_APP_SUPPORT_DIR="${ALAN_UI_SMOKE_APP_SUPPORT_DIR:-${SYSTEM_TMPDIR%/}/$CONTROL_NAMESPACE-app-support}"
 control_tmpdir() {
     if [[ "$LAUNCH_MODE" == "direct" ]]; then
