@@ -311,8 +311,11 @@ extension ShellStateSnapshot {
             )
         }
 
-        let focusedPaneID = remainingPanes.first?.paneID
-        let focusedPane = focusedPaneID.flatMap { paneID in
+        let preferredFocusedPaneID =
+            focusedPaneID.flatMap { candidate in
+                remainingPanes.contains { $0.paneID == candidate } ? candidate : nil
+            } ?? remainingPanes.first?.paneID
+        let focusedPane = preferredFocusedPaneID.flatMap { paneID in
             remainingPanes.first { $0.paneID == paneID }
         }
         let retained = retainedContentRecords(in: remainingSpaces, panes: remainingPanes)
@@ -321,7 +324,7 @@ extension ShellStateSnapshot {
             windowID: windowID,
             focusedSpaceID: focusedPane?.spaceID ?? remainingSpaces.first?.spaceID,
             focusedTabID: focusedPane?.tabID,
-            focusedPaneID: focusedPaneID,
+            focusedPaneID: preferredFocusedPaneID,
             spaces: rebuildingAttention(in: remainingSpaces, panes: remainingPanes),
             panes: remainingPanes,
             paneSlots: retained.paneSlots,
@@ -1438,8 +1441,12 @@ extension ShellStateSnapshot {
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
         let targetSpaceAfterClose = nextSpaces.first { $0.spaceID == targetSpace.spaceID }
+        let retainedFocusedPaneID = focusedPaneID.flatMap { candidate in
+            nextPanes.contains { $0.paneID == candidate } ? candidate : nil
+        }
         let preferredPaneID =
-            targetSpaceAfterClose?.tabs
+            retainedFocusedPaneID
+            ?? targetSpaceAfterClose?.tabs
                 .flatMap(\.paneTree.paneIDs)
                 .first { paneID in nextPanes.contains { $0.paneID == paneID } }
             ?? nextPanes.first(where: { $0.spaceID == targetSpace.spaceID })?.paneID

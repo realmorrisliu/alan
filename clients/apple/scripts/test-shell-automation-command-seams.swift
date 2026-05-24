@@ -131,7 +131,18 @@ private enum ShellAutomationCommandSeamsTests {
 
     private static func verifiesPaneSummaryUsesSafeMetadata() {
         let secretExcerpt = "SECRET_TOKEN=abc123"
-        let state = stateWithVisibleExcerpt(secretExcerpt)
+        let secretViewportSummary = "viewport summary includes SECRET_TOKEN=def456"
+        let secretControlPath = "/tmp/alan-shell-control/window_main/panes/pane_1"
+        let secretBindingFile = "/tmp/alan-shell-bindings/SECRET_BINDING_FILE.json"
+        let state = stateWithPaneMetadata(
+            viewportTitle: "Project shell",
+            displayName: nil,
+            processProgram: "zsh",
+            viewportSummary: secretViewportSummary,
+            visibleExcerpt: secretExcerpt,
+            controlPath: secretControlPath,
+            alanBindingFile: secretBindingFile
+        )
 
         guard let summary = state.automationPaneSummary(paneID: "pane_1") else {
             fail("expected pane summary")
@@ -147,6 +158,18 @@ private enum ShellAutomationCommandSeamsTests {
         expect(
             !summary.displayText.contains(secretExcerpt),
             "summary display text must not expose terminal visible excerpts"
+        )
+        expect(
+            !summary.displayText.contains(secretViewportSummary),
+            "summary display text must not expose terminal viewport summaries"
+        )
+        expect(
+            !summary.displayText.contains(secretControlPath),
+            "summary display text must not expose control paths"
+        )
+        expect(
+            !summary.displayText.contains(secretBindingFile),
+            "summary display text must not expose binding file paths"
         )
         expect(
             !summary.displayText.contains("pane_1"),
@@ -209,7 +232,10 @@ private enum ShellAutomationCommandSeamsTests {
         viewportTitle: String?,
         displayName: String?,
         processProgram: String,
-        visibleExcerpt: String
+        viewportSummary: String = "ready",
+        visibleExcerpt: String,
+        controlPath: String? = "/tmp/alan-shell-control/window_main/panes/pane_1",
+        alanBindingFile: String? = nil
     ) -> ShellStateSnapshot {
         let base = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/Users/morris/Developer/alan")
         let updatedPanes = base.panes.map { pane in
@@ -228,8 +254,8 @@ private enum ShellAutomationCommandSeamsTests {
                     workingDirectoryName: "alan",
                     repositoryRoot: "/Users/morris/Developer/alan",
                     gitBranch: "main",
-                    controlPath: "/tmp/alan-shell-control/window_main/panes/pane_1",
-                    alanBindingFile: nil,
+                    controlPath: controlPath,
+                    alanBindingFile: alanBindingFile,
                     launchStrategy: "login_shell",
                     shellIntegrationSource: "alan",
                     processState: "running",
@@ -239,7 +265,7 @@ private enum ShellAutomationCommandSeamsTests {
                 ),
                 viewport: ShellViewportSnapshot(
                     title: viewportTitle,
-                    summary: "ready",
+                    summary: viewportSummary,
                     visibleExcerpt: visibleExcerpt,
                     lastActivityAt: nil
                 ),
