@@ -23,11 +23,14 @@ private enum ShellWindowPlacementTests {
         try verifiesPendingFloatingSidebarRevealHidesTrafficLightsButReservesLayout()
         try verifiesFloatingSidebarRevealAfterPendingHiddenStateUsesSurfaceOrigin()
         try verifiesCollapsedSidebarRetentionIncludesLeftResizeFrame()
+        try verifiesPrimaryShellWindowDisablesGlobalBackgroundDragging()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
         try verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom()
         try verifiesTrafficLightControlsDoNotTriggerDoubleClickZoom()
         try verifiesTrafficLightGapsCanTriggerDoubleClickZoom()
         try verifiesSidebarChromeBlankAreaCanTriggerDoubleClickZoom()
+        try verifiesSidebarTabListDoesNotTriggerWindowDrag()
+        try verifiesSidebarSpaceDockDoesNotTriggerWindowDrag()
         try verifiesSidebarToolbarButtonsDoNotTriggerDoubleClickZoom()
         try verifiesTitlebarOverlayAcceptsTopBlankHit()
         try verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit()
@@ -342,6 +345,18 @@ private enum ShellWindowPlacementTests {
         )
     }
 
+    private static func verifiesPrimaryShellWindowDisablesGlobalBackgroundDragging() throws {
+        let window = makeTestWindow()
+        window.isMovableByWindowBackground = true
+
+        AlanShellWindowPlacement.configure(window, appearanceMode: .system)
+
+        expect(
+            !window.isMovableByWindowBackground,
+            "primary shell window must not use global background dragging"
+        )
+    }
+
     private static func verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
@@ -426,6 +441,48 @@ private enum ShellWindowPlacementTests {
                 chromeSurface: chromeSurface
             ),
             "blank sidebar chrome beside the traffic lights and toolbar controls must trigger double-click visible-frame zoom"
+        )
+    }
+
+    private static func verifiesSidebarTabListDoesNotTriggerWindowDrag() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(x: 128, y: window.frame.height - 128)
+
+        expect(
+            !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "sidebar tab-list rows must not be treated as window drag or zoom candidates"
+        )
+    }
+
+    private static func verifiesSidebarSpaceDockDoesNotTriggerWindowDrag() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let chromeSurface = ShellWindowChromeSurface(width: 264)
+
+        let location = CGPoint(x: 128, y: 56)
+
+        expect(
+            !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                locationInWindow: location,
+                in: window,
+                chromeSurface: chromeSurface
+            ),
+            "sidebar space switcher rows must not be treated as window drag or zoom candidates"
         )
     }
 

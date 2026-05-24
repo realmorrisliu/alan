@@ -853,7 +853,7 @@ enum AlanShellWindowPlacement {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.minSize = ShellWindowSizing.minimumSize
         window.tabbingMode = .disallowed
 
