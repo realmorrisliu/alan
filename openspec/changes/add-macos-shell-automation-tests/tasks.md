@@ -30,15 +30,15 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run `git diff --check`.
-- [ ] 5.2 Run the focused Apple shell test command added by this change.
-- [ ] 5.3 Run the UI smoke/screenshot command added by this change.
-- [ ] 5.4 Run the Ghostty integration lane when local artifacts are prepared.
-- [ ] 5.5 Run the renamed `alan-macos` macOS build command.
+- [x] 5.1 Run `git diff --check`.
+- [x] 5.2 Run the focused Apple shell test command added by this change.
+- [x] 5.3 Run the UI smoke/screenshot command added by this change.
+- [x] 5.4 Run the Ghostty integration lane when local artifacts are prepared.
+- [x] 5.5 Run the renamed `alan-macos` macOS build command.
 
 ## 6. PR And Archive Readiness
 
-- [ ] 6.1 Review App Intent names, display representations, and privacy behavior in Shortcuts/Spotlight where available.
-- [ ] 6.2 Confirm tests are layered so everyday checks do not require real Ghostty artifacts.
+- [x] 6.1 Review App Intent names, display representations, and privacy behavior in Shortcuts/Spotlight where available.
+- [x] 6.2 Confirm tests are layered so everyday checks do not require real Ghostty artifacts.
 - [ ] 6.3 Before archive, sync accepted delta requirements into `openspec/specs/`.
 - [ ] 6.4 Archive the OpenSpec change after implementation is merged.
