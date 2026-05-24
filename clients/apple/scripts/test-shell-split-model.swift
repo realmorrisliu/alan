@@ -24,6 +24,8 @@ private enum ShellSplitModelTests {
         try verifiesPaneScopedCloseKeepsInactivePaneTargeting()
         try verifiesPaneScopedCloseClosesSinglePaneTab()
         try verifiesPaneScopedCloseLeavesFinalSpaceEmpty()
+        try verifiesClosingBackgroundSpaceTabPreservesCurrentFocus()
+        try verifiesDeletingBackgroundSpacePreservesCurrentFocus()
         try verifiesPaneAllocationSkipsReservedRuntimeIDs()
         try verifiesSplitDecodeRequiresPersistedRatio()
         print("Shell split model tests passed.")
@@ -407,6 +409,86 @@ private enum ShellSplitModelTests {
         expect(result.state.focusedSpaceID == "space_main", "closing the final pane must keep the empty space focused")
         expect(result.state.focusedTabID == nil, "closing the final pane must clear tab focus")
         expect(result.state.focusedPaneID == nil, "closing the final pane must clear pane focus")
+    }
+
+    private static func verifiesClosingBackgroundSpaceTabPreservesCurrentFocus() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp/main")
+        state = state.creatingTerminalSpace(
+            title: "Background",
+            workingDirectory: "/tmp/background"
+        ).state
+        state = try state.openingTerminalTab(
+            in: "space_main",
+            title: "Active second tab",
+            workingDirectory: "/tmp/active"
+        ).state
+
+        expect(state.focusedSpaceID == "space_main", "test setup must focus the main space")
+        expect(state.focusedTabID == "tab_3", "test setup must focus the active tab")
+        expect(state.focusedPaneID == "pane_3", "test setup must focus the active pane")
+
+        let result = try state.closingTab("tab_2")
+
+        expect(
+            result.state.tab(tabID: "tab_2") == nil,
+            "background tab close must remove the target tab"
+        )
+        expect(
+            result.state.pane(paneID: "pane_2") == nil,
+            "background tab close must remove its pane"
+        )
+        expect(
+            result.state.focusedSpaceID == "space_main",
+            "background tab close must preserve focused space"
+        )
+        expect(
+            result.state.focusedTabID == "tab_3",
+            "background tab close must preserve focused tab"
+        )
+        expect(
+            result.state.focusedPaneID == "pane_3",
+            "background tab close must preserve focused pane"
+        )
+    }
+
+    private static func verifiesDeletingBackgroundSpacePreservesCurrentFocus() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp/main")
+        state = state.creatingTerminalSpace(
+            title: "Background",
+            workingDirectory: "/tmp/background"
+        ).state
+        state = try state.openingTerminalTab(
+            in: "space_main",
+            title: "Active second tab",
+            workingDirectory: "/tmp/active"
+        ).state
+
+        expect(state.focusedSpaceID == "space_main", "test setup must focus the main space")
+        expect(state.focusedTabID == "tab_3", "test setup must focus the active tab")
+        expect(state.focusedPaneID == "pane_3", "test setup must focus the active pane")
+
+        let result = try state.deletingSpace("space_2")
+
+        expect(
+            result.state.space(spaceID: "space_2") == nil,
+            "background space delete must remove target space"
+        )
+        expect(
+            result.state.pane(paneID: "pane_2") == nil,
+            "background space delete must remove target panes"
+        )
+        expect(
+            result.state.focusedSpaceID == "space_main",
+            "background space delete must preserve focused space"
+        )
+        expect(
+            result.state.focusedTabID == "tab_3",
+            "background space delete must preserve focused tab"
+        )
+        expect(
+            result.state.focusedPaneID == "pane_3",
+            "background space delete must preserve focused pane"
+        )
     }
 
     private static func verifiesPaneAllocationSkipsReservedRuntimeIDs() throws {
