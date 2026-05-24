@@ -1882,7 +1882,12 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
-    "/Users/\\$\\{USER:-\\$\\(id -un\\)\\}/Applications/Alan Dev\\.app" \
+    'DEFAULT_APP_HOME="\$\{HOME:-/Users/\$\{USER:-\$\(id -un\)\}\}"' \
+    "UI smoke must derive the installed Alan Dev app root from HOME like install-dev"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'DEFAULT_APP_PATH="\$DEFAULT_APP_HOME/Applications/Alan Dev\.app"' \
     "UI smoke must default to the installed Alan Dev app for local repeatability"
 
 require_pattern \
