@@ -54,4 +54,6 @@ Visual acceptance: user confirmed on 2026-05-24 that light-mode mixed content ta
 - [x] 6.7 Run the macOS app build or document any local dependency blocker with the exact failing command.
 - [x] 6.8 Validate `generalize-macos-shell-content-containers` with `openspec validate generalize-macos-shell-content-containers --strict`.
 - [x] 6.9 Run `openspec validate --all --strict` after `persist-macos-shell-workspaces` is archived or while both active changes validate together.
-- [ ] 6.10 After implementation is merged, sync accepted requirements into `openspec/specs/` and confirm the change is archive-ready.
+- [x] 6.10 After implementation is merged, sync accepted requirements into `openspec/specs/` and confirm the change is archive-ready.
+  - 2026-05-24: Archive sync folds the accepted delta specs into long-lived
+    `openspec/specs/` owners and archives this completed change.
