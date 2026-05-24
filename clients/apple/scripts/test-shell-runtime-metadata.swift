@@ -113,6 +113,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesOpeningSettingsTabCreatesSingletonShellContent()
         verifiesSplitPaneAcceptsMarkdownContentIntent()
         verifiesControlPlaneResponsesExposeContentContainers()
+        verifiesControlPlanePropagatesRuntimeDeliveryFailures()
+        verifiesControlFilePollerHandlesMalformedCommandFiles()
+        verifiesControlFilePollerReportsResultWriteDiagnostics()
         verifiesContentContainerEventsCaptureLifecycleAndRejections()
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesChannelScopedSupportStatePaths()
@@ -4484,6 +4487,170 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesControlPlanePropagatesRuntimeDeliveryFailures() {
+        var deliveries: [(String, String)] = []
+        let registry = TerminalRuntimeRegistry(
+            runtimeService: FakeAlanTerminalRuntimeService(),
+            mockDeliveryHandler: { contentID, text in
+                deliveries.append((contentID, text))
+                if text == "timeout" {
+                    return .timeout(
+                        errorMessage: "runtime command exceeded deadline",
+                        runtimePhase: "bootstrapping"
+                    )
+                }
+                return .unavailable(
+                    errorMessage: "runtime is not ready",
+                    runtimePhase: "bootstrapping"
+                )
+            }
+        )
+        let controller = makeController(terminalRuntimeRegistry: registry)
+        guard let terminalContentID = controller.shellState
+            .contentStateProjection()
+            .contentMounted(in: "pane_1")?
+            .contentID
+        else {
+            fail("runtime failure control-plane setup must expose terminal content identity")
+        }
+
+        let unavailable = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "runtime-unavailable-1",
+                  "command": "terminal.send_text",
+                  "pane_id": "pane_1",
+                  "text": "offline"
+                }
+                """
+            )
+        )
+        expect(
+            unavailable.applied == false
+                && unavailable.acceptedBytes == 0
+                && unavailable.deliveryCode == TerminalRuntimeDeliveryCode.unavailableRuntime.rawValue
+                && unavailable.runtimePhase == "bootstrapping"
+                && unavailable.errorCode == "terminal_runtime_unavailable"
+                && unavailable.errorMessage == "runtime is not ready",
+            "control-plane send-text must preserve runtime-unavailable delivery diagnostics"
+        )
+
+        let timeout = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "runtime-timeout-1",
+                  "command": "terminal.send_text",
+                  "pane_id": "pane_1",
+                  "text": "timeout"
+                }
+                """
+            )
+        )
+        expect(
+            timeout.applied == false
+                && timeout.acceptedBytes == 0
+                && timeout.deliveryCode == TerminalRuntimeDeliveryCode.timeout.rawValue
+                && timeout.runtimePhase == "bootstrapping"
+                && timeout.errorCode == "terminal_runtime_timeout",
+            "control-plane send-text must preserve timeout delivery diagnostics"
+        )
+        expect(
+            deliveries.count == 2
+                && deliveries.allSatisfy { $0.0 == terminalContentID },
+            "control-plane delivery failures must still target the resolved terminal content"
+        )
+    }
+
+    private static func verifiesControlFilePollerHandlesMalformedCommandFiles() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MalformedControl-\(UUID().uuidString)", isDirectory: true)
+        let commandsURL = root.appendingPathComponent("commands", isDirectory: true)
+        let resultsURL = root.appendingPathComponent("results", isDirectory: true)
+        try! FileManager.default.createDirectory(at: commandsURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let malformedURL = commandsURL.appendingPathComponent("bad.json")
+        try! "{ not valid json".write(to: malformedURL, atomically: true, encoding: .utf8)
+        var handledCommands = 0
+        var diagnostics: [String] = []
+        let poller = AlanShellControlFilePoller(
+            windowID: "poller_malformed",
+            fileManager: .default,
+            commandsURL: commandsURL,
+            resultsURL: resultsURL,
+            encoder: JSONEncoder(),
+            decoder: JSONDecoder(),
+            commandHandler: { command in
+                handledCommands += 1
+                return controlPlaneTestResponse(requestID: command.requestID, applied: true)
+            },
+            bindingProjectionHandler: { _, _ in },
+            diagnosticHandler: { diagnostics.append($0) }
+        )
+
+        poller.pollCommandsOnce()
+
+        expect(handledCommands == 0, "malformed control command files must not reach the handler")
+        expect(
+            !FileManager.default.fileExists(atPath: malformedURL.path),
+            "malformed control command files must be removed after diagnostics"
+        )
+        expect(
+            diagnostics.contains { $0.contains("Ignored unreadable shell command file bad.json") },
+            "malformed control command files must emit an IO diagnostic"
+        )
+    }
+
+    private static func verifiesControlFilePollerReportsResultWriteDiagnostics() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ResultWriteControl-\(UUID().uuidString)", isDirectory: true)
+        let commandsURL = root.appendingPathComponent("commands", isDirectory: true)
+        let resultsURL = root.appendingPathComponent("results-file")
+        try! FileManager.default.createDirectory(at: commandsURL, withIntermediateDirectories: true)
+        try! "not a directory".write(to: resultsURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let commandURL = commandsURL.appendingPathComponent("io.json")
+        try! """
+        {
+          "request_id": "io-1",
+          "command": "state"
+        }
+        """.write(to: commandURL, atomically: true, encoding: .utf8)
+        var handledRequestIDs: [String] = []
+        var diagnostics: [String] = []
+        let poller = AlanShellControlFilePoller(
+            windowID: "poller_io",
+            fileManager: .default,
+            commandsURL: commandsURL,
+            resultsURL: resultsURL,
+            encoder: JSONEncoder(),
+            decoder: JSONDecoder(),
+            commandHandler: { command in
+                handledRequestIDs.append(command.requestID)
+                return controlPlaneTestResponse(requestID: command.requestID, applied: true)
+            },
+            bindingProjectionHandler: { _, _ in },
+            diagnosticHandler: { diagnostics.append($0) }
+        )
+
+        poller.pollCommandsOnce()
+
+        expect(handledRequestIDs == ["io-1"], "valid control command files must still run")
+        expect(
+            diagnostics.contains {
+                $0.contains("Failed to write shell command result io-1.json")
+            },
+            "result write failures must emit a stable IO diagnostic"
+        )
+        expect(
+            !FileManager.default.fileExists(atPath: commandURL.path),
+            "processed control command files must be removed after result write diagnostics"
+        )
+    }
+
     private static func verifiesContentContainerEventsCaptureLifecycleAndRejections() {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("Events-\(UUID().uuidString).md")
@@ -5442,11 +5609,14 @@ private enum ShellRuntimeMetadataTests {
     private static func makeController(
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
+        terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
-        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let registry =
+            terminalRuntimeRegistry
+            ?? TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
         let context = ShellWindowContext.make(
             windowID: windowID,
             terminalRuntimeRegistry: registry
@@ -5477,6 +5647,35 @@ private enum ShellRuntimeMetadataTests {
             fail("test setup must create a fake terminal surface handle for \(paneID)")
         }
         return handle
+    }
+
+    private static func controlPlaneTestResponse(
+        requestID: String,
+        applied: Bool
+    ) -> AlanShellControlResponse {
+        AlanShellControlResponse(
+            requestID: requestID,
+            contractVersion: ShellContentStateSnapshot.currentContractVersion,
+            applied: applied,
+            state: nil,
+            spaces: nil,
+            tabs: nil,
+            panes: nil,
+            pane: nil,
+            items: nil,
+            candidates: nil,
+            events: nil,
+            focusedPaneID: nil,
+            spaceID: nil,
+            tabID: nil,
+            paneID: nil,
+            acceptedBytes: nil,
+            deliveryCode: nil,
+            runtimePhase: nil,
+            latestEventID: nil,
+            errorCode: nil,
+            errorMessage: nil
+        )
     }
 
     private final class RecordingTerminalPasteboardWriter: AlanTerminalPasteboardWriting {

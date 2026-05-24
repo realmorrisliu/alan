@@ -64,6 +64,10 @@ final class AlanShellControlFilePoller {
         pollSource = nil
     }
 
+    func pollCommandsOnce() {
+        pollCommands()
+    }
+
     func updateTrackedPaneIDs(_ paneIDs: Set<String>) {
         trackedPaneIDs = paneIDs
         let stalePaneIDs = Set(lastBindingPayloadByPaneID.keys).subtracting(paneIDs)
