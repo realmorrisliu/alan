@@ -39,7 +39,9 @@
 - [x] 5.2 Update sidebar tab rows, toolbar titles, pane title bars, and command input labels to use user-facing content titles and type hints.
 - [x] 5.3 Keep terminal-only status, search, and input affordances visible only on terminal content panes.
 - [x] 5.4 Make settings content a singleton tab target in v1 so repeated Open Settings focuses the existing ContentInstance.
-- [ ] 5.5 Capture running-app visual evidence for light-mode mixed content tabs and split panes.
+- [x] 5.5 Capture running-app visual evidence for light-mode mixed content tabs and split panes.
+
+Visual acceptance: user confirmed on 2026-05-24 that light-mode mixed content tabs and split panes look correct in Alan Dev.
 
 ## 6. Verification And Archive Readiness
 
