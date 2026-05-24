@@ -951,18 +951,18 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {}
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
-        guard isSurfaceReady else {
-            let result = TerminalRuntimeDeliveryResult.unavailable(
-                errorMessage: "The requested pane is not ready to receive terminal input.",
+        guard !currentSnapshot.metadata.processExited else {
+            let result = TerminalRuntimeDeliveryResult.rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The terminal process has exited.",
                 runtimePhase: currentSnapshot.runtimePhase
             )
             updateSnapshot(lastDelivery: result)
             return result
         }
-        guard !currentSnapshot.metadata.processExited else {
-            let result = TerminalRuntimeDeliveryResult.rejected(
-                errorCode: "terminal_child_exited",
-                errorMessage: "The terminal process has exited.",
+        guard isSurfaceReady else {
+            let result = TerminalRuntimeDeliveryResult.unavailable(
+                errorMessage: "The requested pane is not ready to receive terminal input.",
                 runtimePhase: currentSnapshot.runtimePhase
             )
             updateSnapshot(lastDelivery: result)
