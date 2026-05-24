@@ -129,8 +129,10 @@ Credential kinds are logical classes: `managed_oauth`, `secret_string`, and
 alan SHALL store non-secret connection metadata separately from secret-bearing
 credentials and managed login state.
 
-V1 non-secret metadata lives in `~/.alan/connections.toml` with this logical
-shape:
+V1 non-secret metadata lives in the active install channel's `connections.toml`
+with this logical shape. The stable channel stores it at
+`~/.alan/connections.toml`; the dev channel stores it at
+`~/.alan-dev/connections.toml`.
 
 ```toml
 version = 1
@@ -158,7 +160,8 @@ Rules:
 - `connections.toml` stores profile and credential metadata only.
 - Secret-bearing credentials live in a host-managed store outside `agent.toml`.
 - Managed ChatGPT login state remains outside `connections.toml`.
-- Existing ChatGPT managed login uses the managed auth store under alan home.
+- Existing ChatGPT managed login uses the managed auth store under the active
+  alan home.
 - `secret_string` credentials use a host-managed secret store with file
   permissions equivalent to `0600` unless replaced by a stronger host backend
   such as keychain or keyring.
@@ -603,3 +606,40 @@ Provider-specific requirements:
 - **THEN** provider adapters project that value to provider-specific wire fields
 - **AND** they do not recompute alan-level precedence, defaults, or validation
   owned by `provider-request-controls`
+
+### Requirement: Connection and credential stores are channel-scoped
+Alan SHALL store connection metadata, credential references, secret-bearing
+credentials, managed auth state, default profile state, and provider model
+overlays under the active install channel's alan home.
+
+#### Scenario: Stable connection store is used
+- **WHEN** stable-channel `alan` or `Alan.app` reads connection metadata
+- **THEN** it uses `~/.alan/connections.toml`
+- **AND** it uses stable-channel credential and managed-auth stores under `~/.alan`
+
+#### Scenario: Dev connection store is used
+- **WHEN** dev-channel `alan-dev` or `Alan Dev.app` reads connection metadata
+- **THEN** it uses `~/.alan-dev/connections.toml`
+- **AND** it uses dev-channel credential and managed-auth stores under `~/.alan-dev`
+- **AND** it does not read `~/.alan/connections.toml`, stable credentials, or stable managed auth as fallback
+
+#### Scenario: Dev channel has no configured profile
+- **WHEN** a dev-channel session starts without a resolvable dev connection profile
+- **THEN** Alan reports a configuration-required or onboarding-required condition
+- **AND** it does not silently reuse the stable default profile
+
+### Requirement: Cross-channel connection reuse is explicit
+Alan SHALL require an explicit user action before copying or importing stable
+connection profile metadata or auth material into the dev channel.
+
+#### Scenario: User requests profile import
+- **WHEN** a future import command copies a stable profile into the dev channel
+- **THEN** the command identifies the source channel and target channel explicitly
+- **AND** it writes new dev-channel metadata and credential references under `~/.alan-dev`
+- **AND** it does not make the dev profile a live reference to stable credential storage
+
+#### Scenario: Managed auth is reused
+- **WHEN** a future command or UI flow allows managed-auth reuse across channels
+- **THEN** the user must approve that operation explicitly
+- **AND** the resulting dev-channel auth state is stored under the dev-channel managed auth store
+- **AND** routine dev startup still does not read stable managed auth as implicit fallback

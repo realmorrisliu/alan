@@ -5,6 +5,7 @@ Define alan's first-class OpenRouter provider contract, including connection
 profile identity, OpenRouter-specific settings, SDK-backed request dispatch,
 response normalization, streaming behavior, capability reporting, and
 verification expectations.
+
 ## Requirements
 ### Requirement: OpenRouter provider identity
 alan SHALL expose OpenRouter as a first-class provider id named `openrouter` in
@@ -35,7 +36,10 @@ configuration value, provider catalog entry, and provider construction path
 without providing automatic migration or alias behavior.
 
 #### Scenario: Saved connection metadata uses the retired provider value
-- **WHEN** `~/.alan/connections.toml` contains `openrouter_openai_chat_completions_compatible` in `profiles.<id>.provider` or `credentials.<id>.provider_family`
+- **WHEN** the active channel's `connections.toml`, such as
+  `~/.alan/connections.toml` for stable or `~/.alan-dev/connections.toml` for
+  dev, contains `openrouter_openai_chat_completions_compatible` in
+  `profiles.<id>.provider` or `credentials.<id>.provider_family`
 - **THEN** alan treats the file as containing unsupported legacy configuration
 - **AND** alan does not automatically rewrite the value to `openrouter`
 - **AND** alan does not resolve or dispatch it as OpenRouter

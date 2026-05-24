@@ -42,4 +42,4 @@
 
 - [x] 6.1 Keep implementation commits scoped to this change and avoid mixing with unrelated macOS shell work.
 - [x] 6.2 Before PR review, confirm public stable install, Homebrew, and Sparkle contracts remain unchanged.
-- [ ] 6.3 After merge, archive the change and verify the delta specs are folded into long-lived `openspec/specs/` owners.
+- [x] 6.3 After merge, archive the change and verify the delta specs are folded into long-lived `openspec/specs/` owners.
