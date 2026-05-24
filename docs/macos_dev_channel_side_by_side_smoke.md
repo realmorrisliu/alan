@@ -12,9 +12,9 @@ It covers the OpenSpec side-by-side boundary:
 1. stable and dev apps are identifiable by distinct bundle identifiers;
 2. launching Alan Dev does not terminate or replace the stable Alan process;
 3. repeated Alan Dev launches activate and reuse the dev singleton instead of
-   creating a second dev process;
+   creating or retaining a second dev process;
 4. repeated stable Alan launches activate and reuse the stable singleton while
-   Alan Dev is running;
+   Alan Dev is running without creating or retaining a second stable process;
 5. dev shell-control state is created for the current run in the
    `alan-dev-shell-control` namespace;
 6. `alan-dev init` writes the current smoke workspace to the dev registry and
@@ -76,8 +76,8 @@ Observed result:
 ```text
 Dev channel side-by-side smoke passed.
   stable pid(s): 60215
-  dev pid(s): 10528
-  dev pid(s) after duplicate launch: 10528
+  dev pid(s): 12095
+  dev pid(s) after duplicate launch: 12095
   stable pid(s) after duplicate launch: 60215
   frontmost before dev launch: com.apple.finder
   frontmost after dev launch: com.apple.finder
@@ -87,7 +87,7 @@ Dev channel side-by-side smoke passed.
   frontmost after duplicate stable launch: app.alanworks.macos
   dev shell-control: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-shell-control
   dev registry: /Users/morris/.alan-dev/registry.json
-  dev workspace state: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-channel-smoke-workspace.V6XdvX/.alan/runtime/dev
+  dev workspace state: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-channel-smoke-workspace.6zBX7X/.alan/runtime/dev
 ```
 
 Additional install evidence from the same run:

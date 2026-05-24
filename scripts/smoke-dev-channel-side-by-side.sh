@@ -98,6 +98,26 @@ wait_for_path() {
     fail "$label was not created: $path"
 }
 
+pid_count() {
+    local pids="$1"
+
+    if [[ -z "$pids" ]]; then
+        printf '0'
+        return 0
+    fi
+
+    printf '%s\n' "$pids" | wc -w | tr -d ' '
+}
+
+assert_single_pid_set() {
+    local pids="$1"
+    local label="$2"
+    local count
+
+    count="$(pid_count "$pids")"
+    [[ "$count" == "1" ]] || fail "$label expected exactly one process, got $count: '$pids'"
+}
+
 activate_finder() {
     /usr/bin/osascript -e 'tell application "Finder" to activate' >/dev/null
 }
@@ -200,6 +220,7 @@ if [[ -z "$stable_pids_before" ]]; then
     /usr/bin/open -g "$STABLE_APP"
     stable_pids_before="$(wait_for_bundle "$STABLE_BUNDLE_ID" "stable Alan")"
 fi
+assert_single_pid_set "$stable_pids_before" "stable Alan before dev launch"
 
 dev_pids_before="$(bundle_process_ids "$DEV_BUNDLE_ID")"
 if [[ -n "$dev_pids_before" ]]; then
@@ -220,6 +241,8 @@ info "Launching Alan Dev while stable Alan is running..."
 /usr/bin/open -g "$DEV_APP"
 dev_pids_after="$(wait_for_bundle "$DEV_BUNDLE_ID" "Alan Dev")"
 stable_pids_after="$(bundle_process_ids "$STABLE_BUNDLE_ID")"
+assert_single_pid_set "$dev_pids_after" "Alan Dev after first launch"
+assert_single_pid_set "$stable_pids_after" "stable Alan after dev launch"
 wait_for_path "$dev_shell_window_dir" "dev shell-control window namespace"
 wait_for_path "$dev_shell_socket" "dev shell-control socket"
 frontmost_after="$(frontmost_bundle_id)"
@@ -236,6 +259,7 @@ frontmost_before_duplicate_dev="$(frontmost_bundle_id)"
 wait_for_frontmost_bundle "$DEV_BUNDLE_ID" "duplicate Alan Dev launch"
 frontmost_after_duplicate_dev="$(frontmost_bundle_id)"
 dev_pids_second="$(bundle_process_ids "$DEV_BUNDLE_ID")"
+assert_single_pid_set "$dev_pids_second" "Alan Dev after duplicate launch"
 [[ "$dev_pids_second" == "$dev_pids_after" ]] ||
     fail "second Alan Dev launch changed dev PID set: before '$dev_pids_after', after '$dev_pids_second'"
 
@@ -247,6 +271,8 @@ wait_for_frontmost_bundle "$STABLE_BUNDLE_ID" "duplicate stable Alan launch"
 frontmost_after_duplicate_stable="$(frontmost_bundle_id)"
 stable_pids_second="$(bundle_process_ids "$STABLE_BUNDLE_ID")"
 dev_pids_after_stable_relaunch="$(bundle_process_ids "$DEV_BUNDLE_ID")"
+assert_single_pid_set "$stable_pids_second" "stable Alan after duplicate launch"
+assert_single_pid_set "$dev_pids_after_stable_relaunch" "Alan Dev after stable duplicate launch"
 [[ "$stable_pids_second" == "$stable_pids_after" ]] ||
     fail "second stable Alan launch changed stable PID set: before '$stable_pids_after', after '$stable_pids_second'"
 [[ "$dev_pids_after_stable_relaunch" == "$dev_pids_second" ]] ||
