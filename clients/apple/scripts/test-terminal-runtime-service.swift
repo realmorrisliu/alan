@@ -27,6 +27,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesContentScopedDeliveryPreservesPendingDiagnostics()
         verifiesDeliveryAndMissingRuntimeResults()
         verifiesDeliveryRejectsExitedRuntime()
+        verifiesUnavailableRuntimeDoesNotDeliverTextAndRecordsSnapshot()
         verifiesQueuedAndTimeoutDeliveryStates()
         verifiesControlResponseCarriesDeliveryDiagnostics()
         verifiesTeardownOnce()
@@ -421,6 +422,26 @@ private enum TerminalRuntimeServiceTests {
         expect(rejected.applied == false, "exited runtime delivery must not report applied")
         expect(rejected.errorCode == "terminal_child_exited", "exited runtime delivery must use stable error code")
         expect(handle.deliveredText.isEmpty, "exited runtime delivery must not reach the surface")
+    }
+
+    private static func verifiesUnavailableRuntimeDoesNotDeliverTextAndRecordsSnapshot() {
+        let service = FakeAlanTerminalRuntimeService()
+        let handle = service.surfaceHandle(for: "pane_1", bootProfile: nil) as! FakeAlanTerminalSurfaceHandle
+        handle.ready = false
+
+        let unavailable = service.sendText(to: "pane_1", text: "while unavailable")
+
+        expect(unavailable.code == .unavailableRuntime, "unready runtime delivery must report unavailable")
+        expect(unavailable.applied == false, "unavailable runtime delivery must not report applied")
+        expect(
+            unavailable.errorCode == "terminal_runtime_unavailable",
+            "unavailable runtime delivery must use stable error code"
+        )
+        expect(handle.deliveredText.isEmpty, "unavailable runtime delivery must not reach the surface")
+        expect(
+            service.snapshot(for: "pane_1")?.lastDelivery == unavailable,
+            "unavailable runtime delivery must stay observable in the metadata snapshot"
+        )
     }
 
     private static func verifiesQueuedAndTimeoutDeliveryStates() {

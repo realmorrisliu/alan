@@ -16,7 +16,7 @@
 ## 3. Focused Tests
 
 - [ ] 3.1 Add Apple-client unit tests for shell model mutations, split/focus/close behavior, and privacy-safe summaries.
-- [ ] 3.2 Add runtime service fake tests for text delivery, unavailable runtime, teardown, and metadata snapshots.
+- [x] 3.2 Add runtime service fake tests for text delivery, unavailable runtime, teardown, and metadata snapshots.
 - [ ] 3.3 Add control-plane tests for query/mutation success, malformed requests, missing targets, runtime unavailable, timeout, and IO diagnostics.
 - [ ] 3.4 Add App Intent routing tests using fake shell state and fake runtime outcomes.
 - [ ] 3.5 Add a Ghostty-enabled integration lane that runs only when local Ghostty artifacts are prepared.
