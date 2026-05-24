@@ -124,5 +124,5 @@
   `alan`.
 - [x] 10.3 Prepare PR/review notes that call out the intentional breaking
   changes and validation evidence.
-- [ ] 10.4 After implementation is merged, sync accepted delta specs into
+- [x] 10.4 After implementation is merged, sync accepted delta specs into
   `openspec/specs/` and archive this change.
