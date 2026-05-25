@@ -11,9 +11,8 @@ use openrouter_rs::{
         Modality, Plugin, StopSequence, StreamOptions, TraceOptions,
     },
     types::{
-        Effort, FinishReason, FunctionCall as OrFunctionCall, ProviderPreferences, ReasoningConfig,
-        ResponseFormat, ResponseUsage, Role, Tool as OrTool, ToolCall as OrToolCall,
-        completion::CompletionsResponse,
+        Effort, FinishReason, ProviderPreferences, ReasoningConfig, ResponseFormat, ResponseUsage,
+        Role, Tool as OrTool, ToolCall as OrToolCall, completion::CompletionsResponse,
     },
 };
 use serde::de::DeserializeOwned;
@@ -441,6 +440,7 @@ async fn consume_openrouter_stream(
                 return;
             }
             UnifiedStreamEvent::Raw { .. } => {}
+            _ => {}
         }
     }
 
@@ -667,14 +667,12 @@ fn apply_openrouter_extra_params(
 fn convert_tool_calls_for_openrouter(tool_calls: Vec<ToolCall>) -> Vec<OrToolCall> {
     tool_calls
         .into_iter()
-        .map(|call| OrToolCall {
-            id: call.id.unwrap_or_default(),
-            type_: "function".to_string(),
-            function: OrFunctionCall {
-                name: call.name,
-                arguments: call.arguments.to_string(),
-            },
-            index: None,
+        .map(|call| {
+            OrToolCall::new(
+                call.id.unwrap_or_default(),
+                call.name,
+                call.arguments.to_string(),
+            )
         })
         .collect()
 }
@@ -762,6 +760,7 @@ fn finish_reason_to_string(reason: &FinishReason) -> &'static str {
         FinishReason::Length => "length",
         FinishReason::ContentFilter => "content_filter",
         FinishReason::Error => "error",
+        _ => "unknown",
     }
 }
 
@@ -912,10 +911,6 @@ fn openrouter_effort(effort: ReasoningEffort) -> Effort {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openrouter_rs::types::{
-        Choice, NonStreamingChoice, ObjectType, ReasoningDetail,
-        completion::Message as OrResponseMessage,
-    };
     use serde_json::json;
 
     #[test]
@@ -1049,24 +1044,17 @@ mod tests {
 
     #[test]
     fn maps_content_reasoning_usage_finish_and_response_id() {
-        let response = response_with_choice(Choice::NonStreaming(NonStreamingChoice {
-            finish_reason: Some(FinishReason::Stop),
-            native_finish_reason: None,
-            message: OrResponseMessage {
-                content: Some("answer".to_string()),
-                role: Some("assistant".to_string()),
-                name: None,
-                tool_calls: None,
-                reasoning: Some("because".to_string()),
-                reasoning_details: None,
-                images: None,
-                audio: None,
-                refusal: None,
-                annotations: None,
+        let response = response_with_choice(json!({
+            "finish_reason": "stop",
+            "native_finish_reason": null,
+            "message": {
+                "content": "answer",
+                "role": "assistant",
+                "reasoning": "because"
             },
-            error: None,
-            index: Some(0),
-            logprobs: None,
+            "error": null,
+            "index": 0,
+            "logprobs": null
         }));
 
         let converted = convert_openrouter_response(response);
@@ -1079,43 +1067,36 @@ mod tests {
 
     #[test]
     fn maps_tool_call_and_drops_malformed_arguments() {
-        let response = response_with_choice(Choice::NonStreaming(NonStreamingChoice {
-            finish_reason: Some(FinishReason::ToolCalls),
-            native_finish_reason: None,
-            message: OrResponseMessage {
-                content: Some(String::new()),
-                role: Some("assistant".to_string()),
-                name: None,
-                tool_calls: Some(vec![
-                    OrToolCall {
-                        id: "call-ok".to_string(),
-                        type_: "function".to_string(),
-                        function: OrFunctionCall {
-                            name: "lookup".to_string(),
-                            arguments: "{\"q\":\"rust\"}".to_string(),
+        let response = response_with_choice(json!({
+            "finish_reason": "tool_calls",
+            "native_finish_reason": null,
+            "message": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call-ok",
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "arguments": "{\"q\":\"rust\"}"
                         },
-                        index: Some(0),
+                        "index": 0
                     },
-                    OrToolCall {
-                        id: "call-bad".to_string(),
-                        type_: "function".to_string(),
-                        function: OrFunctionCall {
-                            name: "broken".to_string(),
-                            arguments: "{bad".to_string(),
+                    {
+                        "id": "call-bad",
+                        "type": "function",
+                        "function": {
+                            "name": "broken",
+                            "arguments": "{bad"
                         },
-                        index: Some(1),
-                    },
-                ]),
-                reasoning: None,
-                reasoning_details: None,
-                images: None,
-                audio: None,
-                refusal: None,
-                annotations: None,
+                        "index": 1
+                    }
+                ]
             },
-            error: None,
-            index: Some(0),
-            logprobs: None,
+            "error": null,
+            "index": 0,
+            "logprobs": null
         }));
 
         let converted = convert_openrouter_response(response);
@@ -1129,32 +1110,23 @@ mod tests {
 
     #[test]
     fn maps_reasoning_detail_signature() {
-        let response = response_with_choice(Choice::NonStreaming(NonStreamingChoice {
-            finish_reason: Some(FinishReason::Stop),
-            native_finish_reason: None,
-            message: OrResponseMessage {
-                content: Some("answer".to_string()),
-                role: Some("assistant".to_string()),
-                name: None,
-                tool_calls: None,
-                reasoning: None,
-                reasoning_details: Some(vec![ReasoningDetail {
-                    block_type: "reasoning.text".to_string(),
-                    text: Some("detail".to_string()),
-                    data: None,
-                    signature: Some("sig".to_string()),
-                    format: None,
-                    id: None,
-                    index: None,
-                }]),
-                images: None,
-                audio: None,
-                refusal: None,
-                annotations: None,
+        let response = response_with_choice(json!({
+            "finish_reason": "stop",
+            "native_finish_reason": null,
+            "message": {
+                "content": "answer",
+                "role": "assistant",
+                "reasoning_details": [
+                    {
+                        "type": "reasoning.text",
+                        "text": "detail",
+                        "signature": "sig"
+                    }
+                ]
             },
-            error: None,
-            index: Some(0),
-            logprobs: None,
+            "error": null,
+            "index": 0,
+            "logprobs": null
         }));
 
         let converted = convert_openrouter_response(response);
@@ -1245,20 +1217,21 @@ mod tests {
         assert_eq!(done.finish_reason.as_deref(), Some("stream_error"));
     }
 
-    fn response_with_choice(choice: Choice) -> CompletionsResponse {
-        CompletionsResponse {
-            id: "resp-1".to_string(),
-            choices: vec![choice],
-            created: 1,
-            model: "openrouter/model".to_string(),
-            object_type: ObjectType::ChatCompletion,
-            provider: Some("openrouter".to_string()),
-            system_fingerprint: None,
-            usage: Some(ResponseUsage {
-                prompt_tokens: 3,
-                completion_tokens: 4,
-                total_tokens: 7,
-            }),
-        }
+    fn response_with_choice(choice: Value) -> CompletionsResponse {
+        serde_json::from_value(json!({
+            "id": "resp-1",
+            "choices": [choice],
+            "created": 1,
+            "model": "openrouter/model",
+            "object": "chat.completion",
+            "provider": "openrouter",
+            "system_fingerprint": null,
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 4,
+                "total_tokens": 7
+            }
+        }))
+        .unwrap()
     }
 }
