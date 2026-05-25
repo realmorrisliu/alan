@@ -1,6 +1,7 @@
 use alan_protocol::{ContentPart, EventEnvelope, Op, Submission};
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
+use reqwest::StatusCode;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -101,12 +102,40 @@ impl DaemonClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            if status == StatusCode::CONFLICT
+                && let Some(session_id) = active_workspace_session_id_from_body(&body)
+            {
+                return self
+                    .read_session_summary(&session_id)
+                    .await
+                    .with_context(|| {
+                        format!("failed to attach existing workspace session {session_id}")
+                    });
+            }
             anyhow::bail!("failed to create session ({status}): {body}");
         }
         response
             .json::<CreateSession>()
             .await
             .context("failed to parse create-session response")
+    }
+
+    async fn read_session_summary(&self, session_id: &str) -> Result<CreateSession> {
+        let response = self
+            .http
+            .get(self.url(&self.endpoints.session_read(session_id)))
+            .send()
+            .await
+            .with_context(|| format!("failed to read session {session_id}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("failed to read session {session_id} ({status}): {body}");
+        }
+        response
+            .json::<CreateSession>()
+            .await
+            .with_context(|| format!("failed to parse session {session_id} summary"))
     }
 
     pub async fn submit_turn(&self, session_id: &str, text: String) -> Result<()> {
@@ -366,6 +395,25 @@ fn parse_event_line(line: String) -> Result<EventEnvelope> {
     serde_json::from_str(&line).with_context(|| format!("invalid event envelope: {line}"))
 }
 
+fn active_workspace_session_id_from_body(body: &str) -> Option<String> {
+    let message = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body.to_string());
+    let prefix = "Workspace already has an active session runtime:";
+    let (_, session_id) = message.split_once(prefix)?;
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    session_id.split_whitespace().next().map(str::to_string)
+}
+
 #[derive(Default)]
 struct NdjsonLineParser {
     buffer: Vec<u8>,
@@ -477,5 +525,35 @@ mod tests {
             parser.push(b"{\"b\":2}\r\n"),
             vec![r#"{"b":2}"#.to_string()]
         );
+    }
+
+    #[test]
+    fn parses_active_workspace_conflict_session_id() {
+        let body = serde_json::json!({
+            "error": "Workspace already has an active session runtime: sess-existing"
+        })
+        .to_string();
+        assert_eq!(
+            active_workspace_session_id_from_body(&body).as_deref(),
+            Some("sess-existing")
+        );
+    }
+
+    #[test]
+    fn create_session_shape_accepts_session_read_payload() {
+        let session: CreateSession = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-existing",
+            "workspace_id": "abc123",
+            "active": true,
+            "profile_id": "chatgpt-main",
+            "resolved_model": "gpt-5.3-codex",
+            "durability": { "durable": false, "required": false },
+            "messages": []
+        }))
+        .unwrap();
+
+        assert_eq!(session.session_id, "sess-existing");
+        assert_eq!(session.profile_id.as_deref(), Some("chatgpt-main"));
+        assert_eq!(session.resolved_model.as_deref(), Some("gpt-5.3-codex"));
     }
 }

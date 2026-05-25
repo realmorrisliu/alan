@@ -45,16 +45,14 @@ reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \
     crates \
     clients/apple \
     README.md \
-    AGENTS.md \
-    openspec/specs
+    AGENTS.md
 
 reject_pattern 'alan chat|alan ask' \
     .github \
     crates \
     clients/apple \
     README.md \
-    AGENTS.md \
-    openspec/specs
+    AGENTS.md
 
 reject_pattern 'TUI Lint / Test / Typecheck|clients/tui|ALAN_TUI_PATH' \
     .github \
