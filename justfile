@@ -28,6 +28,10 @@ guard-agent-root-layout:
 guard-daemon-api-contract:
     ./scripts/check-daemon-api-route-strings.sh
 
+# Check macOS Sparkle auto-update project metadata
+guard-macos-auto-update:
+    ./scripts/check-macos-auto-update-config.sh
+
 # Run clippy
 lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings

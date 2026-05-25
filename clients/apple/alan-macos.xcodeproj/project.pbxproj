@@ -64,6 +64,7 @@
 		000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */; };
 		000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */; };
 		000000000000000000000045 /* Models/Shell/ShellAutomationIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */; };
+		000000000000000000000046 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000802 /* Sparkle */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -149,6 +150,7 @@
 		00000000000000000000013D /* Support/ShellSidebarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarPresentation.swift; sourceTree = "<group>"; };
 		00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellActionRegistry.swift; sourceTree = "<group>"; };
 		00000000000000000000013F /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		000000000000000000000150 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -157,6 +159,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				00000000000000000000000B /* GhosttyKit.xcframework in Frameworks */,
+				000000000000000000000046 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +181,7 @@
 			isa = PBXGroup;
 			children = (
 				00000000000000000000013F /* AppIcon.icon */,
+				000000000000000000000150 /* Info.plist */,
 				000000000000000000000304 /* App */,
 				00000000000000000000030E /* Controllers/Console */,
 				00000000000000000000030F /* Controllers/Shell */,
@@ -368,6 +372,9 @@
 			dependencies = (
 			);
 			name = "alan-macos";
+			packageProductDependencies = (
+				000000000000000000000802 /* Sparkle */,
+			);
 			productName = "alan-macos";
 			productReference = 0000000000000000000000F1 /* Alan.app */;
 			productType = "com.apple.product-type.application";
@@ -396,6 +403,9 @@
 				Base,
 			);
 			mainGroup = 000000000000000000000301;
+			packageReferences = (
+				000000000000000000000801 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			productRefGroup = 000000000000000000000303 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -613,13 +623,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Alan;
-				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "alan-macos/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -652,13 +657,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Alan;
-				"INFOPLIST_KEY_CFBundleDisplayName[sdk=macosx*]" = Alan;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "alan-macos/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -704,6 +704,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		000000000000000000000801 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		000000000000000000000802 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000000000801 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000501 /* Project object */;
 }

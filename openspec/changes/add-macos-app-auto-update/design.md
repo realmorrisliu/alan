@@ -86,15 +86,16 @@ Releases，并从 app bundle 内链接 `alan`。
   Homebrew 管理路径或链接，禁用 Sparkle 安装路径或给出 Homebrew 更新提示。
 - **[Risk] 版本号漂移导致 Sparkle 不提示更新或错误降级。** -> 发布脚本检查
   Cargo、Xcode、zip、GitHub tag 和 appcast 版本一致，并检查 build number 单调递增。
-- **[Risk] Sparkle EdDSA private key 泄漏。** -> 私钥不进入 repo；本地或 CI
-  通过安全文件、Keychain 或 secrets 注入，release 日志不得打印私钥内容。
+- **[Risk] Sparkle EdDSA private key 泄漏。** -> 私钥不进入 repo；本地开发使用
+  ignored 的 `release-secrets/` 目录，CI 通过安全文件、Keychain 或 secrets 注入，
+  release 日志不得打印私钥内容。
 - **[Risk] 首次发布没有旧版样本，无法证明更新。** -> 在真正公开前保留一个旧版
   signed/notarized fixture 或通过临时较低 build number 的安装包验证旧版到新版流程。
 
 ## Migration Plan
 
 1. 创建 Sparkle EdDSA key，把 public key 写入 app Info.plist 配置，private key
-   存在本地安全位置或未来 CI secret。
+   存在 ignored 的本地 `release-secrets/` 目录或未来 CI secret。
 2. 给 Xcode project 增加 Sparkle 2 依赖和 `Check for Updates...` 菜单入口。
 3. 更新 release assembly/signing validation，覆盖 Sparkle 嵌套代码和版本一致性。
 4. 增加 appcast 生成脚本：读取 release zip、GitHub release URL、版本号、长度、

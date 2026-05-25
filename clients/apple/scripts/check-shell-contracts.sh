@@ -1816,6 +1816,21 @@ require_pattern \
     "release app validation must compare manifest checksums with embedded binaries"
 
 require_pattern \
+    "justfile" \
+    "^guard-macos-auto-update:" \
+    "macOS auto-update metadata must have a focused guard target"
+
+require_pattern \
+    "scripts/check-macos-auto-update-config.sh" \
+    "SUPublicEDKey" \
+    "macOS auto-update guard must verify the Sparkle public key metadata"
+
+require_pattern \
+    "scripts/check-macos-auto-update-config.sh" \
+    "https://alanworks\\.app/appcast\\.xml" \
+    "macOS auto-update guard must pin the stable appcast URL"
+
+require_pattern \
     "scripts/assemble-release-app.sh" \
     "Recording signed embedded binary checksums" \
     "release assembly must record manifest checksums after embedded binaries are signed"
