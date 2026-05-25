@@ -7,6 +7,33 @@ WORK_DIR="${TMPDIR:-/tmp}/alan-appcast-tools-test"
 ARCHIVE="$WORK_DIR/alan-0.1.0-macos.zip"
 APPCAST="$WORK_DIR/appcast.xml"
 SIGNED_APPCAST="$WORK_DIR/appcast-signed-tool.xml"
+STALE_APPCAST="$WORK_DIR/appcast-stale.xml"
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+write_app_info_plist() {
+    local plist="$1"
+    local version="$2"
+    local build="$3"
+
+    cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleShortVersionString</key>
+    <string>$version</string>
+    <key>CFBundleVersion</key>
+    <string>$build</string>
+    <key>SUFeedURL</key>
+    <string>https://alanworks.app/appcast.xml</string>
+</dict>
+</plist>
+EOF
+}
 
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
@@ -26,6 +53,32 @@ ALAN_EXPECTED_BUILD=1 \
 ALAN_EXPECTED_ARCHIVE_URL="https://github.com/realmorrisliu/alan/releases/download/v0.1.0/alan-0.1.0-macos.zip" \
 ALAN_EXPECTED_ARCHIVE_PATH="$ARCHIVE" \
     "$SCRIPT_DIR/validate-appcast.sh" "$APPCAST"
+
+OLD_APP="$WORK_DIR/old/Alan.app"
+NEW_APP="$WORK_DIR/new/Alan.app"
+mkdir -p "$OLD_APP/Contents" "$NEW_APP/Contents"
+write_app_info_plist "$OLD_APP/Contents/Info.plist" 0.0.9 0
+write_app_info_plist "$NEW_APP/Contents/Info.plist" 0.1.0 1
+
+ALAN_OLD_APP="$OLD_APP" \
+ALAN_NEW_APP="$NEW_APP" \
+ALAN_APPCAST_PATH="$APPCAST" \
+    "$SCRIPT_DIR/smoke-macos-auto-update.sh" >/dev/null
+
+ALAN_RELEASE_VERSION=0.1.0 \
+ALAN_RELEASE_BUILD=2 \
+ALAN_RELEASE_ARCHIVE="$ARCHIVE" \
+ALAN_RELEASE_ARCHIVE_URL="https://github.com/realmorrisliu/alan/releases/download/v0.1.0/alan-0.1.0-macos.zip" \
+ALAN_SPARKLE_ED_SIGNATURE="dGVzdC1zcGFya2xlLWVkLXNpZ25hdHVyZQ==" \
+ALAN_APPCAST_OUTPUT="$STALE_APPCAST" \
+    "$SCRIPT_DIR/generate-appcast.sh"
+
+if ALAN_OLD_APP="$OLD_APP" \
+    ALAN_NEW_APP="$NEW_APP" \
+    ALAN_APPCAST_PATH="$STALE_APPCAST" \
+    "$SCRIPT_DIR/smoke-macos-auto-update.sh" >/dev/null 2>&1; then
+    fail "auto-update smoke must reject an appcast whose build does not match NEW_APP"
+fi
 
 FAKE_SIGN_UPDATE="$WORK_DIR/sign_update"
 FAKE_PRIVATE_KEY="$WORK_DIR/sparkle_ed25519_private.pem"

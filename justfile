@@ -35,6 +35,7 @@ guard-macos-auto-update:
 # Run focused macOS auto-update tests and release appcast guards
 apple-auto-update-tests:
     bash clients/apple/scripts/test-macos-auto-update-policy.sh
+    ./scripts/test-app-bundle-paths.sh
     ./scripts/test-appcast-tools.sh
     ./scripts/check-macos-auto-update-config.sh
 

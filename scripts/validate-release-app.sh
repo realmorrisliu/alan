@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/install-channel.sh
 source "$SCRIPT_DIR/install-channel.sh"
+# shellcheck source=scripts/app-bundle-paths.sh
+source "$SCRIPT_DIR/app-bundle-paths.sh"
 
 VALIDATE_CHANNEL="${ALAN_VALIDATE_CHANNEL:-${ALAN_INSTALL_CHANNEL:-stable}}"
 if [[ -z "${ALAN_VALIDATE_CHANNEL:-}" && -n "${1:-}" ]]; then
@@ -21,11 +23,6 @@ APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME}"
 MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_CLI_NAME"
 SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
-SPARKLE_VERSION_DIR="$SPARKLE_FRAMEWORK/Versions/B"
-SPARKLE_AUTOUPDATE="$SPARKLE_VERSION_DIR/Autoupdate"
-SPARKLE_UPDATER_APP="$SPARKLE_VERSION_DIR/Updater.app"
-SPARKLE_DOWNLOADER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
-SPARKLE_INSTALLER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -94,8 +91,16 @@ require_manifest_checksum() {
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
 require_executable "$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
 require_executable "$ALAN_BIN"
-require_executable "$SPARKLE_AUTOUPDATE"
 [[ -d "$SPARKLE_FRAMEWORK" ]] || fail "Sparkle.framework not found in release app"
+
+SPARKLE_VERSION_DIR="$(alan_sparkle_version_dir "$SPARKLE_FRAMEWORK")" ||
+    fail "Sparkle.framework version directory not found in release app"
+SPARKLE_AUTOUPDATE="$SPARKLE_VERSION_DIR/Autoupdate"
+SPARKLE_UPDATER_APP="$SPARKLE_VERSION_DIR/Updater.app"
+SPARKLE_DOWNLOADER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+SPARKLE_INSTALLER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+
+require_executable "$SPARKLE_AUTOUPDATE"
 [[ -d "$SPARKLE_UPDATER_APP" ]] || fail "Sparkle Updater.app not found in release app"
 [[ -d "$SPARKLE_DOWNLOADER_XPC" ]] || fail "Sparkle Downloader.xpc not found in release app"
 [[ -d "$SPARKLE_INSTALLER_XPC" ]] || fail "Sparkle Installer.xpc not found in release app"

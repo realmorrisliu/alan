@@ -1896,6 +1896,16 @@ require_pattern \
     "auto-update smoke must support older-app verification input"
 
 require_pattern \
+    "scripts/smoke-macos-auto-update.sh" \
+    "ALAN_EXPECTED_BUILD" \
+    "auto-update smoke must validate the appcast build against the new app"
+
+require_pattern \
+    "scripts/smoke-macos-auto-update.sh" \
+    "ALAN_EXPECTED_VERSION" \
+    "auto-update smoke must validate the appcast short version against the new app"
+
+require_pattern \
     "scripts/assemble-release-app.sh" \
     "Recording signed embedded binary checksums" \
     "release assembly must record manifest checksums after embedded binaries are signed"
@@ -1906,9 +1916,29 @@ require_pattern \
     "release assembly must sign Sparkle nested code before the final app bundle"
 
 require_pattern \
+    "scripts/app-bundle-paths.sh" \
+    "alan_sparkle_version_dir" \
+    "release scripts must resolve the active Sparkle framework version dynamically"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "alan_sparkle_version_dir" \
+    "release assembly must not hard-code the Sparkle framework version directory"
+
+reject_pattern \
+    "scripts/assemble-release-app.sh" \
+    "Versions/B" \
+    "release assembly must not hard-code Sparkle.framework/Versions/B"
+
+require_pattern \
     "scripts/validate-release-app.sh" \
     "SPARKLE_AUTOUPDATE" \
     "release app validation must verify Sparkle Autoupdate helper signatures"
+
+reject_pattern \
+    "scripts/validate-release-app.sh" \
+    "Versions/B" \
+    "release app validation must not hard-code Sparkle.framework/Versions/B"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \

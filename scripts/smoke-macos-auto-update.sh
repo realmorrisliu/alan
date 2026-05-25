@@ -25,23 +25,26 @@ plist_value() {
 [[ -n "$APPCAST" && -f "$APPCAST" ]] ||
     fail "set ALAN_APPCAST_PATH or pass a matching appcast.xml path"
 
-"$SCRIPT_DIR/validate-appcast.sh" "$APPCAST" >/dev/null
-
 old_info="$OLD_APP/Contents/Info.plist"
 new_info="$NEW_APP/Contents/Info.plist"
 [[ -f "$old_info" ]] || fail "old app Info.plist missing"
 [[ -f "$new_info" ]] || fail "new app Info.plist missing"
 
 old_build="$(plist_value "$old_info" CFBundleVersion)"
+new_version="$(plist_value "$new_info" CFBundleShortVersionString)"
 new_build="$(plist_value "$new_info" CFBundleVersion)"
 feed_url="$(plist_value "$old_info" SUFeedURL)"
 
-[[ -n "$old_build" && -n "$new_build" ]] ||
-    fail "old and new app bundles must have CFBundleVersion"
+[[ -n "$old_build" && -n "$new_version" && -n "$new_build" ]] ||
+    fail "old app must have CFBundleVersion and new app must have version/build metadata"
 awk -v old="$old_build" -v new="$new_build" 'BEGIN { exit !(new + 0 > old + 0) }' ||
     fail "new app build $new_build must be greater than old app build $old_build"
 [[ "$feed_url" == "https://alanworks.app/appcast.xml" ]] ||
     fail "old app must be configured with the stable Sparkle feed"
+
+ALAN_EXPECTED_VERSION="$new_version" \
+ALAN_EXPECTED_BUILD="$new_build" \
+    "$SCRIPT_DIR/validate-appcast.sh" "$APPCAST" >/dev/null
 
 if [[ "${ALAN_ALLOW_INTERACTIVE_UPDATE_SMOKE:-0}" != "1" ]]; then
     printf 'Preflight passed. Set ALAN_ALLOW_INTERACTIVE_UPDATE_SMOKE=1 to launch the old app for a manual Sparkle update check.\n'

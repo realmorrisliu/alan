@@ -121,6 +121,31 @@ require_pattern \
     "appcast generation must have focused tests"
 
 require_pattern \
+    'ALAN_EXPECTED_BUILD' \
+    "$REPO_ROOT/scripts/smoke-macos-auto-update.sh" \
+    "auto-update smoke must validate appcast build metadata against the new app"
+
+require_pattern \
+    'ALAN_EXPECTED_VERSION' \
+    "$REPO_ROOT/scripts/smoke-macos-auto-update.sh" \
+    "auto-update smoke must validate appcast short version metadata against the new app"
+
+require_pattern \
+    'alan_sparkle_version_dir' \
+    "$REPO_ROOT/scripts/assemble-release-app.sh" \
+    "release assembly must resolve the active Sparkle framework version dynamically"
+
+require_pattern \
+    'alan_sparkle_version_dir' \
+    "$REPO_ROOT/scripts/validate-release-app.sh" \
+    "release validation must resolve the active Sparkle framework version dynamically"
+
+if rg -n 'Versions/B' "$REPO_ROOT/scripts/assemble-release-app.sh" \
+    "$REPO_ROOT/scripts/validate-release-app.sh" >/dev/null; then
+    fail "release scripts must not hard-code Sparkle.framework/Versions/B"
+fi
+
+require_pattern \
     '^release-secrets/\*$' \
     "$REPO_ROOT/.gitignore" \
     "release-secrets must be ignored"

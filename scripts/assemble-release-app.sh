@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/release-env.sh"
 # shellcheck source=scripts/install-channel.sh
 source "$SCRIPT_DIR/install-channel.sh"
+# shellcheck source=scripts/app-bundle-paths.sh
+source "$SCRIPT_DIR/app-bundle-paths.sh"
 
 alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
@@ -90,15 +92,19 @@ sign_path() {
 
 sign_sparkle_code() {
     local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
-    local version_dir="$framework/Versions/B"
-    local nested_paths=(
+    local version_dir
+    local nested_paths
+
+    [[ -d "$framework" ]] || fail "Sparkle.framework was not embedded in $ALAN_APP_BUNDLE_NAME"
+    version_dir="$(alan_sparkle_version_dir "$framework")" ||
+        fail "Sparkle.framework version directory was not found in $framework"
+
+    nested_paths=(
         "$version_dir/Autoupdate"
         "$version_dir/Updater.app"
         "$version_dir/XPCServices/Downloader.xpc"
         "$version_dir/XPCServices/Installer.xpc"
     )
-
-    [[ -d "$framework" ]] || fail "Sparkle.framework was not embedded in $ALAN_APP_BUNDLE_NAME"
 
     for nested_path in "${nested_paths[@]}"; do
         [[ -e "$nested_path" ]] || fail "Sparkle nested code is missing: $nested_path"

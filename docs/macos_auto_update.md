@@ -68,7 +68,8 @@ brew upgrade --cask alan
    ```
 
 8. For a staged old-to-new update test, provide an older signed app, the newer
-   signed app, and the matching appcast:
+   signed app, and the matching appcast. The smoke preflight rejects appcasts
+   whose Sparkle short version or build does not match the newer app bundle:
 
    ```bash
    ALAN_OLD_APP=/Applications/Alan.app \

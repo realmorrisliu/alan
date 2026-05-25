@@ -25,6 +25,7 @@ direct-install update behavior when macOS auto-update support changes.
 #### Scenario: Direct app update smoke is checked
 - **WHEN** auto-update support is considered release-ready
 - **THEN** verification installs or launches an older signed and notarized `Alan.app`
+- **AND** verification confirms the appcast short version and build match the newer app bundle
 - **AND** verification confirms Sparkle detects the newer appcast item
 - **AND** verification confirms the update downloads, verifies, installs, and relaunches into the newer version
 
