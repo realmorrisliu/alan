@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryCell {
+    Rendered(Vec<String>),
     User(String),
     Assistant(String),
     Thinking(String),
@@ -44,7 +45,16 @@ pub struct PendingYieldCell {
 impl HistoryCell {
     pub fn render_lines(&self, width: usize) -> Vec<String> {
         let width = width.max(16);
+        if let Self::Rendered(lines) = self {
+            return lines
+                .iter()
+                .flat_map(|line| textwrap::wrap(line, width))
+                .map(Into::into)
+                .collect();
+        }
+
         let (prefix, body) = match self {
+            Self::Rendered(_) => unreachable!("rendered cells returned before prefix formatting"),
             Self::User(text) => ("you", text.clone()),
             Self::Assistant(text) => ("alan", text.clone()),
             Self::Thinking(text) => ("thinking", text.clone()),
@@ -112,6 +122,19 @@ impl HistoryCell {
                 }
             })
             .collect()
+    }
+
+    pub fn trim_rendered_prefix(&mut self, width: usize, lines_to_trim: usize) {
+        if lines_to_trim == 0 {
+            return;
+        }
+
+        let remaining = self
+            .render_lines(width)
+            .into_iter()
+            .skip(lines_to_trim)
+            .collect::<Vec<_>>();
+        *self = Self::Rendered(remaining);
     }
 }
 
