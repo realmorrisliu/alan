@@ -29,12 +29,14 @@ pub struct TerminalSession {
 impl TerminalSession {
     pub fn enter() -> Result<Self> {
         crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
+        let startup_guard = TerminalStartupGuard::new();
         let mut out = stdout();
         execute!(out, EnableBracketedPaste, EnableMouseCapture)
             .context("failed to enable terminal input modes")?;
         let backend = CrosstermBackend::new(out);
         let mut terminal = Terminal::new(backend).context("failed to initialize terminal")?;
         terminal.clear().context("failed to clear terminal")?;
+        startup_guard.disarm();
         Ok(Self { terminal })
     }
 
@@ -52,6 +54,13 @@ impl TerminalSession {
             .unwrap_or(24)
     }
 
+    pub fn viewport_size(&self) -> (usize, usize) {
+        self.terminal
+            .size()
+            .map(|area| (area.width as usize, area.height as usize))
+            .unwrap_or((80, 24))
+    }
+
     pub fn write_scrollback(&mut self, lines: &[String]) -> Result<()> {
         if lines.is_empty() {
             return Ok(());
@@ -62,6 +71,31 @@ impl TerminalSession {
         }
         out.flush()?;
         Ok(())
+    }
+}
+
+struct TerminalStartupGuard {
+    armed: bool,
+}
+
+impl TerminalStartupGuard {
+    fn new() -> Self {
+        Self { armed: true }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TerminalStartupGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut out = stdout();
+        let _ = execute!(out, DisableMouseCapture, DisableBracketedPaste);
+        let _ = crossterm_terminal::disable_raw_mode();
     }
 }
 
