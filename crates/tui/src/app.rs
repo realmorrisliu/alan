@@ -71,6 +71,7 @@ pub struct TuiApp {
     pub composer: Composer,
     pub should_quit: bool,
     last_sequence: Option<u64>,
+    committed_rendered_lines: usize,
 }
 
 impl TuiApp {
@@ -81,6 +82,7 @@ impl TuiApp {
             composer: Composer::default(),
             should_quit: false,
             last_sequence: None,
+            committed_rendered_lines: 0,
         }
     }
 
@@ -92,6 +94,7 @@ impl TuiApp {
                 None
             }
             AppEvent::Terminal(TerminalEvent::Resize(width, height)) => {
+                self.committed_rendered_lines = 0;
                 self.reducer.cells.push(HistoryCell::Status(format!(
                     "terminal resized to {width}x{height}"
                 )));
@@ -140,18 +143,34 @@ impl TuiApp {
         &self.reducer.cells
     }
 
-    pub fn drain_committed_scrollback(&mut self, viewport_height: usize) -> Vec<String> {
-        let max_cells = viewport_height.saturating_sub(4).max(4);
-        if self.reducer.cells.len() <= max_cells {
+    pub fn rendered_history_lines(&self, width: usize) -> Vec<String> {
+        let committed = self.committed_rendered_lines;
+        self.render_history_lines(width)
+            .into_iter()
+            .skip(committed)
+            .collect()
+    }
+
+    pub fn drain_committed_scrollback(
+        &mut self,
+        viewport_width: usize,
+        viewport_height: usize,
+    ) -> Vec<String> {
+        let max_lines = viewport_height.saturating_sub(4).max(4);
+        let lines = self.render_history_lines(viewport_width);
+        let committed = self.committed_rendered_lines.min(lines.len());
+        let visible_lines = lines.len().saturating_sub(committed);
+        if visible_lines <= max_lines {
+            self.committed_rendered_lines = committed;
             return Vec::new();
         }
-        let remove_count = self.reducer.cells.len() - max_cells;
-        let removed: Vec<_> = self.reducer.cells.drain(..remove_count).collect();
-        let mut lines = Vec::new();
-        for cell in removed {
-            lines.extend(cell.render_lines(96));
-        }
+        let drain_count = visible_lines - max_lines;
+        self.committed_rendered_lines = committed + drain_count;
         lines
+            .into_iter()
+            .skip(committed)
+            .take(drain_count)
+            .collect()
     }
 
     pub fn clear_pending_yield(&mut self, request_id: &str) {
@@ -229,6 +248,13 @@ impl TuiApp {
         }
         self.reducer.cells.push(HistoryCell::User(text.clone()));
         Some(AppAction::SubmitTurn(text))
+    }
+
+    fn render_history_lines(&self, width: usize) -> Vec<String> {
+        self.history_cells()
+            .iter()
+            .flat_map(|cell| cell.render_lines(width))
+            .collect()
     }
 }
 
@@ -348,6 +374,20 @@ mod tests {
         assert!(app.reducer.pending_yield.is_some());
         app.clear_pending_yield("r-1");
         assert!(app.reducer.pending_yield.is_none());
+    }
+
+    #[test]
+    fn scrollback_drains_by_rendered_lines() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+
+        assert!(!drained.is_empty());
+        assert!(app.rendered_history_lines(32).len() <= 4);
+        assert!(matches!(app.history_cells()[0], HistoryCell::Assistant(_)));
     }
 
     fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {
