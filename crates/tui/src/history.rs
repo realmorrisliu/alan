@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryCell {
+    Rendered(Vec<String>),
     User(String),
     Assistant(String),
     Thinking(String),
@@ -44,7 +45,16 @@ pub struct PendingYieldCell {
 impl HistoryCell {
     pub fn render_lines(&self, width: usize) -> Vec<String> {
         let width = width.max(16);
+        if let Self::Rendered(lines) = self {
+            return lines
+                .iter()
+                .flat_map(|line| textwrap::wrap(line, width))
+                .map(Into::into)
+                .collect();
+        }
+
         let (prefix, body) = match self {
+            Self::Rendered(_) => unreachable!("rendered cells returned before prefix formatting"),
             Self::User(text) => ("you", text.clone()),
             Self::Assistant(text) => ("alan", text.clone()),
             Self::Thinking(text) => ("thinking", text.clone()),
@@ -113,6 +123,56 @@ impl HistoryCell {
             })
             .collect()
     }
+
+    pub fn trim_rendered_prefix(&mut self, width: usize, lines_to_trim: usize) -> bool {
+        if lines_to_trim == 0 {
+            return true;
+        }
+
+        if !self.can_prune_from_active_state() {
+            return false;
+        }
+
+        match self {
+            Self::Assistant(text) => {
+                *text = trim_wrapped_body("alan", text, width, lines_to_trim);
+                return true;
+            }
+            Self::Thinking(text) => {
+                *text = trim_wrapped_body("thinking", text, width, lines_to_trim);
+                return true;
+            }
+            _ => {}
+        }
+
+        let remaining = self
+            .render_lines(width)
+            .into_iter()
+            .skip(lines_to_trim)
+            .collect::<Vec<_>>();
+        *self = Self::Rendered(remaining);
+        true
+    }
+
+    pub fn can_prune_from_active_state(&self) -> bool {
+        !matches!(
+            self,
+            Self::Tool {
+                status: ToolStatus::Running,
+                ..
+            }
+        )
+    }
+}
+
+fn trim_wrapped_body(prefix: &str, text: &str, width: usize, lines_to_trim: usize) -> String {
+    let body_width = width.max(16).saturating_sub(prefix.len() + 3);
+    textwrap::wrap(text, body_width)
+        .into_iter()
+        .skip(lines_to_trim)
+        .map(|line| line.into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug, Default, Clone)]

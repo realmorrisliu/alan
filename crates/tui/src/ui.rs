@@ -20,14 +20,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
         ])
         .split(area);
 
-    let mut transcript = Vec::new();
-    for cell in app.history_cells() {
-        transcript.extend(
-            cell.render_lines(chunks[0].width as usize)
-                .into_iter()
-                .map(Line::from),
-        );
-    }
+    let mut transcript: Vec<Line<'_>> = app
+        .rendered_history_lines(chunks[0].width as usize)
+        .into_iter()
+        .map(Line::from)
+        .collect();
     if transcript.is_empty() {
         transcript.push(Line::from(vec![
             Span::styled("alan", Style::default().add_modifier(Modifier::BOLD)),

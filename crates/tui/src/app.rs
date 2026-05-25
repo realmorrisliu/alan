@@ -140,18 +140,23 @@ impl TuiApp {
         &self.reducer.cells
     }
 
-    pub fn drain_committed_scrollback(&mut self, viewport_height: usize) -> Vec<String> {
-        let max_cells = viewport_height.saturating_sub(4).max(4);
-        if self.reducer.cells.len() <= max_cells {
+    pub fn rendered_history_lines(&self, width: usize) -> Vec<String> {
+        self.render_history_lines(width)
+    }
+
+    pub fn drain_committed_scrollback(
+        &mut self,
+        viewport_width: usize,
+        viewport_height: usize,
+    ) -> Vec<String> {
+        let max_lines = viewport_height.saturating_sub(4).max(4);
+        let lines = self.render_history_lines(viewport_width);
+        if lines.len() <= max_lines {
             return Vec::new();
         }
-        let remove_count = self.reducer.cells.len() - max_cells;
-        let removed: Vec<_> = self.reducer.cells.drain(..remove_count).collect();
-        let mut lines = Vec::new();
-        for cell in removed {
-            lines.extend(cell.render_lines(96));
-        }
-        lines
+        let drain_count = lines.len() - max_lines;
+        let pruned_count = self.prune_rendered_prefix(viewport_width, drain_count);
+        lines.into_iter().take(pruned_count).collect()
     }
 
     pub fn clear_pending_yield(&mut self, request_id: &str) {
@@ -229,6 +234,48 @@ impl TuiApp {
         }
         self.reducer.cells.push(HistoryCell::User(text.clone()));
         Some(AppAction::SubmitTurn(text))
+    }
+
+    fn render_history_lines(&self, width: usize) -> Vec<String> {
+        self.history_cells()
+            .iter()
+            .flat_map(|cell| cell.render_lines(width))
+            .collect()
+    }
+
+    fn prune_rendered_prefix(&mut self, width: usize, lines_to_prune: usize) -> usize {
+        let mut remaining = lines_to_prune;
+        let mut cells_to_remove = 0;
+        let mut pruned = 0;
+
+        while remaining > 0 && cells_to_remove < self.reducer.cells.len() {
+            let cell = &self.reducer.cells[cells_to_remove];
+            if !cell.can_prune_from_active_state() {
+                break;
+            }
+
+            let cell_lines = cell.render_lines(width).len();
+            if cell_lines > remaining {
+                break;
+            }
+
+            remaining -= cell_lines;
+            pruned += cell_lines;
+            cells_to_remove += 1;
+        }
+
+        if cells_to_remove > 0 {
+            self.reducer.cells.drain(0..cells_to_remove);
+        }
+
+        if remaining > 0
+            && let Some(cell) = self.reducer.cells.first_mut()
+            && cell.trim_rendered_prefix(width, remaining)
+        {
+            pruned += remaining;
+        }
+
+        pruned
     }
 }
 
@@ -348,6 +395,224 @@ mod tests {
         assert!(app.reducer.pending_yield.is_some());
         app.clear_pending_yield("r-1");
         assert!(app.reducer.pending_yield.is_none());
+    }
+
+    #[test]
+    fn scrollback_drains_by_rendered_lines() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+
+        assert!(!drained.is_empty());
+        assert!(app.rendered_history_lines(32).len() <= 4);
+        assert!(matches!(app.history_cells()[0], HistoryCell::Assistant(_)));
+    }
+
+    #[test]
+    fn scrollback_prunes_committed_cells_from_active_state() {
+        let mut app = app();
+        for idx in 0..20 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("status {idx}")));
+        }
+
+        let drained = app.drain_committed_scrollback(80, 8);
+
+        assert_eq!(drained.len(), 16);
+        assert_eq!(app.history_cells().len(), 4);
+        assert_eq!(app.rendered_history_lines(80).len(), 4);
+    }
+
+    #[test]
+    fn resize_does_not_replay_committed_scrollback() {
+        let mut app = app();
+        for idx in 0..12 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("status {idx}")));
+        }
+
+        let first_drained = app.drain_committed_scrollback(80, 8);
+        app.dispatch(AppEvent::Terminal(TerminalEvent::Resize(100, 8)));
+        let second_drained = app.drain_committed_scrollback(100, 8);
+
+        assert_eq!(first_drained.len(), 8);
+        assert_eq!(second_drained.len(), 1);
+        assert!(
+            !second_drained
+                .iter()
+                .any(|line| first_drained.contains(line))
+        );
+        assert!(app.rendered_history_lines(100).len() <= 4);
+    }
+
+    #[test]
+    fn pruned_render_tail_wraps_at_resized_width() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
+
+        app.drain_committed_scrollback(80, 8);
+        let drained_after_narrow_resize = app.drain_committed_scrollback(20, 8);
+
+        assert!(!drained_after_narrow_resize.is_empty());
+        assert!(app.rendered_history_lines(20).len() <= 4);
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_streaming_text_cell() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::TextDelta {
+                chunk: "tail".into(),
+                is_final: false,
+            },
+        ));
+
+        assert!(!drained.is_empty());
+        assert_eq!(app.history_cells().len(), 1);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Assistant(text)) if text.ends_with("tail")
+        ));
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_streaming_thinking_cell() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Thinking("long hidden reasoning ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ThinkingDelta {
+                chunk: "tail".into(),
+                is_final: false,
+            },
+        ));
+
+        assert!(!drained.is_empty());
+        assert_eq!(app.history_cells().len(), 1);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Thinking(text)) if text.ends_with("tail")
+        ));
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_running_tool_identity() {
+        let mut app = app();
+        for idx in 0..8 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("status {idx}")));
+        }
+        app.reducer.cells.push(HistoryCell::Tool {
+            id: "tool-1".into(),
+            name: "long-tool-name".into(),
+            status: crate::history::ToolStatus::Running,
+            preview: Some("streamed preview ".repeat(20)),
+        });
+
+        let drained = app.drain_committed_scrollback(24, 8);
+
+        assert_eq!(drained.len(), 8);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Running,
+                ..
+            }) if id == "tool-1"
+        ));
+
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ToolCallCompleted {
+                id: "tool-1".into(),
+                name: Some("long-tool-name".into()),
+                success: Some(true),
+                result_preview: Some("done".into()),
+                audit: None,
+            },
+        ));
+
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Complete,
+                preview: Some(preview),
+                ..
+            }) if id == "tool-1" && preview == "done"
+        ));
+    }
+
+    #[test]
+    fn full_scrollback_prune_preserves_running_tool_identity() {
+        let mut app = app();
+        for idx in 0..8 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("before {idx}")));
+        }
+        app.reducer.cells.push(HistoryCell::Tool {
+            id: "tool-1".into(),
+            name: "read_file".into(),
+            status: crate::history::ToolStatus::Running,
+            preview: None,
+        });
+        for idx in 0..4 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("after {idx}")));
+        }
+
+        let drained = app.drain_committed_scrollback(80, 8);
+
+        assert_eq!(drained.len(), 8);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Running,
+                ..
+            }) if id == "tool-1"
+        ));
+
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ToolCallCompleted {
+                id: "tool-1".into(),
+                name: Some("read_file".into()),
+                success: Some(false),
+                result_preview: Some("failed".into()),
+                audit: None,
+            },
+        ));
+
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Failed,
+                preview: Some(preview),
+                ..
+            }) if id == "tool-1" && preview == "failed"
+        ));
     }
 
     fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {

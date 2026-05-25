@@ -148,7 +148,8 @@ pub async fn run(config: RunConfig) -> Result<()> {
                 dirty = true;
             }
             _ = frame_tick.tick(), if dirty => {
-                let committed = app.drain_committed_scrollback(terminal.viewport_height());
+                let (viewport_width, viewport_height) = terminal.viewport_size();
+                let committed = app.drain_committed_scrollback(viewport_width, viewport_height);
                 terminal.write_scrollback(&committed)?;
                 terminal.draw(&app)?;
                 dirty = false;
