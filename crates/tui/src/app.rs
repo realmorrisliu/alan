@@ -249,9 +249,12 @@ impl TuiApp {
         let mut pruned = 0;
 
         while remaining > 0 && cells_to_remove < self.reducer.cells.len() {
-            let cell_lines = self.reducer.cells[cells_to_remove]
-                .render_lines(width)
-                .len();
+            let cell = &self.reducer.cells[cells_to_remove];
+            if !cell.can_prune_from_active_state() {
+                break;
+            }
+
+            let cell_lines = cell.render_lines(width).len();
             if cell_lines > remaining {
                 break;
             }
@@ -507,6 +510,60 @@ mod tests {
                 preview: Some(preview),
                 ..
             }) if id == "tool-1" && preview == "done"
+        ));
+    }
+
+    #[test]
+    fn full_scrollback_prune_preserves_running_tool_identity() {
+        let mut app = app();
+        for idx in 0..8 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("before {idx}")));
+        }
+        app.reducer.cells.push(HistoryCell::Tool {
+            id: "tool-1".into(),
+            name: "read_file".into(),
+            status: crate::history::ToolStatus::Running,
+            preview: None,
+        });
+        for idx in 0..4 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("after {idx}")));
+        }
+
+        let drained = app.drain_committed_scrollback(80, 8);
+
+        assert_eq!(drained.len(), 8);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Running,
+                ..
+            }) if id == "tool-1"
+        ));
+
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ToolCallCompleted {
+                id: "tool-1".into(),
+                name: Some("read_file".into()),
+                success: Some(false),
+                result_preview: Some("failed".into()),
+                audit: None,
+            },
+        ));
+
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Failed,
+                preview: Some(preview),
+                ..
+            }) if id == "tool-1" && preview == "failed"
         ));
     }
 

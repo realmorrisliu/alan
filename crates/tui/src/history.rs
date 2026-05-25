@@ -129,13 +129,7 @@ impl HistoryCell {
             return true;
         }
 
-        if matches!(
-            self,
-            Self::Tool {
-                status: ToolStatus::Running,
-                ..
-            }
-        ) {
+        if !self.can_prune_from_active_state() {
             return false;
         }
 
@@ -146,6 +140,16 @@ impl HistoryCell {
             .collect::<Vec<_>>();
         *self = Self::Rendered(remaining);
         true
+    }
+
+    pub fn can_prune_from_active_state(&self) -> bool {
+        !matches!(
+            self,
+            Self::Tool {
+                status: ToolStatus::Running,
+                ..
+            }
+        )
     }
 }
 
