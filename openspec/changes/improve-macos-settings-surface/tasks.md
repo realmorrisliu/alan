@@ -7,8 +7,8 @@
   Sessions, Capabilities, and Local rows, and classify each as editable,
   read-only, action-only, or deferred.
 - [ ] 1.3 Decide the first implementation slice for Sessions and Capabilities:
-  summary-only, collapsed advanced, or fully hidden until daemon persistence is
-  available.
+  summary-only or collapsed advanced, while keeping both required sections
+  visible in the default Settings layout.
 
 ## 2. Settings Information Architecture
 
