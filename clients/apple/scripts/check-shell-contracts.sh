@@ -1851,6 +1851,16 @@ require_pattern \
     "Homebrew-managed update message must point at brew upgrade --cask alan"
 
 require_pattern \
+    "clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "resolvingSymlinksInPath" \
+    "Homebrew-managed update policy must inspect resolved app bundle paths"
+
+require_pattern \
+    "clients/apple/scripts/test-macos-auto-update-policy.swift" \
+    "testDirectCommandLinkDoesNotDisableSparkle" \
+    "auto-update policy tests must cover direct app command links"
+
+require_pattern \
     "clients/apple/alan-macos/Info.plist" \
     "SUEnableAutomaticChecks" \
     "first Sparkle version must explicitly disable automatic checks"

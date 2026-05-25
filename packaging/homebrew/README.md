@@ -17,8 +17,10 @@ brew upgrade --cask alan
 ```
 
 Homebrew-managed app bundles must not be replaced by Sparkle. Alan's app-side
-update policy detects cask paths and Homebrew-owned command links, then directs
-users back to Homebrew for updates.
+update policy detects app bundles that live under, or resolve through,
+Homebrew's cask storage, then directs users back to Homebrew for updates. A
+Homebrew-prefix command link is not treated as ownership by itself because
+direct app installs can create the same `alan` symlink.
 
 The cask must link the embedded command:
 

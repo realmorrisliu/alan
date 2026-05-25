@@ -32,7 +32,6 @@ enum AlanMacUpdatePolicy {
 
         if isHomebrewManaged(
             appBundleURL: appBundleURL,
-            channel: channel,
             homebrewPrefixes: homebrewPrefixes,
             fileManager: fileManager
         ) {
@@ -54,7 +53,6 @@ enum AlanMacUpdatePolicy {
 
     static func isHomebrewManaged(
         appBundleURL: URL,
-        channel: AlanInstallChannel = .stable,
         homebrewPrefixes: [String]? = nil,
         fileManager: FileManager = .default
     ) -> Bool {
@@ -65,42 +63,29 @@ enum AlanMacUpdatePolicy {
         )
 
         if prefixes.contains(where: { prefix in
-            appPath.hasPrefix(prefix + "/Caskroom/alan/")
-                || appPath.hasPrefix(prefix + "/Cellar/alan/")
+            isHomebrewManagedAppBundlePath(appPath, prefix: prefix)
         }) {
             return true
         }
 
-        let embeddedToolPaths = channel.toolNames.map { tool in
-            appBundleURL
-                .appendingPathComponent("Contents", isDirectory: true)
-                .appendingPathComponent("Resources", isDirectory: true)
-                .appendingPathComponent("bin", isDirectory: true)
-                .appendingPathComponent(tool)
-                .standardizedFileURL
-                .path
-        }
-
-        for prefix in prefixes {
-            let binDirectory = URL(fileURLWithPath: prefix, isDirectory: true)
-                .appendingPathComponent("bin", isDirectory: true)
-            for tool in channel.toolNames {
-                let link = binDirectory.appendingPathComponent(tool)
-                guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: link.path)
-                else {
-                    continue
-                }
-
-                let resolvedDestination = URL(fileURLWithPath: destination, relativeTo: binDirectory)
-                    .standardizedFileURL
-                    .path
-                if embeddedToolPaths.contains(resolvedDestination) {
-                    return true
-                }
-            }
+        let resolvedAppPath = appBundleURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
+        if resolvedAppPath != appPath,
+           prefixes.contains(where: { prefix in
+               isHomebrewManagedAppBundlePath(resolvedAppPath, prefix: prefix)
+           })
+        {
+            return true
         }
 
         return false
+    }
+
+    private static func isHomebrewManagedAppBundlePath(_ path: String, prefix: String) -> Bool {
+        path.hasPrefix(prefix + "/Caskroom/alan/")
+            || path.hasPrefix(prefix + "/Cellar/alan/")
     }
 
     private static func resolvedHomebrewPrefixes(

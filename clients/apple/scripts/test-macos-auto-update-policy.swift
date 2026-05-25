@@ -86,8 +86,35 @@ private func testHomebrewCaskroomPathDoesNotUseSparkle() throws {
     )
 }
 
-private func testHomebrewCommandLinkToCurrentBundleDoesNotUseSparkle() throws {
-    let root = try temporaryDirectory("homebrew-link")
+private func testHomebrewResolvedCaskroomPathDoesNotUseSparkle() throws {
+    let root = try temporaryDirectory("homebrew-symlinked-app")
+    let prefix = root.appendingPathComponent("opt/homebrew", isDirectory: true)
+    let caskApp = prefix.appendingPathComponent("Caskroom/alan/0.1.0/Alan.app", isDirectory: true)
+    let app = root.appendingPathComponent("Applications/Alan.app", isDirectory: true)
+
+    try FileManager.default.createDirectory(
+        at: caskApp,
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+        at: app.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.createSymbolicLink(at: app, withDestinationURL: caskApp)
+
+    let decision = AlanMacUpdatePolicy.decision(
+        appBundleURL: app,
+        channel: .stable,
+        homebrewPrefixes: [prefix.path],
+        fileManager: .default
+    )
+
+    try expect(decision.installation == .homebrewManaged, "resolved Caskroom app path must be Homebrew-managed")
+    try expect(!decision.allowsSparkleUpdates, "resolved Caskroom app path must disable Sparkle")
+}
+
+private func testDirectCommandLinkDoesNotDisableSparkle() throws {
+    let root = try temporaryDirectory("direct-link")
     let prefix = root.appendingPathComponent("opt/homebrew", isDirectory: true)
     let app = root.appendingPathComponent("Applications/Alan.app", isDirectory: true)
     let embeddedAlan = app.appendingPathComponent("Contents/Resources/bin/alan")
@@ -107,8 +134,8 @@ private func testHomebrewCommandLinkToCurrentBundleDoesNotUseSparkle() throws {
         fileManager: .default
     )
 
-    try expect(decision.installation == .homebrewManaged, "Homebrew command link must mark app managed")
-    try expect(!decision.allowsSparkleUpdates, "Homebrew command link must disable Sparkle")
+    try expect(decision.installation == .direct, "command link alone must not mark a direct app Homebrew-managed")
+    try expect(decision.allowsSparkleUpdates, "direct app with its own command link must still allow Sparkle")
 }
 
 @main
@@ -117,7 +144,8 @@ private enum TestRunner {
         try testStableDirectInstallUsesSparkle()
         try testDevChannelDoesNotUseSparkle()
         try testHomebrewCaskroomPathDoesNotUseSparkle()
-        try testHomebrewCommandLinkToCurrentBundleDoesNotUseSparkle()
+        try testHomebrewResolvedCaskroomPathDoesNotUseSparkle()
+        try testDirectCommandLinkDoesNotDisableSparkle()
         print("macOS auto-update policy tests passed.")
     }
 

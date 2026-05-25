@@ -272,13 +272,61 @@ enum AlanCommandLineToolInstaller {
                 .appendingPathComponent("bin", isDirectory: true)
             for tool in channel.toolNames {
                 let link = binDirectory.appendingPathComponent(tool)
-                if isAlanOwnedLink(link, tool: tool, channel: channel, fileManager: fileManager) {
+                if isHomebrewManagedCommandLink(
+                    link,
+                    tool: tool,
+                    channel: channel,
+                    homebrewPrefixes: prefixes,
+                    fileManager: fileManager
+                ) {
                     links[tool] = link.path
                 }
             }
         }
 
         return links
+    }
+
+    private static func isHomebrewManagedCommandLink(
+        _ url: URL,
+        tool: String,
+        channel: AlanInstallChannel,
+        homebrewPrefixes: [String],
+        fileManager: FileManager
+    ) -> Bool {
+        guard isSymbolicLink(url, fileManager: fileManager),
+              let destination = try? fileManager.destinationOfSymbolicLink(atPath: url.path)
+        else {
+            return false
+        }
+
+        let destinationURL = URL(
+            fileURLWithPath: destination,
+            relativeTo: url.deletingLastPathComponent()
+        )
+        .resolvingSymlinksInPath()
+        .standardizedFileURL
+        let destinationPath = destinationURL.path
+
+        guard channel.ownedAppBundleNames.contains(where: { bundleName in
+            destinationPath.hasSuffix("/\(bundleName)/Contents/Resources/bin/\(tool)")
+        }) else {
+            return false
+        }
+
+        let appBundleURL = destinationURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return homebrewPrefixes.contains { prefix in
+            isHomebrewManagedAppBundlePath(appBundleURL.path, prefix: prefix)
+        }
+    }
+
+    private static func isHomebrewManagedAppBundlePath(_ path: String, prefix: String) -> Bool {
+        path.hasPrefix(prefix + "/Caskroom/alan/")
+            || path.hasPrefix(prefix + "/Cellar/alan/")
     }
 
     private static func resolvedHomebrewPrefixes(

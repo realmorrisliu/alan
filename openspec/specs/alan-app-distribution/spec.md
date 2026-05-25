@@ -245,9 +245,10 @@ Alan for macOS SHALL NOT let Sparkle replace a Homebrew-managed app
 installation.
 
 #### Scenario: Homebrew-managed install is detected
-- **WHEN** Alan detects that the current app installation is managed by the Homebrew cask path or Homebrew-managed command links
+- **WHEN** Alan detects that the current app installation lives under or resolves through a Homebrew cask path
 - **THEN** Sparkle installation is disabled or the update UI directs the user to update with Homebrew
 - **AND** Alan does not replace the Homebrew-managed app bundle through Sparkle
+- **AND** a Homebrew-prefix command link alone does not mark a directly installed app bundle as Homebrew-managed
 
 #### Scenario: Homebrew documentation is shown
 - **WHEN** install or update documentation describes updating a Homebrew cask install

@@ -7,9 +7,11 @@
   Cloudflare.
 - Cloudflare Pages owns the website root and `appcast.xml` with XML content type
   and low-cache headers.
-- Homebrew cask installs are Homebrew-managed. Alan detects cask paths or
-  Homebrew-owned command links and directs users to `brew upgrade --cask alan`
-  instead of letting Sparkle replace the app bundle.
+- Homebrew cask installs are Homebrew-managed. Alan detects app bundles that
+  live under or resolve through Homebrew cask storage and directs users to
+  `brew upgrade --cask alan` instead of letting Sparkle replace the app bundle.
+  A Homebrew-prefix command link alone is not treated as app ownership because
+  direct installs can create the same link.
 
 Remaining live-release closure:
 

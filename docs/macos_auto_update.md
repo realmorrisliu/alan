@@ -12,9 +12,10 @@ user-initiated: automatic checks and silent automatic installation are disabled
 in `Info.plist`.
 
 Homebrew-managed installs are owned by Homebrew. When Alan detects the app is
-under a Homebrew cask path, or that Homebrew-managed command links point to the
-current app bundle, Sparkle replacement is disabled and the user-facing update
-path is:
+under a Homebrew cask path, or that the running app bundle resolves through a
+Homebrew cask path, Sparkle replacement is disabled and the user-facing update
+path is below. A command link under a Homebrew prefix is not enough by itself because
+direct app installs can create the same `alan` symlink:
 
 ```bash
 brew upgrade --cask alan

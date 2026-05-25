@@ -101,6 +101,16 @@ require_pattern \
     "Homebrew-managed update policy must point users at brew upgrade --cask alan"
 
 require_pattern \
+    'resolvingSymlinksInPath' \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "Homebrew-managed update policy must inspect resolved app bundle paths"
+
+require_pattern \
+    'testDirectCommandLinkDoesNotDisableSparkle' \
+    "$REPO_ROOT/clients/apple/scripts/test-macos-auto-update-policy.swift" \
+    "auto-update policy tests must cover direct app command links"
+
+require_pattern \
     'validate-release-version-metadata\.sh' \
     "$REPO_ROOT/scripts/release-check.sh" \
     "release-check must validate version metadata before release"
