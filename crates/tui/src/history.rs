@@ -124,9 +124,19 @@ impl HistoryCell {
             .collect()
     }
 
-    pub fn trim_rendered_prefix(&mut self, width: usize, lines_to_trim: usize) {
+    pub fn trim_rendered_prefix(&mut self, width: usize, lines_to_trim: usize) -> bool {
         if lines_to_trim == 0 {
-            return;
+            return true;
+        }
+
+        if matches!(
+            self,
+            Self::Tool {
+                status: ToolStatus::Running,
+                ..
+            }
+        ) {
+            return false;
         }
 
         let remaining = self
@@ -135,6 +145,7 @@ impl HistoryCell {
             .skip(lines_to_trim)
             .collect::<Vec<_>>();
         *self = Self::Rendered(remaining);
+        true
     }
 }
 

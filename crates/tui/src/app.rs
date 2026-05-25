@@ -155,9 +155,8 @@ impl TuiApp {
             return Vec::new();
         }
         let drain_count = lines.len() - max_lines;
-        let drained = lines.into_iter().take(drain_count).collect::<Vec<_>>();
-        self.prune_rendered_prefix(viewport_width, drain_count);
-        drained
+        let pruned_count = self.prune_rendered_prefix(viewport_width, drain_count);
+        lines.into_iter().take(pruned_count).collect()
     }
 
     pub fn clear_pending_yield(&mut self, request_id: &str) {
@@ -244,9 +243,10 @@ impl TuiApp {
             .collect()
     }
 
-    fn prune_rendered_prefix(&mut self, width: usize, lines_to_prune: usize) {
+    fn prune_rendered_prefix(&mut self, width: usize, lines_to_prune: usize) -> usize {
         let mut remaining = lines_to_prune;
         let mut cells_to_remove = 0;
+        let mut pruned = 0;
 
         while remaining > 0 && cells_to_remove < self.reducer.cells.len() {
             let cell_lines = self.reducer.cells[cells_to_remove]
@@ -257,6 +257,7 @@ impl TuiApp {
             }
 
             remaining -= cell_lines;
+            pruned += cell_lines;
             cells_to_remove += 1;
         }
 
@@ -266,9 +267,12 @@ impl TuiApp {
 
         if remaining > 0
             && let Some(cell) = self.reducer.cells.first_mut()
+            && cell.trim_rendered_prefix(width, remaining)
         {
-            cell.trim_rendered_prefix(width, remaining);
+            pruned += remaining;
         }
+
+        pruned
     }
 }
 
@@ -455,6 +459,55 @@ mod tests {
 
         assert!(!drained_after_narrow_resize.is_empty());
         assert!(app.rendered_history_lines(20).len() <= 4);
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_running_tool_identity() {
+        let mut app = app();
+        for idx in 0..8 {
+            app.reducer
+                .cells
+                .push(HistoryCell::Status(format!("status {idx}")));
+        }
+        app.reducer.cells.push(HistoryCell::Tool {
+            id: "tool-1".into(),
+            name: "long-tool-name".into(),
+            status: crate::history::ToolStatus::Running,
+            preview: Some("streamed preview ".repeat(20)),
+        });
+
+        let drained = app.drain_committed_scrollback(24, 8);
+
+        assert_eq!(drained.len(), 8);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Running,
+                ..
+            }) if id == "tool-1"
+        ));
+
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ToolCallCompleted {
+                id: "tool-1".into(),
+                name: Some("long-tool-name".into()),
+                success: Some(true),
+                result_preview: Some("done".into()),
+                audit: None,
+            },
+        ));
+
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Tool {
+                id,
+                status: crate::history::ToolStatus::Complete,
+                preview: Some(preview),
+                ..
+            }) if id == "tool-1" && preview == "done"
+        ));
     }
 
     fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {
