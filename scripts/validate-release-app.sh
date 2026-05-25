@@ -20,6 +20,12 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME}"
 MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_CLI_NAME"
+SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+SPARKLE_VERSION_DIR="$SPARKLE_FRAMEWORK/Versions/B"
+SPARKLE_AUTOUPDATE="$SPARKLE_VERSION_DIR/Autoupdate"
+SPARKLE_UPDATER_APP="$SPARKLE_VERSION_DIR/Updater.app"
+SPARKLE_DOWNLOADER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+SPARKLE_INSTALLER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -88,6 +94,11 @@ require_manifest_checksum() {
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
 require_executable "$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
 require_executable "$ALAN_BIN"
+require_executable "$SPARKLE_AUTOUPDATE"
+[[ -d "$SPARKLE_FRAMEWORK" ]] || fail "Sparkle.framework not found in release app"
+[[ -d "$SPARKLE_UPDATER_APP" ]] || fail "Sparkle Updater.app not found in release app"
+[[ -d "$SPARKLE_DOWNLOADER_XPC" ]] || fail "Sparkle Downloader.xpc not found in release app"
+[[ -d "$SPARKLE_INSTALLER_XPC" ]] || fail "Sparkle Installer.xpc not found in release app"
 [[ -f "$MANIFEST" ]] || fail "package manifest not found: $MANIFEST"
 if [[ -e "$APP_BUNDLE/Contents/Resources/bin/alan-tui" ||
     -e "$APP_BUNDLE/Contents/Resources/bin/alan-dev-tui" ]]; then
@@ -115,6 +126,11 @@ fi
 require_manifest_checksum "$ALAN_CLI_NAME" "$ALAN_BIN"
 
 require_developer_id_signature "$ALAN_BIN"
+require_developer_id_signature "$SPARKLE_AUTOUPDATE"
+require_developer_id_signature "$SPARKLE_UPDATER_APP"
+require_developer_id_signature "$SPARKLE_DOWNLOADER_XPC"
+require_developer_id_signature "$SPARKLE_INSTALLER_XPC"
+require_developer_id_signature "$SPARKLE_FRAMEWORK"
 require_developer_id_signature "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE" >/dev/null
 

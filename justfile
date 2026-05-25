@@ -32,6 +32,12 @@ guard-daemon-api-contract:
 guard-macos-auto-update:
     ./scripts/check-macos-auto-update-config.sh
 
+# Run focused macOS auto-update tests and release appcast guards
+apple-auto-update-tests:
+    bash clients/apple/scripts/test-macos-auto-update-policy.sh
+    ./scripts/test-appcast-tools.sh
+    ./scripts/check-macos-auto-update-config.sh
+
 # Run clippy
 lint:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -72,6 +78,8 @@ dev-channel-smoke:
 apple-shell-focused-tests:
     bash clients/apple/scripts/test-shell-automation-command-seams.sh
     bash clients/apple/scripts/test-shell-runtime-metadata.sh
+    bash clients/apple/scripts/test-macos-auto-update-policy.sh
+    ./scripts/test-appcast-tools.sh
 
 # Run focused macOS shell automation command seam tests
 apple-shell-automation-seams:

@@ -65,6 +65,8 @@
 		000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */; };
 		000000000000000000000045 /* Models/Shell/ShellAutomationIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */; };
 		000000000000000000000046 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000802 /* Sparkle */; };
+		000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000151 /* App/AlanMacUpdateController.swift */; };
+		000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -151,6 +153,8 @@
 		00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellActionRegistry.swift; sourceTree = "<group>"; };
 		00000000000000000000013F /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		000000000000000000000150 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		000000000000000000000151 /* App/AlanMacUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacUpdateController.swift; sourceTree = "<group>"; };
+		000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanMacUpdatePolicy.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,6 +229,7 @@
 				000000000000000000000115 /* App/AlanMacAppDelegate.swift */,
 				000000000000000000000114 /* App/AlanMacAppStartup.swift */,
 				000000000000000000000116 /* App/AlanMacShellCommands.swift */,
+				000000000000000000000151 /* App/AlanMacUpdateController.swift */,
 				000000000000000000000113 /* App/AlanMacPrimaryShellOwner.swift */,
 				000000000000000000000117 /* App/AlanMacPrimaryWindowPresenter.swift */,
 			);
@@ -236,6 +241,7 @@
 			children = (
 				000000000000000000000118 /* Support/ShellDesignTokens.swift */,
 				00000000000000000000013C /* Support/AlanCommandLineToolInstaller.swift */,
+				000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */,
 				000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */,
 				000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */,
 				00000000000000000000013D /* Support/ShellSidebarPresentation.swift */,
@@ -518,6 +524,8 @@
 				00000000000000000000003D /* Support/ShellSidebarPresentation.swift in Sources */,
 				00000000000000000000003B /* Support/ShellSidebarSpaceContentPager.swift in Sources */,
 				00000000000000000000003C /* Support/AlanCommandLineToolInstaller.swift in Sources */,
+				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
+				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);

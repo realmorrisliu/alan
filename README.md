@@ -245,6 +245,19 @@ When installing `Alan.app` directly, use **Tools > Install Command Line
 Tools...** in the app to create PATH-visible symlinks. `~/.alan/bin` is not a
 supported install location.
 
+Directly installed release apps update through **Check for Updates...** using
+Sparkle and `https://alanworks.app/appcast.xml`. Homebrew cask installs stay
+under Homebrew ownership and should be updated with:
+
+```bash
+brew upgrade --cask alan
+```
+
+The release zip remains a GitHub Release asset. `alanworks.app` hosts the
+website and appcast only; it must not host `alan-<version>-macos.zip`.
+See [macOS Auto Update](docs/macos_auto_update.md) for the appcast and
+Cloudflare Pages flow.
+
 ### Configuration
 
 The recommended setup path is launching bare `alan` and using the
