@@ -390,18 +390,16 @@ async fn consume_openrouter_stream(
 
     while let Some(event) = stream.next().await {
         match event {
-            UnifiedStreamEvent::ContentDelta(text) => {
-                if !text.is_empty() {
-                    emitted_payload = true;
-                    let _ = tx.send(stream_text_chunk(text)).await;
-                }
+            UnifiedStreamEvent::ContentDelta(text) if !text.is_empty() => {
+                emitted_payload = true;
+                let _ = tx.send(stream_text_chunk(text)).await;
             }
-            UnifiedStreamEvent::ReasoningDelta(thinking) => {
-                if !thinking.is_empty() {
-                    emitted_payload = true;
-                    let _ = tx.send(stream_thinking_chunk(thinking)).await;
-                }
+            UnifiedStreamEvent::ContentDelta(_) => {}
+            UnifiedStreamEvent::ReasoningDelta(thinking) if !thinking.is_empty() => {
+                emitted_payload = true;
+                let _ = tx.send(stream_thinking_chunk(thinking)).await;
             }
+            UnifiedStreamEvent::ReasoningDelta(_) => {}
             UnifiedStreamEvent::ReasoningDetailsDelta(details) => {
                 for detail in details {
                     if let Some(thinking) = detail.content().filter(|value| !value.is_empty()) {
