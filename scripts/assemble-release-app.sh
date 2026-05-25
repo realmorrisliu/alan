@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/release-env.sh"
 # shellcheck source=scripts/install-channel.sh
 source "$SCRIPT_DIR/install-channel.sh"
+# shellcheck source=scripts/app-bundle-paths.sh
+source "$SCRIPT_DIR/app-bundle-paths.sh"
 
 alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
@@ -88,6 +90,29 @@ sign_path() {
     codesign "${args[@]}" "$path"
 }
 
+sign_sparkle_code() {
+    local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+    local version_dir
+    local nested_paths
+
+    [[ -d "$framework" ]] || fail "Sparkle.framework was not embedded in $ALAN_APP_BUNDLE_NAME"
+    version_dir="$(alan_sparkle_version_dir "$framework")" ||
+        fail "Sparkle.framework version directory was not found in $framework"
+
+    nested_paths=(
+        "$version_dir/Autoupdate"
+        "$version_dir/Updater.app"
+        "$version_dir/XPCServices/Downloader.xpc"
+        "$version_dir/XPCServices/Installer.xpc"
+    )
+
+    for nested_path in "${nested_paths[@]}"; do
+        [[ -e "$nested_path" ]] || fail "Sparkle nested code is missing: $nested_path"
+        sign_path "$nested_path"
+    done
+    sign_path "$framework"
+}
+
 if ! alan_install_channel_is_stable && [[ "$NOTARIZE" == "1" || "$CREATE_ARCHIVE" == "1" ]]; then
     fail "Dev channel builds are local-only and cannot create public release archives or notarization submissions."
 fi
@@ -137,6 +162,9 @@ chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+
+printf 'Signing Sparkle framework and helper...\n'
+sign_sparkle_code
 
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"

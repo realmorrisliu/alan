@@ -40,6 +40,16 @@ require_pattern \
     "$PROJECT_FILE" \
     "Sparkle is not linked in the app framework phase"
 
+require_pattern \
+    'AlanMacUpdateController\.swift in Sources' \
+    "$PROJECT_FILE" \
+    "Sparkle update controller is not compiled into the macOS app"
+
+require_pattern \
+    'AlanMacUpdatePolicy\.swift in Sources' \
+    "$PROJECT_FILE" \
+    "macOS update policy is not compiled into the macOS app"
+
 plist_binding_count="$(
     rg -c 'INFOPLIST_FILE = "alan-macos/Info.plist";' "$PROJECT_FILE" || true
 )"
@@ -62,6 +72,77 @@ fi
 public_key="$(plutil -extract SUPublicEDKey raw -o - "$INFO_PLIST" 2>/dev/null || true)"
 if [[ ! "$public_key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
     fail "Sparkle public key must be a 44-character base64 EdDSA public key"
+fi
+
+automatic_checks="$(plutil -extract SUEnableAutomaticChecks raw -o - "$INFO_PLIST" 2>/dev/null || true)"
+automatic_install="$(plutil -extract SUAutomaticallyUpdate raw -o - "$INFO_PLIST" 2>/dev/null || true)"
+if [[ "$automatic_checks" != "false" || "$automatic_install" != "false" ]]; then
+    fail "first auto-update version must keep Sparkle checks and installs user-initiated"
+fi
+
+require_pattern \
+    'SPUStandardUpdaterController' \
+    "$REPO_ROOT/clients/apple/alan-macos/App/AlanMacUpdateController.swift" \
+    "macOS app must own Sparkle updater initialization"
+
+require_pattern \
+    'mayPerform updateCheck' \
+    "$REPO_ROOT/clients/apple/alan-macos/App/AlanMacUpdateController.swift" \
+    "macOS app must block Sparkle checks for unsupported install paths"
+
+require_pattern \
+    'Check for Updates\.\.\.' \
+    "$REPO_ROOT/clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
+    "macOS app menu must expose Check for Updates..."
+
+require_pattern \
+    'brew upgrade --cask alan' \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "Homebrew-managed update policy must point users at brew upgrade --cask alan"
+
+require_pattern \
+    'resolvingSymlinksInPath' \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "Homebrew-managed update policy must inspect resolved app bundle paths"
+
+require_pattern \
+    'testDirectCommandLinkDoesNotDisableSparkle' \
+    "$REPO_ROOT/clients/apple/scripts/test-macos-auto-update-policy.swift" \
+    "auto-update policy tests must cover direct app command links"
+
+require_pattern \
+    'validate-release-version-metadata\.sh' \
+    "$REPO_ROOT/scripts/release-check.sh" \
+    "release-check must validate version metadata before release"
+
+require_pattern \
+    'generate-appcast\.sh' \
+    "$REPO_ROOT/scripts/test-appcast-tools.sh" \
+    "appcast generation must have focused tests"
+
+require_pattern \
+    'ALAN_EXPECTED_BUILD' \
+    "$REPO_ROOT/scripts/smoke-macos-auto-update.sh" \
+    "auto-update smoke must validate appcast build metadata against the new app"
+
+require_pattern \
+    'ALAN_EXPECTED_VERSION' \
+    "$REPO_ROOT/scripts/smoke-macos-auto-update.sh" \
+    "auto-update smoke must validate appcast short version metadata against the new app"
+
+require_pattern \
+    'alan_sparkle_version_dir' \
+    "$REPO_ROOT/scripts/assemble-release-app.sh" \
+    "release assembly must resolve the active Sparkle framework version dynamically"
+
+require_pattern \
+    'alan_sparkle_version_dir' \
+    "$REPO_ROOT/scripts/validate-release-app.sh" \
+    "release validation must resolve the active Sparkle framework version dynamically"
+
+if rg -n 'Versions/B' "$REPO_ROOT/scripts/assemble-release-app.sh" \
+    "$REPO_ROOT/scripts/validate-release-app.sh" >/dev/null; then
+    fail "release scripts must not hard-code Sparkle.framework/Versions/B"
 fi
 
 require_pattern \

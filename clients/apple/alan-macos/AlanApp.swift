@@ -5,6 +5,7 @@ struct AlanApp: App {
     #if os(macOS)
     private let singletonGuard: AlanAppSingletonGuard
     @StateObject private var primaryShellOwner: AlanMacPrimaryShellOwner
+    @StateObject private var updateController: AlanMacUpdateController
     @NSApplicationDelegateAdaptor(AlanMacAppDelegate.self) private var appDelegate
     @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
@@ -12,6 +13,7 @@ struct AlanApp: App {
     init() {
         singletonGuard = AlanMacAppStartup.acquireSingletonOrTerminate()
         _primaryShellOwner = StateObject(wrappedValue: AlanMacPrimaryShellOwner())
+        _updateController = StateObject(wrappedValue: AlanMacUpdateController())
     }
     #endif
 
@@ -27,7 +29,7 @@ struct AlanApp: App {
                 .toolbar(removing: .title)
         }
         .commands {
-            AlanMacShellCommands(host: primaryShellOwner.host)
+            AlanMacShellCommands(host: primaryShellOwner.host, updateController: updateController)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultWindowPlacement { _, context in

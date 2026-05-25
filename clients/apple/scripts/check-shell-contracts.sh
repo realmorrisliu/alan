@@ -762,7 +762,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/AlanApp.swift" \
-    "AlanMacShellCommands\\(host: primaryShellOwner\\.host\\)" \
+    "AlanMacShellCommands\\(host: primaryShellOwner\\.host, updateController: updateController\\)" \
     "native menu commands must receive the primary shell host"
 
 require_pattern \
@@ -1831,9 +1831,114 @@ require_pattern \
     "macOS auto-update guard must pin the stable appcast URL"
 
 require_pattern \
+    "clients/apple/alan-macos/App/AlanMacUpdateController.swift" \
+    "SPUStandardUpdaterController" \
+    "macOS app must initialize Sparkle through an updater owner"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacUpdateController.swift" \
+    "mayPerform updateCheck" \
+    "macOS app must prevent Sparkle checks for Homebrew-managed installs"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
+    "Check for Updates\\.\\.\\." \
+    "macOS app menu must expose Check for Updates..."
+
+require_pattern \
+    "clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "brew upgrade --cask alan" \
+    "Homebrew-managed update message must point at brew upgrade --cask alan"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
+    "resolvingSymlinksInPath" \
+    "Homebrew-managed update policy must inspect resolved app bundle paths"
+
+require_pattern \
+    "clients/apple/scripts/test-macos-auto-update-policy.swift" \
+    "testDirectCommandLinkDoesNotDisableSparkle" \
+    "auto-update policy tests must cover direct app command links"
+
+require_pattern \
+    "clients/apple/alan-macos/Info.plist" \
+    "SUEnableAutomaticChecks" \
+    "first Sparkle version must explicitly disable automatic checks"
+
+require_pattern \
+    "clients/apple/alan-macos/Info.plist" \
+    "SUAutomaticallyUpdate" \
+    "first Sparkle version must explicitly disable silent automatic installation"
+
+require_pattern \
+    "justfile" \
+    "^apple-auto-update-tests:" \
+    "macOS auto-update behavior must have a focused test target"
+
+require_pattern \
+    "scripts/generate-appcast.sh" \
+    "sparkle:edSignature" \
+    "appcast generation must include Sparkle EdDSA signature metadata"
+
+require_pattern \
+    "scripts/validate-appcast.sh" \
+    "ALAN_EXPECTED_ARCHIVE_PATH" \
+    "appcast validation must compare archive length and checksum"
+
+require_pattern \
+    "scripts/check-deployed-appcast.sh" \
+    "Cache-Control" \
+    "deployed appcast validation must check cache headers"
+
+require_pattern \
+    "scripts/smoke-macos-auto-update.sh" \
+    "ALAN_OLD_APP" \
+    "auto-update smoke must support older-app verification input"
+
+require_pattern \
+    "scripts/smoke-macos-auto-update.sh" \
+    "ALAN_EXPECTED_BUILD" \
+    "auto-update smoke must validate the appcast build against the new app"
+
+require_pattern \
+    "scripts/smoke-macos-auto-update.sh" \
+    "ALAN_EXPECTED_VERSION" \
+    "auto-update smoke must validate the appcast short version against the new app"
+
+require_pattern \
     "scripts/assemble-release-app.sh" \
     "Recording signed embedded binary checksums" \
     "release assembly must record manifest checksums after embedded binaries are signed"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "Signing Sparkle framework and helper" \
+    "release assembly must sign Sparkle nested code before the final app bundle"
+
+require_pattern \
+    "scripts/app-bundle-paths.sh" \
+    "alan_sparkle_version_dir" \
+    "release scripts must resolve the active Sparkle framework version dynamically"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "alan_sparkle_version_dir" \
+    "release assembly must not hard-code the Sparkle framework version directory"
+
+reject_pattern \
+    "scripts/assemble-release-app.sh" \
+    "Versions/B" \
+    "release assembly must not hard-code Sparkle.framework/Versions/B"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "SPARKLE_AUTOUPDATE" \
+    "release app validation must verify Sparkle Autoupdate helper signatures"
+
+reject_pattern \
+    "scripts/validate-release-app.sh" \
+    "Versions/B" \
+    "release app validation must not hard-code Sparkle.framework/Versions/B"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \

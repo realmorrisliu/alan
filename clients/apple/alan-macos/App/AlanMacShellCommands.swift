@@ -6,9 +6,16 @@ import UniformTypeIdentifiers
 
 struct AlanMacShellCommands: Commands {
     @ObservedObject var host: ShellHostController
+    @ObservedObject var updateController: AlanMacUpdateController
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates...") {
+                updateController.checkForUpdates()
+            }
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("Show alan window") {
                 openWindow(id: "main")

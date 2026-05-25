@@ -50,6 +50,18 @@ check_signing_identity() {
 
 printf 'Release env: %s\n' "${ALAN_RELEASE_ENV_FILE_RESOLVED:-none}"
 
+if "$SCRIPT_DIR/check-macos-auto-update-config.sh"; then
+    ok_check "macOS auto-update project metadata is valid"
+else
+    fail_check "macOS auto-update project metadata is invalid"
+fi
+
+if "$SCRIPT_DIR/validate-release-version-metadata.sh"; then
+    ok_check "release version metadata is aligned"
+else
+    fail_check "release version metadata is not aligned"
+fi
+
 for command in cargo xcodebuild codesign ditto shasum security xcrun; do
     check_command "$command"
 done

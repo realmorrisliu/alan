@@ -34,4 +34,24 @@ if ! alan_is_distinct_existing_path "$WORK_DIR/alan.app" "$WORK_DIR/Missing.app"
     fail "existing candidate must be distinct from a missing reference"
 fi
 
+SPARKLE_FRAMEWORK="$WORK_DIR/Sparkle.framework"
+mkdir -p "$SPARKLE_FRAMEWORK/Versions/C"
+ln -s C "$SPARKLE_FRAMEWORK/Versions/Current"
+expected_sparkle_dir="$(cd "$SPARKLE_FRAMEWORK/Versions/C" && pwd -P)"
+actual_sparkle_dir="$(alan_sparkle_version_dir "$SPARKLE_FRAMEWORK")"
+if [[ "$actual_sparkle_dir" != "$expected_sparkle_dir" ]]; then
+    fail "Sparkle version resolver must follow Versions/Current"
+fi
+
+rm "$SPARKLE_FRAMEWORK/Versions/Current"
+actual_sparkle_dir="$(alan_sparkle_version_dir "$SPARKLE_FRAMEWORK")"
+if [[ "$actual_sparkle_dir" != "$expected_sparkle_dir" ]]; then
+    fail "Sparkle version resolver must fall back to the available framework version"
+fi
+
+rm -rf "$SPARKLE_FRAMEWORK/Versions/C"
+if alan_sparkle_version_dir "$SPARKLE_FRAMEWORK" >/dev/null; then
+    fail "Sparkle version resolver must fail when no framework version exists"
+fi
+
 printf 'App bundle path checks passed.\n'

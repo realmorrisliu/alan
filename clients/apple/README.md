@@ -113,6 +113,11 @@ installs link `Contents/Resources/bin/alan` into the Homebrew prefix. For a dire
 Command Line Tools...** in the app to create PATH-visible symlinks. The app does
 not silently modify shell startup files or use `~/.alan/bin`.
 
+Direct app installs use **Check for Updates...** and Sparkle to read
+`https://alanworks.app/appcast.xml`. Homebrew-managed installs should update
+with `brew upgrade --cask alan`; Sparkle does not replace Homebrew-owned app
+bundles.
+
 The macOS app owns one primary shell context for the process. The default shell
 surface uses the stable `window_main` identity, so reopen, activation, and New
 Window commands focus the existing alan window instead of creating another

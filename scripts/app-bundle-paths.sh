@@ -15,3 +15,24 @@ alan_is_distinct_existing_path() {
 
     [[ ! "$candidate" -ef "$reference" ]]
 }
+
+alan_sparkle_version_dir() {
+    local framework="$1"
+    local versions_dir="$framework/Versions"
+    local current="$versions_dir/Current"
+    local candidate
+
+    if [[ -d "$current" ]]; then
+        (cd "$current" && pwd -P)
+        return
+    fi
+
+    for candidate in "$versions_dir"/*; do
+        [[ -d "$candidate" ]] || continue
+        [[ "$(basename "$candidate")" == "Current" ]] && continue
+        (cd "$candidate" && pwd -P)
+        return
+    done
+
+    return 1
+}
