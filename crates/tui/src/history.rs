@@ -133,6 +133,18 @@ impl HistoryCell {
             return false;
         }
 
+        match self {
+            Self::Assistant(text) => {
+                *text = trim_wrapped_body("alan", text, width, lines_to_trim);
+                return true;
+            }
+            Self::Thinking(text) => {
+                *text = trim_wrapped_body("thinking", text, width, lines_to_trim);
+                return true;
+            }
+            _ => {}
+        }
+
         let remaining = self
             .render_lines(width)
             .into_iter()
@@ -151,6 +163,16 @@ impl HistoryCell {
             }
         )
     }
+}
+
+fn trim_wrapped_body(prefix: &str, text: &str, width: usize, lines_to_trim: usize) -> String {
+    let body_width = width.max(16).saturating_sub(prefix.len() + 3);
+    textwrap::wrap(text, body_width)
+        .into_iter()
+        .skip(lines_to_trim)
+        .map(|line| line.into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug, Default, Clone)]

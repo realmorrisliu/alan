@@ -408,7 +408,7 @@ mod tests {
 
         assert!(!drained.is_empty());
         assert!(app.rendered_history_lines(32).len() <= 4);
-        assert!(matches!(app.history_cells()[0], HistoryCell::Rendered(_)));
+        assert!(matches!(app.history_cells()[0], HistoryCell::Assistant(_)));
     }
 
     #[test]
@@ -462,6 +462,54 @@ mod tests {
 
         assert!(!drained_after_narrow_resize.is_empty());
         assert!(app.rendered_history_lines(20).len() <= 4);
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_streaming_text_cell() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::TextDelta {
+                chunk: "tail".into(),
+                is_final: false,
+            },
+        ));
+
+        assert!(!drained.is_empty());
+        assert_eq!(app.history_cells().len(), 1);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Assistant(text)) if text.ends_with("tail")
+        ));
+    }
+
+    #[test]
+    fn partial_scrollback_prune_preserves_streaming_thinking_cell() {
+        let mut app = app();
+        app.reducer
+            .cells
+            .push(HistoryCell::Thinking("long hidden reasoning ".repeat(40)));
+
+        let drained = app.drain_committed_scrollback(32, 8);
+        app.reducer.apply_envelope(envelope_with_event(
+            2,
+            alan_protocol::Event::ThinkingDelta {
+                chunk: "tail".into(),
+                is_final: false,
+            },
+        ));
+
+        assert!(!drained.is_empty());
+        assert_eq!(app.history_cells().len(), 1);
+        assert!(matches!(
+            app.history_cells().first(),
+            Some(HistoryCell::Thinking(text)) if text.ends_with("tail")
+        ));
     }
 
     #[test]
