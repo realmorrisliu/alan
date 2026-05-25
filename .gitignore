@@ -38,6 +38,8 @@ lcov.info
 .env.release.local
 .release.env
 .release.env.local
+release-secrets/*
+!release-secrets/README.md
 
 # Python local caches and coverage artifacts
 **/__pycache__/

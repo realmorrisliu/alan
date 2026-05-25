@@ -1,10 +1,10 @@
 ## 1. Sparkle Integration
 
-- [ ] 1.1 Add Sparkle 2 to the macOS Xcode project using the repo's chosen dependency mechanism.
-- [ ] 1.2 Generate a Sparkle EdDSA key pair and store only the public key in tracked app configuration.
-- [ ] 1.3 Configure the release app bundle with `SUFeedURL=https://alanworks.app/appcast.xml`.
-- [ ] 1.4 Configure Sparkle public-key metadata and any required updater bundle metadata in the generated Info.plist surface.
-- [ ] 1.5 Add a focused project/configuration check that fails when the release app is missing Sparkle feed URL or public-key metadata.
+- [x] 1.1 Add Sparkle 2 to the macOS Xcode project using the repo's chosen dependency mechanism.
+- [x] 1.2 Generate a Sparkle EdDSA key pair and store only the public key in tracked app configuration.
+- [x] 1.3 Configure the release app bundle with `SUFeedURL=https://alanworks.app/appcast.xml`.
+- [x] 1.4 Configure Sparkle public-key metadata and any required updater bundle metadata in the generated Info.plist surface.
+- [x] 1.5 Add a focused project/configuration check that fails when the release app is missing Sparkle feed URL or public-key metadata.
 
 ## 2. App Update Behavior
 
@@ -43,7 +43,7 @@
 ## 6. Documentation And Change Closure
 
 - [ ] 6.1 Update README and packaging docs to describe direct-app Sparkle updates and Homebrew `brew upgrade --cask alan` updates separately.
-- [ ] 6.2 Document the Sparkle private-key handling rule without committing private material.
+- [x] 6.2 Document the Sparkle private-key handling rule without committing private material.
 - [ ] 6.3 Add PR notes summarizing Cloudflare Pages, GitHub Releases, Sparkle, and Homebrew ownership boundaries.
 - [ ] 6.4 Run `openspec validate add-macos-app-auto-update --strict`.
 - [ ] 6.5 Before archiving, sync accepted delta specs into `openspec/specs/` and run `openspec validate --all --strict`.
