@@ -8,10 +8,10 @@ struct TerminalHostView: NSViewRepresentable {
     let terminalContentMount: TerminalContentMount?
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
+    let renderPriority: TerminalRuntimeRenderPriority
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?
-    let onCommandInput: (() -> Void)?
     let onCloseRequest: ((Bool) -> Void)?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -22,9 +22,9 @@ struct TerminalHostView: NSViewRepresentable {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            renderPriority: renderPriority,
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
-            onCommandInput: onCommandInput,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -38,9 +38,9 @@ struct TerminalHostView: NSViewRepresentable {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            renderPriority: renderPriority,
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
-            onCommandInput: onCommandInput,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate

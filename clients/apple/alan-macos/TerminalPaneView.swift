@@ -506,6 +506,7 @@ private struct ShellPaneTreeLayoutView: View {
             pane: pane,
             bootProfile: host.bootProfile(for: pane),
             isSelected: selectedPaneID == pane.paneID,
+            renderPriority: host.terminalRenderPriority(for: pane),
             isZoomed: host.isPaneZoomed(pane.paneID),
             canZoom: host.canZoomPane(pane.paneID),
             canMovePane: { placement in
@@ -530,9 +531,6 @@ private struct ShellPaneTreeLayoutView: View {
             activationDelegate: host,
             onShellAction: { actionID, target in
                 host.performShellAction(actionID, target: target, source: .terminalHost)
-            },
-            onCommandInput: {
-                host.requestCommandInput()
             },
             onToggleZoom: {
                 if host.isPaneZoomed(pane.paneID) {
@@ -792,6 +790,7 @@ private struct ShellTerminalLeafView: View {
     let pane: ShellPane
     let bootProfile: AlanShellBootProfile?
     let isSelected: Bool
+    let renderPriority: TerminalRuntimeRenderPriority
     let isZoomed: Bool
     let canZoom: Bool
     let canMovePane: (ShellPaneSplitDirection) -> Bool
@@ -801,7 +800,6 @@ private struct ShellTerminalLeafView: View {
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: (ShellActionID, ShellActionTarget) -> Void
-    let onCommandInput: () -> Void
     let onToggleZoom: () -> Void
     let onMovePane: (ShellPaneSplitDirection) -> Void
     let onCopyTerminalSelection: () -> Void
@@ -840,10 +838,10 @@ private struct ShellTerminalLeafView: View {
                     terminalContentMount: TerminalContentMount(pane: pane),
                     bootProfile: bootProfile,
                     isSelected: isSelected,
+                    renderPriority: renderPriority,
                     runtimeRegistry: runtimeRegistry,
                     activationDelegate: activationDelegate,
                     onShellAction: onShellAction,
-                    onCommandInput: onCommandInput,
                     onCloseRequest: { requiresConfirmation in
                         guard !requiresConfirmation else { return }
                         onClosePane()

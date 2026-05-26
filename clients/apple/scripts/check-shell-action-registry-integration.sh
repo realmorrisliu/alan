@@ -29,9 +29,17 @@ if ! rg -q "shellActionShortcut\\(\\.spaceSelectByIndex, target: target\\)" \
   exit 1
 fi
 
-COMMAND_UI_FILE="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift"
-if rg -n "ShellActionRegistry|performShellAction" "$COMMAND_UI_FILE"; then
-  echo "Go to or Command... must stay out of the first shell action registry pass." >&2
+if rg -n "ShellCommandTabView|Ask alan\\.\\.\\.|Go to or Command|newAlanTab|commandInputOpen" \
+  "$REPO_ROOT/clients/apple/alan-macos" \
+  "$REPO_ROOT/clients/apple/alan-macos.xcodeproj/project.pbxproj"; then
+  echo "Removed Ask alan and New alan Tab surfaces must stay out of the shell action registry pass." >&2
+  exit 1
+fi
+
+if rg -n "Command-P|Create Alan Tab|createAlanTab|spaceOpenAlan|launchTarget: \\.alan|ShellLaunchTarget\\.alan" \
+  "$REPO_ROOT/clients/apple/alan-macos" \
+  "$REPO_ROOT/clients/apple/alan-macos.xcodeproj/project.pbxproj"; then
+  echo "Removed command input and first-party alan tab automation must stay absent." >&2
   exit 1
 fi
 

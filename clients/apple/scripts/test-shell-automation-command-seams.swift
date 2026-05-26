@@ -38,14 +38,6 @@ private enum ShellAutomationCommandSeamsTests {
                     workingDirectory: "/Users/morris"
                 )
             ),
-            .createTab(
-                ShellAutomationCreateTabRequest(
-                    launchTarget: .alan,
-                    spaceID: "space_main",
-                    title: "alan",
-                    workingDirectory: "/Users/morris/Developer/alan"
-                )
-            ),
             .splitPane(ShellAutomationPaneSplitRequest(paneID: "pane_1", placement: .right)),
             .focusPane(paneID: "pane_1"),
             .closePane(paneID: "pane_1"),
@@ -55,7 +47,7 @@ private enum ShellAutomationCommandSeamsTests {
             .activateAttentionItem(paneID: "pane_1"),
         ]
 
-        expect(commands.count == 9, "automation command surface must cover core shell actions")
+        expect(commands.count == 8, "automation command surface must cover core shell actions")
         expect(commands.contains(.focusPane(paneID: "pane_1")), "focus command must be equatable")
         expect(
             commands.contains(.activateAttentionItem(paneID: "pane_1")),
@@ -347,7 +339,6 @@ private enum ShellAutomationCommandSeamsTests {
             title: "Shell",
             workingDirectory: "/Users/morris/Developer/alan"
         )
-        _ = ShellAutomationIntentRouter.createAlanTab(spaceID: "space_main", title: "alan")
         _ = ShellAutomationIntentRouter.splitPane(pane, direction: .right)
         _ = ShellAutomationIntentRouter.focusPane(pane)
         _ = ShellAutomationIntentRouter.closePane(pane)
@@ -373,12 +364,6 @@ private enum ShellAutomationCommandSeamsTests {
                     spaceID: "space_main",
                     title: "Shell",
                     workingDirectory: "/Users/morris/Developer/alan"
-                )),
-                .createTab(ShellAutomationCreateTabRequest(
-                    launchTarget: .alan,
-                    spaceID: "space_main",
-                    title: "alan",
-                    workingDirectory: nil
                 )),
                 .splitPane(ShellAutomationPaneSplitRequest(paneID: summary.paneID, placement: .right)),
                 .focusPane(paneID: summary.paneID),

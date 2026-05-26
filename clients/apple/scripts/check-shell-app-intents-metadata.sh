@@ -56,10 +56,6 @@ expect_action "AlanCreateTerminalTabIntent" \
     "Create Terminal Tab" \
     "Create a terminal tab in alan." \
     "Space|Title|Working Directory"
-expect_action "AlanCreateAlanTabIntent" \
-    "Create Alan Tab" \
-    "Create an alan tab in alan." \
-    "Space|Title|Working Directory"
 expect_action "AlanSplitPaneIntent" \
     "Split Shell Pane" \
     "Split an alan shell pane." \
@@ -97,6 +93,10 @@ expect_value "entities.AlanShellAttentionItemEntity.displayTypeName.key" "Shell 
 
 if grep -Eq 'SECRET|secret_|pane_[0-9]|pane_secret|alan-shell-control|/tmp/alan|binding file|socket path|controlPath|visibleExcerpt' "$ACTIONS_DATA"; then
     fail "generated App Intents metadata contains private terminal/debug strings"
+fi
+
+if grep -Eq 'AlanCreateAlanTabIntent|Create Alan Tab|first-party alan tab' "$ACTIONS_DATA"; then
+    fail "generated App Intents metadata must not expose Create Alan Tab"
 fi
 
 printf 'Shell App Intents metadata checks passed.\n'

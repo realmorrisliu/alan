@@ -50,10 +50,11 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
+        verifiesTerminalRenderPrioritiesFollowSelectionAndZoom()
         verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
-        verifiesTerminalCommandResolverProtectsShellTextInput()
+        verifiesTerminalCommandResolverRoutesFocusedTerminalCommands()
         verifiesTerminalCommandResolverRejectsNonTerminalContent()
         verifiesCopyPasteRouteToFocusedTerminalRuntime()
         verifiesContextMenuTerminalCommandsUseContextPane()
@@ -477,7 +478,7 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(workingDirectoryTitle == "Workspace", "pane title bar must use working directory when cwd is missing")
 
-        let alanTitle = shellPaneTitleBarTitle(
+        let alanProcessTitle = shellPaneTitleBarTitle(
             for: pane(
                 context: context(
                     workingDirectoryName: nil,
@@ -488,12 +489,14 @@ private enum ShellRuntimeMetadataTests {
                 ),
                 viewport: nil,
                 cwd: nil,
-                launchTarget: .alan,
                 process: ShellProcessBinding(program: "alan", argvPreview: nil),
                 attention: .idle
             )
         )
-        expect(alanTitle == "alan", "pane title bar must expose alan launch-target fallback")
+        expect(
+            alanProcessTitle == "alan",
+            "pane title bar must still expose user-launched alan processes"
+        )
 
         let processTitle = shellPaneTitleBarTitle(
             for: pane(
@@ -716,7 +719,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: true,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -735,7 +737,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: true,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -866,7 +867,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: true,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -884,7 +884,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: true,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -1624,6 +1623,67 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesTerminalRenderPrioritiesFollowSelectionAndZoom() {
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(terminalRuntimeRegistry: registry)
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+
+        let pane1 = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let pane2 = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.focus(paneID: "pane_1")
+
+        expect(
+            pane1.renderPriority == .foregroundInteractive,
+            "focused selected terminal must be foreground interactive"
+        )
+        expect(
+            pane2.renderPriority == .visibleBackground,
+            "visible split sibling must be visible background"
+        )
+        expect(
+            pane1.renderCatchUpRequestCount == 1 && pane2.renderCatchUpRequestCount == 1,
+            "initial promotion from hidden to visible priorities must request catch-up"
+        )
+
+        let firstTabID = controller.selectedTabID
+        let secondTabID = controller.openTerminalTab(in: controller.selectedSpaceID)
+        guard let hiddenPaneID = controller.selectedPane?.paneID else {
+            fail("new terminal tab must select a pane")
+        }
+        let hiddenPane = fakeSurfaceHandle(for: hiddenPaneID, controller: controller)
+        if let firstTabID {
+            controller.select(tabID: firstTabID)
+        }
+
+        expect(secondTabID != nil, "test setup must open a second terminal tab")
+        expect(
+            hiddenPane.renderPriority == .hiddenBackground,
+            "terminal in an unselected tab must be hidden background"
+        )
+
+        let pane2CatchUpsBeforeZoom = pane2.renderCatchUpRequestCount
+        expect(controller.zoomPane(paneID: "pane_1"), "test setup must zoom focused split")
+        expect(
+            pane1.renderPriority == .foregroundInteractive,
+            "zoomed focused terminal must remain foreground interactive"
+        )
+        expect(
+            pane2.renderPriority == .hiddenBackground,
+            "split sibling hidden by zoom must become hidden background"
+        )
+
+        expect(controller.unzoomSelectedTab(), "test setup must unzoom selected split")
+        expect(
+            pane2.renderPriority == .visibleBackground,
+            "unzooming must promote visible split sibling back to visible background"
+        )
+        expect(
+            pane2.renderCatchUpRequestCount == pane2CatchUpsBeforeZoom + 1,
+            "hidden-to-visible unzoom transition must request catch-up for the sibling runtime"
+        )
+    }
+
     private static func verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1706,7 +1766,7 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesTerminalCommandResolverProtectsShellTextInput() {
+    private static func verifiesTerminalCommandResolverRoutesFocusedTerminalCommands() {
         let controller = makeController()
         let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
         handle.selectedText = "terminal selection"
@@ -1715,17 +1775,10 @@ private enum ShellRuntimeMetadataTests {
             controller.terminalCommandResolution(for: .copySelection).terminalTarget?.paneID == "pane_1",
             "keyboard copy must target the focused terminal when it owns a selection"
         )
-
-        controller.setCommandInputActive(true)
-        expect(
-            controller.terminalCommandResolution(for: .copySelection)
-                == .shell(reason: "shell_text_input_active"),
-            "keyboard copy must not steal text editing while command input is active"
-        )
         expect(
             controller.terminalCommandResolution(for: .copySelection, source: .commandUI)
                 .terminalTarget?.paneID == "pane_1",
-            "command UI execution must still route through the shared terminal resolver"
+            "shared terminal resolver must keep source-specific callers on the focused terminal"
         )
     }
 
@@ -1833,7 +1886,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: true,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { controller.updateTerminalRuntime($0) },
             onMetadataUpdate: { controller.updateTerminalMetadata($0, for: pane.paneID) }
@@ -3325,7 +3377,7 @@ private enum ShellRuntimeMetadataTests {
             paneID: "pane_1",
             tabID: "tab_1",
             spaceID: "space_1",
-            launchTarget: .alan,
+            launchTarget: .shell,
             cwd: "/Users/morris/Developer/alan",
             process: ShellProcessBinding(program: "alan", argvPreview: ["alan", "chat"]),
             attention: .active,
@@ -3828,7 +3880,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: false,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -3884,7 +3935,6 @@ private enum ShellRuntimeMetadataTests {
             isSelected: false,
             activationDelegate: nil,
             onShellAction: nil,
-            onCommandInput: nil,
             onCloseRequest: nil,
             onRuntimeUpdate: { _ in },
             onMetadataUpdate: { _ in }
@@ -6222,7 +6272,7 @@ private enum ShellRuntimeMetadataTests {
             paneID: "pane_1",
             tabID: "tab_main",
             spaceID: "space_main",
-            launchTarget: .alan,
+            launchTarget: .shell,
             cwd: "/tmp",
             process: ShellProcessBinding(program: "alan", argvPreview: ["alan", "chat"]),
             attention: pendingYield ? .awaitingUser : .active,

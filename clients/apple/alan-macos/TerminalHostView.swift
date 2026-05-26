@@ -22,9 +22,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var terminalContentID: String?
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
+    private var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var shellActionHandler: ((ShellActionID, ShellActionTarget) -> Void)?
-    private var commandInputHandler: (() -> Void)?
     private var closeRequestHandler: ((Bool) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
@@ -140,10 +140,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         terminalContentID: String?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
-        onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -156,10 +156,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.terminalContentID = terminalContentID
         self.bootProfile = bootProfile
         self.isSelected = isSelected
+        self.renderPriority = renderPriority
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
         shellActionHandler = onShellAction
-        commandInputHandler = onCommandInput
         closeRequestHandler = onCloseRequest
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
@@ -371,6 +371,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             contentID: terminalContentID,
             paneID: pane?.paneID,
             tabID: pane?.tabID,
+            renderPriority: effectiveRenderPriority,
             logicalSize: logicalSize,
             backingSize: backingRect.size,
             displayName: screen?.localizedName,
@@ -392,6 +393,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             to: canvasView,
             bootProfile: bootProfile,
             focused: terminalInputIsActive,
+            renderPriority: effectiveRenderPriority,
             onDiagnosticsChange: { [weak self] snapshot in
                 guard let self else { return }
                 rendererSnapshot = snapshot
@@ -482,6 +484,20 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
     private var terminalInputIsActive: Bool {
         isSelected && isFocused
+    }
+
+    private var effectiveRenderPriority: TerminalRuntimeRenderPriority {
+        guard renderPriority.isVisible,
+              window?.occlusionState.contains(.visible) == true
+        else {
+            return .hiddenBackground
+        }
+        guard terminalInputIsActive else {
+            return renderPriority == .foregroundInteractive
+                ? .visibleBackground
+                : renderPriority
+        }
+        return renderPriority
     }
 
     private func traceTerminalInput(
@@ -953,9 +969,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #endif
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if routeCommandInputKeyIfNeeded(event) {
-            return true
-        }
         if routeShellActionKeyIfNeeded(event) {
             return true
         }
@@ -997,9 +1010,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func keyDown(with event: NSEvent) {
-        if routeCommandInputKeyIfNeeded(event) {
-            return
-        }
         if routeShellActionKeyIfNeeded(event) {
             return
         }
@@ -1443,19 +1453,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             resolvedTarget = target
         }
         shellActionHandler(.findOpen, resolvedTarget)
-        return true
-    }
-
-    private func routeCommandInputKeyIfNeeded(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown, !event.isARepeat else { return false }
-
-        let flags = event.modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock, .numericPad, .function])
-        guard flags == [.command] else { return false }
-        guard event.charactersIgnoringModifiers?.lowercased() == "p" else { return false }
-
-        commandInputHandler?()
         return true
     }
 

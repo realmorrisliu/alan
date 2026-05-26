@@ -8,7 +8,6 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case quickTerminalClose = "shell.quick_terminal.close"
     case quickTerminalPromote = "shell.quick_terminal.promote"
     case newTerminalTab = "shell.tab.new_terminal"
-    case newAlanTab = "shell.tab.new_alan"
     case tabClose = "shell.tab.close"
     case tabSelectPrevious = "shell.tab.select_previous"
     case tabSelectNext = "shell.tab.select_next"
@@ -37,7 +36,6 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case spaceSelectPrevious = "shell.space.select_previous"
     case spaceSelectNext = "shell.space.select_next"
     case spaceSelectByIndex = "shell.space.select_by_index"
-    case commandInputOpen = "shell.command_input.open"
 
     var id: String { rawValue }
 }
@@ -122,15 +120,8 @@ enum ShellCommandTargetResolver {
         source: ShellTerminalCommandSource,
         target: ShellActionTarget,
         state: ShellStateSnapshot,
-        commandInputActive: Bool,
         runtimeState: (String) -> ShellTerminalCommandRuntimeState
     ) -> ShellTerminalCommandResolution {
-        if commandInputActive,
-           source == .menuBar || source == .keyboardShortcut
-        {
-            return .shell(reason: "shell_text_input_active")
-        }
-
         let paneID: String?
         if case .contextPane(let contextPaneID) = target {
             paneID = contextPaneID
@@ -570,13 +561,6 @@ private let standardActions: [ShellActionDescriptor] = [
         targetKind: .space,
         defaultShortcut: ShellActionShortcut(key: "t", modifiers: [.command], context: .shell),
         effect: .openTab(.shell, spaceID: nil)
-    ),
-    ShellActionDescriptor(
-        id: .newAlanTab,
-        title: "New alan tab",
-        targetKind: .space,
-        defaultShortcut: ShellActionShortcut(key: "t", modifiers: [.command, .option], context: .shell),
-        effect: .openTab(.alan, spaceID: nil)
     ),
     ShellActionDescriptor(
         id: .paneSplitRight,

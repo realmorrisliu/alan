@@ -294,11 +294,17 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     var paneID: String { get }
     var snapshot: AlanTerminalSurfaceSnapshot { get }
     var isSurfaceReady: Bool { get }
+    var renderPriority: TerminalRuntimeRenderPriority { get }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
+    func updateRenderPriority(
+        _ priority: TerminalRuntimeRenderPriority,
+        forceCatchUp: Bool
+    )
     func attach(
         to canvasView: NSView,
         focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
         onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
         onCloseRequest: @escaping (Bool) -> Void
@@ -346,6 +352,7 @@ protocol AlanGhosttyEventSurfaceHandle:
 final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     let contentID: String
     private(set) var paneID: String
+    private(set) var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
 
     private let bootstrap: AlanGhosttyProcessBootstrap
     private var bootProfile: AlanShellBootProfile?
@@ -355,11 +362,19 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private let liveHost = AlanGhosttyLiveHost()
 #endif
 
-    init(contentID: String, paneID: String, bootstrap: AlanGhosttyProcessBootstrap) {
+    init(
+        contentID: String,
+        paneID: String,
+        bootstrap: AlanGhosttyProcessBootstrap,
+        renderCoordinator: TerminalRenderCoordinator? = nil
+    ) {
         self.contentID = contentID
         self.paneID = paneID
         self.bootstrap = bootstrap
         self.currentSnapshot = .pending(contentID: contentID, paneID: paneID)
+#if canImport(GhosttyKit)
+        self.liveHost.renderCoordinator = renderCoordinator
+#endif
     }
 
     var snapshot: AlanTerminalSurfaceSnapshot {
@@ -384,9 +399,24 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         )
     }
 
+    func updateRenderPriority(
+        _ priority: TerminalRuntimeRenderPriority,
+        forceCatchUp: Bool
+    ) {
+        let previousPriority = renderPriority
+        renderPriority = priority
+#if canImport(GhosttyKit)
+        liveHost.updateRenderPriority(priority)
+        if forceCatchUp || (previousPriority == .hiddenBackground && priority.isVisible) {
+            liveHost.requestRenderCatchUp()
+        }
+#endif
+    }
+
     func attach(
         to canvasView: NSView,
         focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
         onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
         onCloseRequest: @escaping (Bool) -> Void
@@ -445,7 +475,13 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         liveHost.onCloseRequest = { requiresConfirmation in
             onCloseRequest(requiresConfirmation)
         }
-        liveHost.attach(to: canvasView, bootProfile: bootProfile, focused: focused)
+        updateRenderPriority(renderPriority, forceCatchUp: false)
+        liveHost.attach(
+            to: canvasView,
+            bootProfile: bootProfile,
+            focused: focused,
+            renderPriority: renderPriority
+        )
         updateSnapshot(
             lifecyclePhase: liveHost.isSurfaceReady ? .attached : .attachable,
             metadata: liveHost.latestMetadata
@@ -701,6 +737,7 @@ protocol AlanTerminalRuntimeService: AnyObject {
     var diagnostics: AlanGhosttyBootstrapDiagnostics { get }
     var registeredContentIDs: Set<String> { get }
     var registeredPaneIDs: Set<String> { get }
+    var renderCoordinatorMetrics: TerminalRenderCoordinatorMetrics? { get }
 
     @discardableResult
     func ensureReady() -> AlanGhosttyBootstrapDiagnostics
@@ -765,21 +802,40 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     private let bootstrap: AlanGhosttyProcessBootstrap
     private let makeSurfaceHandle: SurfaceFactory
     private var handlesByContentID: [String: AlanTerminalSurfaceHandle] = [:]
+    let renderCoordinator: TerminalRenderCoordinator
 
-    init(surfaceFactory: SurfaceFactory? = nil) {
+    init(
+        renderCoordinator: TerminalRenderCoordinator = TerminalRenderCoordinator(),
+        surfaceFactory: SurfaceFactory? = nil
+    ) {
+        self.renderCoordinator = renderCoordinator
         self.bootstrap = AlanDefaultGhosttyProcessBootstrap.shared
+        let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
-            AlanGhosttySurfaceHandle(contentID: contentID, paneID: paneID, bootstrap: bootstrap)
+            AlanGhosttySurfaceHandle(
+                contentID: contentID,
+                paneID: paneID,
+                bootstrap: bootstrap,
+                renderCoordinator: coordinator
+            )
         }
     }
 
     init(
         bootstrap: AlanGhosttyProcessBootstrap,
+        renderCoordinator: TerminalRenderCoordinator = TerminalRenderCoordinator(),
         surfaceFactory: SurfaceFactory? = nil
     ) {
+        self.renderCoordinator = renderCoordinator
         self.bootstrap = bootstrap
+        let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
-            AlanGhosttySurfaceHandle(contentID: contentID, paneID: paneID, bootstrap: bootstrap)
+            AlanGhosttySurfaceHandle(
+                contentID: contentID,
+                paneID: paneID,
+                bootstrap: bootstrap,
+                renderCoordinator: coordinator
+            )
         }
     }
 
@@ -793,6 +849,10 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
 
     var registeredPaneIDs: Set<String> {
         Set(handlesByContentID.values.map(\.paneID))
+    }
+
+    var renderCoordinatorMetrics: TerminalRenderCoordinatorMetrics? {
+        renderCoordinator.metricsSnapshot()
     }
 
     @discardableResult
@@ -886,10 +946,12 @@ final class FakeAlanGhosttyProcessBootstrap: AlanGhosttyProcessBootstrap {
 final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     let contentID: String
     private(set) var paneID: String
+    private(set) var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private(set) var configureCount = 0
     private(set) var attachCount = 0
     private(set) var detachCount = 0
     private(set) var teardownCount = 0
+    private(set) var renderCatchUpRequestCount = 0
     private(set) var deliveredText: [String] = []
     private(set) var searchActions: [String] = []
     private(set) var scrollActions: [String] = []
@@ -928,13 +990,25 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         updateSnapshot(lifecyclePhase: bootProfile == nil ? .pending : .attachable)
     }
 
+    func updateRenderPriority(
+        _ priority: TerminalRuntimeRenderPriority,
+        forceCatchUp: Bool
+    ) {
+        renderPriority = priority
+        if forceCatchUp {
+            renderCatchUpRequestCount += 1
+        }
+    }
+
     func attach(
         to canvasView: NSView,
         focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
         onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
         onCloseRequest: @escaping (Bool) -> Void
     ) {
+        updateRenderPriority(renderPriority, forceCatchUp: false)
         attachCount += 1
         closeRequestHandler = onCloseRequest
         updateSnapshot(lifecyclePhase: .attached, attachedViewCount: 1)
@@ -1128,6 +1202,10 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
 
     var registeredPaneIDs: Set<String> {
         Set(handlesByContentID.values.map(\.paneID))
+    }
+
+    var renderCoordinatorMetrics: TerminalRenderCoordinatorMetrics? {
+        nil
     }
 
     @discardableResult

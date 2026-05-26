@@ -77,6 +77,7 @@ dev-channel-smoke:
 
 # Run focused macOS shell tests that do not require real Ghostty artifacts
 apple-shell-focused-tests:
+    bash clients/apple/scripts/test-terminal-runtime-service.sh
     bash clients/apple/scripts/test-shell-automation-command-seams.sh
     bash clients/apple/scripts/test-shell-runtime-metadata.sh
     bash clients/apple/scripts/test-macos-auto-update-policy.sh

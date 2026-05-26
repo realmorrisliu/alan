@@ -1152,15 +1152,18 @@ final class AlanTerminalSurfaceController {
         to canvasView: NSView,
         bootProfile: AlanShellBootProfile?,
         focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         onDiagnosticsChange: @escaping (TerminalRendererSnapshot) -> Void,
         onMetadataChange: @escaping (TerminalPaneMetadataSnapshot) -> Void,
         onCloseRequest: @escaping (Bool) -> Void
     ) {
         guard let surfaceHandle else { return }
         surfaceHandle.configure(mountedAtPaneID: surfaceHandle.paneID, bootProfile: bootProfile)
+        surfaceHandle.updateRenderPriority(renderPriority, forceCatchUp: false)
         surfaceHandle.attach(
             to: canvasView,
             focused: focused,
+            renderPriority: renderPriority,
             onDiagnosticsChange: { [weak self] snapshot in
                 guard let self else { return }
                 latestRenderer = snapshot

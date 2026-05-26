@@ -31,12 +31,6 @@ enum AlanLaunchStrategy: String, Equatable {
     case loginShellOverride = "login_shell_override"
     case loginShellEnv = "login_shell_env"
     case loginShellFallback = "login_shell_fallback"
-    case envOverride = "env_override"
-    case repoDebugBinary = "repo_debug_binary"
-    case repoReleaseBinary = "repo_release_binary"
-    case bundledResourceBinary = "bundled_resource_binary"
-    case pathBinary = "path_binary"
-    case shellLookup = "shell_lookup"
 }
 
 struct AlanCommandResolution: Equatable {
@@ -63,8 +57,6 @@ struct AlanCommandResolution: Equatable {
         switch launchTarget {
         case .shell:
             return resolveShell(fileManager: fileManager, environment: environment)
-        case .alan:
-            return resolveAlan(fileManager: fileManager, environment: environment)
         }
     }
 
@@ -159,172 +151,6 @@ struct AlanCommandResolution: Equatable {
         )
     }
 
-    private static func resolveAlan(
-        fileManager: FileManager,
-        environment: [String: String]
-    ) -> AlanCommandResolution {
-        let repoRoot = inferredAlanRepoRoot()
-        let channel = AlanInstallChannel.current(environment: environment)
-        let cliName = channel.cliToolName
-
-        let envOverride = normalizedExecutablePath(
-            environment["ALAN_SHELL_ALAN_PATH"],
-            fileManager: fileManager
-        )
-        let repoDebug = repoRoot.flatMap {
-            normalizedExecutablePath("\($0)/target/debug/alan", fileManager: fileManager)
-        }
-        let repoRelease = repoRoot.flatMap {
-            normalizedExecutablePath("\($0)/target/release/alan", fileManager: fileManager)
-        }
-        let bundled = bundledAlanExecutablePath(
-            channel: channel,
-            environment: environment,
-            fileManager: fileManager
-        )
-        let pathBinary = searchPath(
-            executable: cliName,
-            environment: environment,
-            fileManager: fileManager
-        )
-
-        let candidates = [
-            AlanCommandCandidate(
-                label: "Env override",
-                path: environment["ALAN_SHELL_ALAN_PATH"] ?? "(unset)",
-                isPresent: envOverride != nil
-            ),
-            AlanCommandCandidate(
-                label: "Repo debug",
-                path: repoRoot.map { "\($0)/target/debug/alan" } ?? "(unknown repo root)",
-                isPresent: repoDebug != nil
-            ),
-            AlanCommandCandidate(
-                label: "Repo release",
-                path: repoRoot.map { "\($0)/target/release/alan" } ?? "(unknown repo root)",
-                isPresent: repoRelease != nil
-            ),
-            AlanCommandCandidate(
-                label: "App bundle",
-                path: bundled?.path ?? "(not bundled)",
-                isPresent: bundled != nil
-            ),
-            AlanCommandCandidate(
-                label: "PATH lookup",
-                path: pathBinary ?? cliName,
-                isPresent: pathBinary != nil
-            ),
-        ]
-
-        if let envOverride {
-            return directBinary(
-                strategy: .envOverride,
-                executablePath: envOverride,
-                summary: "Launching alan from ALAN_SHELL_ALAN_PATH",
-                detail: envOverride,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if channel == .dev, let bundled {
-            return directBinary(
-                strategy: .bundledResourceBinary,
-                executablePath: bundled.path,
-                summary: "Launching \(cliName) from the app bundle",
-                detail: bundled.path,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if channel == .dev, let pathBinary {
-            return directBinary(
-                strategy: .pathBinary,
-                executablePath: pathBinary,
-                summary: "Launching \(cliName) from the current PATH",
-                detail: pathBinary,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if let repoDebug {
-            return directBinary(
-                strategy: .repoDebugBinary,
-                executablePath: repoDebug,
-                summary: "Launching alan from this worktree's debug binary",
-                detail: repoDebug,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if let repoRelease {
-            return directBinary(
-                strategy: .repoReleaseBinary,
-                executablePath: repoRelease,
-                summary: "Launching alan from this worktree's release binary",
-                detail: repoRelease,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if let bundled {
-            return directBinary(
-                strategy: .bundledResourceBinary,
-                executablePath: bundled.path,
-                summary: "Launching \(cliName) from the app bundle",
-                detail: bundled.path,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        if let pathBinary {
-            return directBinary(
-                strategy: .pathBinary,
-                executablePath: pathBinary,
-                summary: "Launching \(cliName) from the current PATH",
-                detail: pathBinary,
-                repoRoot: repoRoot,
-                candidates: candidates
-            )
-        }
-
-        return AlanCommandResolution(
-            strategy: .shellLookup,
-            executablePath: nil,
-            launchPath: "/bin/zsh",
-            arguments: ["-lc", "\(cliName) chat"],
-            bootCommand: "\(cliName) chat",
-            surfaceCommand: "\(cliName) chat",
-            summary: "No direct \(cliName) binary found; falling back to shell PATH lookup",
-            detail: "Make sure `\(cliName)` is in PATH or set ALAN_SHELL_ALAN_PATH.",
-            repoRoot: repoRoot,
-            candidates: candidates
-        )
-    }
-
-    private static func bundledAlanExecutablePath(
-        channel: AlanInstallChannel,
-        environment: [String: String],
-        fileManager: FileManager
-    ) -> URL? {
-        let resourceRoot = environment["ALAN_APP_RESOURCE_DIR"].map {
-            URL(fileURLWithPath: $0, isDirectory: true)
-        } ?? Bundle.main.resourceURL
-        guard let candidate = resourceRoot?
-            .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent(channel.cliToolName)
-        else {
-            return nil
-        }
-
-        return fileManager.isExecutableFile(atPath: candidate.path) ? candidate : nil
-    }
-
     private static func directShell(
         strategy: AlanLaunchStrategy,
         executablePath: String,
@@ -346,33 +172,6 @@ struct AlanCommandResolution: Equatable {
             arguments: arguments,
             bootCommand: bootCommand,
             surfaceCommand: inheritGhosttyCommand ? nil : bootCommand,
-            summary: summary,
-            detail: detail,
-            repoRoot: repoRoot,
-            candidates: candidates
-        )
-    }
-
-    private static func directBinary(
-        strategy: AlanLaunchStrategy,
-        executablePath: String,
-        summary: String,
-        detail: String?,
-        repoRoot: String?,
-        candidates: [AlanCommandCandidate]
-    ) -> AlanCommandResolution {
-        let arguments = ["chat"]
-        let bootCommand = ([executablePath] + arguments)
-            .map(AlanShellBootProfile.shellQuoted)
-            .joined(separator: " ")
-
-        return AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: executablePath,
-            arguments: arguments,
-            bootCommand: bootCommand,
-            surfaceCommand: bootCommand,
             summary: summary,
             detail: detail,
             repoRoot: repoRoot,
@@ -614,6 +413,302 @@ private struct SurfaceRecreationIdentity: Equatable {
     let launchTarget: String?
 }
 
+enum TerminalRuntimeRenderPriority: Int, Codable, Equatable, CaseIterable, Comparable {
+    case hiddenBackground = 0
+    case visibleBackground = 1
+    case foregroundInteractive = 2
+
+    static func < (
+        lhs: TerminalRuntimeRenderPriority,
+        rhs: TerminalRuntimeRenderPriority
+    ) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var isVisible: Bool {
+        self != .hiddenBackground
+    }
+
+    var isForegroundInteractive: Bool {
+        self == .foregroundInteractive
+    }
+}
+
+enum TerminalRenderRefreshReason: String, Equatable {
+    case automatic
+    case catchUp = "catch_up"
+}
+
+struct TerminalRenderCoordinatorMetrics: Codable, Equatable {
+    var wakeupRequests = 0
+    var appTicks = 0
+    var surfaceRefreshes = 0
+    var coalescedSurfaceRefreshes = 0
+    var catchUpRefreshes = 0
+    var cancelledDrains = 0
+    var drainBatches = 0
+    var lastDrainBatchSize = 0
+    var maxDrainBatchSize = 0
+    var lastDrainLatencyMs = 0.0
+    var maxDrainLatencyMs = 0.0
+    var foregroundInteractiveDrains = 0
+    var visibleBackgroundDrains = 0
+    var hiddenBackgroundDrains = 0
+
+    mutating func recordDrain(priority: TerminalRuntimeRenderPriority) {
+        switch priority {
+        case .foregroundInteractive:
+            foregroundInteractiveDrains += 1
+        case .visibleBackground:
+            visibleBackgroundDrains += 1
+        case .hiddenBackground:
+            hiddenBackgroundDrains += 1
+        }
+    }
+
+    mutating func recordDrainBatch(size: Int, latencyMs: Double) {
+        drainBatches += 1
+        lastDrainBatchSize = size
+        maxDrainBatchSize = max(maxDrainBatchSize, size)
+        lastDrainLatencyMs = latencyMs
+        maxDrainLatencyMs = max(maxDrainLatencyMs, latencyMs)
+    }
+}
+
+protocol TerminalRenderCoordinatedHost: AnyObject {
+    var terminalRenderPriority: TerminalRuntimeRenderPriority { get }
+    var isRenderCoordinatorTargetAlive: Bool { get }
+
+    func renderCoordinatorDrainAppTick()
+    func renderCoordinatorRefreshSurface(reason: TerminalRenderRefreshReason)
+}
+
+final class TerminalRenderCoordinator {
+    private struct PendingWakeup {
+        weak var host: TerminalRenderCoordinatedHost?
+        let sequence: Int
+        let enqueuedAt: DispatchTime
+        var requiresSurfaceRefresh: Bool
+        var reason: TerminalRenderRefreshReason
+    }
+
+    private let lock = NSLock()
+    private let automaticallyDrains: Bool
+    private var pendingWakeupsByHost: [ObjectIdentifier: PendingWakeup] = [:]
+    private var drainScheduled = false
+    private var nextSequence = 0
+
+    private var metrics = TerminalRenderCoordinatorMetrics()
+
+    init(automaticallyDrains: Bool = true) {
+        self.automaticallyDrains = automaticallyDrains
+    }
+
+    func requestWakeup(
+        from host: TerminalRenderCoordinatedHost,
+        requiresSurfaceRefresh: Bool = true
+    ) {
+        enqueueWakeup(
+            from: host,
+            reason: .automatic,
+            requiresSurfaceRefresh: requiresSurfaceRefresh
+        )
+    }
+
+    func requestCatchUp(from host: TerminalRenderCoordinatedHost) {
+        enqueueWakeup(
+            from: host,
+            reason: .catchUp,
+            requiresSurfaceRefresh: true
+        )
+    }
+
+    func drainPending() {
+        let pendingWakeups = takePendingWakeups()
+        guard !pendingWakeups.isEmpty else { return }
+
+        let drainStartedAt = DispatchTime.now()
+        let maxDrainLatencyMs = pendingWakeups
+            .map { latencyMs(from: $0.enqueuedAt, to: drainStartedAt) }
+            .max() ?? 0
+        updateMetrics { metrics in
+            metrics.recordDrainBatch(size: pendingWakeups.count, latencyMs: maxDrainLatencyMs)
+        }
+
+        for pending in pendingWakeups {
+            guard let host = pending.host,
+                  host.isRenderCoordinatorTargetAlive
+            else {
+                updateMetrics { metrics in
+                    metrics.cancelledDrains += 1
+                }
+                continue
+            }
+
+            let priority = host.terminalRenderPriority
+            updateMetrics { metrics in
+                metrics.appTicks += 1
+                metrics.recordDrain(priority: priority)
+            }
+            host.renderCoordinatorDrainAppTick()
+
+            guard pending.requiresSurfaceRefresh else { continue }
+            let shouldRefresh = priority.isVisible || pending.reason == .catchUp
+            guard shouldRefresh else {
+                updateMetrics { metrics in
+                    metrics.coalescedSurfaceRefreshes += 1
+                }
+                continue
+            }
+
+            updateMetrics { metrics in
+                metrics.surfaceRefreshes += 1
+                if pending.reason == .catchUp {
+                    metrics.catchUpRefreshes += 1
+                }
+            }
+            host.renderCoordinatorRefreshSurface(reason: pending.reason)
+        }
+    }
+
+    func metricsSnapshot() -> TerminalRenderCoordinatorMetrics {
+        lock.lock()
+        let snapshot = metrics
+        lock.unlock()
+        return snapshot
+    }
+
+    private func enqueueWakeup(
+        from host: TerminalRenderCoordinatedHost,
+        reason: TerminalRenderRefreshReason,
+        requiresSurfaceRefresh: Bool
+    ) {
+        let shouldScheduleDrain: Bool
+        lock.lock()
+        metrics.wakeupRequests += 1
+        let hostID = ObjectIdentifier(host)
+        if var pending = pendingWakeupsByHost[hostID] {
+            pending.requiresSurfaceRefresh = pending.requiresSurfaceRefresh || requiresSurfaceRefresh
+            if reason == .catchUp {
+                pending.reason = .catchUp
+            }
+            pendingWakeupsByHost[hostID] = pending
+        } else {
+            pendingWakeupsByHost[hostID] = PendingWakeup(
+                host: host,
+                sequence: nextSequence,
+                enqueuedAt: DispatchTime.now(),
+                requiresSurfaceRefresh: requiresSurfaceRefresh,
+                reason: reason
+            )
+            nextSequence += 1
+        }
+        shouldScheduleDrain = automaticallyDrains && !drainScheduled
+        if shouldScheduleDrain {
+            drainScheduled = true
+        }
+        lock.unlock()
+
+        guard shouldScheduleDrain else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.drainPending()
+        }
+    }
+
+    private func takePendingWakeups() -> [PendingWakeup] {
+        lock.lock()
+        let pending = pendingWakeupsByHost.values.sorted { lhs, rhs in
+            let lhsPriority = lhs.host?.terminalRenderPriority ?? .hiddenBackground
+            let rhsPriority = rhs.host?.terminalRenderPriority ?? .hiddenBackground
+            if lhsPriority != rhsPriority {
+                return lhsPriority > rhsPriority
+            }
+            return lhs.sequence < rhs.sequence
+        }
+        pendingWakeupsByHost.removeAll()
+        drainScheduled = false
+        lock.unlock()
+        return pending
+    }
+
+    private func latencyMs(from start: DispatchTime, to end: DispatchTime) -> Double {
+        let nanos = end.uptimeNanoseconds >= start.uptimeNanoseconds
+            ? end.uptimeNanoseconds - start.uptimeNanoseconds
+            : 0
+        return Double(nanos) / 1_000_000
+    }
+
+    private func updateMetrics(_ update: (inout TerminalRenderCoordinatorMetrics) -> Void) {
+        lock.lock()
+        update(&metrics)
+        lock.unlock()
+    }
+}
+
+func terminalRuntimeRenderPriority(
+    paneID: String,
+    paneSpaceID: String,
+    paneTabID: String,
+    selectedSpaceID: String?,
+    selectedTabID: String?,
+    focusedPaneID: String?,
+    visiblePaneIDs: Set<String>,
+    windowIsVisible: Bool
+) -> TerminalRuntimeRenderPriority {
+    guard windowIsVisible,
+          paneSpaceID == selectedSpaceID,
+          paneTabID == selectedTabID,
+          visiblePaneIDs.contains(paneID)
+    else {
+        return .hiddenBackground
+    }
+
+    guard paneID == focusedPaneID else {
+        return .visibleBackground
+    }
+    return .foregroundInteractive
+}
+
+enum TerminalRuntimePublicationPolicy {
+    static func shouldProjectToShell(
+        previous: TerminalHostRuntimeSnapshot?,
+        next: TerminalHostRuntimeSnapshot
+    ) -> Bool {
+        guard next.renderPriority == .hiddenBackground else {
+            return true
+        }
+        guard let previous else {
+            return true
+        }
+
+        return hiddenSummaryChanged(previous: previous, next: next)
+    }
+
+    private static func hiddenSummaryChanged(
+        previous: TerminalHostRuntimeSnapshot,
+        next: TerminalHostRuntimeSnapshot
+    ) -> Bool {
+        previous.contentID != next.contentID
+            || previous.paneID != next.paneID
+            || previous.tabID != next.tabID
+            || previous.stage != next.stage
+            || previous.renderPriority != next.renderPriority
+            || previous.renderer.failureReason != next.renderer.failureReason
+            || (previous.renderer.phase != .failed && next.renderer.phase == .failed)
+            || previous.paneMetadata.title != next.paneMetadata.title
+            || previous.paneMetadata.workingDirectory != next.paneMetadata.workingDirectory
+            || previous.paneMetadata.summary != next.paneMetadata.summary
+            || previous.paneMetadata.attention != next.paneMetadata.attention
+            || previous.paneMetadata.processExited != next.paneMetadata.processExited
+            || previous.paneMetadata.lastCommandExitCode != next.paneMetadata.lastCommandExitCode
+            || previous.paneMetadata.activeTaskState != next.paneMetadata.activeTaskState
+            || previous.paneMetadata.activity != next.paneMetadata.activity
+            || previous.paneMetadata.clearsActivity != next.paneMetadata.clearsActivity
+            || previous.surfaceState.readiness != next.surfaceState.readiness
+            || previous.surfaceState.inputReady != next.surfaceState.inputReady
+    }
+}
+
 enum TerminalHostStage: String, Equatable {
     case scaffold
     case viewAttached = "view_attached"
@@ -712,6 +807,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let contentID: String?
     let paneID: String?
     let tabID: String?
+    let renderPriority: TerminalRuntimeRenderPriority
     let logicalSize: CGSize
     let backingSize: CGSize
     let displayName: String?
@@ -723,6 +819,40 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let surfaceState: AlanTerminalSurfaceStateSnapshot
     let lastUpdatedAt: Date
 
+    init(
+        stage: TerminalHostStage,
+        contentID: String?,
+        paneID: String?,
+        tabID: String?,
+        renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
+        logicalSize: CGSize,
+        backingSize: CGSize,
+        displayName: String?,
+        displayID: String?,
+        attachedWindowTitle: String?,
+        isFocused: Bool,
+        renderer: TerminalRendererSnapshot,
+        paneMetadata: TerminalPaneMetadataSnapshot,
+        surfaceState: AlanTerminalSurfaceStateSnapshot,
+        lastUpdatedAt: Date
+    ) {
+        self.stage = stage
+        self.contentID = contentID
+        self.paneID = paneID
+        self.tabID = tabID
+        self.renderPriority = renderPriority
+        self.logicalSize = logicalSize
+        self.backingSize = backingSize
+        self.displayName = displayName
+        self.displayID = displayID
+        self.attachedWindowTitle = attachedWindowTitle
+        self.isFocused = isFocused
+        self.renderer = renderer
+        self.paneMetadata = paneMetadata
+        self.surfaceState = surfaceState
+        self.lastUpdatedAt = lastUpdatedAt
+    }
+
     var stageLabel: String {
         stage.rawValue.replacingOccurrences(of: "_", with: " ")
     }
@@ -732,6 +862,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         contentID: nil,
         paneID: nil,
         tabID: nil,
+        renderPriority: .hiddenBackground,
         logicalSize: .zero,
         backingSize: .zero,
         displayName: nil,

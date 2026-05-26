@@ -69,11 +69,6 @@ struct AlanMacShellCommands: Commands {
             }
             .shellActionKeyboardShortcut(host.shellActionShortcut(.newTerminalTab))
 
-            Button(host.shellActionTitle(.newAlanTab)) {
-                host.performShellAction(.newAlanTab)
-            }
-            .shellActionKeyboardShortcut(host.shellActionShortcut(.newAlanTab))
-
             Button("Open Markdown...") {
                 openMarkdownFile()
             }
@@ -81,11 +76,6 @@ struct AlanMacShellCommands: Commands {
             Button("Open Settings") {
                 openSettingsTab()
             }
-
-            Button("Ask alan...") {
-                host.requestCommandInput()
-            }
-            .keyboardShortcut("p", modifiers: .command)
 
             Button("Find") {
                 host.openTerminalSearch(source: .menuBar)

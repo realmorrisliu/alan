@@ -18,7 +18,7 @@ private enum ShellActionRegistryTests {
         try verifiesMoveToSpaceRequiresExplicitTarget()
         try verifiesUnavailableShortcutActionDoesNotExecuteHandler()
         try verifiesMoveTabShortcutRoutesHandler()
-        try verifiesCommandInputRemainsOutOfRegistry()
+        try verifiesRemovedAlanActionsRemainOutOfRegistry()
         try verifiesQuickTerminalActionsRouteThroughSharedRegistry()
         try verifiesQuickTerminalPromoteRequiresExplicitDestination()
         try verifiesPaneZoomRoutesThroughSharedRegistry()
@@ -46,7 +46,6 @@ private enum ShellActionRegistryTests {
 
         let expectedShortcuts: [(ShellActionID, ShellActionShortcut)] = [
             (.newTerminalTab, ShellActionShortcut(key: "t", modifiers: [.command], context: .shell)),
-            (.newAlanTab, ShellActionShortcut(key: "t", modifiers: [.command, .option], context: .shell)),
             (.tabClose, ShellActionShortcut(key: "w", modifiers: [.command], context: .shell)),
             (.tabSelectPrevious, ShellActionShortcut(key: "[", modifiers: [.command, .shift], context: .shell)),
             (.tabSelectNext, ShellActionShortcut(key: "]", modifiers: [.command, .shift], context: .shell)),
@@ -198,11 +197,11 @@ private enum ShellActionRegistryTests {
             effect: .workspaceCommand(.newTerminalTab)
         )
         let second = ShellActionDescriptor(
-            id: .newAlanTab,
-            title: "New alan tab",
+            id: .tabClose,
+            title: "Conflicting Close Tab",
             targetKind: .currentSelection,
             defaultShortcut: duplicateShortcut,
-            effect: .workspaceCommand(.newAlanTab)
+            effect: .closeTab(nil)
         )
 
         do {
@@ -211,7 +210,7 @@ private enum ShellActionRegistryTests {
         } catch ShellActionRegistryError.duplicateShortcut(let shortcut, let actionIDs) {
             expect(shortcut == duplicateShortcut, "duplicate shortcut error must include the shortcut")
             expect(
-                actionIDs == [.newTerminalTab, .newAlanTab],
+                actionIDs == [.newTerminalTab, .tabClose],
                 "duplicate shortcut error must name both conflicting actions"
             )
         }
@@ -356,12 +355,28 @@ private enum ShellActionRegistryTests {
         )
     }
 
-    private static func verifiesCommandInputRemainsOutOfRegistry() throws {
-        let actionIDs = Set(ShellActionRegistry.standard.actions.map(\.id))
+    private static func verifiesRemovedAlanActionsRemainOutOfRegistry() throws {
+        let registry = ShellActionRegistry.standard
+        let actionRawIDs = Set(registry.actions.map(\.id.rawValue))
+        let titles = registry.actions.map { $0.title.lowercased() }
 
-        expect(!actionIDs.contains(.commandInputOpen), "Command-P command input must stay out of registry")
+        expect(!actionRawIDs.contains("shell.tab.new_alan"), "new alan tab action must stay out of registry")
+        expect(!actionRawIDs.contains("shell.command_input.open"), "Ask alan command input must stay out of registry")
+        expect(!titles.contains { $0.contains("ask alan") || $0.contains("new alan tab") }, "removed alan actions must not have descriptors")
         expect(
-            ShellActionRegistry.standard.action(for: .tabMoveToSpace)?.availability(
+            registry.keyboardAction(
+                for: ShellActionShortcut(key: "p", modifiers: [.command], context: .shell)
+            ) == nil,
+            "Command-P must not resolve to an Ask alan command input action"
+        )
+        expect(
+            registry.keyboardAction(
+                for: ShellActionShortcut(key: "t", modifiers: [.command, .option], context: .shell)
+            ) == nil,
+            "Command-Option-T must not resolve to first-party alan tab creation"
+        )
+        expect(
+            registry.action(for: .tabMoveToSpace)?.availability(
                 state: ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp"),
                 target: .currentSelection
             ) == .unavailable(reason: "Move target is required"),

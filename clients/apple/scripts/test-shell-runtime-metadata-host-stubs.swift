@@ -11,6 +11,7 @@ protocol TerminalHostActivationDelegate: AnyObject {
 final class AlanTerminalHostNSView: NSView {
     private(set) var teardownCount = 0
     private(set) var focusCount = 0
+    private(set) var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private weak var surfaceHandle: AlanTerminalSurfaceHandle?
 
     func configure(
@@ -18,14 +19,16 @@ final class AlanTerminalHostNSView: NSView {
         terminalContentID: String?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        renderPriority: TerminalRuntimeRenderPriority,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
-        onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
     ) {
+        self.renderPriority = renderPriority
+        surfaceHandle?.updateRenderPriority(renderPriority, forceCatchUp: false)
         self.surfaceHandle = surfaceHandle
     }
 

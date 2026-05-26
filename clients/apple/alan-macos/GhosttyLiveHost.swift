@@ -12,6 +12,7 @@ final class AlanGhosttyLiveHost: NSObject {
     var onCloseRequest: ((Bool) -> Void)?
     var onSearchUpdate: ((AlanTerminalSearchEngineUpdate) -> Void)?
     var onScrollbackUpdate: ((AlanTerminalScrollbackMetrics) -> Void)?
+    var renderCoordinator: TerminalRenderCoordinator?
 
     private let logger = Logger(
         subsystem: AlanInstallChannel.current().logSubsystem,
@@ -30,6 +31,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var didEmitFirstRefresh = false
     private var diagnostics = TerminalRendererSnapshot.placeholder
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
+    private var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private let terminalModeTracker = AlanTerminalModeTracker()
     private var didEmitNonConfirmingCloseRequest = false
     private var foregroundCommandStartedAt: Date?
@@ -43,7 +45,8 @@ final class AlanGhosttyLiveHost: NSObject {
     func attach(
         to canvasView: AlanGhosttyCanvasView,
         bootProfile: AlanShellBootProfile?,
-        focused: Bool
+        focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority
     ) {
         let canvasChanged = self.canvasView !== canvasView
         let needsSurfaceRecreation = bootProfile?.requiresSurfaceRecreation(
@@ -52,6 +55,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         self.canvasView = canvasView
         self.bootProfile = bootProfile
+        self.renderPriority = renderPriority
 
         guard let bootProfile else {
             teardownSurface()
@@ -82,17 +86,36 @@ final class AlanGhosttyLiveHost: NSObject {
             createSurface(on: canvasView, bootProfile: bootProfile)
         }
 
-        synchronizeViewState(focused: focused)
+        synchronizeViewState(focused: focused, renderPriority: renderPriority)
     }
 
-    func synchronizeViewState(focused: Bool) {
+    func updateRenderPriority(_ priority: TerminalRuntimeRenderPriority) {
+        renderPriority = priority
+    }
+
+    func requestRenderCatchUp() {
+        if let renderCoordinator {
+            renderCoordinator.requestCatchUp(from: self)
+            return
+        }
+        scheduleTick()
+    }
+
+    func synchronizeViewState(
+        focused: Bool,
+        renderPriority: TerminalRuntimeRenderPriority? = nil
+    ) {
         guard let canvasView, let surface else { return }
+        let priority = renderPriority ?? self.renderPriority
+        self.renderPriority = priority
         synchronizeDrawableMetrics(for: canvasView)
-        ghostty_surface_set_focus(surface, focused)
-        let visible = canvasView.window?.occlusionState.contains(.visible) ?? false
+        ghostty_surface_set_focus(surface, focused && priority.isForegroundInteractive)
+        let visible = priority.isVisible
+            && (canvasView.window?.occlusionState.contains(.visible) ?? false)
         ghostty_surface_set_occlusion(surface, visible)
-        ghostty_surface_refresh(surface)
-        markFirstRefreshIfNeeded(on: canvasView)
+        if visible {
+            requestRenderCatchUp()
+        }
     }
 
     var latestMetadata: TerminalPaneMetadataSnapshot {
@@ -545,6 +568,11 @@ final class AlanGhosttyLiveHost: NSObject {
 
     private func scheduleTick() {
         guard markTickScheduledIfNeeded() else { return }
+
+        if let renderCoordinator {
+            renderCoordinator.requestWakeup(from: self)
+            return
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -1114,6 +1142,31 @@ final class AlanGhosttyLiveHost: NSObject {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+extension AlanGhosttyLiveHost: TerminalRenderCoordinatedHost {
+    var terminalRenderPriority: TerminalRuntimeRenderPriority {
+        renderPriority
+    }
+
+    var isRenderCoordinatorTargetAlive: Bool {
+        app != nil || surface != nil
+    }
+
+    func renderCoordinatorDrainAppTick() {
+        clearScheduledTick()
+        if let app {
+            ghostty_app_tick(app)
+        }
+    }
+
+    func renderCoordinatorRefreshSurface(reason: TerminalRenderRefreshReason) {
+        guard let surface else { return }
+        ghostty_surface_refresh(surface)
+        if let canvasView {
+            markFirstRefreshIfNeeded(on: canvasView)
+        }
     }
 }
 

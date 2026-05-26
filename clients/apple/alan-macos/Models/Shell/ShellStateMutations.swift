@@ -216,13 +216,13 @@ extension ShellStateSnapshot {
             spaceID: spaceID,
             launchTarget: launchTarget,
             workingDirectory: workingDirectory ?? defaultWorkingDirectory,
-            summary: launchTarget == .alan ? "new alan space scaffolded" : "new shell space scaffolded",
+            summary: "new shell space scaffolded",
             now: now
         )
         let tab = ShellTab(
             tabID: tabID,
             kind: .terminal,
-            title: launchTarget == .alan ? "alan" : "Shell",
+            title: "Shell",
             paneTree: ShellPaneTreeNode(
                 nodeID: "node_\(paneID)",
                 kind: .pane,
@@ -233,7 +233,7 @@ extension ShellStateSnapshot {
         )
         let space = ShellSpace(
             spaceID: spaceID,
-            title: title ?? (launchTarget == .alan ? "alan space \(spaceIndex)" : "Space \(spaceIndex)"),
+            title: title ?? "Space \(spaceIndex)",
             attention: .active,
             tabs: [tab]
         )
@@ -249,23 +249,6 @@ extension ShellStateSnapshot {
             spaceID: spaceID,
             tabID: tabID,
             paneID: paneID
-        )
-    }
-
-    func creatingAlanSpace(
-        title: String?,
-        workingDirectory: String?,
-        reservedPaneIDs: Set<String> = [],
-        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
-        now: Date = .now
-    ) -> ShellStateMutationResult {
-        creatingSpace(
-            launchTarget: .alan,
-            title: title,
-            workingDirectory: workingDirectory,
-            reservedPaneIDs: reservedPaneIDs,
-            defaultWorkingDirectory: defaultWorkingDirectory,
-            now: now
         )
     }
 
@@ -428,25 +411,6 @@ extension ShellStateSnapshot {
                 workingDirectory: workingDirectory
             ),
             in: requestedSpaceID,
-            reservedPaneIDs: reservedPaneIDs,
-            defaultWorkingDirectory: defaultWorkingDirectory,
-            now: now
-        )
-    }
-
-    func openingAlanTab(
-        in requestedSpaceID: String?,
-        title: String?,
-        workingDirectory: String?,
-        reservedPaneIDs: Set<String> = [],
-        defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
-        now: Date = .now
-    ) throws -> ShellStateMutationResult {
-        try openingTab(
-            launchTarget: .alan,
-            in: requestedSpaceID,
-            title: title,
-            workingDirectory: workingDirectory,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -1789,8 +1753,6 @@ extension ShellStateSnapshot {
                     : URL(fileURLWithPath: shellPath).lastPathComponent,
                 argvPreview: ["-l"]
             )
-        case .alan:
-            return ShellProcessBinding(program: "alan", argvPreview: ["alan"])
         }
     }
 
@@ -1798,8 +1760,6 @@ extension ShellStateSnapshot {
         switch launchTarget {
         case .shell:
             return "Shell"
-        case .alan:
-            return "alan"
         }
     }
 
@@ -1813,8 +1773,6 @@ extension ShellStateSnapshot {
                 return title
             }
             switch launchTarget {
-            case .alan:
-                return "alan \(existingTabCount + 1)"
             case .shell:
                 return "Shell \(existingTabCount + 1)"
             }
@@ -1827,11 +1785,11 @@ extension ShellStateSnapshot {
     }
 
     private static func defaultTerminalSummary(for contentIntent: ShellContentIntent) -> String {
-        guard case .terminal(let launchTarget, _, _) = contentIntent else {
+        guard case .terminal = contentIntent else {
             return "new shell tab scaffolded"
         }
 
-        return launchTarget == .alan ? "new alan tab scaffolded" : "new shell tab scaffolded"
+        return "new shell tab scaffolded"
     }
 
     private static func markdownTitle(for fileURL: URL, explicitTitle: String?) -> String {
@@ -1914,7 +1872,7 @@ extension ShellStateSnapshot {
                 paneID: "pane_1",
                 tabID: "tab_main",
                 spaceID: "space_alan_app",
-                launchTarget: .alan,
+                launchTarget: .shell,
                 cwd: "/Users/morris/Developer/Alan",
                 process: ShellProcessBinding(program: "alan", argvPreview: ["alan"]),
                 attention: .awaitingUser,

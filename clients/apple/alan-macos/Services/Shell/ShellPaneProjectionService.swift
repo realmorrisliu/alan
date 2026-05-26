@@ -131,17 +131,7 @@ struct ShellPaneProjectionService {
             return existing
         }
 
-        guard pane.resolvedLaunchTarget == .alan, !processExited else {
-            return nil
-        }
-
-        return ShellAlanBinding(
-            sessionID: "pending:\(pane.paneID)",
-            runStatus: "booting",
-            pendingYield: false,
-            source: "alan_shell_boot_projection",
-            lastProjectedAt: iso8601Formatter.string(from: .now)
-        )
+        return nil
     }
 
     private func projectedViewportSummary(

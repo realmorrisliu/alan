@@ -5,7 +5,6 @@ enum AlanShellControlCommandKind: String, Codable {
     case state
     case spaceList = "space.list"
     case spaceCreate = "space.create"
-    case spaceOpenAlan = "space.open_alan"
     case tabList = "tab.list"
     case tabOpen = "tab.open"
     case tabClose = "tab.close"
@@ -27,6 +26,7 @@ enum AlanShellControlCommandKind: String, Codable {
     case paneZoom = "pane.zoom"
     case paneUnzoom = "pane.unzoom"
     case terminalSendText = "terminal.send_text"
+    case terminalRenderMetrics = "terminal.render_metrics"
     case agentActivity = "agent.activity"
     case attentionInbox = "attention.inbox"
     case attentionSet = "attention.set"
@@ -215,6 +215,7 @@ struct AlanShellControlResponse: Codable {
     let acceptedBytes: Int?
     let deliveryCode: String?
     let runtimePhase: String?
+    let terminalRenderMetrics: TerminalRenderCoordinatorMetrics?
     let latestEventID: String?
     let splitNodeID: String?
     let ratio: Double?
@@ -265,6 +266,7 @@ struct AlanShellControlResponse: Codable {
         acceptedBytes: Int? = nil,
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
+        terminalRenderMetrics: TerminalRenderCoordinatorMetrics? = nil,
         latestEventID: String? = nil,
         splitNodeID: String? = nil,
         ratio: Double? = nil,
@@ -314,6 +316,7 @@ struct AlanShellControlResponse: Codable {
         self.acceptedBytes = acceptedBytes
         self.deliveryCode = deliveryCode
         self.runtimePhase = runtimePhase
+        self.terminalRenderMetrics = terminalRenderMetrics
         self.latestEventID = latestEventID
         self.splitNodeID = splitNodeID
         self.ratio = ratio
@@ -365,6 +368,7 @@ struct AlanShellControlResponse: Codable {
         case acceptedBytes = "accepted_bytes"
         case deliveryCode = "delivery_code"
         case runtimePhase = "runtime_phase"
+        case terminalRenderMetrics = "terminal_render_metrics"
         case latestEventID = "latest_event_id"
         case splitNodeID = "split_node_id"
         case ratio

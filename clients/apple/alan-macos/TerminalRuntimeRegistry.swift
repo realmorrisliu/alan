@@ -79,9 +79,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
         for pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
-        onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -91,9 +91,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            renderPriority: renderPriority,
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
-            onCommandInput: onCommandInput,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -105,9 +105,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
-        onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -121,9 +121,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
             pane: pane,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            renderPriority: renderPriority,
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
-            onCommandInput: onCommandInput,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -137,9 +137,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
         pane: ShellPane?,
         bootProfile: AlanShellBootProfile?,
         isSelected: Bool,
+        renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
-        onCommandInput: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -162,10 +162,10 @@ final class TerminalRuntimeRegistry: ObservableObject {
             terminalContentID: mount?.contentID,
             bootProfile: bootProfile,
             isSelected: isSelected,
+            renderPriority: renderPriority,
             surfaceHandle: surfaceHandle,
             activationDelegate: activationDelegate,
             onShellAction: onShellAction,
-            onCommandInput: onCommandInput,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -206,6 +206,23 @@ final class TerminalRuntimeRegistry: ObservableObject {
         runtimeService
             .existingSurfaceHandle(forTerminalContentID: contentID)?
             .updateHostRuntimeSnapshot(snapshot)
+    }
+
+    func updateRenderPriorities(
+        _ prioritiesByContentID: [String: TerminalRuntimeRenderPriority]
+    ) {
+        let knownContentIDs = registeredContentIDs
+            .union(paneSlotIDByContentID.keys)
+            .union(hostViewsByContentID.keys)
+        knownContentIDs.forEach { contentID in
+            let priority = prioritiesByContentID[contentID] ?? .hiddenBackground
+            let handle = runtimeService.existingSurfaceHandle(forTerminalContentID: contentID)
+            let previousPriority = handle?.renderPriority ?? .hiddenBackground
+            handle?.updateRenderPriority(
+                priority,
+                forceCatchUp: previousPriority == .hiddenBackground && priority.isVisible
+            )
+        }
     }
 
     func snapshot(for paneID: String?) -> TerminalHostRuntimeSnapshot {
@@ -379,6 +396,10 @@ final class TerminalRuntimeRegistry: ObservableObject {
             .union(runtimeService.registeredPaneIDs)
     }
 
+    var renderCoordinatorMetrics: TerminalRenderCoordinatorMetrics? {
+        runtimeService.renderCoordinatorMetrics
+    }
+
     private func releaseTerminalContent(_ contentID: String) {
         if let hostView = hostViewsByContentID.removeValue(forKey: contentID) {
             hostView.teardownTerminalRuntime()
@@ -445,6 +466,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             contentID: surfaceSnapshot.contentID,
             paneID: surfaceSnapshot.paneID,
             tabID: nil,
+            renderPriority: .hiddenBackground,
             logicalSize: .zero,
             backingSize: .zero,
             displayName: nil,
