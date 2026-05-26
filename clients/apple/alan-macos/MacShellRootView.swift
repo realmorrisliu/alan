@@ -326,7 +326,8 @@ struct MacShellRootView: View {
                 floatingCornerRadius: ShellRadii.floatingSidebarPanel,
                 systemColorScheme: $systemColorScheme,
                 collapsedSidebarPointerRetentionEnabled: isCollapsedSidebarPointerRetentionActive,
-                collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained
+                collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained,
+                windowVisibilityHandler: host.updateShellWindowVisibilityForRendering
             )
         )
     }
@@ -474,6 +475,7 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
     @Binding var systemColorScheme: ColorScheme
     let collapsedSidebarPointerRetentionEnabled: Bool
     @Binding var collapsedSidebarPointerRetained: Bool
+    let windowVisibilityHandler: (Bool) -> Void
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get {
@@ -492,7 +494,8 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
             chromeSurface: windowChromeSurface,
             systemColorScheme: $systemColorScheme,
             collapsedSidebarPointerRetentionEnabled: collapsedSidebarPointerRetentionEnabled,
-            collapsedSidebarPointerRetained: $collapsedSidebarPointerRetained
+            collapsedSidebarPointerRetained: $collapsedSidebarPointerRetained,
+            windowVisibilityHandler: windowVisibilityHandler
         )
     }
 

@@ -325,6 +325,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private var routedActivityNotificationKeys: Set<String> = []
     private var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
     private var visibleBackgroundRuntimeProjectionScheduled = false
+    private var shellWindowIsVisibleForRendering = true
 
     init(
         shellState: ShellStateSnapshot,
@@ -634,8 +635,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             selectedTabID: selectedTabID,
             focusedPaneID: shellState.focusedPaneID,
             visiblePaneIDs: visiblePaneIDs,
-            windowIsVisible: true
+            windowIsVisible: shellWindowIsVisibleForRendering
         )
+    }
+
+    func updateShellWindowVisibilityForRendering(_ isVisible: Bool) {
+        guard shellWindowIsVisibleForRendering != isVisible else { return }
+        shellWindowIsVisibleForRendering = isVisible
+        synchronizeTerminalRenderPriorities()
     }
 
     func displayPaneTree(for tab: ShellTab?) -> ShellPaneTreeNode? {

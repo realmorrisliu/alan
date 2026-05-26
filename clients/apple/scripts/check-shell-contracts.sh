@@ -1669,6 +1669,21 @@ require_pattern \
     "ghostty_surface_set_occlusion\\(surface, visible\\)" \
     "GhosttyKit bridge must pass the observed visible state used by this linked Ghostty build"
 
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "windowIsVisible: shellWindowIsVisibleForRendering" \
+    "terminal render priorities must use observed shell window visibility instead of a hardcoded visible window"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didChangeOcclusionStateNotification" \
+    "shell window visibility must observe occlusion changes for terminal render-priority throttling"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didMiniaturizeNotification" \
+    "shell window visibility must observe minimization for terminal render-priority throttling"
+
 reject_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
     "let isOccluded =|isSurfaceOccluded|!isVisible" \

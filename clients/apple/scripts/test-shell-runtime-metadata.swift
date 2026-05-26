@@ -51,6 +51,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
         verifiesTerminalRenderPrioritiesFollowSelectionAndZoom()
+        verifiesTerminalRenderPrioritiesTrackWindowVisibility()
         verifiesSplitZoomIsTabScopedAndPrunedWhenPaneDisappears()
         verifiesInTabPaneMovementPreservesRuntimeContinuity()
         verifiesPaneMovementDragPolicyProtectsTerminalSelection()
@@ -1681,6 +1682,59 @@ private enum ShellRuntimeMetadataTests {
         expect(
             pane2.renderCatchUpRequestCount == pane2CatchUpsBeforeZoom + 1,
             "hidden-to-visible unzoom transition must request catch-up for the sibling runtime"
+        )
+    }
+
+    private static func verifiesTerminalRenderPrioritiesTrackWindowVisibility() {
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(terminalRuntimeRegistry: registry)
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+
+        let pane1 = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let pane2 = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.focus(paneID: "pane_1")
+
+        expect(
+            pane1.renderPriority == .foregroundInteractive,
+            "test setup must start with focused selected terminal foreground"
+        )
+        expect(
+            pane2.renderPriority == .visibleBackground,
+            "test setup must start with split sibling visible"
+        )
+
+        let pane1CatchUpsBeforeHide = pane1.renderCatchUpRequestCount
+        let pane2CatchUpsBeforeHide = pane2.renderCatchUpRequestCount
+        controller.updateShellWindowVisibilityForRendering(false)
+
+        expect(
+            pane1.renderPriority == .hiddenBackground,
+            "hidden or occluded shell window must demote focused terminal rendering"
+        )
+        expect(
+            pane2.renderPriority == .hiddenBackground,
+            "hidden or occluded shell window must demote visible split rendering"
+        )
+        expect(
+            pane1.renderCatchUpRequestCount == pane1CatchUpsBeforeHide
+                && pane2.renderCatchUpRequestCount == pane2CatchUpsBeforeHide,
+            "demoting window visibility must not request catch-up work"
+        )
+
+        controller.updateShellWindowVisibilityForRendering(true)
+        expect(
+            pane1.renderPriority == .foregroundInteractive,
+            "restored visible shell window must promote focused terminal rendering"
+        )
+        expect(
+            pane2.renderPriority == .visibleBackground,
+            "restored visible shell window must promote split sibling rendering"
+        )
+        expect(
+            pane1.renderCatchUpRequestCount == pane1CatchUpsBeforeHide + 1
+                && pane2.renderCatchUpRequestCount == pane2CatchUpsBeforeHide + 1,
+            "hidden-window to visible-window transition must request catch-up for visible terminals"
         )
     }
 
