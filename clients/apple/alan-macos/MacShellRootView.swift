@@ -6,7 +6,6 @@ struct MacShellRootView: View {
     @ObservedObject private var host: ShellHostController
     @Binding private var appearanceMode: ShellAppearanceMode
     @Binding private var isSidebarCollapsed: Bool
-    @State private var isCommandTabPresented = false
     @State private var isSidebarPanelRevealed = false
     @State private var areFloatingSidebarTrafficLightsVisible = false
     @State private var sidebarRevealToken = 0
@@ -22,7 +21,6 @@ struct MacShellRootView: View {
     private let floatingSidebarInset: CGFloat = 6
     private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
     private let sidebarPinMorphDuration: TimeInterval = 0.18
-    private let hiddenCommandInputOpacity = 0.001
 
     init(
         host: ShellHostController,
@@ -35,29 +33,6 @@ struct MacShellRootView: View {
         _pinnedSidebarPresentationProgress = State(
             initialValue: isSidebarCollapsed.wrappedValue ? 0 : 1
         )
-    }
-
-    private func toggleCommandInput() {
-        if isCommandTabPresented {
-            dismissCommandInput()
-        } else {
-            presentCommandInput()
-        }
-    }
-
-    private func presentCommandInput() {
-        withAnimation(commandInputAnimation) {
-            isCommandTabPresented = true
-        }
-    }
-
-    private func dismissCommandInput() {
-        withAnimation(commandInputAnimation) {
-            isCommandTabPresented = false
-        }
-        DispatchQueue.main.async {
-            host.refocusSelectedTerminalPane()
-        }
     }
 
     private var isSidebarSurfaceVisible: Bool {
@@ -113,14 +88,6 @@ struct MacShellRootView: View {
             phase: sidebarPresentationPhase,
             configuration: sidebarPresentationConfiguration
         )
-    }
-
-    private var commandInputOpacity: Double {
-        isCommandTabPresented ? 1 : hiddenCommandInputOpacity
-    }
-
-    private var commandInputAnimation: Animation? {
-        reduceMotion ? nil : .easeOut(duration: 0.14)
     }
 
     private var isCollapsedSidebarPointerRetentionActive: Bool {
@@ -329,29 +296,6 @@ struct MacShellRootView: View {
                     .transition(.opacity)
             }
 
-            if isCommandTabPresented {
-                Color.clear
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .transition(.identity)
-                    .transaction { transaction in
-                        transaction.animation = nil
-                        transaction.disablesAnimations = true
-                    }
-                    .onTapGesture {
-                        dismissCommandInput()
-                    }
-            }
-
-            ShellCommandTabView(
-                host: host,
-                isPresented: $isCommandTabPresented,
-                isActive: isCommandTabPresented
-            )
-            .frame(width: 560)
-            .opacity(commandInputOpacity)
-            .allowsHitTesting(isCommandTabPresented)
-            .accessibilityHidden(!isCommandTabPresented)
         }
         .animation(sidebarPinnedStateAnimation, value: pinnedSidebarPresentationProgress)
         .environment(\.colorScheme, resolvedAppearanceColorScheme)
@@ -363,9 +307,6 @@ struct MacShellRootView: View {
         .onChange(of: isSidebarCollapsed) { _, collapsed in
             guard !isSidebarPinMorphActive else { return }
             synchronizePinnedSidebarPresentation(collapsed: collapsed)
-        }
-        .onChange(of: host.commandInputRequestID) { _, _ in
-            toggleCommandInput()
         }
         .onChange(of: isCollapsedSidebarPointerRetained) { _, retained in
             handleCollapsedSidebarPointerRetention(retained)
@@ -385,7 +326,8 @@ struct MacShellRootView: View {
                 floatingCornerRadius: ShellRadii.floatingSidebarPanel,
                 systemColorScheme: $systemColorScheme,
                 collapsedSidebarPointerRetentionEnabled: isCollapsedSidebarPointerRetentionActive,
-                collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained
+                collapsedSidebarPointerRetained: $isCollapsedSidebarPointerRetained,
+                windowVisibilityHandler: host.updateShellWindowVisibilityForRendering
             )
         )
     }
@@ -428,9 +370,7 @@ struct MacShellRootView: View {
             chromeMetrics: windowChromeMetrics,
             displaySpaceID: nil,
             isSwipeEnabled: isSwipeEnabled
-        ) {
-            presentCommandInput()
-        }
+        )
     }
 
     private var collapsedSidebarRevealZone: some View {
@@ -535,6 +475,7 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
     @Binding var systemColorScheme: ColorScheme
     let collapsedSidebarPointerRetentionEnabled: Bool
     @Binding var collapsedSidebarPointerRetained: Bool
+    let windowVisibilityHandler: (Bool) -> Void
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get {
@@ -553,7 +494,8 @@ private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
             chromeSurface: windowChromeSurface,
             systemColorScheme: $systemColorScheme,
             collapsedSidebarPointerRetentionEnabled: collapsedSidebarPointerRetentionEnabled,
-            collapsedSidebarPointerRetained: $collapsedSidebarPointerRetained
+            collapsedSidebarPointerRetained: $collapsedSidebarPointerRetained,
+            windowVisibilityHandler: windowVisibilityHandler
         )
     }
 

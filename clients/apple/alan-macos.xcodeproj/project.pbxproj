@@ -34,7 +34,6 @@
 		000000000000000000000019 /* Support/ShellWindowPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000119 /* Support/ShellWindowPlacement.swift */; };
 		00000000000000000000001A /* Views/Shell/ShellSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
-		00000000000000000000001C /* Views/Shell/ShellCommandTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011C /* Views/Shell/ShellCommandTabView.swift */; };
 		00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* Support/ShellVoiceCommandController.swift */; };
 		00000000000000000000001E /* Models/Console/ConsoleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011E /* Models/Console/ConsoleModels.swift */; };
 		00000000000000000000001F /* Models/API/DaemonAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011F /* Models/API/DaemonAPIModels.swift */; };
@@ -110,7 +109,6 @@
 		000000000000000000000119 /* Support/ShellWindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellWindowPlacement.swift; sourceTree = "<group>"; };
 		00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarView.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
-		00000000000000000000011C /* Views/Shell/ShellCommandTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellCommandTabView.swift; sourceTree = "<group>"; };
 		00000000000000000000011D /* Support/ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
 		00000000000000000000011E /* Models/Console/ConsoleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Console/ConsoleModels.swift; sourceTree = "<group>"; };
 		00000000000000000000011F /* Models/API/DaemonAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/API/DaemonAPIModels.swift; sourceTree = "<group>"; };
@@ -257,7 +255,6 @@
 			children = (
 				00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */,
 				00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */,
-				00000000000000000000011C /* Views/Shell/ShellCommandTabView.swift */,
 			);
 			name = Views/Shell;
 			sourceTree = "<group>";
@@ -485,7 +482,6 @@
 				000000000000000000000019 /* Support/ShellWindowPlacement.swift in Sources */,
 				00000000000000000000001A /* Views/Shell/ShellSidebarView.swift in Sources */,
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,
-				00000000000000000000001C /* Views/Shell/ShellCommandTabView.swift in Sources */,
 				00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */,
 				00000000000000000000001E /* Models/Console/ConsoleModels.swift in Sources */,
 				00000000000000000000001F /* Models/API/DaemonAPIModels.swift in Sources */,

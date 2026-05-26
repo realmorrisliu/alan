@@ -114,7 +114,6 @@ enum ShellSpatialFocusDirection: String, Codable, CaseIterable {
 
 enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
     case newTerminalTab
-    case newAlanTab
     case splitLeft
     case splitRight
     case splitUp
@@ -142,7 +141,6 @@ enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
 
 enum ShellLaunchTarget: String, Codable, CaseIterable {
     case shell
-    case alan
 }
 
 enum ShellTabActiveTaskState: String, Codable, Equatable, CaseIterable {

@@ -317,14 +317,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var lastCopiedAt: Date?
     @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
-    @Published private(set) var commandInputRequestID = 0
-    @Published private(set) var commandInputActive = false
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
     private let appIsActiveProvider: @MainActor () -> Bool
     private var routedActivityNotificationKeys: Set<String> = []
+    private var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var visibleBackgroundRuntimeProjectionScheduled = false
+    private var shellWindowIsVisibleForRendering = true
 
     init(
         shellState: ShellStateSnapshot,
@@ -618,6 +619,32 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalRuntimeRegistry.snapshot(for: paneID)
     }
 
+    func terminalRenderPriority(for pane: ShellPane) -> TerminalRuntimeRenderPriority {
+        if pane.isQuickTerminalPane {
+            return shellState.quickTerminal?.presentation == .visible
+                ? .foregroundInteractive
+                : .hiddenBackground
+        }
+
+        let visiblePaneIDs = Set(displayPaneTree(for: selectedTab)?.paneIDs ?? [])
+        return terminalRuntimeRenderPriority(
+            paneID: pane.paneID,
+            paneSpaceID: pane.spaceID,
+            paneTabID: pane.tabID,
+            selectedSpaceID: selectedSpaceID,
+            selectedTabID: selectedTabID,
+            focusedPaneID: shellState.focusedPaneID,
+            visiblePaneIDs: visiblePaneIDs,
+            windowIsVisible: shellWindowIsVisibleForRendering
+        )
+    }
+
+    func updateShellWindowVisibilityForRendering(_ isVisible: Bool) {
+        guard shellWindowIsVisibleForRendering != isVisible else { return }
+        shellWindowIsVisibleForRendering = isVisible
+        synchronizeTerminalRenderPriorities()
+    }
+
     func displayPaneTree(for tab: ShellTab?) -> ShellPaneTreeNode? {
         guard let tab else { return nil }
         guard let zoomedPaneID = zoomedPaneID(in: tab) else {
@@ -666,6 +693,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             paneID: paneID,
             zoomedPaneID: paneID
         )
+        synchronizeTerminalRenderPriorities()
         return true
     }
 
@@ -693,6 +721,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             paneID: zoomedPaneID,
             zoomedPaneID: nil
         )
+        synchronizeTerminalRenderPriorities()
         return true
     }
 
@@ -816,14 +845,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } ?? tab.paneTree.paneIDs.first
     }
 
-    func requestCommandInput() {
-        commandInputRequestID += 1
-    }
-
-    func setCommandInputActive(_ active: Bool) {
-        commandInputActive = active
-    }
-
     func refocusSelectedTerminalPane() {
         guard let paneID = selectedPane?.paneID else { return }
         guard canRequestTerminalFocus(for: paneID) else { return }
@@ -919,11 +940,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func createTerminalSpace(title: String? = nil, workingDirectory: String? = nil) -> String? {
         createSpace(launchTarget: .shell, title: title, workingDirectory: workingDirectory)
-    }
-
-    @discardableResult
-    func createAlanSpace(title: String? = nil, workingDirectory: String? = nil) -> String? {
-        createSpace(launchTarget: .alan, title: title, workingDirectory: workingDirectory)
     }
 
     @discardableResult
@@ -1102,20 +1118,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    func openAlanTab(
-        in spaceID: String? = nil,
-        title: String? = nil,
-        workingDirectory: String? = nil
-    ) -> String? {
-        openTab(
-            launchTarget: .alan,
-            in: spaceID,
-            title: title,
-            workingDirectory: workingDirectory
-        )
-    }
-
-    @discardableResult
     func openMarkdownTab(
         fileURL: URL,
         in spaceID: String? = nil,
@@ -1226,17 +1228,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 .createTab(
                     ShellAutomationCreateTabRequest(
                         launchTarget: .shell,
-                        spaceID: nil,
-                        title: nil,
-                        workingDirectory: nil
-                    )
-                )
-            ).applied
-        case .newAlanTab:
-            return performShellAutomationCommand(
-                .createTab(
-                    ShellAutomationCreateTabRequest(
-                        launchTarget: .alan,
                         spaceID: nil,
                         title: nil,
                         workingDirectory: nil
@@ -1502,8 +1493,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             command,
             source: source,
             target: target,
-            state: shellState,
-            commandInputActive: commandInputActive
+            state: shellState
         ) { [terminalRuntimeRegistry] paneID in
             terminalRuntimeRegistry.terminalCommandRuntimeState(for: paneID)
         }
@@ -1653,6 +1643,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func updateTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        let previousRuntime = runtime.paneID.map { self.runtime(for: $0) }
         terminalRuntimeRegistry.updateSnapshot(runtime)
 
         if let paneID = runtime.paneID,
@@ -1669,6 +1660,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             }
         }
 
+        guard TerminalRuntimePublicationPolicy.shouldProjectToShell(
+            previous: previousRuntime,
+            next: runtime
+        ) else {
+            return
+        }
+
+        if runtime.renderPriority == .visibleBackground {
+            scheduleVisibleBackgroundRuntimeProjection(runtime)
+            return
+        }
+
+        projectTerminalRuntime(runtime)
+    }
+
+    private func projectTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
         if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
             terminalRuntime = runtime
         }
@@ -1711,6 +1718,28 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             if activeTaskChanged && !didPublishPaneUpdate {
                 syncWorkspaceManifestFromShellState()
             }
+        }
+    }
+
+    private func scheduleVisibleBackgroundRuntimeProjection(_ runtime: TerminalHostRuntimeSnapshot) {
+        guard let paneID = runtime.paneID else {
+            projectTerminalRuntime(runtime)
+            return
+        }
+        pendingVisibleBackgroundRuntimeByPaneID[paneID] = runtime
+        guard !visibleBackgroundRuntimeProjectionScheduled else { return }
+        visibleBackgroundRuntimeProjectionScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
+            self?.flushVisibleBackgroundRuntimeProjections()
+        }
+    }
+
+    private func flushVisibleBackgroundRuntimeProjections() {
+        let pending = pendingVisibleBackgroundRuntimeByPaneID
+        pendingVisibleBackgroundRuntimeByPaneID.removeAll()
+        visibleBackgroundRuntimeProjectionScheduled = false
+        for runtime in pending.values.sorted(by: { ($0.paneID ?? "") < ($1.paneID ?? "") }) {
+            projectTerminalRuntime(runtime)
         }
     }
 
@@ -2103,12 +2132,27 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             selectedSpaceID = focusedPane.spaceID
             selectedTabID = focusedPane.tabID
             terminalRuntime = runtime(for: focusedPane.paneID)
+            synchronizeTerminalRenderPriorities()
             return
         }
 
         selectedSpaceID = shellState.focusedSpaceID ?? selectedSpaceID ?? shellState.spaces.first?.spaceID
         selectedTabID = shellState.focusedTabID ?? selectedSpace?.tabs.first?.tabID
         terminalRuntime = runtime(for: selectedPane?.paneID)
+        synchronizeTerminalRenderPriorities()
+    }
+
+    private func synchronizeTerminalRenderPriorities() {
+        let contentState = shellState.contentStateProjection()
+        let prioritiesByContentID = shellState.panes.reduce(
+            into: [String: TerminalRuntimeRenderPriority]()
+        ) { priorities, pane in
+            guard paneHasTerminalContent(pane, in: contentState, state: shellState) else { return }
+            let contentID = contentState.contentMounted(in: pane.paneID)?.contentID
+                ?? pane.terminalContentID
+            priorities[contentID] = terminalRenderPriority(for: pane)
+        }
+        terminalRuntimeRegistry.updateRenderPriorities(prioritiesByContentID)
     }
 
     private func zoomedPaneID(in tab: ShellTab) -> String? {
@@ -2645,12 +2689,6 @@ extension ShellHostController: ShellAutomationCommandHandling {
             switch request.launchTarget {
             case .shell:
                 tabID = openTerminalTab(
-                    in: request.spaceID,
-                    title: request.title,
-                    workingDirectory: request.workingDirectory
-                )
-            case .alan:
-                tabID = openAlanTab(
                     in: request.spaceID,
                     title: request.title,
                     workingDirectory: request.workingDirectory

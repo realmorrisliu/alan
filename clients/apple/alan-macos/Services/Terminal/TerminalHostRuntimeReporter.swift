@@ -33,6 +33,7 @@ final class TerminalHostRuntimeReporter {
         lhs.stage == rhs.stage
             && lhs.paneID == rhs.paneID
             && lhs.tabID == rhs.tabID
+            && lhs.renderPriority == rhs.renderPriority
             && lhs.logicalSize == rhs.logicalSize
             && lhs.backingSize == rhs.backingSize
             && lhs.displayName == rhs.displayName

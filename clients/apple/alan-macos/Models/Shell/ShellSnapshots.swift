@@ -131,25 +131,7 @@ extension ShellPane {
 
 extension ShellPane {
     var resolvedLaunchTarget: ShellLaunchTarget {
-        if let launchTarget {
-            return launchTarget
-        }
-
-        if let processProgram = process?.program.lowercased(),
-           processProgram.contains("alan")
-        {
-            return .alan
-        }
-
-        if process?.argvPreview?.contains(where: { $0.lowercased().contains("alan") }) == true {
-            return .alan
-        }
-
-        if alanBinding != nil {
-            return .alan
-        }
-
-        return .shell
+        launchTarget ?? .shell
     }
 }
 
@@ -1383,8 +1365,6 @@ extension ShellContentInstance {
         switch pane.resolvedLaunchTarget {
         case .shell:
             return "Shell"
-        case .alan:
-            return "alan"
         }
     }
 

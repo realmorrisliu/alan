@@ -447,10 +447,6 @@ func shellDisplayTitle(
         return fallback
     }
 
-    if launchTarget == .alan {
-        return "alan"
-    }
-
     if let program = shellVisibleLabel(program) {
         return program
     }
@@ -469,10 +465,6 @@ func shellPaneTitleBarTitle(for pane: ShellPane) -> String {
 
     if let workingDirectory = shellVisibleLabel(pane.context?.workingDirectoryName) {
         return workingDirectory
-    }
-
-    if pane.resolvedLaunchTarget == .alan {
-        return "alan"
     }
 
     if let program = shellVisibleLabel(pane.process?.program) {
@@ -638,7 +630,7 @@ private func shellPaneAlanAccessoryProjection(for pane: ShellPane) -> ShellPaneT
 
 private func shellProcessDuplicatesAgentOrAlan(_ program: String, pane: ShellPane) -> Bool {
     let lowercasedProgram = program.lowercased()
-    if pane.alanBinding != nil || pane.resolvedLaunchTarget == .alan {
+    if pane.alanBinding != nil {
         return lowercasedProgram.contains("alan")
     }
 

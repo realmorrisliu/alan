@@ -10,6 +10,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
     @Binding private var systemColorScheme: ColorScheme
     var collapsedSidebarPointerRetentionEnabled = false
     @Binding private var collapsedSidebarPointerRetained: Bool
+    var windowVisibilityHandler: (Bool) -> Void = { _ in }
 
     init(
         metrics: Binding<ShellWindowChromeMetrics>,
@@ -17,7 +18,8 @@ struct ShellWindowPlacementView: NSViewRepresentable {
         chromeSurface: ShellWindowChromeSurface = .visible,
         systemColorScheme: Binding<ColorScheme>,
         collapsedSidebarPointerRetentionEnabled: Bool = false,
-        collapsedSidebarPointerRetained: Binding<Bool> = .constant(false)
+        collapsedSidebarPointerRetained: Binding<Bool> = .constant(false),
+        windowVisibilityHandler: @escaping (Bool) -> Void = { _ in }
     ) {
         _metrics = metrics
         self.appearanceMode = appearanceMode
@@ -25,6 +27,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
         _systemColorScheme = systemColorScheme
         self.collapsedSidebarPointerRetentionEnabled = collapsedSidebarPointerRetentionEnabled
         _collapsedSidebarPointerRetained = collapsedSidebarPointerRetained
+        self.windowVisibilityHandler = windowVisibilityHandler
     }
 
     func makeNSView(context: Context) -> ShellWindowPlacementNSView {
@@ -37,7 +40,8 @@ struct ShellWindowPlacementView: NSViewRepresentable {
             metricsHandler: metricsHandler(metricsBinding),
             systemAppearanceHandler: systemAppearanceHandler(systemColorSchemeBinding),
             collapsedSidebarPointerRetentionEnabled: collapsedSidebarPointerRetentionEnabled,
-            collapsedSidebarPointerRetentionHandler: pointerRetentionHandler(pointerRetentionBinding)
+            collapsedSidebarPointerRetentionHandler: pointerRetentionHandler(pointerRetentionBinding),
+            windowVisibilityHandler: windowVisibilityHandler
         )
     }
 
@@ -51,6 +55,7 @@ struct ShellWindowPlacementView: NSViewRepresentable {
         nsView.updateCollapsedSidebarPointerRetentionHandler(
             pointerRetentionHandler(pointerRetentionBinding)
         )
+        nsView.updateWindowVisibilityHandler(windowVisibilityHandler)
         nsView.updateChromeSurface(chromeSurface)
         nsView.updateCollapsedSidebarPointerRetention(
             enabled: collapsedSidebarPointerRetentionEnabled
@@ -89,6 +94,15 @@ struct ShellWindowPlacementView: NSViewRepresentable {
                 pointerRetentionBinding.wrappedValue = retained
             }
         }
+    }
+}
+
+enum ShellWindowRenderVisibility {
+    static func isVisible(_ window: NSWindow?) -> Bool {
+        guard let window else { return false }
+        return window.isVisible
+            && !window.isMiniaturized
+            && window.occlusionState.contains(.visible)
     }
 }
 
@@ -385,6 +399,8 @@ final class ShellWindowPlacementNSView: NSView {
     private var collapsedSidebarPointerRetentionEnabled = false
     private var collapsedSidebarPointerRetained = false
     private var collapsedSidebarPointerRetentionHandler: (Bool) -> Void
+    private var windowVisibilityHandler: (Bool) -> Void
+    private var lastPublishedWindowVisibility: Bool?
     private var pointerRetentionEventMonitor: Any?
 
     init(
@@ -393,7 +409,8 @@ final class ShellWindowPlacementNSView: NSView {
         metricsHandler: @escaping (ShellWindowChromeMetrics) -> Void,
         systemAppearanceHandler: @escaping (ColorScheme) -> Void = { _ in },
         collapsedSidebarPointerRetentionEnabled: Bool = false,
-        collapsedSidebarPointerRetentionHandler: @escaping (Bool) -> Void = { _ in }
+        collapsedSidebarPointerRetentionHandler: @escaping (Bool) -> Void = { _ in },
+        windowVisibilityHandler: @escaping (Bool) -> Void = { _ in }
     ) {
         self.appearanceMode = appearanceMode
         self.chromeSurface = chromeSurface
@@ -401,6 +418,7 @@ final class ShellWindowPlacementNSView: NSView {
         self.systemAppearanceHandler = systemAppearanceHandler
         self.collapsedSidebarPointerRetentionEnabled = collapsedSidebarPointerRetentionEnabled
         self.collapsedSidebarPointerRetentionHandler = collapsedSidebarPointerRetentionHandler
+        self.windowVisibilityHandler = windowVisibilityHandler
         super.init(frame: .zero)
     }
 
@@ -444,6 +462,11 @@ final class ShellWindowPlacementNSView: NSView {
     func updateSystemAppearanceHandler(_ handler: @escaping (ColorScheme) -> Void) {
         systemAppearanceHandler = handler
         publishEffectiveSystemColorScheme()
+    }
+
+    func updateWindowVisibilityHandler(_ handler: @escaping (Bool) -> Void) {
+        windowVisibilityHandler = handler
+        publishCurrentWindowVisibility()
     }
 
     func updateAppearanceMode(_ mode: ShellAppearanceMode) {
@@ -493,6 +516,7 @@ final class ShellWindowPlacementNSView: NSView {
             }
 
             self.synchronizeChrome(for: window)
+            self.publishWindowVisibility(for: window)
         }
     }
 
@@ -547,6 +571,28 @@ final class ShellWindowPlacementNSView: NSView {
                 queue: .main
             ) { [weak self] _ in
                 self?.scheduleChromeSync()
+                self?.publishCurrentWindowVisibility()
+            },
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishCurrentWindowVisibility()
+            },
+            center.addObserver(
+                forName: NSWindow.didMiniaturizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishCurrentWindowVisibility()
+            },
+            center.addObserver(
+                forName: NSWindow.didDeminiaturizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishCurrentWindowVisibility()
             },
             center.addObserver(
                 forName: NSWindow.willEnterFullScreenNotification,
@@ -590,6 +636,18 @@ final class ShellWindowPlacementNSView: NSView {
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         windowObservers.removeAll()
         observedWindow = nil
+        publishWindowVisibility(for: nil)
+    }
+
+    private func publishCurrentWindowVisibility() {
+        publishWindowVisibility(for: observedWindow ?? window)
+    }
+
+    private func publishWindowVisibility(for targetWindow: NSWindow?) {
+        let isVisible = ShellWindowRenderVisibility.isVisible(targetWindow)
+        guard lastPublishedWindowVisibility != isVisible else { return }
+        lastPublishedWindowVisibility = isVisible
+        windowVisibilityHandler(isVisible)
     }
 
     private func installTitlebarObservers(for titlebarView: NSView?) {

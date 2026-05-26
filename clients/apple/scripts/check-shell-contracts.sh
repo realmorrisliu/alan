@@ -35,7 +35,6 @@ reject_active_shell_radius_drift() {
     for file in \
         "clients/apple/alan-macos/MacShellRootView.swift" \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-        "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "clients/apple/alan-macos/TerminalHostView.swift"
     do
@@ -283,14 +282,14 @@ require_semantic_terminal_actions_contract() {
         "semantic prompt/output actions must be gated to the normal terminal buffer"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-        "requiresSemanticCommandBoundaries" \
+        "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+        "case \\.copyLastCommandOutput, \\.searchLastCommandOutput:" \
         "command-aware terminal actions must stay gated behind reliable command boundaries"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-        "semanticCommandsAvailable: host\\.focusedPaneHasReliableSemanticCommands" \
-        "Go to or Command actions must resolve semantic terminal commands only for reliable focused panes"
+        "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+        "runtime\\.hasReliableSemanticCommands" \
+        "semantic terminal commands must resolve only for reliable focused panes"
 
     require_pattern \
         "clients/apple/scripts/test-terminal-surface-controller.swift" \
@@ -785,80 +784,60 @@ require_pattern \
     "host\\.performShellAction\\(\\.tabClose\\)" \
     "native menu close actions must use the shell action registry"
 
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "ShellWorkspaceCommand\\.splitRight" \
-    "command UI split actions must call the same shell command router as native menus"
+reject_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "ShellCommandTabView" \
+    "deleted floating Ask alan view must stay out of the Xcode project"
 
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "host\\.performShellWorkspaceCommand\\(\\.newTerminalTab\\)" \
-    "command UI tab actions must use the shared shell workspace command vocabulary"
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "Ask alan\\.\\.\\.|Go to or Command|New alan tab|newAlanTab|openAlanTab" \
+    "sidebar must not expose Ask alan or first-party alan tab creation"
 
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "GlassEffectContainer\\(spacing:" \
-    "floating Ask alan command input must group custom Liquid Glass surfaces"
-
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "\\.glassEffect\\(\\.regular\\.interactive\\(\\), in: shape\\)" \
-    "floating Ask alan command input must use the default system Liquid Glass material"
-
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "\\.glassEffectTransition\\(\\.identity\\)" \
-    "floating Ask alan command input must disable Liquid Glass material insertion animation"
-
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellCommandTabView.swift" \
-    "private var commandInputContent: some View" \
-    "floating Ask alan command input foreground content must render outside the glass-effect layer"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "private let hiddenCommandInputOpacity = 0\\.001" \
-    "floating Ask alan command input must keep the Liquid Glass surface mounted before presentation"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "private func toggleCommandInput\\(\\)" \
-    "Command-P must toggle the floating Ask alan command input"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "isActive: isCommandTabPresented" \
-    "floating Ask alan command input must separate mounted glass identity from active text focus"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "withAnimation\\(commandInputAnimation\\)" \
-    "floating Ask alan command input must fade between hidden and visible states"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "\\.opacity\\(commandInputOpacity\\)" \
-    "floating Ask alan command input must use opacity fade instead of moving from an edge"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "Color\\.clear" \
-    "floating Ask alan click-away layer must avoid visible dimming under Liquid Glass"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "\\.transition\\(\\.identity\\)" \
-    "floating Ask alan click-away layer must not animate behind Liquid Glass on insertion"
+reject_pattern \
+    "clients/apple/alan-macos/App/AlanMacShellCommands.swift" \
+    "Ask alan\\.\\.\\.|New alan tab|requestCommandInput|newAlanTab|Command-P" \
+    "native menu commands must not expose Ask alan, Command-P command input, or New alan Tab"
 
 reject_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
-    "ShellPalette\\.overlayScrim" \
-    "floating Ask alan must not place a visible dimming scrim behind Liquid Glass"
+    "ShellCommandTabView|commandInputRequestID|toggleCommandInput|isCommandTabPresented|commandInputOpacity|requestCommandInput" \
+    "root shell view must not retain floating Ask alan command input plumbing"
 
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "Ask alan\\.\\.\\." \
-    "command entry copy must match the accepted shell command UI label"
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "openAlanTab|requestCommandInput|setCommandInputActive|commandInputActive|newAlanTab" \
+    "shell controller must not retain Ask alan or first-party alan tab command paths"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+    "newAlanTab|commandInputOpen|Ask alan|New alan tab|shell\\.command_input\\.open|shell\\.tab\\.new_alan" \
+    "shell action registry must not register removed Ask alan or New alan Tab actions"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
+    "openingAlanTab|creatingAlanSpace|launchTarget: \\.alan|ShellLaunchTarget\\.alan" \
+    "shell state mutations must not create first-party alan tabs"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "resolveAlan|alan chat|launchTarget: \\.alan|ShellLaunchTarget\\.alan|case \\.alan" \
+    "terminal runtime must not auto-launch first-party alan tabs"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellAutomationIntents.swift" \
+    "AlanCreateAlanTabIntent|createAlanTab|Create Alan Tab" \
+    "App Intents must not expose Create Alan Tab"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellAutomationCommand.swift" \
+    "launchTarget: \\.alan|ShellLaunchTarget\\.alan" \
+    "automation command models must not encode first-party alan tab creation"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \
+    "spaceOpenAlan" \
+    "shell control plane DTOs must not expose first-party alan space creation"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
@@ -1677,13 +1656,33 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "let visible = .*occlusionState\\.contains\\(\\.visible\\) \\?\\? false" \
+    "let visible = priority\\.isVisible" \
+    "Ghostty occlusion bridge must include render-priority visibility in the visible flag"
+
+require_pattern \
+    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "canvasView\\.window\\?\\.occlusionState\\.contains\\(\\.visible\\) \\?\\? false" \
     "Ghostty occlusion bridge must derive the visible flag from NSWindow occlusion state"
 
 require_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
     "ghostty_surface_set_occlusion\\(surface, visible\\)" \
     "GhosttyKit bridge must pass the observed visible state used by this linked Ghostty build"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "windowIsVisible: shellWindowIsVisibleForRendering" \
+    "terminal render priorities must use observed shell window visibility instead of a hardcoded visible window"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didChangeOcclusionStateNotification" \
+    "shell window visibility must observe occlusion changes for terminal render-priority throttling"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "NSWindow\\.didMiniaturizeNotification" \
+    "shell window visibility must observe minimization for terminal render-priority throttling"
 
 reject_pattern \
     "clients/apple/alan-macos/GhosttyLiveHost.swift" \
@@ -1792,8 +1791,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
-    "bundled_resource_binary" \
-    "alan launch resolution must support the app-bundled CLI"
+    "case \\.shell:" \
+    "terminal launch resolution must keep normal shell launch support"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "bundled_resource_binary|repo_debug_binary|repo_release_binary|path_binary|shell_lookup" \
+    "terminal launch resolution must not retain first-party alan tab CLI boot strategies"
 
 reject_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \

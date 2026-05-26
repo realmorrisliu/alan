@@ -17,7 +17,6 @@ private enum TerminalRuntimeServiceTests {
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
-        verifiesDevChannelUsesBundledDevBinary()
         verifiesDevChannelPropagatesInstallChannelEnvironment()
         verifiesChannelScopedShellControlPaths()
         verifiesDevBootProfileUsesDevShellControlNamespace()
@@ -34,6 +33,11 @@ private enum TerminalRuntimeServiceTests {
         verifiesTeardownOnce()
         verifiesFinalizePanesOnlyReleasesStaleHandles()
         verifiesBootstrapFailureDiagnostics()
+        verifiesTerminalRenderPriorityDerivation()
+        verifiesRenderCoordinatorCoalescesHiddenWakeups()
+        verifiesRenderCoordinatorDrainsForegroundBeforeBackground()
+        verifiesRenderCoordinatorCatchUpRefreshesHiddenSurface()
+        verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates()
         print("Terminal runtime service tests passed.")
     }
 
@@ -66,6 +70,249 @@ private enum TerminalRuntimeServiceTests {
         expect(
             profile.environment["ALAN_SHELL_CONTENT_ID"] == pane.terminalContentID,
             "boot profile must expose terminal content identity to child processes"
+        )
+    }
+
+    private static func verifiesTerminalRenderPriorityDerivation() {
+        let visiblePaneIDs: Set<String> = ["pane_1", "pane_2"]
+
+        expect(
+            terminalRuntimeRenderPriority(
+                paneID: "pane_1",
+                paneSpaceID: "space_1",
+                paneTabID: "tab_1",
+                selectedSpaceID: "space_1",
+                selectedTabID: "tab_1",
+                focusedPaneID: "pane_1",
+                visiblePaneIDs: visiblePaneIDs,
+                windowIsVisible: true
+            ) == .foregroundInteractive,
+            "focused selected visible pane must be foreground interactive"
+        )
+        expect(
+            terminalRuntimeRenderPriority(
+                paneID: "pane_2",
+                paneSpaceID: "space_1",
+                paneTabID: "tab_1",
+                selectedSpaceID: "space_1",
+                selectedTabID: "tab_1",
+                focusedPaneID: "pane_1",
+                visiblePaneIDs: visiblePaneIDs,
+                windowIsVisible: true
+            ) == .visibleBackground,
+            "visible split sibling must be visible background"
+        )
+        expect(
+            terminalRuntimeRenderPriority(
+                paneID: "pane_3",
+                paneSpaceID: "space_1",
+                paneTabID: "tab_2",
+                selectedSpaceID: "space_1",
+                selectedTabID: "tab_1",
+                focusedPaneID: "pane_1",
+                visiblePaneIDs: visiblePaneIDs,
+                windowIsVisible: true
+            ) == .hiddenBackground,
+            "terminal in a hidden tab must be hidden background"
+        )
+        expect(
+            terminalRuntimeRenderPriority(
+                paneID: "pane_1",
+                paneSpaceID: "space_1",
+                paneTabID: "tab_1",
+                selectedSpaceID: "space_1",
+                selectedTabID: "tab_1",
+                focusedPaneID: "pane_1",
+                visiblePaneIDs: visiblePaneIDs,
+                windowIsVisible: false
+            ) == .hiddenBackground,
+            "occluded window must make visible panes hidden for rendering"
+        )
+    }
+
+    private static func verifiesRenderCoordinatorCoalescesHiddenWakeups() {
+        var events: [String] = []
+        let coordinator = TerminalRenderCoordinator(automaticallyDrains: false)
+        let hidden = FakeRenderCoordinatorHost(
+            id: "hidden",
+            priority: .hiddenBackground,
+            events: { events.append($0) }
+        )
+
+        coordinator.requestWakeup(from: hidden)
+        coordinator.requestWakeup(from: hidden)
+        coordinator.drainPending()
+
+        expect(hidden.appTickCount == 1, "hidden wakeups in one interval must coalesce to one app tick")
+        expect(hidden.surfaceRefreshCount == 0, "hidden wakeups must not repaint on every output burst")
+        let metrics = coordinator.metricsSnapshot()
+        expect(
+            metrics.coalescedSurfaceRefreshes == 1,
+            "coordinator metrics must record the hidden refresh coalescing"
+        )
+        expect(metrics.drainBatches == 1, "coordinator metrics must count drain batches")
+        expect(
+            metrics.maxDrainLatencyMs >= 0,
+            "coordinator metrics must record drain latency"
+        )
+        expect(events == ["tick:hidden"], "hidden drain must only process app tick state")
+    }
+
+    private static func verifiesRenderCoordinatorDrainsForegroundBeforeBackground() {
+        var events: [String] = []
+        let coordinator = TerminalRenderCoordinator(automaticallyDrains: false)
+        let hidden = FakeRenderCoordinatorHost(
+            id: "hidden",
+            priority: .hiddenBackground,
+            events: { events.append($0) }
+        )
+        let foreground = FakeRenderCoordinatorHost(
+            id: "foreground",
+            priority: .foregroundInteractive,
+            events: { events.append($0) }
+        )
+        let visible = FakeRenderCoordinatorHost(
+            id: "visible",
+            priority: .visibleBackground,
+            events: { events.append($0) }
+        )
+
+        coordinator.requestWakeup(from: hidden)
+        coordinator.requestWakeup(from: visible)
+        coordinator.requestWakeup(from: foreground)
+        coordinator.drainPending()
+
+        expect(
+            events == [
+                "tick:foreground", "refresh:foreground:automatic",
+                "tick:visible", "refresh:visible:automatic",
+                "tick:hidden",
+            ],
+            "coordinator must drain foreground, visible background, then hidden background"
+        )
+        expect(
+            coordinator.metricsSnapshot().maxDrainBatchSize == 3,
+            "coordinator metrics must record the largest coalesced drain batch"
+        )
+    }
+
+    private static func verifiesRenderCoordinatorCatchUpRefreshesHiddenSurface() {
+        var events: [String] = []
+        let coordinator = TerminalRenderCoordinator(automaticallyDrains: false)
+        let hidden = FakeRenderCoordinatorHost(
+            id: "hidden",
+            priority: .hiddenBackground,
+            events: { events.append($0) }
+        )
+
+        coordinator.requestWakeup(from: hidden)
+        coordinator.drainPending()
+        hidden.priority = .visibleBackground
+        coordinator.requestCatchUp(from: hidden)
+        coordinator.drainPending()
+
+        expect(hidden.appTickCount == 2, "catch-up must drain current app state")
+        expect(hidden.surfaceRefreshCount == 1, "catch-up must refresh the existing surface")
+        expect(
+            events == ["tick:hidden", "tick:hidden", "refresh:hidden:catch_up"],
+            "catch-up must refresh only after the terminal becomes visible"
+        )
+        expect(coordinator.metricsSnapshot().catchUpRefreshes == 1, "catch-up refresh must be counted")
+    }
+
+    private static func verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates() {
+        let previous = sampleRuntimeSnapshot(
+            priority: .hiddenBackground,
+            metadata: .placeholder,
+            lastUpdatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let timestampOnly = sampleRuntimeSnapshot(
+            priority: .hiddenBackground,
+            metadata: .placeholder,
+            lastUpdatedAt: Date(timeIntervalSince1970: 2)
+        )
+        expect(
+            !TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: previous,
+                next: timestampOnly
+            ),
+            "hidden runtime timestamp-only churn must not publish to shell UI"
+        )
+
+        let rendererPhaseChurn = sampleRuntimeSnapshot(
+            priority: .hiddenBackground,
+            metadata: .placeholder,
+            renderer: TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .firstRefresh,
+                summary: "Terminal surface refreshed.",
+                detail: nil,
+                failureReason: nil,
+                recentEvents: ["refresh"]
+            ),
+            lastUpdatedAt: Date(timeIntervalSince1970: 3)
+        )
+        expect(
+            !TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: previous,
+                next: rendererPhaseChurn
+            ),
+            "hidden runtime renderer phase churn must not publish to shell UI"
+        )
+
+        let rendererFailure = sampleRuntimeSnapshot(
+            priority: .hiddenBackground,
+            metadata: .placeholder,
+            renderer: TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .failed,
+                summary: "Terminal renderer failed.",
+                detail: nil,
+                failureReason: "renderer_failed",
+                recentEvents: ["failed"]
+            ),
+            lastUpdatedAt: Date(timeIntervalSince1970: 4)
+        )
+        expect(
+            TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: previous,
+                next: rendererFailure
+            ),
+            "hidden runtime renderer failures must remain publishable"
+        )
+
+        let titleChange = sampleRuntimeSnapshot(
+            priority: .hiddenBackground,
+            metadata: TerminalPaneMetadataSnapshot(
+                title: "cargo test",
+                workingDirectory: nil,
+                summary: nil,
+                attention: .idle,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 5)
+            ),
+            lastUpdatedAt: Date(timeIntervalSince1970: 5)
+        )
+        expect(
+            TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: previous,
+                next: titleChange
+            ),
+            "hidden runtime title changes must remain publishable for sidebar summaries"
+        )
+
+        let foreground = sampleRuntimeSnapshot(
+            priority: .foregroundInteractive,
+            metadata: .placeholder,
+            lastUpdatedAt: Date(timeIntervalSince1970: 6)
+        )
+        expect(
+            TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: previous,
+                next: foreground
+            ),
+            "foreground runtime updates must publish immediately"
         )
     }
 
@@ -112,79 +359,10 @@ private enum TerminalRuntimeServiceTests {
                 candidates: []
             )
         )
-        let alanFromBundle = sampleBootProfile(
-            workingDirectory: "/Users/morris",
-            command: sampleAlanCommand(
-                strategy: .bundledResourceBinary,
-                executablePath: "/Users/morris/Applications/Alan.app/Contents/Resources/bin/alan"
-            ),
-            environment: [
-                "ALAN_SHELL_LAUNCH_TARGET": ShellLaunchTarget.alan.rawValue,
-                "ALAN_SHELL_EXECUTABLE": "/Users/morris/Applications/Alan.app/Contents/Resources/bin/alan",
-            ]
-        )
-        let alanDuringInstall = sampleBootProfile(
-            workingDirectory: "/Users/morris",
-            command: AlanCommandResolution(
-                strategy: .shellLookup,
-                executablePath: nil,
-                launchPath: "/bin/zsh",
-                arguments: ["-lc", "alan"],
-                bootCommand: "alan",
-                surfaceCommand: "alan",
-                summary: "No direct alan binary found; falling back to shell PATH lookup",
-                detail: nil,
-                repoRoot: nil,
-                candidates: []
-            ),
-            environment: [
-                "ALAN_SHELL_LAUNCH_TARGET": ShellLaunchTarget.alan.rawValue
-            ]
-        )
 
         expect(
             !whileBundleIsBeingReplaced.requiresSurfaceRecreation(comparedTo: running),
             "install-time Ghostty resource discovery changes must not recreate a running surface"
-        )
-        expect(
-            !alanDuringInstall.requiresSurfaceRecreation(comparedTo: alanFromBundle),
-            "install-time alan binary discovery changes must not recreate a running surface"
-        )
-    }
-
-    private static func verifiesDevChannelUsesBundledDevBinary() {
-        let resourceRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("alan-dev-resource-\(UUID().uuidString)", isDirectory: true)
-        let bin = resourceRoot.appendingPathComponent("bin", isDirectory: true)
-        let alanDev = bin.appendingPathComponent("alan-dev", isDirectory: false)
-
-        try! FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        try! "#!/bin/sh\nexit 0\n".write(to: alanDev, atomically: true, encoding: .utf8)
-        try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: alanDev.path)
-        defer {
-            try? FileManager.default.removeItem(at: resourceRoot)
-        }
-
-        let resolution = AlanCommandResolution.resolve(
-            for: .alan,
-            environment: [
-                "ALAN_INSTALL_CHANNEL": "dev",
-                "ALAN_APP_RESOURCE_DIR": resourceRoot.path,
-                "PATH": "",
-            ]
-        )
-
-        expect(
-            resolution.strategy == .bundledResourceBinary,
-            "dev channel must prefer the bundled alan-dev binary"
-        )
-        expect(
-            resolution.executablePath == alanDev.path,
-            "dev channel must resolve the bundled alan-dev path"
-        )
-        expect(
-            resolution.bootCommand.contains("alan-dev") && resolution.arguments == ["chat"],
-            "dev channel boot command must use alan-dev"
         )
     }
 
@@ -587,6 +765,31 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
+    private static func sampleRuntimeSnapshot(
+        priority: TerminalRuntimeRenderPriority,
+        metadata: TerminalPaneMetadataSnapshot,
+        renderer: TerminalRendererSnapshot = .placeholder,
+        lastUpdatedAt: Date
+    ) -> TerminalHostRuntimeSnapshot {
+        TerminalHostRuntimeSnapshot(
+            stage: .windowAttached,
+            contentID: "content_terminal_policy",
+            paneID: "pane_policy",
+            tabID: "tab_policy",
+            renderPriority: priority,
+            logicalSize: .zero,
+            backingSize: .zero,
+            displayName: nil,
+            displayID: nil,
+            attachedWindowTitle: nil,
+            isFocused: priority == .foregroundInteractive,
+            renderer: renderer,
+            paneMetadata: metadata,
+            surfaceState: .placeholder,
+            lastUpdatedAt: lastUpdatedAt
+        )
+    }
+
     private static func sampleShellCommand() -> AlanCommandResolution {
         AlanCommandResolution(
             strategy: .loginShellFallback,
@@ -602,24 +805,6 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
-    private static func sampleAlanCommand(
-        strategy: AlanLaunchStrategy,
-        executablePath: String
-    ) -> AlanCommandResolution {
-        AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: executablePath,
-            arguments: ["chat"],
-            bootCommand: "\(executablePath) chat",
-            surfaceCommand: "\(executablePath) chat",
-            summary: "Launching alan",
-            detail: executablePath,
-            repoRoot: nil,
-            candidates: []
-        )
-    }
-
     private static func expect(
         _ condition: @autoclosure () -> Bool,
         _ message: String
@@ -628,6 +813,39 @@ private enum TerminalRuntimeServiceTests {
             fputs("error: \(message)\n", stderr)
             exit(1)
         }
+    }
+}
+
+private final class FakeRenderCoordinatorHost: TerminalRenderCoordinatedHost {
+    let id: String
+    var priority: TerminalRuntimeRenderPriority
+    var isRenderCoordinatorTargetAlive = true
+    private(set) var appTickCount = 0
+    private(set) var surfaceRefreshCount = 0
+    private let recordEvent: (String) -> Void
+
+    init(
+        id: String,
+        priority: TerminalRuntimeRenderPriority,
+        events: @escaping (String) -> Void
+    ) {
+        self.id = id
+        self.priority = priority
+        self.recordEvent = events
+    }
+
+    var terminalRenderPriority: TerminalRuntimeRenderPriority {
+        priority
+    }
+
+    func renderCoordinatorDrainAppTick() {
+        appTickCount += 1
+        recordEvent("tick:\(id)")
+    }
+
+    func renderCoordinatorRefreshSurface(reason: TerminalRenderRefreshReason) {
+        surfaceRefreshCount += 1
+        recordEvent("refresh:\(id):\(reason.rawValue)")
     }
 }
 #endif

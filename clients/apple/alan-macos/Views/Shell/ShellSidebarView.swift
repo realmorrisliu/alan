@@ -8,13 +8,11 @@ struct ShellSidebarView: View {
     let chromeMetrics: ShellWindowChromeMetrics
     let displaySpaceID: String?
     let isSwipeEnabled: Bool
-    let openCommandTab: () -> Void
     @State private var spacePager: ShellSidebarSpaceContentPagerState?
     @State private var spacePagerToken = 0
     @State private var spacePagerPageWidth: CGFloat = 1
     @State private var hoveredTabID: String?
     @State private var hoveredSpaceID: String?
-    @State private var isCommandLauncherHovered = false
     @State private var tabListScrollOffsetY: CGFloat = 0
     @State private var activityFreshnessNow = Date()
     @State private var activeTabDrag: ShellSidebarTabDragState?
@@ -27,14 +25,12 @@ struct ShellSidebarView: View {
         previewedSpaceID: String? = nil,
         isSpaceSwipeGestureLocked: Bool = false,
         isSwipeEnabled: Bool,
-        onSpaceSwipe: @escaping (ShellSidebarSwipeUpdate) -> Void = { _ in },
-        openCommandTab: @escaping () -> Void
+        onSpaceSwipe: @escaping (ShellSidebarSwipeUpdate) -> Void = { _ in }
     ) {
         self.host = host
         self.chromeMetrics = chromeMetrics
         self.displaySpaceID = displaySpaceID
         self.isSwipeEnabled = isSwipeEnabled
-        self.openCommandTab = openCommandTab
         _ = previewedSpaceID
         _ = isSpaceSwipeGestureLocked
         _ = onSpaceSwipe
@@ -58,9 +54,6 @@ struct ShellSidebarView: View {
 
     private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            commandLauncher
-                .padding(.horizontal, ShellSidebarMetrics.edgeInset)
-                .padding(.bottom, 10)
             spaceContentPager
             spaceDock
                 .padding(.horizontal, ShellSidebarMetrics.edgeInset)
@@ -104,43 +97,6 @@ struct ShellSidebarView: View {
         )
         .frame(maxWidth: .infinity)
         .frame(height: 28)
-    }
-
-    private var commandLauncher: some View {
-        Button(action: openCommandTab) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
-                    .foregroundStyle(commandLauncherForeground)
-                    .frame(width: ShellSidebarMetrics.iconColumnWidth)
-                Text("Ask alan...")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(commandLauncherForeground)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, ShellSidebarMetrics.rowInset)
-            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-            .background {
-                ShellLiquidGlassSurface(
-                    shape: Capsule(),
-                    tint: ShellPalette.commandGlassTint,
-                    tintOpacity: isCommandLauncherHovered ? 0.22 : 0.18,
-                    strokeOpacity: isCommandLauncherHovered ? 0.22 : 0.16
-                )
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering in
-            isCommandLauncherHovered = isHovering
-        }
-        .help("Ask alan, Command-P")
-        .accessibilityLabel("Ask alan")
-    }
-
-    private var commandLauncherForeground: Color {
-        ShellPalette.sidebarMutedInk.opacity(isCommandLauncherHovered ? 0.92 : 0.80)
     }
 
     private func tabSection(for spaceID: String?) -> some View {
@@ -655,9 +611,6 @@ struct ShellSidebarView: View {
             Button(host.shellActionTitle(.newTerminalTab)) {
                 host.performShellAction(.newTerminalTab, target: .contextSpace(space.spaceID))
             }
-            Button(host.shellActionTitle(.newAlanTab)) {
-                host.performShellAction(.newAlanTab, target: .contextSpace(space.spaceID))
-            }
             Divider()
             if host.isTabPinned(tabID: tab.tabID) {
                 Button(host.shellActionTitle(.tabUpdatePin)) {
@@ -840,14 +793,6 @@ struct ShellSidebarView: View {
     }
 
     private func spaceSymbol(for space: ShellSpace) -> String {
-        let hasAlan = host.shellState.panes.contains { pane in
-            pane.spaceID == space.spaceID && pane.resolvedLaunchTarget == .alan
-        }
-
-        if hasAlan {
-            return "sparkles"
-        }
-
         if space.tabs.count > 1 {
             return "square.stack.3d.up"
         }
@@ -861,10 +806,7 @@ struct ShellSidebarView: View {
     }
 
     private func showsAlanMarker(for tab: ShellTab, activity: TerminalActivitySnapshot?) -> Bool {
-        guard activity?.source.kind != .alan else { return false }
-        return host.shellState.panes.contains { pane in
-            pane.tabID == tab.tabID && pane.resolvedLaunchTarget == .alan
-        }
+        false
     }
 
     private func contentIconName(for content: ShellContentInstance) -> String {
@@ -1087,14 +1029,6 @@ private struct ShellSidebarSpaceHeader: View {
 
     private func symbolName(for space: ShellSpace?) -> String {
         guard let space else { return "terminal" }
-        let hasAlan = host.shellState.panes.contains { pane in
-            pane.spaceID == space.spaceID && pane.resolvedLaunchTarget == .alan
-        }
-
-        if hasAlan {
-            return "sparkles"
-        }
-
         if space.tabs.count > 1 {
             return "square.stack.3d.up"
         }

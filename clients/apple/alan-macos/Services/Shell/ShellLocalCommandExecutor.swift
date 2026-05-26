@@ -49,10 +49,9 @@ enum AlanShellLocalCommandExecutor {
                 sideEffect: nil
             )
 
-        case .spaceCreate, .spaceOpenAlan:
-            let launchTarget: ShellLaunchTarget = command.command == .spaceOpenAlan ? .alan : .shell
+        case .spaceCreate:
             let result = state.creatingSpace(
-                launchTarget: launchTarget,
+                launchTarget: .shell,
                 title: command.title,
                 workingDirectory: command.cwd
             )
@@ -592,7 +591,7 @@ enum AlanShellLocalCommandExecutor {
              .paneZoom, .paneUnzoom:
             return nil
 
-        case .terminalSendText:
+        case .terminalSendText, .terminalRenderMetrics:
             return nil
 
         case .agentActivity:

@@ -144,6 +144,7 @@ extension ShellHostController {
         acceptedBytes: Int? = nil,
         deliveryCode: String? = nil,
         runtimePhase: String? = nil,
+        terminalRenderMetrics: TerminalRenderCoordinatorMetrics? = nil,
         latestEventID: String? = nil,
         splitNodeID: String? = nil,
         ratio: Double? = nil,
@@ -199,6 +200,7 @@ extension ShellHostController {
             acceptedBytes: acceptedBytes,
             deliveryCode: deliveryCode,
             runtimePhase: runtimePhase,
+            terminalRenderMetrics: terminalRenderMetrics,
             latestEventID: latestEventID,
             splitNodeID: splitNodeID,
             ratio: ratio,
@@ -265,7 +267,8 @@ extension ShellHostController {
                 state: shellState,
                 paneSlots: contentState.paneSlots,
                 contents: contentState.contents,
-                paneSlotID: contentState.focusedPaneSlotID
+                paneSlotID: contentState.focusedPaneSlotID,
+                terminalRenderMetrics: terminalRuntimeRegistry.renderCoordinatorMetrics
             )
 
         case .spaceList:
@@ -275,13 +278,10 @@ extension ShellHostController {
                 spaces: shellState.spaces
             )
 
-        case .spaceCreate, .spaceOpenAlan:
-            let launchTarget: ShellLaunchTarget = command.command == .spaceOpenAlan ? .alan : .shell
-            let failureMessage = launchTarget == .alan
-                ? "Failed to create a new alan space."
-                : "Failed to create a new shell space."
+        case .spaceCreate:
+            let failureMessage = "Failed to create a new shell space."
             guard let spaceID = createSpace(
-                launchTarget: launchTarget,
+                launchTarget: .shell,
                 title: command.title,
                 workingDirectory: command.cwd
             ) else {
@@ -870,6 +870,13 @@ extension ShellHostController {
                 runtimePhase: delivery.runtimePhase,
                 errorCode: delivery.errorCode,
                 errorMessage: delivery.errorMessage
+            )
+
+        case .terminalRenderMetrics:
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                terminalRenderMetrics: terminalRuntimeRegistry.renderCoordinatorMetrics
             )
 
         case .agentActivity:

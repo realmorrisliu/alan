@@ -864,8 +864,6 @@ struct ShellWorkspaceMaterializer {
         switch launchTarget {
         case .shell:
             return "Shell"
-        case .alan:
-            return "alan"
         }
     }
 

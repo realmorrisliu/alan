@@ -67,13 +67,8 @@ struct ShellAutomationIntentOutcome: Equatable, Sendable {
     ) -> String {
         let safeSummary = summary.map { ": \($0.displayText)" } ?? "."
         switch command {
-        case let .createTab(request):
-            switch request.launchTarget {
-            case .shell:
-                return "Created terminal tab\(safeSummary)"
-            case .alan:
-                return "Created alan tab\(safeSummary)"
-            }
+        case .createTab:
+            return "Created terminal tab\(safeSummary)"
         case .splitPane:
             return "Split pane\(safeSummary)"
         case .focusPane:
@@ -144,19 +139,6 @@ enum ShellAutomationIntentRouter {
     ) -> ShellAutomationIntentOutcome {
         perform(.createTab(ShellAutomationCreateTabRequest(
             launchTarget: .shell,
-            spaceID: spaceID,
-            title: title,
-            workingDirectory: workingDirectory
-        )))
-    }
-
-    static func createAlanTab(
-        spaceID: String? = nil,
-        title: String? = nil,
-        workingDirectory: String? = nil
-    ) -> ShellAutomationIntentOutcome {
-        perform(.createTab(ShellAutomationCreateTabRequest(
-            launchTarget: .alan,
             spaceID: spaceID,
             title: title,
             workingDirectory: workingDirectory
@@ -255,30 +237,6 @@ struct AlanCreateTerminalTabIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.createTerminalTab(
-            spaceID: space?.id,
-            title: tabTitle,
-            workingDirectory: workingDirectory
-        )
-        return try shellAutomationIntentResult(outcome)
-    }
-}
-
-@available(macOS 13.0, *)
-struct AlanCreateAlanTabIntent: AppIntent {
-    static var title: LocalizedStringResource = "Create Alan Tab"
-    static var description = IntentDescription("Create an alan tab in alan.")
-
-    @Parameter(title: "Space")
-    var space: AlanShellSpaceEntity?
-
-    @Parameter(title: "Title")
-    var tabTitle: String?
-
-    @Parameter(title: "Working Directory")
-    var workingDirectory: String?
-
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let outcome = await ShellAutomationIntentRouter.createAlanTab(
             spaceID: space?.id,
             title: tabTitle,
             workingDirectory: workingDirectory
