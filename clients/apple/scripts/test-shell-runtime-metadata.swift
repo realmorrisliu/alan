@@ -44,6 +44,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalTerminalCommandsStayRoutable()
         verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
         verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
+        verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection()
         verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
@@ -1450,6 +1451,58 @@ private enum ShellRuntimeMetadataTests {
         expect(window.focusedPaneIDs == [ShellQuickTerminalSlot.globalPaneID], "peak presenter must focus terminal input after show")
         expect(controller.selectedSpaceID == selectedSpaceBefore, "peak presenter must not move the selected Alan space")
         expect(controller.selectedTabID == selectedTabBefore, "peak presenter must not move the selected Alan tab")
+    }
+
+    private static func verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection() {
+        let controller = makeController()
+        let focusedSpaceBefore = controller.shellState.focusedSpaceID
+        let focusedTabBefore = controller.shellState.focusedTabID
+        let focusedPaneBefore = controller.shellState.focusedPaneID
+        let selectedSpaceBefore = controller.selectedSpaceID
+        let selectedTabBefore = controller.selectedTabID
+
+        _ = controller.showQuickTerminal()
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .focused,
+                contentID: ShellContentInstance.terminalContentID(
+                    forPaneID: ShellQuickTerminalSlot.globalPaneID
+                ),
+                paneID: ShellQuickTerminalSlot.globalPaneID,
+                tabID: ShellQuickTerminalSlot.globalTabID,
+                logicalSize: CGSize(width: 840, height: 360),
+                backingSize: CGSize(width: 840, height: 360),
+                displayName: "test-display",
+                displayID: "test-display",
+                attachedWindowTitle: "Quick Terminal",
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                lastUpdatedAt: .now
+            )
+        )
+
+        expect(
+            controller.shellState.focusedSpaceID == focusedSpaceBefore,
+            "quick terminal runtime focus must not commit private Peak space as workspace focus"
+        )
+        expect(
+            controller.shellState.focusedTabID == focusedTabBefore,
+            "quick terminal runtime focus must not commit private Peak tab as workspace focus"
+        )
+        expect(
+            controller.shellState.focusedPaneID == focusedPaneBefore,
+            "quick terminal runtime focus must not replace regular workspace focused pane"
+        )
+        expect(
+            controller.selectedSpaceID == selectedSpaceBefore,
+            "quick terminal runtime focus must not move selected Alan space"
+        )
+        expect(
+            controller.selectedTabID == selectedTabBefore,
+            "quick terminal runtime focus must not move selected Alan tab"
+        )
     }
 
     private static func verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide() {
