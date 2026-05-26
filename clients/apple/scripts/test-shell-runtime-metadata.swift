@@ -49,6 +49,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
+        verifiesQuickTerminalRenderPriorityStaysDetachedFromMainWindowVisibility()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
         verifiesTerminalRenderPrioritiesFollowSelectionAndZoom()
         verifiesTerminalRenderPrioritiesTrackWindowVisibility()
@@ -1584,6 +1585,42 @@ private enum ShellRuntimeMetadataTests {
         expect(policy.escapeKeyBehavior == .terminalInput, "Esc must remain terminal input by default")
         expect(policy.hidesOnFocusLoss == false, "focus loss must not auto-hide the peak")
         expect(policy.usesMainWindowParenting == false, "peak must not be parented to the main window")
+    }
+
+    private static func verifiesQuickTerminalRenderPriorityStaysDetachedFromMainWindowVisibility() {
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(terminalRuntimeRegistry: registry)
+
+        expect(
+            controller.showQuickTerminal() == ShellQuickTerminalSlot.globalPaneID,
+            "quick terminal setup must show the global pane"
+        )
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+
+        controller.updateShellWindowVisibilityForRendering(false)
+        expect(
+            quickHandle.renderPriority == .foregroundInteractive,
+            "visible Peak render priority must stay independent from the main shell window"
+        )
+
+        expect(controller.hideQuickTerminal(), "quick terminal hide must apply")
+        expect(
+            quickHandle.renderPriority == .hiddenBackground,
+            "hidden quick terminal presentation must demote the detached runtime"
+        )
+
+        expect(
+            controller.showQuickTerminal() == ShellQuickTerminalSlot.globalPaneID,
+            "reshowing Peak while the main shell is hidden must still promote the detached runtime"
+        )
+        expect(
+            quickHandle.renderPriority == .foregroundInteractive,
+            "visible detached Peak must remain foreground even when the main shell window is hidden"
+        )
     }
 
     private static func verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes() {
