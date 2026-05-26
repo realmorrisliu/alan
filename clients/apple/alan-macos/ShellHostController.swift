@@ -1659,8 +1659,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
            runtime.isFocused,
            shellState.focusedPaneID != paneID
         {
-            focus(paneID: paneID)
-            return
+            // Peak input focus is window-local; it must not commit the private quick
+            // terminal slot as the regular workspace selection.
+            let isQuickTerminalFocus = pane(paneID: paneID)
+                .map { paneIsQuickTerminalContent($0) } ?? false
+            if !isQuickTerminalFocus {
+                focus(paneID: paneID)
+                return
+            }
         }
 
         if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
