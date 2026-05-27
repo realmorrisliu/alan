@@ -264,6 +264,10 @@ private func testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot() throws {
         context.skillCatalogWorkspaceDir == nil,
         "unregistered workspaces must not be sent to the skill catalog alias-only endpoint"
     )
+    try expect(
+        context.skillCatalogUnavailableReason == "Register this workspace to show workspace skills.",
+        "unregistered workspaces with .alan state must not fall back to the default skill catalog"
+    )
 }
 
 private func testUnavailableRemoteSummariesStayCompact() throws {

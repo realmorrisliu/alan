@@ -612,11 +612,13 @@ struct ShellSettingsLocalSummary: Equatable {
 struct ShellSettingsWorkspaceContext: Equatable {
     let connectionWorkspaceDir: String?
     let skillCatalogWorkspaceDir: String?
+    let skillCatalogUnavailableReason: String?
     let agentName: String?
 
     static let none = ShellSettingsWorkspaceContext(
         connectionWorkspaceDir: nil,
         skillCatalogWorkspaceDir: nil,
+        skillCatalogUnavailableReason: nil,
         agentName: nil
     )
 
@@ -631,6 +633,7 @@ struct ShellSettingsWorkspaceContext: Equatable {
             return ShellSettingsWorkspaceContext(
                 connectionWorkspaceDir: nil,
                 skillCatalogWorkspaceDir: nil,
+                skillCatalogUnavailableReason: nil,
                 agentName: normalizedNonEmpty(agentName)
             )
         }
@@ -644,16 +647,21 @@ struct ShellSettingsWorkspaceContext: Equatable {
             return ShellSettingsWorkspaceContext(
                 connectionWorkspaceDir: registered.path,
                 skillCatalogWorkspaceDir: registered.catalogIdentifier,
+                skillCatalogUnavailableReason: nil,
                 agentName: normalizedNonEmpty(agentName)
             )
         }
 
+        let discoveredWorkspaceRoot = workspaceRootContainingAlanDirectory(
+            activeDirectory,
+            fileManager: fileManager
+        )
         return ShellSettingsWorkspaceContext(
-            connectionWorkspaceDir: workspaceRootContainingAlanDirectory(
-                activeDirectory,
-                fileManager: fileManager
-            ) ?? activeDirectory,
+            connectionWorkspaceDir: discoveredWorkspaceRoot ?? activeDirectory,
             skillCatalogWorkspaceDir: nil,
+            skillCatalogUnavailableReason: discoveredWorkspaceRoot.map { _ in
+                "Register this workspace to show workspace skills."
+            },
             agentName: normalizedNonEmpty(agentName)
         )
     }

@@ -1188,6 +1188,7 @@ private struct ShellSettingsContentView: View {
             descriptor.contentID ?? descriptor.title,
             workspaceContext.connectionWorkspaceDir,
             workspaceContext.skillCatalogWorkspaceDir,
+            workspaceContext.skillCatalogUnavailableReason,
             workspaceContext.agentName,
         ]
         .compactMap { $0 }
@@ -1213,17 +1214,33 @@ private struct ShellSettingsContentView: View {
             async let currentResponse = client.currentConnection(
                 workspaceDir: workspaceContext.connectionWorkspaceDir
             )
-            async let skillsResponse = client.skillCatalog(
-                workspaceDir: workspaceContext.skillCatalogWorkspaceDir,
-                agentName: workspaceContext.agentName
-            )
 
-            let (catalog, profiles, current, skills) = try await (
+            let (catalog, profiles, current) = try await (
                 catalogResponse,
                 profilesResponse,
-                currentResponse,
-                skillsResponse
+                currentResponse
             )
+            let capabilitiesSummary: ShellSettingsCapabilitiesSummary
+            if let reason = workspaceContext.skillCatalogUnavailableReason {
+                capabilitiesSummary = .unavailable(reason: reason)
+            } else {
+                let skills = try await client.skillCatalog(
+                    workspaceDir: workspaceContext.skillCatalogWorkspaceDir,
+                    agentName: workspaceContext.agentName
+                )
+                capabilitiesSummary = ShellSettingsCapabilitiesSummary(
+                    skills: skills.skills.map { skill in
+                        ShellSettingsSkillSummary(
+                            id: skill.id,
+                            name: skill.name,
+                            enabled: skill.enabled,
+                            allowImplicitInvocation: skill.allowImplicitInvocation,
+                            available: skill.available
+                        )
+                    },
+                    unavailableReason: nil
+                )
+            }
             remoteSnapshot = ShellSettingsRemoteSnapshot(
                 accounts: ShellSettingsAccountsSummary(
                     current: ShellSettingsConnectionSelection(
@@ -1254,18 +1271,7 @@ private struct ShellSettingsContentView: View {
                     },
                     unavailableReason: nil
                 ),
-                capabilities: ShellSettingsCapabilitiesSummary(
-                    skills: skills.skills.map { skill in
-                        ShellSettingsSkillSummary(
-                            id: skill.id,
-                            name: skill.name,
-                            enabled: skill.enabled,
-                            allowImplicitInvocation: skill.allowImplicitInvocation,
-                            available: skill.available
-                        )
-                    },
-                    unavailableReason: nil
-                )
+                capabilities: capabilitiesSummary
             )
         } catch {
             remoteSnapshot = .unavailable(reason: "Daemon unavailable")
