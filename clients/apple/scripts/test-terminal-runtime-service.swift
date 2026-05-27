@@ -33,6 +33,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesRuntimeServiceCapturesLiveTranscriptSnapshot()
         verifiesRuntimeServiceUsesRingBufferFallbackAndReportsFailures()
         verifiesRuntimeServiceSeedsRestoredTranscriptBeforeInput()
+        verifiesFinalizeEvictsRestoredTranscriptCache()
         verifiesTeardownOnce()
         verifiesFinalizePanesOnlyReleasesStaleHandles()
         verifiesBootstrapFailureDiagnostics()
@@ -799,6 +800,54 @@ private enum TerminalRuntimeServiceTests {
         let delivery = service.sendText(toTerminalContentID: contentID, text: "echo fresh\n")
         expect(delivery.applied, "seeded restored runtime must still accept fresh shell input")
         expect(handle.deliveredText == ["echo fresh\n"], "fresh input must route to the seeded runtime")
+    }
+
+    private static func verifiesFinalizeEvictsRestoredTranscriptCache() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_reused"
+        let snapshot = TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: "/repo/old",
+            title: "old shell",
+            dimensions: TerminalTranscriptDimensions(columns: 80, rows: 24),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 0, cursorRow: 1),
+            transcriptLines: ["old restored output"],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "inactive",
+                program: "zsh",
+                argvPreview: nil,
+                lastCommandExitCode: 0
+            ),
+            capturedAt: Date(timeIntervalSince1970: 140),
+            alternateScreen: false
+        )
+
+        service.seedRestoredTranscriptSnapshot(snapshot, forTerminalContentID: contentID)
+        let first = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_reused",
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+        expect(
+            first.seededTranscriptSnapshot?.transcriptLines == ["old restored output"],
+            "restored terminal must receive the cached transcript"
+        )
+
+        expect(
+            service.finalizeTerminalContent(contentID) == .completed,
+            "finalizing restored content must tear down the live handle"
+        )
+        let second = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_reused",
+            bootProfile: nil
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        expect(second !== first, "reused content id must create a new handle after finalize")
+        expect(
+            second.seededTranscriptSnapshot == nil,
+            "new terminal must not inherit a finalized restored transcript"
+        )
     }
 
     private static func verifiesTeardownOnce() {

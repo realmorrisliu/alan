@@ -1051,6 +1051,7 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
 
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
@@ -1467,6 +1468,7 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
 
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
