@@ -6537,6 +6537,22 @@ private enum ShellRuntimeMetadataTests {
             capturedAt: Date(timeIntervalSince1970: 91),
             alternateScreen: false
         )
+        let stalePinnedTranscript = TerminalTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/pinned",
+            title: "pin-time output",
+            dimensions: TerminalTranscriptDimensions(columns: 80, rows: 24),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 0, cursorRow: 1),
+            transcriptLines: ["stale pinned output"],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "inactive",
+                program: "zsh",
+                argvPreview: nil,
+                lastCommandExitCode: 0
+            ),
+            capturedAt: Date(timeIntervalSince1970: 90),
+            alternateScreen: false
+        )
         let tab = ShellContentWorkspaceTabRecord(
             tabID: "tab_main",
             title: "Pinned",
@@ -6549,7 +6565,7 @@ private enum ShellRuntimeMetadataTests {
                 paneSlotID: "pane_1",
                 contentID: "content_pane_1",
                 cwd: "/pinned",
-                transcriptSnapshot: nil
+                transcriptSnapshot: stalePinnedTranscript
             ),
             liveSnapshot: contentRestoreSnapshot(
                 paneSlotID: "pane_1",
@@ -6565,7 +6581,12 @@ private enum ShellRuntimeMetadataTests {
         expect(payload?.cwd == "/pinned", "pinned restore must keep explicit template cwd")
         expect(
             payload?.transcriptSnapshot?.transcriptLines == ["prior output"],
-            "matching live transcript must overlay onto pinned terminal restore"
+            "matching live transcript must replace stale pinned terminal transcript"
+        )
+        expect(
+            terminalPayload(in: tab.pinSnapshot, paneSlotID: "pane_1")?
+                .transcriptSnapshot?.transcriptLines == ["stale pinned output"],
+            "live transcript overlay must not mutate the pinned restore template"
         )
 
         let unmatched = ShellContentWorkspaceTabRecord(

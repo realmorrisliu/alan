@@ -417,7 +417,7 @@ extension ShellContentTabRestoreSnapshot {
                         launchTarget: terminalPayload.launchTarget,
                         cwd: terminalPayload.cwd,
                         title: terminalPayload.title,
-                        transcriptSnapshot: terminalPayload.transcriptSnapshot ?? transcriptSnapshot
+                        transcriptSnapshot: transcriptSnapshot
                     )
                 )
             )
