@@ -114,6 +114,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesInteractiveConfirmedPaneCloseCapturesSnapshotBeforeFinalization()
         verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation()
         verifiesWindowAndAppCloseIncludeActiveQuickTerminal()
+        verifiesConfirmedAppClosePersistsAndRestoresQuickTerminalTranscript()
         verifiesControlPlaneClosePaneReportsRequiresConfirmation()
         verifiesControlPlaneCloseTabReportsRequiresConfirmation()
         verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation()
@@ -1232,6 +1233,157 @@ private enum ShellRuntimeMetadataTests {
             "cancelled surface close must preserve quick terminal state"
         )
         expect(quickHandle.teardownCount == 0, "cancelled surface close must preserve quick runtime")
+    }
+
+    private static func verifiesConfirmedAppClosePersistsAndRestoresQuickTerminalTranscript() {
+        let windowID = "quick_terminal_close_restore_\(UUID().uuidString)"
+        let manifestURL = manifestURL("quick_terminal_close_restore")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [true])
+        let controller = makeController(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/repo/app",
+                now: Date(timeIntervalSince1970: 94)
+            ),
+            closeConfirmationPresenter: presenter
+        )
+        _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+        let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 2)
+        quickHandle.commandOutputTextByRange[range] = "quick ready\nrunning background job"
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: ShellContentInstance.terminalContentID(
+                    forPaneID: ShellQuickTerminalSlot.globalPaneID
+                ),
+                paneID: ShellQuickTerminalSlot.globalPaneID,
+                tabID: ShellQuickTerminalSlot.globalTabID,
+                logicalSize: CGSize(width: 120, height: 2),
+                backingSize: CGSize(width: 120, height: 2),
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: "python server",
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: metadata(
+                    title: "python server",
+                    cwd: "/repo/quick",
+                    activeTaskState: .foregroundCommand
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .ready,
+                    terminalMode: .normalBuffer,
+                    scrollback: AlanTerminalScrollbackState(
+                        metrics: AlanTerminalScrollbackMetrics(
+                            totalRows: 2,
+                            visibleRows: 2,
+                            firstVisibleRow: 0,
+                            mode: .normalBuffer
+                        ),
+                        nativeScrollbarVisible: false,
+                        thumbRange: 0..<2
+                    ),
+                    search: nil,
+                    semanticCommands: .placeholder,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: true,
+                    rendererHealth: "ready",
+                    childExited: false,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 94)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 94)
+            )
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "python server", cwd: "/repo/quick", activeTaskState: .foregroundCommand),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+
+        expect(controller.requestTerminateApp(), "confirmed app quit with active quick terminal must apply")
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let quickSnapshot = savedManifest.quickTerminal?.liveSnapshot,
+              let quickPayload = terminalPayload(
+                in: quickSnapshot,
+                paneSlotID: ShellQuickTerminalSlot.globalPaneID
+              ),
+              let transcript = quickPayload.transcriptSnapshot
+        else {
+            fail("confirmed app quit must persist quick terminal transcript in workspace manifest")
+        }
+        expect(
+            transcript.transcriptLines == ["quick ready", "running background job"],
+            "quick terminal transcript must preserve close-time output"
+        )
+        expect(quickPayload.cwd == "/repo/quick", "quick terminal restore payload must preserve cwd")
+        expect(
+            savedManifest.spaces.flatMap(\.tabs).allSatisfy {
+                $0.tabID != ShellQuickTerminalSlot.globalTabID
+            },
+            "quick terminal restore must not create a normal workspace tab"
+        )
+
+        let restoredState = ShellWorkspaceMaterializer.materialize(
+            manifest: savedManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: Date(timeIntervalSince1970: 95)
+        )
+        expect(
+            restoredState.quickTerminal?.paneID == ShellQuickTerminalSlot.globalPaneID,
+            "workspace manifest restore must recreate the quick terminal slot"
+        )
+        expect(
+            restoredState.quickTerminal?.presentation == .visible,
+            "workspace manifest restore must preserve quick terminal presentation"
+        )
+        expect(
+            restoredState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.cwd == "/repo/quick",
+            "workspace manifest restore must recreate quick terminal cwd"
+        )
+
+        let restoredController = makeController(
+            windowID: "restored_\(windowID)",
+            shellState: restoredState,
+            terminalRuntimeRegistry: TerminalRuntimeRegistry(
+                runtimeService: FakeAlanTerminalRuntimeService()
+            ),
+            workspaceManifestStore: store,
+            workspaceManifest: savedManifest
+        )
+        restoredController.updateTerminalMetadata(
+            metadata(title: "python server", cwd: "/repo/quick", activeTaskState: .foregroundCommand),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+        let retainedManifest = decodeManifest(at: manifestURL)
+        expect(
+            terminalPayload(
+                in: retainedManifest?.quickTerminal?.liveSnapshot,
+                paneSlotID: ShellQuickTerminalSlot.globalPaneID
+            )?.transcriptSnapshot?.transcriptLines == ["quick ready", "running background job"],
+            "quick terminal manifest sync without a live runtime must preserve restored transcript history"
+        )
+        let restoredHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: restoredController
+        )
+        expect(
+            restoredHandle.seededTranscriptSnapshot?.transcriptLines == [
+                "quick ready",
+                "running background job",
+            ],
+            "restored quick terminal runtime must be seeded with close-time transcript history"
+        )
     }
 
     private static func verifiesControlPlaneClosePaneReportsRequiresConfirmation() {

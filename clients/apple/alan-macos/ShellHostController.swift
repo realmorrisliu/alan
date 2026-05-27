@@ -2361,11 +2361,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func syncWorkspaceManifestFromShellState(
         now: Date = .now,
-        pinSnapshotTabIDs: Set<String> = []
+        pinSnapshotTabIDs: Set<String> = [],
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
     ) {
         guard let workspaceManifestStore else { return }
 
-        let nextManifest = makeWorkspaceManifestFromShellState(now: now)
+        let nextManifest = makeWorkspaceManifestFromShellState(
+            now: now,
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides
+        )
         var manifestToSave = nextManifest
         if !pinSnapshotTabIDs.isEmpty {
             applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
@@ -2436,6 +2440,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func makeWorkspaceManifestFromShellState(now: Date) -> ShellContentWorkspaceManifest {
+        makeWorkspaceManifestFromShellState(now: now, transcriptSnapshotOverrides: [:])
+    }
+
+    private func makeWorkspaceManifestFromShellState(
+        now: Date,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentWorkspaceManifest {
         let existingSpaces = Dictionary(
             uniqueKeysWithValues: (workspaceManifest?.spaces ?? []).map { ($0.spaceID, $0) }
         )
@@ -2451,7 +2462,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             let tabRecords = space.tabs.map { tab -> ShellContentWorkspaceTabRecord in
                 let existingTab = existingTabs[tab.tabID]
                 let panes = shellState.panes(in: tab.tabID)
-                let snapshot = makeRestoreSnapshot(for: tab, contentState: contentState)
+                let snapshot = makeRestoreSnapshot(
+                    for: tab,
+                    contentState: contentState,
+                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                )
                 let paneActivityAt = panes.compactMap { paneActivityDate($0) }.max()
                 let lastActivatedAt = tab.tabID == shellState.focusedTabID
                     ? now
@@ -2493,6 +2508,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             selectedTabID: shellState.focusedTabID,
             spaces: spaces
         )
+        manifest.quickTerminal = makeQuickTerminalRestoreRecord(
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides
+        )
         manifest.repairSelection()
         return manifest
     }
@@ -2507,9 +2525,90 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         for tab: ShellTab,
         contentState: ShellContentStateSnapshot
     ) -> ShellContentTabRestoreSnapshot {
+        makeRestoreSnapshot(
+            for: tab,
+            contentState: contentState,
+            transcriptSnapshotOverrides: [:]
+        )
+    }
+
+    private func makeRestoreSnapshot(
+        for tab: ShellTab,
+        contentState: ShellContentStateSnapshot,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentTabRestoreSnapshot {
         let snapshot = ShellContentTabRestoreSnapshot.projecting(tab: tab, contentState: contentState)
-        let capturedTranscripts = capturedTerminalTranscriptSnapshots(for: snapshot)
+        var capturedTranscripts = capturedTerminalTranscriptSnapshots(for: snapshot)
+        capturedTranscripts.merge(transcriptSnapshotOverrides) { _, override in override }
         return snapshot.overlayingTerminalTranscriptSnapshots(capturedTranscripts)
+    }
+
+    private func makeQuickTerminalRestoreRecord(
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+    ) -> ShellQuickTerminalRestoreRecord? {
+        guard let quickTerminal = shellState.quickTerminal,
+              let pane = shellState.pane(paneID: quickTerminal.paneID)
+        else {
+            return nil
+        }
+
+        let contentID = pane.terminalContentID
+        let projectedContent = ShellContentInstance.projectingTerminalPane(pane, contentID: contentID)
+        let terminalPayload = projectedContent.payload.terminal
+        let transcriptSnapshot = transcriptSnapshotOverrides[contentID]
+            ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
+            ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
+        let title = projectedContent.title
+        let content = ShellContentRestoreRecord(
+            contentID: contentID,
+            kind: .terminal,
+            title: title,
+            payload: .terminal(
+                ShellTerminalContentPayload(
+                    launchTarget: terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget,
+                    cwd: terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory,
+                    title: terminalPayload?.title ?? title,
+                    transcriptSnapshot: transcriptSnapshot
+                )
+            )
+        )
+        let snapshot = ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(pane.paneID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: pane.paneID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: pane.paneID,
+                    contentID: contentID
+                )
+            ],
+            contents: [content]
+        )
+        return ShellQuickTerminalRestoreRecord(
+            paneID: pane.paneID,
+            presentation: quickTerminal.presentation,
+            lastWorkingDirectory: quickTerminal.lastWorkingDirectory ?? pane.cwd,
+            liveSnapshot: snapshot,
+            activeTask: terminalActiveTasksByPaneID[pane.paneID] ?? .inactive
+        )
+    }
+
+    private func existingQuickTerminalTranscriptSnapshot(
+        paneID: String,
+        contentID: String
+    ) -> TerminalTranscriptSnapshot? {
+        guard let snapshot = workspaceManifest?.quickTerminal?.liveSnapshot,
+              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneID }),
+              paneSlot.contentID == contentID,
+              let content = snapshot.contents.first(where: { $0.contentID == contentID })
+        else {
+            return nil
+        }
+        return content.payload.terminal?.transcriptSnapshot
     }
 
     private func capturedTerminalTranscriptSnapshots(
@@ -2517,18 +2616,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> [String: TerminalTranscriptSnapshot] {
         var capturedByContentID: [String: TerminalTranscriptSnapshot] = [:]
         for content in snapshot.contents where content.kind == .terminal {
-            switch terminalRuntimeRegistry.captureTranscriptSnapshot(
-                forTerminalContentID: content.contentID
-            ) {
-            case .captured(let transcript):
+            if let transcript = capturedTerminalTranscriptSnapshot(forContentID: content.contentID) {
                 capturedByContentID[content.contentID] = transcript
-            case .failed(let failure):
-                recordControlPlaneDiagnostic(
-                    "terminal transcript capture failed for \(content.contentID): \(failure.code.rawValue)"
-                )
             }
         }
         return capturedByContentID
+    }
+
+    private func capturedTerminalTranscriptSnapshot(
+        forContentID contentID: String
+    ) -> TerminalTranscriptSnapshot? {
+        switch terminalRuntimeRegistry.captureTranscriptSnapshot(forTerminalContentID: contentID) {
+        case .captured(let transcript):
+            return transcript
+        case .failed(let failure):
+            recordControlPlaneDiagnostic(
+                "terminal transcript capture failed for \(contentID): \(failure.code.rawValue)"
+            )
+            return nil
+        }
     }
 
     @discardableResult
@@ -2748,12 +2854,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard closeConfirmationPresenter.confirmClose(impact: impact) else {
             return false
         }
-        captureTerminalTranscriptSnapshots(for: impact)
-        return applyConfirmedClose(impact)
+        let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
+        return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
     }
 
     @discardableResult
-    private func applyConfirmedClose(_ impact: ShellCloseGuardImpact) -> Bool {
+    private func applyConfirmedClose(
+        _ impact: ShellCloseGuardImpact,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+    ) -> Bool {
         switch impact.scope {
         case .paneSlot(let paneID):
             return applyClosePaneMutation(paneID: paneID) == .closed
@@ -2762,7 +2871,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .quickTerminal:
             return applyCloseQuickTerminalMutation()
         case .window, .app:
-            syncWorkspaceManifestFromShellState()
+            syncWorkspaceManifestFromShellState(
+                transcriptSnapshotOverrides: transcriptSnapshotOverrides
+            )
             shutdownTerminalRuntimes()
             return true
         }
