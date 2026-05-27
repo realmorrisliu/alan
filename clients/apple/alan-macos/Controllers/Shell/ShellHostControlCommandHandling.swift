@@ -252,7 +252,7 @@ extension ShellHostController {
             return .unavailableRuntime
         case .timeout:
             return .timeout
-        case .invalidRequest, .unsupportedContent, .lastPane, .lastTab:
+        case .invalidRequest, .unsupportedContent, .requiresConfirmation, .lastPane, .lastTab:
             return .rejected
         }
     }
@@ -371,7 +371,7 @@ extension ShellHostController {
                     errorMessage: result.errorMessage
                 )
             case .queued, .rejected, .invalidRequest, .unsupportedContent, .runtimeUnavailable,
-                    .timeout, .lastPane:
+                    .requiresConfirmation, .timeout, .lastPane:
                 return response(
                     requestID: command.requestID,
                     applied: false,
@@ -647,7 +647,7 @@ extension ShellHostController {
                     errorMessage: result.errorMessage
                 )
             case .queued, .rejected, .invalidRequest, .unsupportedContent, .runtimeUnavailable,
-                    .timeout, .lastPane:
+                    .requiresConfirmation, .timeout, .lastPane:
                 return response(
                     requestID: command.requestID,
                     applied: false,
@@ -1044,6 +1044,17 @@ extension ShellHostController {
 
         case .quickTerminalClose:
             let paneID = shellState.quickTerminal?.paneID
+            if let impact = closeGuardImpact(for: .quickTerminal) {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    contentID: impact.activeTerminalContentIDs.first
+                        ?? impact.affectedTerminalContentIDs.first,
+                    errorCode: "requires_confirmation",
+                    errorMessage: "The requested close contains active terminal work and requires confirmation."
+                )
+            }
             guard closeQuickTerminal() else {
                 return response(
                     requestID: command.requestID,

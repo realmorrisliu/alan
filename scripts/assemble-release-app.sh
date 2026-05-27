@@ -83,9 +83,9 @@ sha256() {
 
 sign_path() {
     local path="$1"
-    local args=(--force --options runtime --sign "$SIGNING_IDENTITY")
+    local args=(--force --sign "$SIGNING_IDENTITY")
     if [[ "$SIGNING_IDENTITY" != "-" ]]; then
-        args+=(--timestamp)
+        args+=(--options runtime --timestamp)
     fi
     codesign "${args[@]}" "$path"
 }

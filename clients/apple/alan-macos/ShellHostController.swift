@@ -15,16 +15,75 @@ struct ShellAttentionItem: Identifiable, Equatable {
     var id: String { paneID }
 }
 
-enum ShellTabCloseResult {
+enum ShellTabCloseResult: Equatable {
     case closed
     case tabNotFound
     case lastTab
+    case requiresConfirmation(ShellCloseGuardImpact)
 }
 
-enum ShellPaneCloseResult {
+enum ShellPaneCloseResult: Equatable {
     case closed
     case paneNotFound
     case lastTab
+    case requiresConfirmation(ShellCloseGuardImpact)
+}
+
+enum ShellCloseGuardScope: Equatable {
+    case paneSlot(String)
+    case tab(String)
+    case window
+    case app
+    case quickTerminal
+}
+
+struct ShellCloseGuardImpact: Equatable {
+    let scope: ShellCloseGuardScope
+    let affectedTerminalContentIDs: [String]
+    let activeTerminalContentIDs: [String]
+
+    var requiresConfirmation: Bool {
+        !activeTerminalContentIDs.isEmpty
+    }
+}
+
+@MainActor
+protocol ShellCloseConfirmationPresenting: AnyObject {
+    func confirmClose(impact: ShellCloseGuardImpact) -> Bool
+}
+
+@MainActor
+final class ShellNSAlertCloseConfirmationPresenter: ShellCloseConfirmationPresenting {
+    func confirmClose(impact: ShellCloseGuardImpact) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = closeTitle(for: impact.scope)
+        alert.informativeText = closeMessage(for: impact)
+        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func closeTitle(for scope: ShellCloseGuardScope) -> String {
+        switch scope {
+        case .paneSlot:
+            return "Close pane?"
+        case .tab:
+            return "Close tab?"
+        case .window:
+            return "Close window?"
+        case .app:
+            return "Quit alan?"
+        case .quickTerminal:
+            return "Close Quick Terminal?"
+        }
+    }
+
+    private func closeMessage(for impact: ShellCloseGuardImpact) -> String {
+        let count = impact.activeTerminalContentIDs.count
+        let noun = count == 1 ? "terminal has" : "terminals have"
+        return "\(count) \(noun) active work. Closing will stop the running process and save only restorable terminal history."
+    }
 }
 
 enum ShellPaneLiftResult {
@@ -275,6 +334,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let terminalContentProjection: TerminalContentProjectionAdapter
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
+    private let closeConfirmationPresenter: ShellCloseConfirmationPresenting
     lazy var controlPlane = AlanShellControlPlane(
         windowID: windowContext.windowID,
         channel: windowContext.installChannel
@@ -335,6 +395,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
+        closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
@@ -353,6 +414,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.workspaceManifestStore = workspaceManifestStore
         self.workspaceManifest = workspaceManifest
         self.clipboardWriter = ShellClipboardWriter()
+        self.closeConfirmationPresenter =
+            closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
         self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
         self.terminalRuntimeRegistry =
@@ -612,7 +675,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     func bootProfile(for pane: ShellPane?) -> AlanShellBootProfile? {
         guard let pane else { return nil }
+        seedRestoredTranscriptSnapshotIfNeeded(for: pane)
         return AlanShellBootProfile.forPane(pane, shellState: shellState)
+    }
+
+    private func seedRestoredTranscriptSnapshotIfNeeded(for pane: ShellPane) {
+        guard let content = terminalContentInstance(mountedIn: pane),
+              let transcriptSnapshot = content.payload.terminal?.transcriptSnapshot
+        else {
+            return
+        }
+
+        terminalRuntimeRegistry.seedRestoredTranscriptSnapshot(
+            transcriptSnapshot,
+            forTerminalContentID: content.contentID
+        )
+    }
+
+    private func terminalContentInstance(mountedIn pane: ShellPane) -> ShellContentInstance? {
+        let contentID =
+            shellState.paneSlots?
+                .first { $0.paneSlotID == pane.paneID }?
+                .contentID
+            ?? pane.terminalContentID
+        return shellState.contents?.first { $0.contentID == contentID }
     }
 
     func runtime(for paneID: String?) -> TerminalHostRuntimeSnapshot {
@@ -896,6 +982,41 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func closeQuickTerminal() -> Bool {
+        if closeGuardImpact(for: .quickTerminal) != nil {
+            return false
+        }
+        return applyCloseQuickTerminalMutation()
+    }
+
+    @discardableResult
+    func requestCloseQuickTerminal() -> Bool {
+        if let impact = closeGuardImpact(for: .quickTerminal) {
+            return confirmAndApplyClose(impact)
+        }
+        return applyCloseQuickTerminalMutation()
+    }
+
+    @discardableResult
+    func requestCloseWindow() -> Bool {
+        requestCloseShellSurface(scope: .window)
+    }
+
+    @discardableResult
+    func requestTerminateApp() -> Bool {
+        requestCloseShellSurface(scope: .app)
+    }
+
+    private func requestCloseShellSurface(scope: ShellCloseGuardScope) -> Bool {
+        if let impact = closeGuardImpact(for: scope) {
+            return confirmAndApplyClose(impact)
+        }
+        syncWorkspaceManifestFromShellState()
+        shutdownTerminalRuntimes()
+        return true
+    }
+
+    @discardableResult
+    private func applyCloseQuickTerminalMutation() -> Bool {
         do {
             let result = try shellState.closingQuickTerminal()
             applyMutationResult(result)
@@ -1264,10 +1385,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return moveSelectedPaneWithinTab(.down)
         case .closePane:
             guard let paneID = selectedPane?.paneID else { return false }
-            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
+            return requestClosePane(paneID: paneID)
         case .closeTab:
             guard let tabID = selectedTabID else { return false }
-            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
+            return requestCloseTab(tabID: tabID)
         case .quickTerminalToggle:
             return toggleQuickTerminal() != nil
         case .quickTerminalShow:
@@ -1277,7 +1398,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .quickTerminalFocus:
             return focusQuickTerminal() != nil
         case .quickTerminalClose:
-            return closeQuickTerminal()
+            return requestCloseQuickTerminal()
         }
     }
 
@@ -1346,10 +1467,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ).applied
         case .closeTab(let tabID):
             guard let tabID = tabID ?? selectedTabID else { return false }
-            return performShellAutomationCommand(.closeTab(tabID: tabID)).applied
+            return requestCloseTab(tabID: tabID)
         case .closePane(let paneID):
             guard let paneID = paneID ?? selectedPane?.paneID else { return false }
-            return performShellAutomationCommand(.closePane(paneID: paneID)).applied
+            return requestClosePane(paneID: paneID)
         case .selectAdjacentTab(let offset):
             return selectAdjacentTab(offset: offset)
         case .selectAdjacentSpace(let offset):
@@ -1423,18 +1544,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func closeSelectedTab() -> Bool {
         guard let selectedTabID else { return false }
-        return closeTab(tabID: selectedTabID) == .closed
+        return requestCloseTab(tabID: selectedTabID)
     }
 
     @discardableResult
     func closeSelectedPane() -> Bool {
         guard let paneID = selectedPane?.paneID else { return false }
-        return closePane(paneID: paneID) == .closed
+        return requestClosePane(paneID: paneID)
     }
 
     @discardableResult
     func closePaneByID(_ paneID: String) -> Bool {
-        closePane(paneID: paneID) == .closed
+        requestClosePane(paneID: paneID)
     }
 
     @discardableResult
@@ -2240,11 +2361,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func syncWorkspaceManifestFromShellState(
         now: Date = .now,
-        pinSnapshotTabIDs: Set<String> = []
+        pinSnapshotTabIDs: Set<String> = [],
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
     ) {
         guard let workspaceManifestStore else { return }
 
-        let nextManifest = makeWorkspaceManifestFromShellState(now: now)
+        let nextManifest = makeWorkspaceManifestFromShellState(
+            now: now,
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides
+        )
         var manifestToSave = nextManifest
         if !pinSnapshotTabIDs.isEmpty {
             applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
@@ -2315,6 +2440,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func makeWorkspaceManifestFromShellState(now: Date) -> ShellContentWorkspaceManifest {
+        makeWorkspaceManifestFromShellState(now: now, transcriptSnapshotOverrides: [:])
+    }
+
+    private func makeWorkspaceManifestFromShellState(
+        now: Date,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentWorkspaceManifest {
         let existingSpaces = Dictionary(
             uniqueKeysWithValues: (workspaceManifest?.spaces ?? []).map { ($0.spaceID, $0) }
         )
@@ -2330,7 +2462,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             let tabRecords = space.tabs.map { tab -> ShellContentWorkspaceTabRecord in
                 let existingTab = existingTabs[tab.tabID]
                 let panes = shellState.panes(in: tab.tabID)
-                let snapshot = makeRestoreSnapshot(for: tab, contentState: contentState)
+                let snapshot = makeRestoreSnapshot(
+                    for: tab,
+                    contentState: contentState,
+                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                )
                 let paneActivityAt = panes.compactMap { paneActivityDate($0) }.max()
                 let lastActivatedAt = tab.tabID == shellState.focusedTabID
                     ? now
@@ -2372,6 +2508,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             selectedTabID: shellState.focusedTabID,
             spaces: spaces
         )
+        manifest.quickTerminal = makeQuickTerminalRestoreRecord(
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides
+        )
         manifest.repairSelection()
         return manifest
     }
@@ -2386,7 +2525,134 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         for tab: ShellTab,
         contentState: ShellContentStateSnapshot
     ) -> ShellContentTabRestoreSnapshot {
-        ShellContentTabRestoreSnapshot.projecting(tab: tab, contentState: contentState)
+        makeRestoreSnapshot(
+            for: tab,
+            contentState: contentState,
+            transcriptSnapshotOverrides: [:]
+        )
+    }
+
+    private func makeRestoreSnapshot(
+        for tab: ShellTab,
+        contentState: ShellContentStateSnapshot,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentTabRestoreSnapshot {
+        let snapshot = ShellContentTabRestoreSnapshot.projecting(tab: tab, contentState: contentState)
+        var capturedTranscripts = capturedTerminalTranscriptSnapshots(for: snapshot)
+        capturedTranscripts.merge(transcriptSnapshotOverrides) { _, override in override }
+        return snapshot.overlayingTerminalTranscriptSnapshots(capturedTranscripts)
+    }
+
+    private func makeQuickTerminalRestoreRecord(
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+    ) -> ShellQuickTerminalRestoreRecord? {
+        guard let quickTerminal = shellState.quickTerminal,
+              let pane = shellState.pane(paneID: quickTerminal.paneID)
+        else {
+            return nil
+        }
+
+        let contentID = pane.terminalContentID
+        let projectedContent = ShellContentInstance.projectingTerminalPane(pane, contentID: contentID)
+        let terminalPayload = projectedContent.payload.terminal
+        let transcriptSnapshot = transcriptSnapshotOverrides[contentID]
+            ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
+            ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
+        let title = projectedContent.title
+        let content = ShellContentRestoreRecord(
+            contentID: contentID,
+            kind: .terminal,
+            title: title,
+            payload: .terminal(
+                ShellTerminalContentPayload(
+                    launchTarget: terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget,
+                    cwd: terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory,
+                    title: terminalPayload?.title ?? title,
+                    transcriptSnapshot: transcriptSnapshot
+                )
+            )
+        )
+        let snapshot = ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(pane.paneID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: pane.paneID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: pane.paneID,
+                    contentID: contentID
+                )
+            ],
+            contents: [content]
+        )
+        return ShellQuickTerminalRestoreRecord(
+            paneID: pane.paneID,
+            presentation: quickTerminal.presentation,
+            lastWorkingDirectory: quickTerminal.lastWorkingDirectory ?? pane.cwd,
+            liveSnapshot: snapshot,
+            activeTask: terminalActiveTasksByPaneID[pane.paneID] ?? .inactive
+        )
+    }
+
+    private func existingQuickTerminalTranscriptSnapshot(
+        paneID: String,
+        contentID: String
+    ) -> TerminalTranscriptSnapshot? {
+        guard let snapshot = workspaceManifest?.quickTerminal?.liveSnapshot,
+              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneID }),
+              paneSlot.contentID == contentID,
+              let content = snapshot.contents.first(where: { $0.contentID == contentID })
+        else {
+            return nil
+        }
+        return content.payload.terminal?.transcriptSnapshot
+    }
+
+    private func capturedTerminalTranscriptSnapshots(
+        for snapshot: ShellContentTabRestoreSnapshot
+    ) -> [String: TerminalTranscriptSnapshot] {
+        var capturedByContentID: [String: TerminalTranscriptSnapshot] = [:]
+        for content in snapshot.contents where content.kind == .terminal {
+            if let transcript = capturedTerminalTranscriptSnapshot(forContentID: content.contentID) {
+                capturedByContentID[content.contentID] = transcript
+            }
+        }
+        return capturedByContentID
+    }
+
+    private func capturedTerminalTranscriptSnapshot(
+        forContentID contentID: String
+    ) -> TerminalTranscriptSnapshot? {
+        switch terminalRuntimeRegistry.captureTranscriptSnapshot(forTerminalContentID: contentID) {
+        case .captured(let transcript):
+            return transcript
+        case .failed(let failure):
+            recordControlPlaneDiagnostic(
+                "terminal transcript capture failed for \(contentID): \(failure.code.rawValue)"
+            )
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func captureTerminalTranscriptSnapshots(
+        for impact: ShellCloseGuardImpact
+    ) -> [String: TerminalTranscriptSnapshot] {
+        var capturedByContentID: [String: TerminalTranscriptSnapshot] = [:]
+        for contentID in impact.affectedTerminalContentIDs {
+            switch terminalRuntimeRegistry.captureTranscriptSnapshot(forTerminalContentID: contentID) {
+            case .captured(let transcript):
+                capturedByContentID[contentID] = transcript
+            case .failed(let failure):
+                recordControlPlaneDiagnostic(
+                    "terminal transcript capture failed for \(contentID): \(failure.code.rawValue)"
+                )
+            }
+        }
+        return capturedByContentID
     }
 
     private func paneActivityDate(_ pane: ShellPane) -> Date? {
@@ -2519,6 +2785,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func closeTab(tabID: String) -> ShellTabCloseResult {
+        if let impact = closeGuardImpact(for: .tab(tabID)) {
+            return .requiresConfirmation(impact)
+        }
+        return applyCloseTabMutation(tabID: tabID)
+    }
+
+    @discardableResult
+    func requestCloseTab(tabID: String) -> Bool {
+        switch closeTab(tabID: tabID) {
+        case .closed:
+            return true
+        case .requiresConfirmation(let impact):
+            return confirmAndApplyClose(impact)
+        case .tabNotFound, .lastTab:
+            return false
+        }
+    }
+
+    private func applyCloseTabMutation(tabID: String) -> ShellTabCloseResult {
         do {
             let result = try shellState.closingTab(tabID)
             applyMutationResult(result)
@@ -2533,6 +2818,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func closePane(paneID: String) -> ShellPaneCloseResult {
+        if let impact = closeGuardImpact(for: .paneSlot(paneID)) {
+            return .requiresConfirmation(impact)
+        }
+        return applyClosePaneMutation(paneID: paneID)
+    }
+
+    @discardableResult
+    func requestClosePane(paneID: String) -> Bool {
+        switch closePane(paneID: paneID) {
+        case .closed:
+            return true
+        case .requiresConfirmation(let impact):
+            return confirmAndApplyClose(impact)
+        case .paneNotFound, .lastTab:
+            return false
+        }
+    }
+
+    private func applyClosePaneMutation(paneID: String) -> ShellPaneCloseResult {
         do {
             let result = try shellState.closingPane(paneID)
             applyMutationResult(result)
@@ -2544,6 +2848,130 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    private func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {
+        guard closeConfirmationPresenter.confirmClose(impact: impact) else {
+            return false
+        }
+        let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
+        return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
+    }
+
+    @discardableResult
+    private func applyConfirmedClose(
+        _ impact: ShellCloseGuardImpact,
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+    ) -> Bool {
+        switch impact.scope {
+        case .paneSlot(let paneID):
+            return applyClosePaneMutation(paneID: paneID) == .closed
+        case .tab(let tabID):
+            return applyCloseTabMutation(tabID: tabID) == .closed
+        case .quickTerminal:
+            return applyCloseQuickTerminalMutation()
+        case .window, .app:
+            syncWorkspaceManifestFromShellState(
+                transcriptSnapshotOverrides: transcriptSnapshotOverrides
+            )
+            shutdownTerminalRuntimes()
+            return true
+        }
+    }
+
+    func closeGuardImpact(for scope: ShellCloseGuardScope) -> ShellCloseGuardImpact? {
+        let paneIDs = terminalPaneIDsAffected(by: scope)
+        guard !paneIDs.isEmpty else { return nil }
+        let contentState = shellState.contentStateProjection()
+        let affectedContentIDs = paneIDs.compactMap { paneID -> String? in
+            terminalContentIDForCloseGuard(paneID: paneID, contentState: contentState)
+        }
+        let activeContentIDs = paneIDs.compactMap { paneID -> String? in
+            guard let pane = shellState.pane(paneID: paneID),
+                  let contentID = terminalContentIDForCloseGuard(
+                    paneID: paneID,
+                    contentState: contentState
+                  ),
+                  terminalRequiresCloseConfirmation(pane: pane, contentID: contentID)
+            else {
+                return nil
+            }
+            return contentID
+        }
+        let impact = ShellCloseGuardImpact(
+            scope: scope,
+            affectedTerminalContentIDs: affectedContentIDs,
+            activeTerminalContentIDs: activeContentIDs
+        )
+        return impact.requiresConfirmation ? impact : nil
+    }
+
+    private func terminalContentIDForCloseGuard(
+        paneID: String,
+        contentState: ShellContentStateSnapshot
+    ) -> String? {
+        if let content = contentState.contentMounted(in: paneID),
+           content.kind == .terminal
+        {
+            return content.contentID
+        }
+        guard let pane = shellState.pane(paneID: paneID),
+              pane.isQuickTerminalPane
+        else {
+            return nil
+        }
+        return pane.terminalContentID
+    }
+
+    private func terminalPaneIDsAffected(by scope: ShellCloseGuardScope) -> [String] {
+        switch scope {
+        case .paneSlot(let paneID):
+            return shellState.pane(paneID: paneID).map { [$0.paneID] } ?? []
+        case .tab(let tabID):
+            return shellState.tab(tabID: tabID)?.paneTree.paneIDs ?? []
+        case .window, .app:
+            var paneIDs = shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs)
+            if let quickPaneID = shellState.quickTerminal?.paneID,
+               !paneIDs.contains(quickPaneID)
+            {
+                paneIDs.append(quickPaneID)
+            }
+            return paneIDs
+        case .quickTerminal:
+            guard let paneID = shellState.quickTerminal?.paneID else { return [] }
+            return [paneID]
+        }
+    }
+
+    private func terminalRequiresCloseConfirmation(
+        pane: ShellPane,
+        contentID: String
+    ) -> Bool {
+        if pane.alanBinding?.pendingYield == true {
+            return true
+        }
+        if let processState = pane.context?.processState {
+            if processState == "exited" {
+                return false
+            }
+            if processState == ShellTabActiveTaskState.foregroundCommand.rawValue
+                || processState == ShellTabActiveTaskState.alanRunning.rawValue
+                || processState == ShellTabActiveTaskState.alanPendingYield.rawValue
+                || processState == ShellTabActiveTaskState.alanSession.rawValue
+                || processState == ShellTabActiveTaskState.unknown.rawValue
+            {
+                return true
+            }
+        }
+        let runtime = terminalRuntimeRegistry.snapshot(forTerminalContentID: contentID)
+        let metadata = runtime.paneMetadata
+        if metadata.processExited {
+            return false
+        }
+        if let activeTaskState = metadata.activeTaskState {
+            return activeTaskState.protectsFromPruning
+        }
+        return terminalRuntimeRegistry.registeredContentIDs.contains(contentID)
     }
 
     private func focusedPaneWorkingDirectory() -> String? {
@@ -2566,7 +2994,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> Bool {
         guard processExited else { return false }
         guard pane(paneID: paneID) != nil else { return false }
-        return closePane(paneID: paneID) == .closed
+        return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
     func movePane(
@@ -2753,6 +3181,12 @@ extension ShellHostController: ShellAutomationCommandHandling {
                     errorCode: "last_tab",
                     errorMessage: "alan terminal workspace must keep at least one pane open."
                 )
+            case .requiresConfirmation(let impact):
+                return shellAutomationCloseRequiresConfirmationResult(
+                    impact: impact,
+                    tabID: shellState.pane(paneID: paneID)?.tabID,
+                    paneID: paneID
+                )
             }
 
         case .closeTab(let tabID):
@@ -2776,6 +3210,12 @@ extension ShellHostController: ShellAutomationCommandHandling {
                     tabID: tabID,
                     errorCode: "last_tab",
                     errorMessage: "alan terminal workspace must keep at least one tab open."
+                )
+            case .requiresConfirmation(let impact):
+                return shellAutomationCloseRequiresConfirmationResult(
+                    impact: impact,
+                    tabID: tabID,
+                    paneID: shellState.tab(tabID: tabID)?.paneTree.paneIDs.first
                 )
             }
 
@@ -2834,6 +3274,20 @@ extension ShellHostController: ShellAutomationCommandHandling {
             paneID: paneID,
             errorCode: "pane_not_found",
             errorMessage: "The requested pane does not exist."
+        )
+    }
+
+    private func shellAutomationCloseRequiresConfirmationResult(
+        impact: ShellCloseGuardImpact,
+        tabID: String? = nil,
+        paneID: String? = nil
+    ) -> ShellAutomationCommandResult {
+        shellAutomationResult(
+            code: .requiresConfirmation,
+            tabID: tabID,
+            paneID: paneID,
+            errorCode: "requires_confirmation",
+            errorMessage: "The requested close contains active terminal work and requires confirmation."
         )
     }
 

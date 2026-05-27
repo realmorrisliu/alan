@@ -106,6 +106,22 @@ struct TerminalRuntimeDeliveryResult: Codable, Equatable {
     }
 }
 
+enum TerminalTranscriptCaptureFailureCode: String, Equatable {
+    case missingRuntime = "missing_runtime"
+    case emptyTranscript = "empty_transcript"
+}
+
+struct TerminalTranscriptCaptureFailure: Equatable {
+    let contentID: String
+    let code: TerminalTranscriptCaptureFailureCode
+    let message: String
+}
+
+enum TerminalTranscriptCaptureResult: Equatable {
+    case captured(TerminalTranscriptSnapshot)
+    case failed(TerminalTranscriptCaptureFailure)
+}
+
 enum AlanGhosttyBootstrapPhase: String, Equatable {
     case pending
     case ready
@@ -295,6 +311,9 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     var snapshot: AlanTerminalSurfaceSnapshot { get }
     var isSurfaceReady: Bool { get }
     var renderPriority: TerminalRuntimeRenderPriority { get }
+    var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? { get }
+    var fallbackTranscriptLines: [String] { get }
+    var seededTranscriptSnapshot: TerminalTranscriptSnapshot? { get }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
     func updateRenderPriority(
@@ -311,6 +330,8 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     )
     func detach()
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot)
+    func captureTranscriptText(in range: AlanTerminalBufferRange) -> String?
+    func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot)
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult
     @discardableResult
     func teardown() -> AlanTerminalSurfaceTeardownStatus
@@ -358,6 +379,8 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private var bootProfile: AlanShellBootProfile?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
+    private var transcriptRingBufferLines: [String] = []
+    private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
 #endif
@@ -387,6 +410,14 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #else
         return false
 #endif
+    }
+
+    var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? {
+        latestHostRuntime
+    }
+
+    var fallbackTranscriptLines: [String] {
+        transcriptRingBufferLines
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
@@ -506,6 +537,20 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
         latestHostRuntime = snapshot
+    }
+
+    func captureTranscriptText(in range: AlanTerminalBufferRange) -> String? {
+#if canImport(GhosttyKit)
+        liveHost.readText(in: range)
+#else
+        nil
+#endif
+    }
+
+    func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot) {
+        let bounded = snapshot.boundedForManifest()
+        seededTranscriptSnapshot = bounded
+        transcriptRingBufferLines = bounded.transcriptLines
     }
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
@@ -748,6 +793,11 @@ protocol AlanTerminalRuntimeService: AnyObject {
     ) -> AlanTerminalSurfaceHandle
     func existingSurfaceHandle(forTerminalContentID contentID: String) -> AlanTerminalSurfaceHandle?
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot?
+    func captureTranscriptSnapshot(forTerminalContentID contentID: String) -> TerminalTranscriptCaptureResult
+    func seedRestoredTranscriptSnapshot(
+        _ snapshot: TerminalTranscriptSnapshot,
+        forTerminalContentID contentID: String
+    )
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus
@@ -796,12 +846,90 @@ extension AlanTerminalRuntimeService {
 }
 
 @MainActor
+private func buildTerminalTranscriptCapture(
+    for handle: AlanTerminalSurfaceHandle,
+    now: Date = .now
+) -> TerminalTranscriptCaptureResult {
+    let hostSnapshot = handle.latestHostRuntimeSnapshot
+    let surfaceSnapshot = handle.snapshot
+    let metrics = hostSnapshot?.surfaceState.scrollback.metrics
+    let range = transcriptCaptureRange(metrics: metrics)
+    let liveLines = handle.captureTranscriptText(in: range)
+        .map(transcriptLines(from:)) ?? []
+    let lines = liveLines.isEmpty ? handle.fallbackTranscriptLines : liveLines
+    guard !lines.isEmpty else {
+        return .failed(
+            TerminalTranscriptCaptureFailure(
+                contentID: handle.contentID,
+                code: .emptyTranscript,
+                message: "The terminal runtime did not expose restorable transcript text."
+            )
+        )
+    }
+
+    let metadata = hostSnapshot?.paneMetadata ?? surfaceSnapshot.metadata
+    let dimensions = transcriptDimensions(from: hostSnapshot, metrics: metrics)
+    let alternateScreen = hostSnapshot?.surfaceState.terminalMode == .alternateScreen
+    let snapshot = TerminalTranscriptSnapshot(
+        contentID: handle.contentID,
+        cwd: metadata.workingDirectory,
+        title: metadata.title,
+        dimensions: dimensions,
+        viewport: TerminalTranscriptViewport(
+            firstVisibleRow: metrics?.firstVisibleRow,
+            cursorRow: nil
+        ),
+        transcriptLines: lines,
+        processSummary: TerminalTranscriptProcessSummary(
+            processState: metadata.processExited
+                ? "exited"
+                : metadata.activeTaskState?.rawValue,
+            program: metadata.activity?.source.label,
+            argvPreview: nil,
+            lastCommandExitCode: metadata.lastCommandExitCode
+        ),
+        capturedAt: now,
+        alternateScreen: alternateScreen
+    )
+    return .captured(snapshot.boundedForManifest())
+}
+
+private func transcriptCaptureRange(metrics: AlanTerminalScrollbackMetrics?) -> AlanTerminalBufferRange {
+    guard let metrics, metrics.totalRows > 0 else {
+        return AlanTerminalBufferRange(
+            lowerBound: 0,
+            upperBound: TerminalTranscriptSnapshot.defaultMaxRows
+        )
+    }
+    let upperBound = max(metrics.totalRows, metrics.firstVisibleRow + metrics.visibleRows)
+    return AlanTerminalBufferRange(
+        lowerBound: max(0, upperBound - TerminalTranscriptSnapshot.defaultMaxRows),
+        upperBound: upperBound
+    )
+}
+
+private func transcriptLines(from text: String) -> [String] {
+    text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+}
+
+private func transcriptDimensions(
+    from hostSnapshot: TerminalHostRuntimeSnapshot?,
+    metrics: AlanTerminalScrollbackMetrics?
+) -> TerminalTranscriptDimensions? {
+    let columns = hostSnapshot.map { Int($0.logicalSize.width.rounded(.down)) } ?? 0
+    let rows = metrics?.visibleRows ?? hostSnapshot.map { Int($0.logicalSize.height.rounded(.down)) } ?? 0
+    guard columns > 0 || rows > 0 else { return nil }
+    return TerminalTranscriptDimensions(columns: max(0, columns), rows: max(0, rows))
+}
+
+@MainActor
 final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     typealias SurfaceFactory = (String, String, AlanGhosttyProcessBootstrap) -> AlanTerminalSurfaceHandle
 
     private let bootstrap: AlanGhosttyProcessBootstrap
     private let makeSurfaceHandle: SurfaceFactory
     private var handlesByContentID: [String: AlanTerminalSurfaceHandle] = [:]
+    private var restoredTranscriptSnapshotsByContentID: [String: TerminalTranscriptSnapshot] = [:]
     let renderCoordinator: TerminalRenderCoordinator
 
     init(
@@ -868,10 +996,16 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         ensureReady()
         if let handle = handlesByContentID[contentID] {
             handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+            if let restored = restoredTranscriptSnapshotsByContentID[contentID] {
+                handle.seedRestoredTranscriptSnapshot(restored)
+            }
             return handle
         }
         let handle = makeSurfaceHandle(contentID, paneID, bootstrap)
         handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+        if let restored = restoredTranscriptSnapshotsByContentID[contentID] {
+            handle.seedRestoredTranscriptSnapshot(restored)
+        }
         handlesByContentID[contentID] = handle
         return handle
     }
@@ -882,6 +1016,28 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
 
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot? {
         handlesByContentID[contentID]?.snapshot
+    }
+
+    func captureTranscriptSnapshot(forTerminalContentID contentID: String) -> TerminalTranscriptCaptureResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return .failed(
+                TerminalTranscriptCaptureFailure(
+                    contentID: contentID,
+                    code: .missingRuntime,
+                    message: "No service-owned terminal runtime is registered for this content."
+                )
+            )
+        }
+        return buildTerminalTranscriptCapture(for: handle)
+    }
+
+    func seedRestoredTranscriptSnapshot(
+        _ snapshot: TerminalTranscriptSnapshot,
+        forTerminalContentID contentID: String
+    ) {
+        let bounded = snapshot.boundedForManifest()
+        restoredTranscriptSnapshotsByContentID[contentID] = bounded
+        handlesByContentID[contentID]?.seedRestoredTranscriptSnapshot(bounded)
     }
 
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {
@@ -895,6 +1051,7 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
 
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
@@ -959,8 +1116,12 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
     var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
+    private(set) var captureTranscriptTextRanges: [AlanTerminalBufferRange] = []
     var selectedText: String?
     var ready = true
+    private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
+    private(set) var transcriptRingBufferLines: [String] = []
+    private var latestHostRuntime: TerminalHostRuntimeSnapshot?
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
     private var scrollbackUpdateHandler: ((AlanTerminalScrollbackMetrics) -> Void)?
     private var closeRequestHandler: ((Bool) -> Void)?
@@ -982,6 +1143,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     var isSurfaceReady: Bool {
         ready && currentSnapshot.teardownStatus != .completed
+    }
+
+    var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? {
+        latestHostRuntime
+    }
+
+    var fallbackTranscriptLines: [String] {
+        transcriptRingBufferLines
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
@@ -1022,7 +1191,29 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         updateSnapshot(attachedViewCount: 0)
     }
 
-    func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {}
+    func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
+        latestHostRuntime = snapshot
+    }
+
+    func captureTranscriptText(in range: AlanTerminalBufferRange) -> String? {
+        captureTranscriptTextRanges.append(range)
+        return commandOutputTextByRange[range]
+    }
+
+    func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot) {
+        let bounded = snapshot.boundedForManifest()
+        seededTranscriptSnapshot = bounded
+        transcriptRingBufferLines = bounded.transcriptLines
+    }
+
+    func recordTranscriptOutput(_ text: String) {
+        transcriptRingBufferLines.append(contentsOf: transcriptLines(from: text))
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+    }
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
         guard !currentSnapshot.metadata.processExited else {
@@ -1183,6 +1374,7 @@ extension FakeAlanTerminalSurfaceHandle: AlanTerminalCommandBufferEngine {
 final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
     let bootstrap: FakeAlanGhosttyProcessBootstrap
     private(set) var handlesByContentID: [String: FakeAlanTerminalSurfaceHandle] = [:]
+    private var restoredTranscriptSnapshotsByContentID: [String: TerminalTranscriptSnapshot] = [:]
 
     init() {
         self.bootstrap = FakeAlanGhosttyProcessBootstrap()
@@ -1221,10 +1413,16 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
         ensureReady()
         if let handle = handlesByContentID[contentID] {
             handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+            if let restored = restoredTranscriptSnapshotsByContentID[contentID] {
+                handle.seedRestoredTranscriptSnapshot(restored)
+            }
             return handle
         }
         let handle = FakeAlanTerminalSurfaceHandle(contentID: contentID, paneID: paneID)
         handle.configure(mountedAtPaneID: paneID, bootProfile: bootProfile)
+        if let restored = restoredTranscriptSnapshotsByContentID[contentID] {
+            handle.seedRestoredTranscriptSnapshot(restored)
+        }
         handlesByContentID[contentID] = handle
         return handle
     }
@@ -1235,6 +1433,28 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
 
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot? {
         handlesByContentID[contentID]?.snapshot
+    }
+
+    func captureTranscriptSnapshot(forTerminalContentID contentID: String) -> TerminalTranscriptCaptureResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return .failed(
+                TerminalTranscriptCaptureFailure(
+                    contentID: contentID,
+                    code: .missingRuntime,
+                    message: "No fake terminal runtime is registered for this content."
+                )
+            )
+        }
+        return buildTerminalTranscriptCapture(for: handle)
+    }
+
+    func seedRestoredTranscriptSnapshot(
+        _ snapshot: TerminalTranscriptSnapshot,
+        forTerminalContentID contentID: String
+    ) {
+        let bounded = snapshot.boundedForManifest()
+        restoredTranscriptSnapshotsByContentID[contentID] = bounded
+        handlesByContentID[contentID]?.seedRestoredTranscriptSnapshot(bounded)
     }
 
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {
@@ -1248,6 +1468,7 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
 
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }

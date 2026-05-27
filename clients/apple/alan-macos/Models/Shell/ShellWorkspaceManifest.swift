@@ -199,6 +199,7 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
     var selectedSpaceID: String?
     var selectedTabID: String?
     var spaces: [ShellContentWorkspaceSpaceRecord]
+    var quickTerminal: ShellQuickTerminalRestoreRecord? = nil
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -207,6 +208,7 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
         case selectedSpaceID = "selected_space_id"
         case selectedTabID = "selected_tab_id"
         case spaces
+        case quickTerminal = "quick_terminal"
     }
 }
 
@@ -313,7 +315,7 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
 
     func restoreSnapshot(defaultWorkingDirectory: String) -> ShellContentTabRestoreSnapshot {
         if isPinned, let pinSnapshot {
-            return pinSnapshot
+            return pinSnapshot.overlayingTerminalTranscriptSnapshots(from: liveSnapshot)
         }
 
         if let liveSnapshot {
@@ -369,6 +371,22 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
     }
 }
 
+struct ShellQuickTerminalRestoreRecord: Codable, Equatable {
+    var paneID: String
+    var presentation: ShellQuickTerminalPresentation
+    var lastWorkingDirectory: String?
+    var liveSnapshot: ShellContentTabRestoreSnapshot?
+    var activeTask: ShellTabActiveTaskState
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case presentation
+        case lastWorkingDirectory = "last_working_directory"
+        case liveSnapshot = "live_snapshot"
+        case activeTask = "active_task"
+    }
+}
+
 struct ShellContentTabRestoreSnapshot: Codable, Equatable {
     var paneTree: ShellPaneSlotTreeNode
     var paneSlots: [ShellPaneSlotRestoreRecord]
@@ -378,6 +396,51 @@ struct ShellContentTabRestoreSnapshot: Codable, Equatable {
         case paneTree = "pane_tree"
         case paneSlots = "pane_slots"
         case contents
+    }
+}
+
+extension ShellContentTabRestoreSnapshot {
+    func overlayingTerminalTranscriptSnapshots(
+        from liveSnapshot: ShellContentTabRestoreSnapshot?
+    ) -> ShellContentTabRestoreSnapshot {
+        guard let liveSnapshot else { return self }
+        let liveTranscriptsByContentID = Dictionary(
+            uniqueKeysWithValues: liveSnapshot.contents.compactMap { content in
+                content.payload.terminal?.transcriptSnapshot.map { (content.contentID, $0) }
+            }
+        )
+        guard !liveTranscriptsByContentID.isEmpty else { return self }
+
+        return overlayingTerminalTranscriptSnapshots(liveTranscriptsByContentID)
+    }
+
+    func overlayingTerminalTranscriptSnapshots(
+        _ transcriptsByContentID: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentTabRestoreSnapshot {
+        guard !transcriptsByContentID.isEmpty else { return self }
+
+        var restored = self
+        restored.contents = contents.map { content in
+            guard let terminalPayload = content.payload.terminal,
+                  let transcriptSnapshot = transcriptsByContentID[content.contentID]
+            else {
+                return content
+            }
+            return ShellContentRestoreRecord(
+                contentID: content.contentID,
+                kind: content.kind,
+                title: content.title,
+                payload: .terminal(
+                    ShellTerminalContentPayload(
+                        launchTarget: terminalPayload.launchTarget,
+                        cwd: terminalPayload.cwd,
+                        title: terminalPayload.title,
+                        transcriptSnapshot: transcriptSnapshot
+                    )
+                )
+            )
+        }
+        return restored
     }
 }
 
@@ -670,7 +733,83 @@ struct ShellWorkspaceMaterializer {
             contents: contents
         )
 
-        return contentState.materializingShellState()
+        guard var state = contentState.materializingShellState() else {
+            return nil
+        }
+        if let quickTerminal = sourceManifest.quickTerminal,
+           let restoredQuickTerminal = materializeQuickTerminal(
+            quickTerminal,
+            defaultWorkingDirectory: defaultWorkingDirectory
+           ),
+           !state.panes.contains(where: { $0.paneID == restoredQuickTerminal.pane.paneID })
+        {
+            var contents = state.contents ?? []
+            if !contents.contains(where: { $0.contentID == restoredQuickTerminal.content.contentID }) {
+                contents.append(restoredQuickTerminal.content)
+            }
+            state = ShellStateSnapshot(
+                contractVersion: state.contractVersion,
+                windowID: state.windowID,
+                focusedSpaceID: state.focusedSpaceID,
+                focusedTabID: state.focusedTabID,
+                focusedPaneID: state.focusedPaneID,
+                spaces: state.spaces,
+                panes: state.panes + [restoredQuickTerminal.pane],
+                paneSlots: state.paneSlots,
+                contents: contents.isEmpty ? nil : contents,
+                quickTerminal: restoredQuickTerminal.slot
+            )
+        }
+        return state
+    }
+
+    private static func materializeQuickTerminal(
+        _ record: ShellQuickTerminalRestoreRecord,
+        defaultWorkingDirectory: String
+    ) -> (
+        slot: ShellQuickTerminalSlot,
+        pane: ShellPane,
+        content: ShellContentInstance
+    )? {
+        guard let snapshot = record.liveSnapshot,
+              let paneSlotRecord = snapshot.paneSlots.first(where: { $0.paneSlotID == record.paneID })
+                ?? snapshot.paneSlots.first,
+              let contentRecord = snapshot.contents.first(where: {
+                $0.contentID == paneSlotRecord.contentID
+              }),
+              contentRecord.kind == .terminal
+        else {
+            return nil
+        }
+
+        let content = restoredContentInstance(contentRecord, defaultWorkingDirectory: defaultWorkingDirectory)
+        guard let terminalPayload = content.payload.terminal else {
+            return nil
+        }
+        let lastWorkingDirectory = record.lastWorkingDirectory ?? terminalPayload.cwd
+        let pane = ShellPane(
+            paneID: record.paneID,
+            tabID: ShellQuickTerminalSlot.globalTabID,
+            spaceID: ShellQuickTerminalSlot.globalSpaceID,
+            launchTarget: terminalPayload.launchTarget,
+            cwd: terminalPayload.cwd,
+            process: nil,
+            attention: record.activeTask.protectsFromPruning ? .active : .idle,
+            context: nil,
+            viewport: ShellViewportSnapshot(
+                title: content.title,
+                summary: nil,
+                visibleExcerpt: nil,
+                lastActivityAt: nil
+            ),
+            alanBinding: nil
+        )
+        let slot = ShellQuickTerminalSlot(
+            paneID: record.paneID,
+            presentation: record.presentation,
+            lastWorkingDirectory: lastWorkingDirectory
+        )
+        return (slot, pane, content)
     }
 
     private static func restoredContentInstance(
@@ -685,7 +824,8 @@ struct ShellWorkspaceMaterializer {
                 ShellTerminalContentPayload(
                     launchTarget: terminalPayload.launchTarget,
                     cwd: terminalPayload.cwd ?? defaultWorkingDirectory,
-                    title: terminalPayload.title
+                    title: terminalPayload.title,
+                    transcriptSnapshot: terminalPayload.transcriptSnapshot
                 )
             )
         } else {

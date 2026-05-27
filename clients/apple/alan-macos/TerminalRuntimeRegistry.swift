@@ -236,6 +236,19 @@ final class TerminalRuntimeRegistry: ObservableObject {
             ?? runtimeSnapshot(from: runtimeService.snapshot(forTerminalContentID: contentID))
     }
 
+    func captureTranscriptSnapshot(
+        forTerminalContentID contentID: String
+    ) -> TerminalTranscriptCaptureResult {
+        runtimeService.captureTranscriptSnapshot(forTerminalContentID: contentID)
+    }
+
+    func seedRestoredTranscriptSnapshot(
+        _ snapshot: TerminalTranscriptSnapshot,
+        forTerminalContentID contentID: String
+    ) {
+        runtimeService.seedRestoredTranscriptSnapshot(snapshot, forTerminalContentID: contentID)
+    }
+
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
         let activeContentIDs = Set(activePaneIDs.map { terminalContentID(mountedAtPaneID: $0) })
         releaseRuntimes(excludingTerminalContentIDs: activeContentIDs)

@@ -52,6 +52,8 @@ struct ShellAutomationIntentOutcome: Equatable, Sendable {
             return "Unsupported shell content."
         case .runtimeUnavailable:
             return "Terminal runtime unavailable."
+        case .requiresConfirmation:
+            return "Close requires confirmation."
         case .timeout:
             return "Shell command timed out."
         case .lastPane:

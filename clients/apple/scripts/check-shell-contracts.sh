@@ -2015,6 +2015,26 @@ require_pattern \
     "UI smoke must keep an app bundle override for CI and one-off built app validation"
 
 require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    "ALAN_UI_SMOKE_RESTART_RESTORE_STEPS" \
+    "UI smoke must expose an opt-in restart transcript restore path"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    "shell-workspace-window_main\\.json" \
+    "UI smoke restart restore must inspect the persisted workspace manifest"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    "restart-restore" \
+    "UI smoke restart restore must capture relaunch evidence"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'RESTART_RESTORE_CWD="\$OUTPUT_DIR/restart-restore-cwd"' \
+    "UI smoke restart restore cwd must follow the selected output directory"
+
+require_pattern \
     "justfile" \
     "^apple-shell-focused-tests:" \
     "focused Apple shell tests must have a single everyday just target"

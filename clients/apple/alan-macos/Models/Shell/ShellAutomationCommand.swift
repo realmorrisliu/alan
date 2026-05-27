@@ -44,6 +44,7 @@ enum ShellAutomationCommandResultCode: String, Codable, Equatable {
     case invalidRequest = "invalid_request"
     case unsupportedContent = "unsupported_content"
     case runtimeUnavailable = "runtime_unavailable"
+    case requiresConfirmation = "requires_confirmation"
     case timeout
     case lastPane = "last_pane"
     case lastTab = "last_tab"
