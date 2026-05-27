@@ -406,14 +406,15 @@ struct ShellWindowCloseGuardView: NSViewRepresentable {
         }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {
-            guard shouldClose() else { return false }
             if let previousDelegate,
                previousDelegate !== self,
                previousDelegate.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:)))
             {
-                return previousDelegate.windowShouldClose?(sender) ?? true
+                guard previousDelegate.windowShouldClose?(sender) ?? true else {
+                    return false
+                }
             }
-            return true
+            return shouldClose()
         }
     }
 }

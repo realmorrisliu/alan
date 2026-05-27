@@ -113,6 +113,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesInteractivePaneCloseCancelLeavesStateManifestAndRuntimeUnchanged()
         verifiesInteractiveConfirmedPaneCloseCapturesSnapshotBeforeFinalization()
         verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation()
+        verifiesWindowAndAppCloseIncludeActiveQuickTerminal()
         verifiesControlPlaneClosePaneReportsRequiresConfirmation()
         verifiesControlPlaneCloseTabReportsRequiresConfirmation()
         verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation()
@@ -1188,6 +1189,49 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(controller.shellState == stateBeforeClose, "cancelled app quit must preserve shell state")
         expect(handle.teardownCount == 0, "cancelled app quit must preserve runtime")
+    }
+
+    private static func verifiesWindowAndAppCloseIncludeActiveQuickTerminal() {
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false, false])
+        let controller = makeController(closeConfirmationPresenter: presenter)
+        _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "python server", activeTaskState: .foregroundCommand),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+        let quickTerminalContentID = ShellContentInstance.terminalContentID(
+            forPaneID: ShellQuickTerminalSlot.globalPaneID
+        )
+        let stateBeforeClose = controller.shellState
+
+        expect(
+            controller.requestCloseWindow() == false,
+            "active quick terminal must guard window close"
+        )
+        expect(
+            controller.requestTerminateApp() == false,
+            "active quick terminal must guard app quit"
+        )
+        expect(
+            presenter.impacts.map(\.scope) == [.window, .app],
+            "window close and app quit must present scoped confirmations for quick terminal work"
+        )
+        expect(
+            presenter.impacts.allSatisfy {
+                $0.activeTerminalContentIDs.contains(quickTerminalContentID)
+                    && $0.affectedTerminalContentIDs.contains(quickTerminalContentID)
+            },
+            "window and app close impacts must include the quick terminal content"
+        )
+        expect(
+            controller.shellState == stateBeforeClose,
+            "cancelled surface close must preserve quick terminal state"
+        )
+        expect(quickHandle.teardownCount == 0, "cancelled surface close must preserve quick runtime")
     }
 
     private static func verifiesControlPlaneClosePaneReportsRequiresConfirmation() {

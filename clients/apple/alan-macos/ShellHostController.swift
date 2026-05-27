@@ -2819,7 +2819,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .tab(let tabID):
             return shellState.tab(tabID: tabID)?.paneTree.paneIDs ?? []
         case .window, .app:
-            return shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs)
+            var paneIDs = shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs)
+            if let quickPaneID = shellState.quickTerminal?.paneID,
+               !paneIDs.contains(quickPaneID)
+            {
+                paneIDs.append(quickPaneID)
+            }
+            return paneIDs
         case .quickTerminal:
             guard let paneID = shellState.quickTerminal?.paneID else { return [] }
             return [paneID]

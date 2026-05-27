@@ -3,11 +3,14 @@ import Foundation
 
 @main
 struct ShellWindowPlacementTestRunner {
-    static func main() throws {
-        try ShellWindowPlacementTests.run()
+    static func main() async throws {
+        try await MainActor.run {
+            try ShellWindowPlacementTests.run()
+        }
     }
 }
 
+@MainActor
 private enum ShellWindowPlacementTests {
     static func run() throws {
         try verifiesDefaultFrameUsesVisibleRegionRatios()
@@ -38,6 +41,8 @@ private enum ShellWindowPlacementTests {
         try verifiesTitlebarOverlayRejectsTrafficLightHit()
         try verifiesAppearanceModeAppliesToAttachedWindowImmediately()
         try verifiesSystemModeClearsExplicitWindowAppearanceImmediately()
+        try verifiesCloseGuardDefersSideEffectsUntilPreviousDelegateApproves()
+        try verifiesCloseGuardRunsAfterPreviousDelegateApproval()
         print("Shell window placement tests passed.")
     }
 
@@ -600,6 +605,43 @@ private enum ShellWindowPlacementTests {
         )
     }
 
+    private static func verifiesCloseGuardDefersSideEffectsUntilPreviousDelegateApproves() throws {
+        let window = makeTestWindow()
+        let previousDelegate = FakeWindowCloseDelegate(responses: [false])
+        var shouldCloseCalls = 0
+        let coordinator = ShellWindowCloseGuardView.Coordinator {
+            shouldCloseCalls += 1
+            return true
+        }
+        coordinator.previousDelegate = previousDelegate
+
+        let shouldClose = coordinator.windowShouldClose(window)
+
+        expect(!shouldClose, "close guard must honor a previous delegate veto")
+        expect(previousDelegate.callCount == 1, "close guard must consult the previous delegate")
+        expect(
+            shouldCloseCalls == 0,
+            "close guard must not run close side effects when the previous delegate vetoes"
+        )
+    }
+
+    private static func verifiesCloseGuardRunsAfterPreviousDelegateApproval() throws {
+        let window = makeTestWindow()
+        let previousDelegate = FakeWindowCloseDelegate(responses: [true])
+        var shouldCloseCalls = 0
+        let coordinator = ShellWindowCloseGuardView.Coordinator {
+            shouldCloseCalls += 1
+            return true
+        }
+        coordinator.previousDelegate = previousDelegate
+
+        let shouldClose = coordinator.windowShouldClose(window)
+
+        expect(shouldClose, "close guard must allow close after both delegates approve")
+        expect(previousDelegate.callCount == 1, "close guard must keep previous delegate chaining")
+        expect(shouldCloseCalls == 1, "close guard must run its own close check after approval")
+    }
+
     private static func makeAttachedPlacementView() -> (
         window: NSWindow,
         placementView: ShellWindowPlacementNSView
@@ -670,6 +712,20 @@ private enum ShellWindowPlacementTests {
     ) {
         guard condition() else {
             fatalError(message())
+        }
+    }
+
+    private final class FakeWindowCloseDelegate: NSObject, NSWindowDelegate {
+        private var responses: [Bool]
+        private(set) var callCount = 0
+
+        init(responses: [Bool]) {
+            self.responses = responses
+        }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            callCount += 1
+            return responses.isEmpty ? true : responses.removeFirst()
         }
     }
 }
