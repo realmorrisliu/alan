@@ -582,9 +582,14 @@ private struct ShellPaneTreeLayoutView: View {
         paneSlotID: String,
         backingPane: ShellPane?
     ) -> some View {
-        ShellBoundedContentLeafView(
+        let settingsWorkspaceContext =
+            descriptor.renderKind == .settings
+            ? host.settingsWorkspaceContext(forPaneSlotID: paneSlotID)
+            : .none
+        return ShellBoundedContentLeafView(
             descriptor: descriptor,
             paneSlotID: paneSlotID,
+            settingsWorkspaceContext: settingsWorkspaceContext,
             isSelected: selectedPaneID == paneSlotID,
             isZoomed: host.isPaneZoomed(paneSlotID),
             canZoom: host.canZoomPane(paneSlotID),
@@ -938,6 +943,7 @@ private enum ShellPaneTitleBarAccessoryMode: Equatable {
 private struct ShellBoundedContentLeafView: View {
     let descriptor: ShellContentRenderDescriptor
     let paneSlotID: String
+    let settingsWorkspaceContext: ShellSettingsWorkspaceContext
     let isSelected: Bool
     let isZoomed: Bool
     let canZoom: Bool
@@ -967,7 +973,10 @@ private struct ShellBoundedContentLeafView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onFocusPane)
             case .settings:
-                ShellSettingsContentView(descriptor: descriptor)
+                ShellSettingsContentView(
+                    descriptor: descriptor,
+                    workspaceContext: settingsWorkspaceContext
+                )
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onFocusPane)
             case .terminal, .unavailable:
@@ -1134,6 +1143,7 @@ private enum ShellMarkdownContentLoadResult {
 
 private struct ShellSettingsContentView: View {
     let descriptor: ShellContentRenderDescriptor
+    let workspaceContext: ShellSettingsWorkspaceContext
 
     @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
@@ -1168,9 +1178,20 @@ private struct ShellSettingsContentView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .task(id: descriptor.contentID ?? descriptor.title) {
+        .task(id: refreshTaskID) {
             await refreshSettingsSummaries()
         }
+    }
+
+    private var refreshTaskID: String {
+        [
+            descriptor.contentID ?? descriptor.title,
+            workspaceContext.connectionWorkspaceDir,
+            workspaceContext.skillCatalogWorkspaceDir,
+            workspaceContext.agentName,
+        ]
+        .compactMap { $0 }
+        .joined(separator: "|")
     }
 
     private var sidebarVisible: Binding<Bool> {
@@ -1189,8 +1210,13 @@ private struct ShellSettingsContentView: View {
             let client = try AlanAPIClient(baseURLString: local.daemonURL)
             async let catalogResponse = client.connectionCatalog()
             async let profilesResponse = client.listConnectionProfiles()
-            async let currentResponse = client.currentConnection()
-            async let skillsResponse = client.skillCatalog()
+            async let currentResponse = client.currentConnection(
+                workspaceDir: workspaceContext.connectionWorkspaceDir
+            )
+            async let skillsResponse = client.skillCatalog(
+                workspaceDir: workspaceContext.skillCatalogWorkspaceDir,
+                agentName: workspaceContext.agentName
+            )
 
             let (catalog, profiles, current, skills) = try await (
                 catalogResponse,

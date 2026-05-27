@@ -2981,6 +2981,74 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ?? nonEmptyWorkingDirectory(pane.cwd)
     }
 
+    func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {
+        ShellSettingsWorkspaceContext.resolve(
+            activeWorkingDirectory: settingsWorkspaceWorkingDirectory(forPaneSlotID: paneSlotID),
+            channel: windowContext.installChannel,
+            fileManager: fileManager
+        )
+    }
+
+    private func settingsWorkspaceWorkingDirectory(forPaneSlotID paneSlotID: String) -> String? {
+        let contentState = shellState.contentStateProjection()
+        var candidates: [ShellPane] = []
+
+        func appendCandidate(_ pane: ShellPane?) {
+            guard let pane,
+                  !candidates.contains(where: { $0.paneID == pane.paneID })
+            else {
+                return
+            }
+            candidates.append(pane)
+        }
+
+        let targetPane = pane(paneID: paneSlotID)
+        appendCandidate(targetPane)
+
+        if focusedPane?.paneID != paneSlotID {
+            appendCandidate(focusedPane)
+        }
+        if selectedPane?.paneID != paneSlotID {
+            appendCandidate(selectedPane)
+        }
+
+        let targetTabID = targetPane?.tabID ?? selectedTab?.tabID
+        if let targetTabID {
+            shellState.panes
+                .filter { $0.tabID == targetTabID && $0.paneID != paneSlotID }
+                .forEach { appendCandidate($0) }
+        }
+
+        shellState.panes
+            .filter { $0.paneID != paneSlotID }
+            .forEach { appendCandidate($0) }
+
+        for candidate in candidates {
+            if let workingDirectory = terminalWorkingDirectory(
+                for: candidate,
+                contentState: contentState
+            ) {
+                return workingDirectory
+            }
+        }
+        return nil
+    }
+
+    private func terminalWorkingDirectory(
+        for pane: ShellPane,
+        contentState: ShellContentStateSnapshot
+    ) -> String? {
+        if let content = contentState.contentMounted(in: pane.paneID),
+           content.kind != .terminal
+        {
+            return nil
+        }
+
+        let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
+        return nonEmptyWorkingDirectory(runtimeCwd)
+            ?? nonEmptyWorkingDirectory(pane.cwd)
+    }
+
     private func nonEmptyWorkingDirectory(_ path: String?) -> String? {
         guard let path else { return nil }
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)

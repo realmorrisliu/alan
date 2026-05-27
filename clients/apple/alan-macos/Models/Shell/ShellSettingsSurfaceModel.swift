@@ -308,7 +308,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 id: "daemonEndpoint",
                 systemName: "server.rack",
                 title: "Daemon endpoint",
-                detail: "Default bind \(local.daemonBindAddress)",
+                detail: "Bind \(local.daemonBindAddress)",
                 value: local.daemonURL
             ),
             ShellSettingsRowModel(
@@ -564,8 +564,11 @@ struct ShellSettingsLocalSummary: Equatable {
         updateDecision: AlanMacUpdateDecision = AlanMacUpdatePolicy.decision(),
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> ShellSettingsLocalSummary {
-        let daemonBindAddress = channel.daemonBindAddress(environment: environment)
-        let daemonURL = channel.daemonURL(environment: environment, bindAddress: daemonBindAddress)
+        let hostConfig = ShellSettingsHostConfig.resolve(
+            channel: channel,
+            environment: environment,
+            homeDirectory: homeDirectory
+        )
         return ShellSettingsLocalSummary(
             channel: channel,
             appDisplayName: channel.appDisplayName,
@@ -573,8 +576,8 @@ struct ShellSettingsLocalSummary: Equatable {
             bundleIdentifier: channel.bundleIdentifier,
             channelLabel: channel.settingsChannelLabel,
             cliToolName: channel.cliToolName,
-            daemonURL: daemonURL,
-            daemonBindAddress: daemonBindAddress,
+            daemonURL: hostConfig.daemonURL,
+            daemonBindAddress: hostConfig.bindAddress,
             updateSummary: updateSummary(for: updateDecision),
             updateDetail: updateDetail(for: updateDecision),
             alanHomeDisplayPath: channel.alanHomeDisplayPath,
@@ -603,6 +606,88 @@ struct ShellSettingsLocalSummary: Equatable {
             return trimmed
         }
         return "Use \(decision.menuTitle) for this install."
+    }
+}
+
+struct ShellSettingsWorkspaceContext: Equatable {
+    let connectionWorkspaceDir: String?
+    let skillCatalogWorkspaceDir: String?
+    let agentName: String?
+
+    static let none = ShellSettingsWorkspaceContext(
+        connectionWorkspaceDir: nil,
+        skillCatalogWorkspaceDir: nil,
+        agentName: nil
+    )
+
+    static func resolve(
+        activeWorkingDirectory: String?,
+        channel: AlanInstallChannel = .current(),
+        agentName: String? = nil,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        fileManager: FileManager = .default
+    ) -> ShellSettingsWorkspaceContext {
+        guard let activeDirectory = normalizedPath(activeWorkingDirectory) else {
+            return ShellSettingsWorkspaceContext(
+                connectionWorkspaceDir: nil,
+                skillCatalogWorkspaceDir: nil,
+                agentName: normalizedNonEmpty(agentName)
+            )
+        }
+
+        if let registered = ShellSettingsWorkspaceRegistry.load(
+            channel: channel,
+            homeDirectory: homeDirectory,
+            fileManager: fileManager
+        )
+        .mostSpecificEntry(containing: activeDirectory) {
+            return ShellSettingsWorkspaceContext(
+                connectionWorkspaceDir: registered.path,
+                skillCatalogWorkspaceDir: registered.catalogIdentifier,
+                agentName: normalizedNonEmpty(agentName)
+            )
+        }
+
+        return ShellSettingsWorkspaceContext(
+            connectionWorkspaceDir: workspaceRootContainingAlanDirectory(
+                activeDirectory,
+                fileManager: fileManager
+            ) ?? activeDirectory,
+            skillCatalogWorkspaceDir: nil,
+            agentName: normalizedNonEmpty(agentName)
+        )
+    }
+
+    private static func normalizedNonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private static func normalizedPath(_ path: String?) -> String? {
+        guard let trimmed = normalizedNonEmpty(path) else {
+            return nil
+        }
+        return URL(fileURLWithPath: trimmed, isDirectory: true)
+            .standardizedFileURL
+            .path
+    }
+
+    private static func workspaceRootContainingAlanDirectory(
+        _ path: String,
+        fileManager: FileManager
+    ) -> String? {
+        var url = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        while url.path != "/" {
+            let alanDirectory = url.appendingPathComponent(".alan", isDirectory: true).path
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: alanDirectory, isDirectory: &isDirectory),
+               isDirectory.boolValue
+            {
+                return url.path
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
     }
 }
 
@@ -643,6 +728,15 @@ private extension AlanInstallChannel {
         }
     }
 
+    var alanHomeDirectoryName: String {
+        switch self {
+        case .stable:
+            return ".alan"
+        case .dev:
+            return ".alan-dev"
+        }
+    }
+
     var globalSkillsDisplayPath: String {
         switch self {
         case .stable:
@@ -679,25 +773,201 @@ private extension AlanInstallChannel {
         return "~/" + suffix
     }
 
-    func daemonBindAddress(environment: [String: String]) -> String {
-        let override = environment["BIND_ADDRESS"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return override?.isEmpty == false ? override! : defaultDaemonBindAddress
-    }
-
-    func daemonURL(environment: [String: String], bindAddress: String) -> String {
-        let override = environment["ALAN_AGENTD_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if override?.isEmpty == false {
-            return override!
-        }
-        if bindAddress == defaultDaemonBindAddress {
-            return defaultDaemonURL
-        }
-        return Self.localDaemonURL(for: bindAddress)
-    }
-
     static func localDaemonURL(for bindAddress: String) -> String {
         let port = bindAddress.split(separator: ":").last.flatMap { UInt16($0) } ?? 8090
         return "http://127.0.0.1:\(port)"
+    }
+}
+
+private struct ShellSettingsHostConfig {
+    let bindAddress: String
+    let daemonURL: String
+
+    static func resolve(
+        channel: AlanInstallChannel,
+        environment: [String: String],
+        homeDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> ShellSettingsHostConfig {
+        let fileConfig = load(channel: channel, homeDirectory: homeDirectory, fileManager: fileManager)
+        let bindAddress =
+            nonEmpty(environment["BIND_ADDRESS"])
+            ?? fileConfig?.bindAddress
+            ?? channel.defaultDaemonBindAddress
+        let daemonURL =
+            nonEmpty(environment["ALAN_AGENTD_URL"])
+            ?? fileConfig?.daemonURL
+            ?? channel.defaultDaemonURL
+        return ShellSettingsHostConfig(bindAddress: bindAddress, daemonURL: daemonURL)
+    }
+
+    private static func load(
+        channel: AlanInstallChannel,
+        homeDirectory: URL,
+        fileManager: FileManager
+    ) -> ShellSettingsHostConfig? {
+        let path = homeDirectory
+            .appendingPathComponent(channel.alanHomeDirectoryName, isDirectory: true)
+            .appendingPathComponent("host.toml", isDirectory: false)
+            .path
+        guard fileManager.fileExists(atPath: path),
+              let content = try? String(contentsOfFile: path, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        let values = ShellSettingsTopLevelTOMLParser.parse(content)
+        let bindAddress = nonEmpty(values["bind_address"]) ?? channel.defaultDaemonBindAddress
+        let daemonURL = nonEmpty(values["daemon_url"]) ?? AlanInstallChannel.localDaemonURL(
+            for: bindAddress
+        )
+        return ShellSettingsHostConfig(bindAddress: bindAddress, daemonURL: daemonURL)
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+private enum ShellSettingsTopLevelTOMLParser {
+    static func parse(_ content: String) -> [String: String] {
+        var values: [String: String] = [:]
+        for line in content.components(separatedBy: .newlines) {
+            let stripped = stripComment(from: line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !stripped.isEmpty,
+                  !stripped.hasPrefix("["),
+                  let separator = stripped.firstIndex(of: "=")
+            else {
+                continue
+            }
+
+            let key = String(stripped[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawValue = String(stripped[stripped.index(after: separator)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty,
+               let value = parsedScalar(rawValue)
+            {
+                values[key] = value
+            }
+        }
+        return values
+    }
+
+    private static func parsedScalar(_ rawValue: String) -> String? {
+        if rawValue.count >= 2,
+           let first = rawValue.first,
+           let last = rawValue.last,
+           (first == "\"" && last == "\"") || (first == "'" && last == "'")
+        {
+            return String(rawValue.dropFirst().dropLast())
+        }
+        return rawValue.isEmpty ? nil : rawValue
+    }
+
+    private static func stripComment(from line: String) -> String {
+        var isInSingleQuotedString = false
+        var isInDoubleQuotedString = false
+        var previousCharacter: Character?
+
+        for index in line.indices {
+            let character = line[index]
+            if character == "\"",
+               !isInSingleQuotedString,
+               previousCharacter != "\\"
+            {
+                isInDoubleQuotedString.toggle()
+            } else if character == "'",
+                      !isInDoubleQuotedString
+            {
+                isInSingleQuotedString.toggle()
+            } else if character == "#",
+                      !isInSingleQuotedString,
+                      !isInDoubleQuotedString
+            {
+                return String(line[..<index])
+            }
+            previousCharacter = character
+        }
+        return line
+    }
+}
+
+private struct ShellSettingsWorkspaceRegistry {
+    struct Entry: Decodable, Equatable {
+        let id: String
+        let path: String
+        let alias: String
+
+        var catalogIdentifier: String {
+            let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedAlias.isEmpty ? id : trimmedAlias
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case path
+            case alias
+        }
+    }
+
+    let entries: [Entry]
+
+    static func load(
+        channel: AlanInstallChannel,
+        homeDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> ShellSettingsWorkspaceRegistry {
+        let path = homeDirectory
+            .appendingPathComponent(channel.alanHomeDirectoryName, isDirectory: true)
+            .appendingPathComponent("registry.json", isDirectory: false)
+            .path
+        guard fileManager.fileExists(atPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let file = try? JSONDecoder().decode(File.self, from: data)
+        else {
+            return ShellSettingsWorkspaceRegistry(entries: [])
+        }
+        let entries = file.workspaces.map { entry in
+            Entry(
+                id: entry.id,
+                path: normalizedPath(entry.path) ?? entry.path,
+                alias: entry.alias
+            )
+        }
+        return ShellSettingsWorkspaceRegistry(entries: entries)
+    }
+
+    func mostSpecificEntry(containing activeDirectory: String) -> Entry? {
+        entries
+            .filter { contains(path: activeDirectory, inWorkspaceRoot: $0.path) }
+            .sorted { lhs, rhs in
+                lhs.path.count > rhs.path.count
+            }
+            .first
+    }
+
+    private static func normalizedPath(_ path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: trimmed, isDirectory: true).standardizedFileURL.path
+    }
+
+    private func contains(path: String, inWorkspaceRoot root: String) -> Bool {
+        guard !root.isEmpty else {
+            return false
+        }
+        if path == root {
+            return true
+        }
+        let normalizedRoot = root.hasSuffix("/") ? root : root + "/"
+        return path.hasPrefix(normalizedRoot)
+    }
+
+    private struct File: Decodable {
+        let workspaces: [Entry]
     }
 }
 #endif

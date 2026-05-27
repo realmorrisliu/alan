@@ -25,6 +25,9 @@ struct ShellSettingsSurfaceTestRunner {
             try testDefaultSectionOrderAndInterfaceMutability()
             try testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted()
             try testDevChannelLocalRowsUseDevIdentity()
+            try testLocalSummaryReadsHostConfigForDaemonEndpoint()
+            try testWorkspaceContextUsesRegistryForWorkspaceScopedRequests()
+            try testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot()
             try testUnavailableRemoteSummariesStayCompact()
             print("Shell settings surface tests passed.")
         } catch {
@@ -167,6 +170,102 @@ private func testDevChannelLocalRowsUseDevIdentity() throws {
     )
 }
 
+private func testLocalSummaryReadsHostConfigForDaemonEndpoint() throws {
+    let homeDirectory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+    let alanHome = homeDirectory.appendingPathComponent(".alan-dev", isDirectory: true)
+    try FileManager.default.createDirectory(at: alanHome, withIntermediateDirectories: true)
+    try """
+    bind_address = "127.0.0.1:9123"
+    """
+    .write(to: alanHome.appendingPathComponent("host.toml"), atomically: true, encoding: .utf8)
+
+    let summary = ShellSettingsLocalSummary.current(
+        channel: .dev,
+        environment: [:],
+        updateDecision: unsupportedDevUpdateDecision(),
+        homeDirectory: homeDirectory
+    )
+
+    try expect(
+        summary.daemonBindAddress == "127.0.0.1:9123",
+        "settings must display the bind address from the channel host.toml"
+    )
+    try expect(
+        summary.daemonURL == "http://127.0.0.1:9123",
+        "settings must query the daemon URL derived from host.toml"
+    )
+}
+
+private func testWorkspaceContextUsesRegistryForWorkspaceScopedRequests() throws {
+    let homeDirectory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+    let workspace = homeDirectory.appendingPathComponent("repo", isDirectory: true)
+    let nestedDirectory = workspace.appendingPathComponent("Sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+
+    let alanHome = homeDirectory.appendingPathComponent(".alan-dev", isDirectory: true)
+    try FileManager.default.createDirectory(at: alanHome, withIntermediateDirectories: true)
+    let registry: [String: Any] = [
+        "version": 1,
+        "workspaces": [
+            [
+                "id": "abc123",
+                "path": workspace.standardizedFileURL.path,
+                "alias": "repo",
+                "created_at": "2026-05-27T00:00:00Z",
+            ],
+        ],
+    ]
+    let registryData = try JSONSerialization.data(withJSONObject: registry, options: [.prettyPrinted])
+    try registryData.write(to: alanHome.appendingPathComponent("registry.json"))
+
+    let context = ShellSettingsWorkspaceContext.resolve(
+        activeWorkingDirectory: nestedDirectory.path,
+        channel: .dev,
+        homeDirectory: homeDirectory
+    )
+
+    try expect(
+        context.connectionWorkspaceDir == workspace.standardizedFileURL.path,
+        "connection state must use the registered workspace root, not a nested terminal cwd"
+    )
+    try expect(
+        context.skillCatalogWorkspaceDir == "repo",
+        "skill catalog requests must use a registered workspace alias or short id"
+    )
+}
+
+private func testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot() throws {
+    let homeDirectory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+    let workspace = homeDirectory.appendingPathComponent("unregistered", isDirectory: true)
+    let nestedDirectory = workspace.appendingPathComponent("Sources", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: workspace.appendingPathComponent(".alan", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+
+    let context = ShellSettingsWorkspaceContext.resolve(
+        activeWorkingDirectory: nestedDirectory.path,
+        channel: .dev,
+        homeDirectory: homeDirectory
+    )
+
+    try expect(
+        context.connectionWorkspaceDir == workspace.standardizedFileURL.path,
+        "connection state must fall back to the discovered workspace root"
+    )
+    try expect(
+        context.skillCatalogWorkspaceDir == nil,
+        "unregistered workspaces must not be sent to the skill catalog alias-only endpoint"
+    )
+}
+
 private func testUnavailableRemoteSummariesStayCompact() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
         remote: .unavailable(reason: "Connection refused"),
@@ -210,13 +309,24 @@ private func devLocalSummary() -> ShellSettingsLocalSummary {
     ShellSettingsLocalSummary.current(
         channel: .dev,
         environment: [:],
-        updateDecision: AlanMacUpdateDecision(
-            installation: .unsupportedChannel,
-            allowsSparkleUpdates: false,
-            menuTitle: "Check for Updates...",
-            userMessage: "This local dev build does not use Sparkle updates."
-        ),
+        updateDecision: unsupportedDevUpdateDecision(),
         homeDirectory: URL(fileURLWithPath: "/Users/test", isDirectory: true)
     )
+}
+
+private func unsupportedDevUpdateDecision() -> AlanMacUpdateDecision {
+    AlanMacUpdateDecision(
+        installation: .unsupportedChannel,
+        allowsSparkleUpdates: false,
+        menuTitle: "Check for Updates...",
+        userMessage: "This local dev build does not use Sparkle updates."
+    )
+}
+
+private func makeTemporaryDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("alan-shell-settings-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
 }
 #endif
