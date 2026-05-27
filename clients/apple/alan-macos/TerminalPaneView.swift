@@ -395,7 +395,7 @@ struct ShellQuickTerminalPeakView: View {
                     selectedPaneID: pane.paneID,
                     terminalSurfaceInsets: EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
                     onClosePane: { _ in
-                        _ = host.closeQuickTerminal()
+                        _ = host.requestCloseQuickTerminal()
                     }
                 )
             }

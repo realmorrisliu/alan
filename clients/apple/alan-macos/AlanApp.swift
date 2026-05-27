@@ -25,6 +25,15 @@ struct AlanApp: App {
                 appearanceMode: $appearanceMode,
                 isSidebarCollapsed: $isSidebarCollapsed
             )
+                .background(
+                    ShellWindowCloseGuardView {
+                        primaryShellOwner.host.requestCloseWindow()
+                    }
+                    .frame(width: 0, height: 0)
+                )
+                .onAppear {
+                    appDelegate.shellHost = primaryShellOwner.host
+                }
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .toolbar(removing: .title)
         }

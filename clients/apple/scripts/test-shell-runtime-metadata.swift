@@ -46,6 +46,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
         verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection()
         verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
+        verifiesQuickTerminalActiveCloseCancelPreservesRuntime()
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
@@ -106,6 +107,16 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
         verifiesClosingTabReleasesTerminalRuntime()
+        verifiesActivePaneCloseRequiresConfirmationWithoutMutation()
+        verifiesIdlePaneCloseBypassesCloseGuard()
+        verifiesActiveTabCloseRequiresOneConfirmationForMultiplePanes()
+        verifiesInteractivePaneCloseCancelLeavesStateManifestAndRuntimeUnchanged()
+        verifiesInteractiveConfirmedPaneCloseCapturesSnapshotBeforeFinalization()
+        verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation()
+        verifiesControlPlaneClosePaneReportsRequiresConfirmation()
+        verifiesControlPlaneCloseTabReportsRequiresConfirmation()
+        verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation()
+        verifiesControlPlaneCloseIdlePaneSucceeds()
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesShellActionTabNavigationTargetsCurrentSelection()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
@@ -130,10 +141,15 @@ private enum ShellRuntimeMetadataTests {
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
+        verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript()
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
         verifiesExplicitSpaceDeletionRemovesManifestSpace()
         verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges()
         verifiesMixedContentPinAndLiveSnapshotsPersistContentPayloads()
+        verifiesOldManifestDecodesWithoutTerminalTranscriptSnapshot()
+        verifiesTerminalTranscriptSnapshotsAreBoundedThroughManifestRoundTrip()
+        verifiesPinnedRestoreOverlaysMatchingTranscriptWithoutMutatingTemplate()
+        verifiesWorkspaceManifestSyncCapturesLiveTerminalTranscript()
         verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership()
         verifiesManifestActiveTaskProjection()
         print("Shell runtime metadata tests passed.")
@@ -965,6 +981,302 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesActivePaneCloseRequiresConfirmationWithoutMutation() {
+        let controller = makeController()
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "make test", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        let stateBefore = controller.snapshotJSON
+
+        switch controller.closePane(paneID: "pane_1") {
+        case .requiresConfirmation(let impact):
+            expect(impact.activeTerminalContentIDs == ["content_pane_1"], "active pane close must report guarded content")
+            expect(impact.scope == .paneSlot("pane_1"), "active pane close impact must preserve requested scope")
+        case .closed, .paneNotFound, .lastTab:
+            fail("active pane close must require confirmation")
+        }
+
+        expect(controller.snapshotJSON == stateBefore, "guarded pane close must not mutate shell state")
+        expect(handle.teardownCount == 0, "guarded pane close must not finalize terminal runtime")
+    }
+
+    private static func verifiesIdlePaneCloseBypassesCloseGuard() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let handle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "zsh", activeTaskState: .inactive),
+            for: "pane_2"
+        )
+
+        switch controller.closePane(paneID: "pane_2") {
+        case .closed:
+            break
+        case .requiresConfirmation, .paneNotFound, .lastTab:
+            fail("idle pane close must bypass active-work confirmation")
+        }
+
+        expect(controller.pane(paneID: "pane_2") == nil, "idle close must remove the pane")
+        expect(handle.teardownCount == 1, "idle close must finalize the closed terminal runtime")
+    }
+
+    private static func verifiesActiveTabCloseRequiresOneConfirmationForMultiplePanes() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let leftHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let rightHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "cargo test", activeTaskState: .foregroundCommand),
+            for: "pane_2"
+        )
+        let stateBefore = controller.snapshotJSON
+
+        switch controller.closeTab(tabID: "tab_main") {
+        case .requiresConfirmation(let impact):
+            expect(impact.scope == .tab("tab_main"), "tab close impact must preserve requested tab")
+            expect(impact.affectedTerminalContentIDs.count == 2, "tab close impact must collect all terminal panes")
+            expect(impact.activeTerminalContentIDs == ["content_pane_2"], "tab close must identify active terminal only once")
+        case .closed, .tabNotFound, .lastTab:
+            fail("active tab close must require one confirmation")
+        }
+
+        expect(controller.snapshotJSON == stateBefore, "guarded tab close must not mutate shell state")
+        expect(leftHandle.teardownCount == 0, "guarded tab close must preserve idle sibling runtime")
+        expect(rightHandle.teardownCount == 0, "guarded tab close must preserve active runtime")
+    }
+
+    private static func verifiesInteractivePaneCloseCancelLeavesStateManifestAndRuntimeUnchanged() {
+        let windowID = "interactive_cancel_\(UUID().uuidString)"
+        let manifestURL = manifestURL("interactive_cancel")
+        let service = FakeAlanTerminalRuntimeService()
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false])
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/repo/app",
+                now: Date(timeIntervalSince1970: 80)
+            ),
+            closeConfirmationPresenter: presenter
+        )
+        _ = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "npm run dev", cwd: "/repo/app", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        let stateBeforeClose = controller.shellState
+        let manifestBeforeClose = decodeManifest(at: manifestURL)
+
+        expect(
+            controller.requestClosePane(paneID: "pane_1") == false,
+            "interactive active pane close must stop when confirmation is cancelled"
+        )
+        expect(presenter.impacts.count == 1, "interactive close must present one confirmation")
+        expect(controller.shellState == stateBeforeClose, "cancelled close must leave shell state unchanged")
+        expect(
+            decodeManifest(at: manifestURL) == manifestBeforeClose,
+            "cancelled close must leave workspace manifest unchanged"
+        )
+        expect(
+            service.registeredContentIDs.contains("content_pane_1"),
+            "cancelled close must leave terminal runtime alive"
+        )
+    }
+
+    private static func verifiesInteractiveConfirmedPaneCloseCapturesSnapshotBeforeFinalization() {
+        let service = FakeAlanTerminalRuntimeService()
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [true])
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(
+            terminalRuntimeRegistry: registry,
+            closeConfirmationPresenter: presenter
+        )
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 1)
+        handle.commandOutputTextByRange[range] = "build running"
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: "content_pane_1",
+                paneID: "pane_1",
+                tabID: "tab_main",
+                logicalSize: CGSize(width: 80, height: 1),
+                backingSize: CGSize(width: 80, height: 1),
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: "make build",
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: metadata(
+                    title: "make build",
+                    cwd: "/repo/app",
+                    activeTaskState: .foregroundCommand
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .ready,
+                    terminalMode: .normalBuffer,
+                    scrollback: AlanTerminalScrollbackState(
+                        metrics: AlanTerminalScrollbackMetrics(
+                            totalRows: 1,
+                            visibleRows: 1,
+                            firstVisibleRow: 0,
+                            mode: .normalBuffer
+                        ),
+                        nativeScrollbarVisible: false,
+                        thumbRange: 0..<1
+                    ),
+                    search: nil,
+                    semanticCommands: .placeholder,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: true,
+                    rendererHealth: "ready",
+                    childExited: false,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 81)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 81)
+            )
+        )
+
+        expect(
+            controller.requestClosePane(paneID: "pane_1"),
+            "confirmed active pane close must apply"
+        )
+        expect(presenter.impacts.count == 1, "confirmed close must present one confirmation")
+        expect(
+            handle.captureTranscriptTextRanges == [range],
+            "confirmed close must capture transcript before runtime finalization"
+        )
+        expect(handle.teardownCount == 1, "confirmed close must finalize the terminal runtime")
+        expect(controller.pane(paneID: "pane_1") == nil, "confirmed close must remove the pane")
+    }
+
+    private static func verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation() {
+        let service = FakeAlanTerminalRuntimeService()
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false, false])
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let controller = makeController(
+            terminalRuntimeRegistry: registry,
+            closeConfirmationPresenter: presenter
+        )
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "cargo test", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        let stateBeforeClose = controller.shellState
+
+        expect(
+            controller.requestCloseWindow() == false,
+            "active window close must stop when confirmation is cancelled"
+        )
+        expect(controller.shellState == stateBeforeClose, "cancelled window close must preserve shell state")
+        expect(handle.teardownCount == 0, "cancelled window close must preserve runtime")
+
+        expect(
+            controller.requestTerminateApp() == false,
+            "active app quit must stop when confirmation is cancelled"
+        )
+        expect(
+            presenter.impacts.map(\.scope) == [.window, .app],
+            "window close and app quit must each present one scoped confirmation"
+        )
+        expect(controller.shellState == stateBeforeClose, "cancelled app quit must preserve shell state")
+        expect(handle.teardownCount == 0, "cancelled app quit must preserve runtime")
+    }
+
+    private static func verifiesControlPlaneClosePaneReportsRequiresConfirmation() {
+        let controller = makeController()
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "npm run dev", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        let stateBefore = controller.snapshotJSON
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "close-active-pane",
+                  "command": "pane.close",
+                  "pane_id": "pane_1"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == false, "control close must not apply when confirmation is required")
+        expect(response.errorCode == "requires_confirmation", "control close must report stable confirmation code")
+        expect(response.paneID == "pane_1", "control close response must identify guarded pane")
+        expect(response.contentID == "content_pane_1", "control close response must identify guarded content")
+        expect(controller.snapshotJSON == stateBefore, "control close rejection must not mutate shell state")
+        expect(handle.teardownCount == 0, "control close rejection must not finalize runtime")
+    }
+
+    private static func verifiesControlPlaneCloseTabReportsRequiresConfirmation() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let leftHandle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let rightHandle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "cargo test", activeTaskState: .foregroundCommand),
+            for: "pane_2"
+        )
+        let stateBefore = controller.snapshotJSON
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "close-active-tab",
+                  "command": "tab.close",
+                  "tab_id": "tab_main"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == false, "control tab close must not apply when confirmation is required")
+        expect(response.errorCode == "requires_confirmation", "control tab close must report stable confirmation code")
+        expect(response.tabID == "tab_main", "control tab close response must identify guarded tab")
+        expect(controller.snapshotJSON == stateBefore, "control tab close rejection must not mutate shell state")
+        expect(leftHandle.teardownCount == 0, "control tab close rejection must preserve idle sibling runtime")
+        expect(rightHandle.teardownCount == 0, "control tab close rejection must preserve active runtime")
+    }
+
+    private static func verifiesControlPlaneCloseIdlePaneSucceeds() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let handle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "zsh", activeTaskState: .inactive),
+            for: "pane_2"
+        )
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "close-idle-pane",
+                  "command": "pane.close",
+                  "pane_id": "pane_2"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == true, "control idle pane close must preserve existing success semantics")
+        expect(response.errorCode == nil, "control idle pane close must not report confirmation")
+        expect(controller.pane(paneID: "pane_2") == nil, "control idle pane close must remove the pane")
+        expect(handle.teardownCount == 1, "control idle pane close must finalize the runtime")
+    }
+
     private static func verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1547,6 +1859,71 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
         expect(quickHandle.teardownCount == 1, "explicit close must release the quick-terminal runtime")
+    }
+
+    private static func verifiesQuickTerminalActiveCloseCancelPreservesRuntime() {
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false])
+        let controller = makeController(closeConfirmationPresenter: presenter)
+        _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "python server", activeTaskState: .foregroundCommand),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+        let stateBeforeClose = controller.shellState
+
+        expect(
+            controller.requestCloseQuickTerminal() == false,
+            "active quick terminal close must stop when confirmation is cancelled"
+        )
+        expect(
+            presenter.impacts.map(\.scope) == [.quickTerminal],
+            "active quick terminal close must present one quick-terminal confirmation"
+        )
+        expect(controller.shellState == stateBeforeClose, "cancelled quick close must leave shell state unchanged")
+        expect(controller.quickTerminalPane != nil, "cancelled quick close must preserve the quick terminal pane")
+        expect(quickHandle.teardownCount == 0, "cancelled quick close must preserve the terminal runtime")
+    }
+
+    private static func verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation() {
+        let controller = makeController()
+        _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "python server", activeTaskState: .foregroundCommand),
+            for: ShellQuickTerminalSlot.globalPaneID
+        )
+        let stateBeforeClose = controller.shellState
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-close-active-1",
+                  "command": "quick_terminal.close"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == false, "active quick-terminal control close must not apply")
+        expect(
+            response.errorCode == "requires_confirmation",
+            "active quick-terminal control close must report stable confirmation code"
+        )
+        expect(
+            response.paneID == ShellQuickTerminalSlot.globalPaneID,
+            "active quick-terminal control close must identify the guarded pane"
+        )
+        expect(controller.shellState == stateBeforeClose, "guarded quick close must leave shell state unchanged")
+        expect(controller.quickTerminalPane != nil, "guarded quick close must preserve the quick terminal pane")
+        expect(quickHandle.teardownCount == 0, "guarded quick close must preserve the terminal runtime")
     }
 
     private static func verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh() {
@@ -5645,6 +6022,122 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript() {
+        let windowID = "manifest_seed_transcript_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let context = ShellWindowContext.make(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry
+        )
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let transcript = TerminalTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/repo/app",
+            title: "npm run dev",
+            dimensions: TerminalTranscriptDimensions(columns: 120, rows: 30),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 7, cursorRow: 29),
+            transcriptLines: ["server ready", "listening on 3000"],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "foreground_command",
+                program: "npm",
+                argvPreview: ["npm", "run", "dev"],
+                lastCommandExitCode: nil
+            ),
+            capturedAt: Date(timeIntervalSince1970: 94),
+            alternateScreen: false
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: windowID,
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_main",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: Date(timeIntervalSince1970: 94),
+                    updatedAt: Date(timeIntervalSince1970: 94),
+                    tabs: [
+                        ShellContentWorkspaceTabRecord(
+                            tabID: "tab_main",
+                            title: "Shell",
+                            kind: .terminal,
+                            createdAt: Date(timeIntervalSince1970: 94),
+                            lastActivatedAt: Date(timeIntervalSince1970: 94),
+                            lastActivityAt: Date(timeIntervalSince1970: 94),
+                            isPinned: false,
+                            pinSnapshot: nil,
+                            liveSnapshot: contentRestoreSnapshot(
+                                paneSlotID: "pane_1",
+                                contentID: "content_pane_1",
+                                cwd: "/repo/app",
+                                transcriptSnapshot: transcript
+                            ),
+                            activeTask: .foregroundCommand
+                        )
+                    ]
+                )
+            ]
+        )
+
+        do {
+            try store.save(manifest)
+        } catch {
+            fail("test setup must write transcript manifest: \(error)")
+        }
+
+        let controller = ShellHostController.live(
+            windowContext: context,
+            startupMode: .workspaceManifest,
+            workspaceManifestURL: manifestURL,
+            defaultWorkingDirectory: "/fallback",
+            now: Date(timeIntervalSince1970: 95)
+        )
+
+        expect(
+            controller.shellState.contentStateProjection()
+                .contentMounted(in: "pane_1")?
+                .payload.terminal?
+                .transcriptSnapshot?
+                .transcriptLines == ["server ready", "listening on 3000"],
+            "content-state projection must preserve restored transcript payload until runtime capture replaces it"
+        )
+
+        guard let pane = controller.pane(paneID: "pane_1"),
+              let bootProfile = controller.bootProfile(for: pane),
+              let handle = registry.surfaceHandle(
+                for: pane,
+                bootProfile: bootProfile
+              ) as? FakeAlanTerminalSurfaceHandle
+        else {
+            fail("workspace manifest restore must create a terminal runtime handle")
+        }
+
+        expect(
+            bootProfile.workingDirectory == "/repo/app",
+            "restored terminal runtime must start a fresh shell in the restored cwd"
+        )
+        expect(
+            handle.seededTranscriptSnapshot?.transcriptLines == ["server ready", "listening on 3000"],
+            "restored terminal runtime must be seeded with manifest transcript history before input"
+        )
+        expect(
+            handle.seededTranscriptSnapshot?.title == "npm run dev",
+            "restored terminal runtime must preserve transcript title metadata"
+        )
+        expect(
+            handle.seededTranscriptSnapshot?.transcriptLines.contains { line in
+                line.localizedCaseInsensitiveContains("restored session")
+            } == false,
+            "restored terminal transcript must not inject a normal-mode restored-session banner"
+        )
+    }
+
     private static func verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest() {
         let windowID = "manifest_close_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
@@ -5866,6 +6359,287 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesOldManifestDecodesWithoutTerminalTranscriptSnapshot() {
+        let json = """
+        {
+          "schema_version": 1,
+          "content_contract_version": "0.2",
+          "window_id": "window_legacy_no_transcript",
+          "selected_space_id": "space_main",
+          "selected_tab_id": "tab_main",
+          "spaces": [{
+            "space_id": "space_main",
+            "title": "Main",
+            "order": 0,
+            "created_at": "1970-01-01T00:00:01Z",
+            "updated_at": "1970-01-01T00:00:01Z",
+            "tabs": [{
+              "tab_id": "tab_main",
+              "title": "Shell",
+              "kind": "terminal",
+              "created_at": "1970-01-01T00:00:01Z",
+              "last_activated_at": "1970-01-01T00:00:01Z",
+              "last_activity_at": "1970-01-01T00:00:01Z",
+              "is_pinned": false,
+              "active_task": "inactive",
+              "live_snapshot": {
+                "pane_tree": {
+                  "node_id": "node_pane_1",
+                  "kind": "pane",
+                  "pane_slot_id": "pane_1"
+                },
+                "pane_slots": [{
+                  "pane_slot_id": "pane_1",
+                  "content_id": "content_pane_1"
+                }],
+                "contents": [{
+                  "content_id": "content_pane_1",
+                  "kind": "terminal",
+                  "title": "Shell",
+                  "payload": {
+                    "terminal": {
+                      "launch_target": "shell",
+                      "cwd": "/legacy",
+                      "title": "Shell"
+                    }
+                  }
+                }]
+              }
+            }]
+          }]
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let manifest = try? decoder.decode(
+            ShellContentWorkspaceManifest.self,
+            from: Data(json.utf8)
+        ) else {
+            fail("old content manifest without transcript snapshot must decode")
+        }
+
+        let payload = manifest.spaces.first?.tabs.first?.liveSnapshot?.contents.first?.payload.terminal
+        expect(payload?.cwd == "/legacy", "old manifest terminal payload must preserve cwd")
+        expect(
+            payload?.transcriptSnapshot == nil,
+            "old manifest terminal payload must treat absent transcript snapshot as nil"
+        )
+    }
+
+    private static func verifiesTerminalTranscriptSnapshotsAreBoundedThroughManifestRoundTrip() {
+        let oversizedRows = (0..<(TerminalTranscriptSnapshot.defaultMaxRows + 25)).map {
+            "row-\($0)"
+        }
+        let oversizedLine = String(
+            repeating: "x",
+            count: TerminalTranscriptSnapshot.defaultEncodedByteLimit + 128
+        )
+        let snapshot = TerminalTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/repo/app",
+            title: "make test",
+            dimensions: TerminalTranscriptDimensions(columns: 120, rows: 32),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 12, cursorRow: 20),
+            transcriptLines: oversizedRows + [oversizedLine],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "foreground_command",
+                program: "make",
+                argvPreview: ["make", "test"],
+                lastCommandExitCode: nil
+            ),
+            capturedAt: Date(timeIntervalSince1970: 90),
+            alternateScreen: false
+        )
+        let decodedSnapshot = roundTripTerminalTranscriptSnapshot(snapshot)
+
+        expect(decodedSnapshot?.contentID == "content_pane_1", "snapshot must preserve content identity")
+        expect(decodedSnapshot?.cwd == "/repo/app", "snapshot must preserve cwd")
+        expect(decodedSnapshot?.title == "make test", "snapshot must preserve terminal title")
+        expect(decodedSnapshot?.dimensions?.columns == 120, "snapshot must preserve terminal columns")
+        expect(decodedSnapshot?.viewport?.firstVisibleRow == 12, "snapshot must preserve viewport anchor")
+        expect(
+            decodedSnapshot?.transcriptLines.count ?? Int.max <= TerminalTranscriptSnapshot.defaultMaxRows,
+            "manifest round trip must enforce transcript row bounds"
+        )
+        expect(
+            decodedSnapshot?.truncation.encodedByteCount ?? Int.max
+                <= TerminalTranscriptSnapshot.defaultEncodedByteLimit,
+            "manifest round trip must enforce transcript byte bounds"
+        )
+        expect(
+            decodedSnapshot?.truncation.truncatedHead == true,
+            "bounded tail snapshot must record head truncation"
+        )
+        expect(
+            decodedSnapshot?.processSummary?.processState == "foreground_command",
+            "snapshot must preserve process summary"
+        )
+    }
+
+    private static func verifiesPinnedRestoreOverlaysMatchingTranscriptWithoutMutatingTemplate() {
+        let transcript = TerminalTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/live",
+            title: "live output",
+            dimensions: TerminalTranscriptDimensions(columns: 100, rows: 24),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 0, cursorRow: 1),
+            transcriptLines: ["prior output"],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "inactive",
+                program: "zsh",
+                argvPreview: nil,
+                lastCommandExitCode: 0
+            ),
+            capturedAt: Date(timeIntervalSince1970: 91),
+            alternateScreen: false
+        )
+        let tab = ShellContentWorkspaceTabRecord(
+            tabID: "tab_main",
+            title: "Pinned",
+            kind: .terminal,
+            createdAt: Date(timeIntervalSince1970: 91),
+            lastActivatedAt: Date(timeIntervalSince1970: 91),
+            lastActivityAt: Date(timeIntervalSince1970: 91),
+            isPinned: true,
+            pinSnapshot: contentRestoreSnapshot(
+                paneSlotID: "pane_1",
+                contentID: "content_pane_1",
+                cwd: "/pinned",
+                transcriptSnapshot: nil
+            ),
+            liveSnapshot: contentRestoreSnapshot(
+                paneSlotID: "pane_1",
+                contentID: "content_pane_1",
+                cwd: "/live",
+                transcriptSnapshot: transcript
+            ),
+            activeTask: .inactive
+        )
+
+        let restored = tab.restoreSnapshot(defaultWorkingDirectory: "/fallback")
+        let payload = terminalPayload(in: restored, paneSlotID: "pane_1")
+        expect(payload?.cwd == "/pinned", "pinned restore must keep explicit template cwd")
+        expect(
+            payload?.transcriptSnapshot?.transcriptLines == ["prior output"],
+            "matching live transcript must overlay onto pinned terminal restore"
+        )
+
+        let unmatched = ShellContentWorkspaceTabRecord(
+            tabID: "tab_main",
+            title: "Pinned",
+            kind: .terminal,
+            createdAt: Date(timeIntervalSince1970: 92),
+            lastActivatedAt: Date(timeIntervalSince1970: 92),
+            lastActivityAt: Date(timeIntervalSince1970: 92),
+            isPinned: true,
+            pinSnapshot: contentRestoreSnapshot(
+                paneSlotID: "pane_1",
+                contentID: "content_pane_1",
+                cwd: "/pinned",
+                transcriptSnapshot: nil
+            ),
+            liveSnapshot: contentRestoreSnapshot(
+                paneSlotID: "pane_2",
+                contentID: "content_pane_2",
+                cwd: "/live",
+                transcriptSnapshot: transcript
+            ),
+            activeTask: .inactive
+        )
+        let unmatchedPayload = terminalPayload(
+            in: unmatched.restoreSnapshot(defaultWorkingDirectory: "/fallback"),
+            paneSlotID: "pane_1"
+        )
+        expect(
+            unmatchedPayload?.transcriptSnapshot == nil,
+            "unmatched live transcript must not mutate a pinned restore template"
+        )
+    }
+
+    private static func verifiesWorkspaceManifestSyncCapturesLiveTerminalTranscript() {
+        let windowID = "manifest_transcript_capture_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let controller = makeController(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/repo/app",
+                now: Date(timeIntervalSince1970: 93)
+            )
+        )
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 2)
+        handle.commandOutputTextByRange[range] = "server ready\nlistening on 3000"
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: "content_pane_1",
+                paneID: "pane_1",
+                tabID: "tab_main",
+                logicalSize: CGSize(width: 100, height: 2),
+                backingSize: CGSize(width: 100, height: 2),
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: "npm run dev",
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: metadata(
+                    title: "npm run dev",
+                    cwd: "/repo/app",
+                    activeTaskState: .foregroundCommand
+                ),
+                surfaceState: AlanTerminalSurfaceStateSnapshot(
+                    readiness: .ready,
+                    terminalMode: .normalBuffer,
+                    scrollback: AlanTerminalScrollbackState(
+                        metrics: AlanTerminalScrollbackMetrics(
+                            totalRows: 2,
+                            visibleRows: 2,
+                            firstVisibleRow: 0,
+                            mode: .normalBuffer
+                        ),
+                        nativeScrollbarVisible: false,
+                        thumbRange: 0..<2
+                    ),
+                    search: nil,
+                    semanticCommands: .placeholder,
+                    readonly: false,
+                    secureInput: false,
+                    inputReady: true,
+                    rendererHealth: "ready",
+                    childExited: false,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 93)
+                ),
+                lastUpdatedAt: Date(timeIntervalSince1970: 93)
+            )
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "npm run dev", cwd: "/repo/app", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let transcript = terminalPayload(
+                in: savedManifest.spaces.first?.tabs.first?.liveSnapshot,
+                paneSlotID: "pane_1"
+              )?.transcriptSnapshot
+        else {
+            fail("workspace manifest sync must persist live terminal transcript snapshot")
+        }
+        expect(
+            transcript.transcriptLines == ["server ready", "listening on 3000"],
+            "workspace manifest transcript snapshot must preserve captured terminal output"
+        )
+        expect(transcript.cwd == "/repo/app", "workspace manifest transcript snapshot must preserve cwd")
+        expect(transcript.title == "npm run dev", "workspace manifest transcript snapshot must preserve title")
+    }
+
     private static func verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership() {
         let windowID = "manifest_tab_org_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
@@ -6029,6 +6803,7 @@ private enum ShellRuntimeMetadataTests {
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
+        closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -6047,6 +6822,7 @@ private enum ShellRuntimeMetadataTests {
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
+            closeConfirmationPresenter: closeConfirmationPresenter,
             appIsActiveProvider: { appIsActive }
         )
     }
@@ -6104,6 +6880,20 @@ private enum ShellRuntimeMetadataTests {
         }
     }
 
+    private final class FakeShellCloseConfirmationPresenter: ShellCloseConfirmationPresenting {
+        private var nextResponses: [Bool]
+        private(set) var impacts: [ShellCloseGuardImpact] = []
+
+        init(nextResponses: [Bool]) {
+            self.nextResponses = nextResponses
+        }
+
+        func confirmClose(impact: ShellCloseGuardImpact) -> Bool {
+            impacts.append(impact)
+            return nextResponses.isEmpty ? false : nextResponses.removeFirst()
+        }
+    }
+
     private static func manifestURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)-workspace.json")
@@ -6150,6 +6940,97 @@ private enum ShellRuntimeMetadataTests {
         paneSlotID: String
     ) -> ShellTerminalContentPayload? {
         contentRecord(in: snapshot, paneSlotID: paneSlotID)?.payload.terminal
+    }
+
+    private static func roundTripTerminalTranscriptSnapshot(
+        _ snapshot: TerminalTranscriptSnapshot
+    ) -> TerminalTranscriptSnapshot? {
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: 1,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_transcript_roundtrip",
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_main",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: Date(timeIntervalSince1970: 90),
+                    updatedAt: Date(timeIntervalSince1970: 90),
+                    tabs: [
+                        ShellContentWorkspaceTabRecord(
+                            tabID: "tab_main",
+                            title: "Shell",
+                            kind: .terminal,
+                            createdAt: Date(timeIntervalSince1970: 90),
+                            lastActivatedAt: Date(timeIntervalSince1970: 90),
+                            lastActivityAt: Date(timeIntervalSince1970: 90),
+                            isPinned: false,
+                            pinSnapshot: nil,
+                            liveSnapshot: contentRestoreSnapshot(
+                                paneSlotID: "pane_1",
+                                contentID: snapshot.contentID,
+                                cwd: snapshot.cwd,
+                                transcriptSnapshot: snapshot
+                            ),
+                            activeTask: .foregroundCommand
+                        )
+                    ]
+                )
+            ]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        guard let data = try? encoder.encode(manifest),
+              let decoded = try? decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        else {
+            fail("terminal transcript snapshot manifest must round-trip")
+        }
+        return decoded.spaces.first?.tabs.first?.liveSnapshot?.contents.first?
+            .payload.terminal?.transcriptSnapshot
+    }
+
+    private static func contentRestoreSnapshot(
+        paneSlotID: String,
+        contentID: String,
+        cwd: String?,
+        transcriptSnapshot: TerminalTranscriptSnapshot?
+    ) -> ShellContentTabRestoreSnapshot {
+        ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(paneSlotID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: paneSlotID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlotID,
+                    contentID: contentID
+                )
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: contentID,
+                    kind: .terminal,
+                    title: "Shell",
+                    payload: .terminal(
+                        ShellTerminalContentPayload(
+                            launchTarget: .shell,
+                            cwd: cwd,
+                            title: "Shell",
+                            transcriptSnapshot: transcriptSnapshot
+                        )
+                    )
+                )
+            ]
+        )
     }
 
     private static func contentRecord(

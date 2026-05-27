@@ -213,6 +213,9 @@ terminal content.
 - Ghostty readiness discovery for local developer integration
 - Live Ghostty-backed host path with runtime diagnostics, fallback config, and
   command-resolution inspection
+- Bounded terminal transcript snapshots can seed restarted terminal panes with
+  prior readable history, while true PTY/process survival and daemon-backed
+  terminal attach remain future work
 - External Ghostty artifact cache plus ignored local links and app-bundled
   resources/terminfo
 - Window-scoped file/socket shell control plane with pane lifecycle events,

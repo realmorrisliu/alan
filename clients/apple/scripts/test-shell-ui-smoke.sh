@@ -68,12 +68,18 @@ KEEP_RUNNING="${ALAN_UI_SMOKE_KEEP_RUNNING:-0}"
 KEEP_RUNTIME_TMP="${ALAN_UI_SMOKE_KEEP_RUNTIME_TMP:-0}"
 RUN_TERMINAL_STEPS="${ALAN_UI_SMOKE_TERMINAL_STEPS:-auto}"
 UI_SCRIPTING_STEPS="${ALAN_UI_SMOKE_UI_SCRIPTING_STEPS:-auto}"
+RUN_RESTART_RESTORE_STEPS="${ALAN_UI_SMOKE_RESTART_RESTORE_STEPS:-auto}"
 REQUIRE_TERMINAL_STEPS="${ALAN_REQUIRE_TERMINAL_UI_SMOKE:-0}"
 REQUIRE_UI_SCRIPTING_STEPS="${ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE:-0}"
+REQUIRE_RESTART_RESTORE_STEPS="${ALAN_REQUIRE_RESTART_RESTORE_UI_SMOKE:-0}"
 SMOKE_BUNDLE_ID="${ALAN_UI_SMOKE_BUNDLE_ID:-}"
 SMOKE_DISPLAY_NAME="${ALAN_UI_SMOKE_DISPLAY_NAME:-Alan UI Smoke}"
 SMOKE_HOME="$OUTPUT_DIR/home"
 MANIFEST_PATH="$OUTPUT_DIR/manifest.txt"
+RESTART_RESTORE_CWD="$OUTPUT_DIR/restart-restore-cwd"
+RESTART_RESTORE_BEFORE_TOKEN="alan-ui-smoke-restart-before"
+RESTART_RESTORE_AFTER_TOKEN="alan-ui-smoke-restart-after"
+RESTART_RESTORE_PWD_FILE="alan-ui-smoke-after-pwd.txt"
 APP_PID=""
 CAPTURE_INDEX=0
 CONTROL_INDEX=0
@@ -99,6 +105,8 @@ Options:
   --keep-running              Leave the launched app running after the smoke flow.
   --terminal-steps <mode>     auto, always, or never. Default: auto.
   --ui-scripting-steps <mode> auto, always, or never. Default: auto.
+  --restart-restore-steps <mode>
+                               auto, always, or never. Default: auto.
   --help                      Show this help text.
 
 Environment:
@@ -109,12 +117,16 @@ Environment:
 
   ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE=1 makes command UI, keyboard switching,
   and pane-scoped Find checks fail unless Accessibility is available.
+
+  ALAN_REQUIRE_RESTART_RESTORE_UI_SMOKE=1 makes restart transcript restore
+  checks fail unless terminal delivery and Accessibility are both available.
 USAGE
 }
 
 refresh_derived_paths() {
     SMOKE_HOME="$OUTPUT_DIR/home"
     MANIFEST_PATH="$OUTPUT_DIR/manifest.txt"
+    RESTART_RESTORE_CWD="$OUTPUT_DIR/restart-restore-cwd"
     if [[ "$CUSTOM_SMOKE_TMPDIR" != "1" ]]; then
         SMOKE_TMPDIR="$OUTPUT_DIR/tmp"
     fi
@@ -160,6 +172,11 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || fail "missing value after --ui-scripting-steps"
             UI_SCRIPTING_STEPS="$1"
+            ;;
+        --restart-restore-steps)
+            shift
+            [[ $# -gt 0 ]] || fail "missing value after --restart-restore-steps"
+            RUN_RESTART_RESTORE_STEPS="$1"
             ;;
         --help|-h)
             usage
@@ -234,6 +251,15 @@ case "$UI_SCRIPTING_STEPS" in
     *) fail "--ui-scripting-steps must be auto, always, or never" ;;
 esac
 
+if [[ "$REQUIRE_RESTART_RESTORE_STEPS" == "1" && "$RUN_RESTART_RESTORE_STEPS" == "auto" ]]; then
+    RUN_RESTART_RESTORE_STEPS=always
+fi
+
+case "$RUN_RESTART_RESTORE_STEPS" in
+    auto|always|never) ;;
+    *) fail "--restart-restore-steps must be auto, always, or never" ;;
+esac
+
 case "$LAUNCH_MODE" in
     open|direct) ;;
     *) fail "ALAN_UI_SMOKE_LAUNCH_MODE must be open or direct" ;;
@@ -265,6 +291,8 @@ fi
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$SMOKE_HOME"
 mkdir -p "$SMOKE_HOME"
+rm -rf "$RESTART_RESTORE_CWD"
+mkdir -p "$RESTART_RESTORE_CWD"
 if [[ "$CUSTOM_SMOKE_TMPDIR" != "1" ]]; then
     rm -rf "$SMOKE_TMPDIR"
 fi
@@ -352,6 +380,10 @@ send_control_json() {
     printf '%s\n' "$result_path"
 }
 
+json_escape_fragment() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
 set_launch_env() {
     local key="$1"
     local value="$2"
@@ -393,6 +425,18 @@ wait_for_app_pid() {
         sleep 0.2
     done
     fail "timed out waiting for launched alan smoke app process"
+}
+
+wait_for_app_exit() {
+    local label="$1"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while [[ -n "${APP_PID:-}" ]] && kill -0 "$APP_PID" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            fail "timed out waiting for alan smoke app to exit after $label"
+        fi
+        sleep 0.2
+    done
+    APP_PID=""
 }
 
 install_launch_environment() {
@@ -471,14 +515,69 @@ control_pane_split() {
 
 control_terminal_send_text() {
     local pane_slot_id="$1"
+    control_terminal_send_text_payload "$pane_slot_id" "printf \\\"alan-ui-smoke-input-ok\\\\n\\\"\\n" "terminal-send"
+}
+
+control_terminal_send_text_payload() {
+    local pane_slot_id="$1"
+    local text_json="$2"
+    local label="${3:-terminal-send}"
     local request_id
-    request_id=$(next_request_id terminal-send)
+    request_id=$(next_request_id "$label")
     send_control_json "$request_id" "{
   \"request_id\": \"$request_id\",
   \"command\": \"terminal.send_text\",
   \"pane_slot_id\": \"$pane_slot_id\",
-  \"text\": \"printf \\\"alan-ui-smoke-input-ok\\\\n\\\"\\n\"
+  \"text\": \"$text_json\"
 }"
+}
+
+control_tab_open_cwd() {
+    local cwd="$1"
+    local request_id
+    request_id=$(next_request_id tab-open-cwd)
+    send_control_json "$request_id" "{
+  \"request_id\": \"$request_id\",
+  \"command\": \"tab.open\",
+  \"title\": \"Restart Restore\",
+  \"cwd\": \"$(json_escape_fragment "$cwd")\"
+}"
+}
+
+send_terminal_payload_until_applied() {
+    local pane_slot_id="$1"
+    local text_json="$2"
+    local label="$3"
+    local result_path=""
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        result_path=$(control_terminal_send_text_payload "$pane_slot_id" "$text_json" "$label")
+        if [[ "$(json_get "$result_path" applied)" == "true" ]]; then
+            printf '%s\n' "$result_path"
+            return 0
+        fi
+        sleep 0.5
+    done
+    printf '%s\n' "$result_path"
+    return 1
+}
+
+workspace_manifest_path() {
+    printf '%s\n' "$SMOKE_APP_SUPPORT_DIR/alan-macos-dev/shell-workspace-window_main.json"
+}
+
+wait_for_file_text() {
+    local path="$1"
+    local needle="$2"
+    local label="$3"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if [[ -f "$path" ]] && grep -F "$needle" "$path" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label"
 }
 
 wait_for_window_capture() {
@@ -576,8 +675,43 @@ on run argv
             keystroke "]" using {command down, shift down}
         else if actionName is "find" then
             keystroke "f" using command down
+        else if actionName is "return" then
+            key code 36
         else if actionName is "escape" then
             key code 53
+        else if actionName is "quit-confirm" then
+            set clickedQuit to false
+            repeat with candidateMenuBarItem in menu bar items of menu bar 1 of targetProcess
+                repeat with candidateMenuItem in menu items of menu 1 of candidateMenuBarItem
+                    if (name of candidateMenuItem starts with "Quit") then
+                        click candidateMenuItem
+                        set clickedQuit to true
+                        exit repeat
+                    end if
+                end repeat
+                if clickedQuit then exit repeat
+            end repeat
+            if not clickedQuit then error "quit menu item not found"
+            set closeDeadline to (current date) + timeoutSeconds
+            repeat
+                set matches to every process whose unix id is targetPID
+                if (count of matches) = 0 then error "alan exited before close confirmation"
+                set targetProcess to item 1 of matches
+                repeat with candidateWindow in windows of targetProcess
+                    if exists button "Close" of candidateWindow then
+                        click button "Close" of candidateWindow
+                        return
+                    end if
+                    repeat with candidateSheet in sheets of candidateWindow
+                        if exists button "Close" of candidateSheet then
+                            click button "Close" of candidateSheet
+                            return
+                        end if
+                    end repeat
+                end repeat
+                if (current date) > closeDeadline then error "close confirmation did not appear"
+                delay 0.25
+            end repeat
         else
             error "unknown action: " & actionName
         end if
@@ -613,6 +747,103 @@ run_ui_step() {
     return 1
 }
 
+run_restart_restore_step() {
+    local before_token="$RESTART_RESTORE_BEFORE_TOKEN-$$"
+    local after_token="$RESTART_RESTORE_AFTER_TOKEN-$$"
+    local pwd_file="$RESTART_RESTORE_CWD/$RESTART_RESTORE_PWD_FILE"
+    local manifest_path
+    local tab_result
+    local pane_id
+    local cwd_json
+    local before_json
+    local after_json
+    local terminal_result
+    local state_result
+    local restored_pane_id
+    local cwd_result
+
+    manifest_path=$(workspace_manifest_path)
+    tab_result=$(control_tab_open_cwd "$RESTART_RESTORE_CWD")
+    require_control_applied "$tab_result" "restart restore tab.open"
+    pane_id=$(json_get "$tab_result" pane_id)
+    [[ -n "$pane_id" ]] || fail "restart restore tab.open did not include a pane target"
+
+    cwd_json=$(json_escape_fragment "$RESTART_RESTORE_CWD")
+    before_json=$(json_escape_fragment "$before_token")
+    printf -v terminal_payload 'cd \\"%s\\"; echo %s; sleep 30\\n' \
+        "$cwd_json" "$before_json"
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$pane_id" \
+        "$terminal_payload" \
+        "restart-before")
+    then
+        require_control_applied "$terminal_result" "restart restore terminal.send_text before quit"
+    fi
+    require_control_applied "$terminal_result" "restart restore terminal.send_text before quit"
+
+    sleep 1
+    capture_step restart-before-quit
+
+    run_ui_step quit-confirm \
+        || fail "restart restore quit confirmation failed"
+    wait_for_app_exit "restart restore confirmed quit"
+
+    wait_for_file "$manifest_path" "workspace manifest after restart restore quit"
+    wait_for_file_text \
+        "$manifest_path" \
+        "$before_token" \
+        "persisted restart transcript token"
+    append_manifest "restart_restore_manifest=$manifest_path"
+    append_manifest "restart_restore_prior_output=$before_token"
+
+    info "relaunching alan smoke app for restart restore"
+    if [[ "$LAUNCH_MODE" == "direct" ]]; then
+        launch_smoke_app_direct
+    else
+        launch_smoke_app_open
+    fi
+    append_manifest "relaunch_pid=$APP_PID"
+    wait_for_window_capture
+    wait_for_file "$STATE_PATH" "shell control-plane state after relaunch"
+    sleep 1
+
+    state_result=$(control_state)
+    require_control_applied "$state_result" "restart restore state after relaunch"
+    wait_for_file_text \
+        "$state_result" \
+        "$before_token" \
+        "restored control-state transcript token"
+    capture_step restart-restore
+
+    restored_pane_id=$(json_get "$state_result" focused_pane_id)
+    [[ -n "$restored_pane_id" ]] || fail "restart restore relaunch did not expose a focused pane"
+
+    rm -f "$pwd_file"
+    after_json=$(json_escape_fragment "$after_token")
+    printf -v terminal_payload 'pwd > %s; echo %s' \
+        "$RESTART_RESTORE_PWD_FILE" "$after_json"
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$restored_pane_id" \
+        "$terminal_payload" \
+        "restart-after")
+    then
+        require_control_applied "$terminal_result" "restart restore terminal.send_text after relaunch"
+    fi
+    require_control_applied "$terminal_result" "restart restore terminal.send_text after relaunch"
+    run_ui_step return \
+        || fail "restart restore return key delivery failed"
+
+    wait_for_file "$pwd_file" "restart restore cwd proof file"
+    cwd_result=$(cat "$pwd_file")
+    [[ "$cwd_result" == "$RESTART_RESTORE_CWD" ]] \
+        || fail "restored terminal cwd mismatch: expected $RESTART_RESTORE_CWD, got ${cwd_result:-<empty>}"
+
+    append_manifest "restart_restore_after_input=$after_token"
+    append_manifest "restart_restore_cwd_verified=$cwd_result"
+    sleep 1
+    capture_step restart-after-input
+}
+
 ui_scripting_enabled=0
 case "$UI_SCRIPTING_STEPS" in
     always)
@@ -646,6 +877,25 @@ if [[ "$REQUIRE_TERMINAL_STEPS" == "1" && "$terminal_steps_enabled" != "1" ]]; t
     fail "terminal UI smoke requested but Ghostty artifacts are not prepared; run clients/apple/scripts/setup-local-ghosttykit.sh"
 fi
 
+restart_restore_steps_enabled=0
+case "$RUN_RESTART_RESTORE_STEPS" in
+    always)
+        restart_restore_steps_enabled=1
+        ;;
+    never)
+        restart_restore_steps_enabled=0
+        ;;
+    auto)
+        if [[ "$terminal_steps_enabled" == "1" && "$ui_scripting_enabled" == "1" ]]; then
+            restart_restore_steps_enabled=1
+        fi
+        ;;
+esac
+
+if [[ "$REQUIRE_RESTART_RESTORE_STEPS" == "1" && "$restart_restore_steps_enabled" != "1" ]]; then
+    fail "restart transcript restore smoke requested but terminal delivery or Accessibility is unavailable"
+fi
+
 if [[ "$SKIP_BUILD" != "1" ]]; then
     info "building alan-macos into $DERIVED_DATA"
     xcodebuild \
@@ -673,6 +923,7 @@ append_manifest "bundle_id=$SMOKE_BUNDLE_ID"
 append_manifest "control_namespace=$CONTROL_NAMESPACE"
 append_manifest "terminal_steps=$terminal_steps_enabled"
 append_manifest "ui_scripting_steps=$ui_scripting_enabled"
+append_manifest "restart_restore_steps=$restart_restore_steps_enabled"
 
 wait_for_window_capture
 wait_for_file "$STATE_PATH" "shell control-plane state"
@@ -754,6 +1005,12 @@ if [[ "$terminal_steps_enabled" == "1" ]]; then
     fi
 else
     append_manifest "skipped_terminal_steps=Ghostty artifacts were not prepared"
+fi
+
+if [[ "$restart_restore_steps_enabled" == "1" ]]; then
+    run_restart_restore_step
+else
+    append_manifest "skipped_restart_restore_steps=terminal delivery or Accessibility was unavailable"
 fi
 
 if [[ "$ui_scripting_enabled" == "1" ]]; then

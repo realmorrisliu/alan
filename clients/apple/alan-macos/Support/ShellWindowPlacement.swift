@@ -380,6 +380,74 @@ enum ShellWindowDoubleClickZoomHitTesting {
     }
 }
 
+struct ShellWindowCloseGuardView: NSViewRepresentable {
+    let shouldClose: @MainActor () -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(shouldClose: shouldClose)
+    }
+
+    func makeNSView(context: Context) -> ShellWindowCloseGuardNSView {
+        ShellWindowCloseGuardNSView(coordinator: context.coordinator)
+    }
+
+    func updateNSView(_ nsView: ShellWindowCloseGuardNSView, context: Context) {
+        context.coordinator.shouldClose = shouldClose
+        nsView.resolveWindowIfNeeded()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSWindowDelegate {
+        var shouldClose: @MainActor () -> Bool
+        weak var previousDelegate: NSWindowDelegate?
+
+        init(shouldClose: @escaping @MainActor () -> Bool) {
+            self.shouldClose = shouldClose
+        }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard shouldClose() else { return false }
+            if let previousDelegate,
+               previousDelegate !== self,
+               previousDelegate.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:)))
+            {
+                return previousDelegate.windowShouldClose?(sender) ?? true
+            }
+            return true
+        }
+    }
+}
+
+final class ShellWindowCloseGuardNSView: NSView {
+    private let coordinator: ShellWindowCloseGuardView.Coordinator
+    private weak var observedWindow: NSWindow?
+
+    init(coordinator: ShellWindowCloseGuardView.Coordinator) {
+        self.coordinator = coordinator
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resolveWindowIfNeeded()
+    }
+
+    func resolveWindowIfNeeded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            guard self.observedWindow !== window else { return }
+            self.observedWindow = window
+            self.coordinator.previousDelegate = window.delegate
+            window.delegate = self.coordinator
+        }
+    }
+}
+
 final class ShellWindowPlacementNSView: NSView {
     private var appearanceMode: ShellAppearanceMode
     private var chromeSurface: ShellWindowChromeSurface

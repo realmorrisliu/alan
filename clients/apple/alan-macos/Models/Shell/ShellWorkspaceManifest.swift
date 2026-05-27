@@ -313,7 +313,7 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
 
     func restoreSnapshot(defaultWorkingDirectory: String) -> ShellContentTabRestoreSnapshot {
         if isPinned, let pinSnapshot {
-            return pinSnapshot
+            return pinSnapshot.overlayingTerminalTranscriptSnapshots(from: liveSnapshot)
         }
 
         if let liveSnapshot {
@@ -378,6 +378,51 @@ struct ShellContentTabRestoreSnapshot: Codable, Equatable {
         case paneTree = "pane_tree"
         case paneSlots = "pane_slots"
         case contents
+    }
+}
+
+extension ShellContentTabRestoreSnapshot {
+    func overlayingTerminalTranscriptSnapshots(
+        from liveSnapshot: ShellContentTabRestoreSnapshot?
+    ) -> ShellContentTabRestoreSnapshot {
+        guard let liveSnapshot else { return self }
+        let liveTranscriptsByContentID = Dictionary(
+            uniqueKeysWithValues: liveSnapshot.contents.compactMap { content in
+                content.payload.terminal?.transcriptSnapshot.map { (content.contentID, $0) }
+            }
+        )
+        guard !liveTranscriptsByContentID.isEmpty else { return self }
+
+        return overlayingTerminalTranscriptSnapshots(liveTranscriptsByContentID)
+    }
+
+    func overlayingTerminalTranscriptSnapshots(
+        _ transcriptsByContentID: [String: TerminalTranscriptSnapshot]
+    ) -> ShellContentTabRestoreSnapshot {
+        guard !transcriptsByContentID.isEmpty else { return self }
+
+        var restored = self
+        restored.contents = contents.map { content in
+            guard let terminalPayload = content.payload.terminal,
+                  let transcriptSnapshot = transcriptsByContentID[content.contentID]
+            else {
+                return content
+            }
+            return ShellContentRestoreRecord(
+                contentID: content.contentID,
+                kind: content.kind,
+                title: content.title,
+                payload: .terminal(
+                    ShellTerminalContentPayload(
+                        launchTarget: terminalPayload.launchTarget,
+                        cwd: terminalPayload.cwd,
+                        title: terminalPayload.title,
+                        transcriptSnapshot: terminalPayload.transcriptSnapshot ?? transcriptSnapshot
+                    )
+                )
+            )
+        }
+        return restored
     }
 }
 
@@ -685,7 +730,8 @@ struct ShellWorkspaceMaterializer {
                 ShellTerminalContentPayload(
                     launchTarget: terminalPayload.launchTarget,
                     cwd: terminalPayload.cwd ?? defaultWorkingDirectory,
-                    title: terminalPayload.title
+                    title: terminalPayload.title,
+                    transcriptSnapshot: terminalPayload.transcriptSnapshot
                 )
             )
         } else {

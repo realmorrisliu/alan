@@ -175,15 +175,242 @@ struct ShellContentRendererState: Codable, Equatable {
     }
 }
 
+struct TerminalTranscriptDimensions: Codable, Equatable {
+    let columns: Int
+    let rows: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case columns
+        case rows
+    }
+}
+
+struct TerminalTranscriptViewport: Codable, Equatable {
+    let firstVisibleRow: Int?
+    let cursorRow: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case firstVisibleRow = "first_visible_row"
+        case cursorRow = "cursor_row"
+    }
+}
+
+struct TerminalTranscriptProcessSummary: Codable, Equatable {
+    let processState: String?
+    let program: String?
+    let argvPreview: [String]?
+    let lastCommandExitCode: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case processState = "process_state"
+        case program
+        case argvPreview = "argv_preview"
+        case lastCommandExitCode = "last_command_exit_code"
+    }
+}
+
+struct TerminalTranscriptTruncationMetadata: Codable, Equatable {
+    let originalRowCount: Int
+    let storedRowCount: Int
+    let rowLimit: Int
+    let encodedByteLimit: Int
+    let encodedByteCount: Int
+    let truncatedHead: Bool
+    let truncatedBytes: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case originalRowCount = "original_row_count"
+        case storedRowCount = "stored_row_count"
+        case rowLimit = "row_limit"
+        case encodedByteLimit = "encoded_byte_limit"
+        case encodedByteCount = "encoded_byte_count"
+        case truncatedHead = "truncated_head"
+        case truncatedBytes = "truncated_bytes"
+    }
+}
+
+struct TerminalTranscriptSnapshot: Codable, Equatable {
+    static let defaultMaxRows = 500
+    static let defaultEncodedByteLimit = 64 * 1024
+
+    let contentID: String
+    let cwd: String?
+    let title: String?
+    let dimensions: TerminalTranscriptDimensions?
+    let viewport: TerminalTranscriptViewport?
+    let transcriptLines: [String]
+    let processSummary: TerminalTranscriptProcessSummary?
+    let capturedAt: Date
+    let truncation: TerminalTranscriptTruncationMetadata
+    let alternateScreen: Bool
+
+    init(
+        contentID: String,
+        cwd: String?,
+        title: String?,
+        dimensions: TerminalTranscriptDimensions?,
+        viewport: TerminalTranscriptViewport?,
+        transcriptLines: [String],
+        processSummary: TerminalTranscriptProcessSummary?,
+        capturedAt: Date,
+        truncation: TerminalTranscriptTruncationMetadata? = nil,
+        alternateScreen: Bool
+    ) {
+        self.contentID = contentID
+        self.cwd = cwd
+        self.title = title
+        self.dimensions = dimensions
+        self.viewport = viewport
+        self.transcriptLines = transcriptLines
+        self.processSummary = processSummary
+        self.capturedAt = capturedAt
+        self.truncation = truncation ?? TerminalTranscriptTruncationMetadata(
+            originalRowCount: transcriptLines.count,
+            storedRowCount: transcriptLines.count,
+            rowLimit: Self.defaultMaxRows,
+            encodedByteLimit: Self.defaultEncodedByteLimit,
+            encodedByteCount: Self.encodedByteCount(for: transcriptLines),
+            truncatedHead: false,
+            truncatedBytes: false
+        )
+        self.alternateScreen = alternateScreen
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contentID = "content_id"
+        case cwd
+        case title
+        case dimensions
+        case viewport
+        case transcriptLines = "transcript_lines"
+        case processSummary = "process_summary"
+        case capturedAt = "captured_at"
+        case truncation
+        case alternateScreen = "alternate_screen"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        contentID = try container.decode(String.self, forKey: .contentID)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        dimensions = try container.decodeIfPresent(TerminalTranscriptDimensions.self, forKey: .dimensions)
+        viewport = try container.decodeIfPresent(TerminalTranscriptViewport.self, forKey: .viewport)
+        transcriptLines = try container.decodeIfPresent([String].self, forKey: .transcriptLines) ?? []
+        processSummary = try container.decodeIfPresent(
+            TerminalTranscriptProcessSummary.self,
+            forKey: .processSummary
+        )
+        capturedAt = try container.decode(Date.self, forKey: .capturedAt)
+        truncation = try container.decodeIfPresent(
+            TerminalTranscriptTruncationMetadata.self,
+            forKey: .truncation
+        ) ?? TerminalTranscriptTruncationMetadata(
+            originalRowCount: transcriptLines.count,
+            storedRowCount: transcriptLines.count,
+            rowLimit: Self.defaultMaxRows,
+            encodedByteLimit: Self.defaultEncodedByteLimit,
+            encodedByteCount: Self.encodedByteCount(for: transcriptLines),
+            truncatedHead: false,
+            truncatedBytes: false
+        )
+        alternateScreen = try container.decodeIfPresent(Bool.self, forKey: .alternateScreen) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        let bounded = boundedForManifest()
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(bounded.contentID, forKey: .contentID)
+        try container.encodeIfPresent(bounded.cwd, forKey: .cwd)
+        try container.encodeIfPresent(bounded.title, forKey: .title)
+        try container.encodeIfPresent(bounded.dimensions, forKey: .dimensions)
+        try container.encodeIfPresent(bounded.viewport, forKey: .viewport)
+        try container.encode(bounded.transcriptLines, forKey: .transcriptLines)
+        try container.encodeIfPresent(bounded.processSummary, forKey: .processSummary)
+        try container.encode(bounded.capturedAt, forKey: .capturedAt)
+        try container.encode(bounded.truncation, forKey: .truncation)
+        try container.encode(bounded.alternateScreen, forKey: .alternateScreen)
+    }
+
+    func boundedForManifest(
+        maxRows: Int = TerminalTranscriptSnapshot.defaultMaxRows,
+        maxEncodedBytes: Int = TerminalTranscriptSnapshot.defaultEncodedByteLimit
+    ) -> TerminalTranscriptSnapshot {
+        let rowLimit = max(0, maxRows)
+        let byteLimit = max(0, maxEncodedBytes)
+        let originalRowCount = transcriptLines.count
+        var lines = Array(transcriptLines.suffix(rowLimit))
+        var truncatedHead = originalRowCount > lines.count || truncation.truncatedHead
+        var truncatedBytes = truncation.truncatedBytes
+
+        while Self.encodedByteCount(for: lines) > byteLimit, !lines.isEmpty {
+            if lines.count == 1 {
+                let trimmed = Self.utf8Suffix(lines[0], byteLimit: byteLimit)
+                truncatedBytes = trimmed != lines[0] || truncatedBytes
+                lines = trimmed.isEmpty ? [] : [trimmed]
+                break
+            }
+            lines.removeFirst()
+            truncatedHead = true
+            truncatedBytes = true
+        }
+
+        return TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: cwd,
+            title: title,
+            dimensions: dimensions,
+            viewport: viewport,
+            transcriptLines: lines,
+            processSummary: processSummary,
+            capturedAt: capturedAt,
+            truncation: TerminalTranscriptTruncationMetadata(
+                originalRowCount: originalRowCount,
+                storedRowCount: lines.count,
+                rowLimit: rowLimit,
+                encodedByteLimit: byteLimit,
+                encodedByteCount: Self.encodedByteCount(for: lines),
+                truncatedHead: truncatedHead,
+                truncatedBytes: truncatedBytes
+            ),
+            alternateScreen: alternateScreen
+        )
+    }
+
+    private static func encodedByteCount(for lines: [String]) -> Int {
+        lines.joined(separator: "\n").utf8.count
+    }
+
+    private static func utf8Suffix(_ text: String, byteLimit: Int) -> String {
+        guard byteLimit > 0 else { return "" }
+        guard text.utf8.count > byteLimit else { return text }
+        return String(decoding: Array(text.utf8.suffix(byteLimit)), as: UTF8.self)
+    }
+}
+
 struct ShellTerminalContentPayload: Codable, Equatable {
     let launchTarget: ShellLaunchTarget
     let cwd: String?
     let title: String?
+    let transcriptSnapshot: TerminalTranscriptSnapshot?
+
+    init(
+        launchTarget: ShellLaunchTarget,
+        cwd: String?,
+        title: String?,
+        transcriptSnapshot: TerminalTranscriptSnapshot? = nil
+    ) {
+        self.launchTarget = launchTarget
+        self.cwd = cwd
+        self.title = title
+        self.transcriptSnapshot = transcriptSnapshot
+    }
 
     private enum CodingKeys: String, CodingKey {
         case launchTarget = "launch_target"
         case cwd
         case title
+        case transcriptSnapshot = "transcript_snapshot"
     }
 }
 
@@ -1066,7 +1293,32 @@ extension ShellContentStateSnapshot {
                 return content
             }
 
-            return ShellContentInstance.projectingTerminalPane(pane, contentID: content.contentID)
+            let projected = ShellContentInstance.projectingTerminalPane(
+                pane,
+                contentID: content.contentID
+            )
+            guard let transcriptSnapshot = content.payload.terminal?.transcriptSnapshot,
+                  let terminalPayload = projected.payload.terminal
+            else {
+                return projected
+            }
+            return ShellContentInstance(
+                contentID: projected.contentID,
+                kind: projected.kind,
+                title: projected.title,
+                iconName: projected.iconName,
+                capabilities: projected.capabilities,
+                payload: .terminal(
+                    ShellTerminalContentPayload(
+                        launchTarget: terminalPayload.launchTarget,
+                        cwd: terminalPayload.cwd,
+                        title: terminalPayload.title,
+                        transcriptSnapshot: transcriptSnapshot
+                    )
+                ),
+                lifecycle: projected.lifecycle,
+                rendererState: projected.rendererState
+            )
         }
         let terminalPanes = projectedPanes.filter { !explicitPaneSlotIDs.contains($0.paneID) }
         let paneSlots = explicitPaneSlots + terminalPanes.map(ShellPaneSlot.projectingTerminalPane)

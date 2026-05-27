@@ -30,6 +30,9 @@ private enum TerminalRuntimeServiceTests {
         verifiesUnavailableRuntimeDoesNotDeliverTextAndRecordsSnapshot()
         verifiesQueuedAndTimeoutDeliveryStates()
         verifiesControlResponseCarriesDeliveryDiagnostics()
+        verifiesRuntimeServiceCapturesLiveTranscriptSnapshot()
+        verifiesRuntimeServiceUsesRingBufferFallbackAndReportsFailures()
+        verifiesRuntimeServiceSeedsRestoredTranscriptBeforeInput()
         verifiesTeardownOnce()
         verifiesFinalizePanesOnlyReleasesStaleHandles()
         verifiesBootstrapFailureDiagnostics()
@@ -689,6 +692,115 @@ private enum TerminalRuntimeServiceTests {
         expect(json.contains("\"runtime_phase\":\"failed\""), "control response must encode runtime phase")
     }
 
+    private static func verifiesRuntimeServiceCapturesLiveTranscriptSnapshot() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_capture_live"
+        let handle = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_capture",
+            bootProfile: sampleBootProfile(workingDirectory: "/repo/app")
+        ) as! FakeAlanTerminalSurfaceHandle
+        let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 2)
+        handle.commandOutputTextByRange[range] = "build started\nbuild passed"
+        handle.updateHostRuntimeSnapshot(
+            transcriptRuntimeSnapshot(
+                contentID: contentID,
+                paneID: "pane_capture",
+                cwd: "/repo/app",
+                title: "make test",
+                totalRows: 2,
+                visibleRows: 2,
+                firstVisibleRow: 0,
+                mode: .normalBuffer
+            )
+        )
+
+        let result = service.captureTranscriptSnapshot(forTerminalContentID: contentID)
+        guard case .captured(let snapshot) = result else {
+            fail("live terminal transcript capture must succeed")
+        }
+        expect(snapshot.contentID == contentID, "captured snapshot must be keyed by content identity")
+        expect(snapshot.cwd == "/repo/app", "captured snapshot must preserve cwd")
+        expect(snapshot.title == "make test", "captured snapshot must preserve terminal title")
+        expect(snapshot.transcriptLines == ["build started", "build passed"], "capture must preserve text lines")
+        expect(snapshot.dimensions?.rows == 2, "capture must preserve visible row dimensions")
+        expect(snapshot.viewport?.firstVisibleRow == 0, "capture must preserve viewport anchor")
+        expect(snapshot.alternateScreen == false, "normal-buffer capture must not report alternate screen")
+    }
+
+    private static func verifiesRuntimeServiceUsesRingBufferFallbackAndReportsFailures() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_capture_fallback"
+        let handle = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_capture",
+            bootProfile: sampleBootProfile(workingDirectory: "/repo/fallback")
+        ) as! FakeAlanTerminalSurfaceHandle
+        handle.recordTranscriptOutput("fallback one\nfallback two")
+        handle.updateHostRuntimeSnapshot(
+            transcriptRuntimeSnapshot(
+                contentID: contentID,
+                paneID: "pane_capture",
+                cwd: "/repo/fallback",
+                title: "zsh",
+                totalRows: 2,
+                visibleRows: 2,
+                firstVisibleRow: 0,
+                mode: .alternateScreen
+            )
+        )
+
+        let fallback = service.captureTranscriptSnapshot(forTerminalContentID: contentID)
+        guard case .captured(let snapshot) = fallback else {
+            fail("runtime transcript capture must fall back to service-owned ring buffer")
+        }
+        expect(snapshot.transcriptLines == ["fallback one", "fallback two"], "fallback must preserve ring-buffer text")
+        expect(snapshot.alternateScreen == true, "fallback capture must retain alternate-screen metadata")
+
+        let missing = service.captureTranscriptSnapshot(forTerminalContentID: "content_missing")
+        guard case .failed(let failure) = missing else {
+            fail("missing runtime transcript capture must report explicit failure")
+        }
+        expect(failure.contentID == "content_missing", "capture failure must preserve requested content id")
+        expect(failure.code == .missingRuntime, "missing runtime must use stable failure code")
+    }
+
+    private static func verifiesRuntimeServiceSeedsRestoredTranscriptBeforeInput() {
+        let service = FakeAlanTerminalRuntimeService()
+        let contentID = "content_seeded"
+        let snapshot = TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: "/repo/restored",
+            title: "restored shell",
+            dimensions: TerminalTranscriptDimensions(columns: 80, rows: 24),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 0, cursorRow: 1),
+            transcriptLines: ["previous output"],
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "inactive",
+                program: "zsh",
+                argvPreview: nil,
+                lastCommandExitCode: 0
+            ),
+            capturedAt: Date(timeIntervalSince1970: 120),
+            alternateScreen: false
+        )
+
+        service.seedRestoredTranscriptSnapshot(snapshot, forTerminalContentID: contentID)
+        let handle = service.surfaceHandle(
+            forTerminalContentID: contentID,
+            mountedAtPaneID: "pane_seeded",
+            bootProfile: sampleBootProfile(workingDirectory: "/repo/restored")
+        ) as! FakeAlanTerminalSurfaceHandle
+
+        expect(
+            handle.seededTranscriptSnapshot?.transcriptLines == ["previous output"],
+            "surface handle must receive restored transcript before input"
+        )
+        let delivery = service.sendText(toTerminalContentID: contentID, text: "echo fresh\n")
+        expect(delivery.applied, "seeded restored runtime must still accept fresh shell input")
+        expect(handle.deliveredText == ["echo fresh\n"], "fresh input must route to the seeded runtime")
+    }
+
     private static func verifiesTeardownOnce() {
         let service = FakeAlanTerminalRuntimeService()
         let handle = service.surfaceHandle(for: "pane_1", bootProfile: nil) as! FakeAlanTerminalSurfaceHandle
@@ -790,6 +902,66 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
+    private static func transcriptRuntimeSnapshot(
+        contentID: String,
+        paneID: String,
+        cwd: String,
+        title: String,
+        totalRows: Int,
+        visibleRows: Int,
+        firstVisibleRow: Int,
+        mode: AlanTerminalMode
+    ) -> TerminalHostRuntimeSnapshot {
+        let surfaceState = AlanTerminalSurfaceStateSnapshot(
+            readiness: .ready,
+            terminalMode: mode,
+            scrollback: AlanTerminalScrollbackState(
+                metrics: AlanTerminalScrollbackMetrics(
+                    totalRows: totalRows,
+                    visibleRows: visibleRows,
+                    firstVisibleRow: firstVisibleRow,
+                    mode: mode
+                ),
+                nativeScrollbarVisible: totalRows > visibleRows,
+                thumbRange: firstVisibleRow..<max(firstVisibleRow, firstVisibleRow + visibleRows)
+            ),
+            search: nil,
+            semanticCommands: .placeholder,
+            readonly: false,
+            secureInput: false,
+            inputReady: true,
+            rendererHealth: "ready",
+            childExited: false,
+            lastUpdatedAt: Date(timeIntervalSince1970: 120)
+        )
+        return TerminalHostRuntimeSnapshot(
+            stage: .windowAttached,
+            contentID: contentID,
+            paneID: paneID,
+            tabID: "tab_capture",
+            renderPriority: .foregroundInteractive,
+            logicalSize: CGSize(width: 80, height: visibleRows),
+            backingSize: CGSize(width: 80, height: visibleRows),
+            displayName: nil,
+            displayID: nil,
+            attachedWindowTitle: title,
+            isFocused: true,
+            renderer: .placeholder,
+            paneMetadata: TerminalPaneMetadataSnapshot(
+                title: title,
+                workingDirectory: cwd,
+                summary: nil,
+                attention: .active,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 120),
+                activeTaskState: .foregroundCommand
+            ),
+            surfaceState: surfaceState,
+            lastUpdatedAt: Date(timeIntervalSince1970: 120)
+        )
+    }
+
     private static func sampleShellCommand() -> AlanCommandResolution {
         AlanCommandResolution(
             strategy: .loginShellFallback,
@@ -813,6 +985,11 @@ private enum TerminalRuntimeServiceTests {
             fputs("error: \(message)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func fail(_ message: String) -> Never {
+        fputs("error: \(message)\n", stderr)
+        exit(1)
     }
 }
 
