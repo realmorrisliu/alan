@@ -873,6 +873,19 @@ OpenSpec.
    for current implementation details, use `docs/skills_and_tools.md` and
    `docs/skill_authoring.md`.
 
+### macOS App Testing Safety
+
+For macOS app testing, scripted operation, visual QA, and Computer Use, use the
+dev channel as the default target: `Alan Dev.app`,
+`app.alanworks.macos.dev`, `alan-dev`, `~/.alan-dev`, and
+`alan-dev-shell-control`.
+
+Do not launch, quit, install over, inspect, or otherwise operate the user's
+stable/native Alan app (`Alan.app`, `app.alanworks.macos`, `alan`, `~/.alan`)
+for testing unless the user explicitly asks to work on the stable channel. The
+stable/native app is the user's normal work environment; automation against it
+can interrupt active work.
+
 ---
 
 ## Installation

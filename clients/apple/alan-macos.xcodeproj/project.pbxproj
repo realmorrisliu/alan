@@ -66,6 +66,7 @@
 		000000000000000000000046 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000802 /* Sparkle */; };
 		000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000151 /* App/AlanMacUpdateController.swift */; };
 		000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */; };
+		000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -153,6 +154,7 @@
 		000000000000000000000150 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		000000000000000000000151 /* App/AlanMacUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacUpdateController.swift; sourceTree = "<group>"; };
 		000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanMacUpdatePolicy.swift; sourceTree = "<group>"; };
+		000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSettingsSurfaceModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -306,6 +308,7 @@
 				000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */,
 				000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */,
 				000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */,
+				000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */,
 			);
 			name = Models/Shell;
 			sourceTree = "<group>";
@@ -522,6 +525,7 @@
 				00000000000000000000003C /* Support/AlanCommandLineToolInstaller.swift in Sources */,
 				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
 				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
+				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);

@@ -2045,6 +2045,11 @@ require_pattern \
     "focused Apple shell tests must include runtime and control-plane metadata coverage"
 
 require_pattern \
+    "justfile" \
+    "test-shell-settings-surface\\.sh" \
+    "focused Apple shell tests must include settings surface coverage"
+
+require_pattern \
     "clients/apple/scripts/check-shell-app-intents-metadata.sh" \
     "AlanCreateTerminalTabIntent" \
     "App Intent metadata review must cover generated Shortcuts action names"

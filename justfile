@@ -80,6 +80,7 @@ apple-shell-focused-tests:
     bash clients/apple/scripts/test-terminal-runtime-service.sh
     bash clients/apple/scripts/test-shell-automation-command-seams.sh
     bash clients/apple/scripts/test-shell-runtime-metadata.sh
+    bash clients/apple/scripts/test-shell-settings-surface.sh
     bash clients/apple/scripts/test-macos-auto-update-policy.sh
     ./scripts/test-appcast-tools.sh
 
