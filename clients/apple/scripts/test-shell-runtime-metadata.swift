@@ -103,6 +103,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesHiddenQuickTerminalRoutesUserActionableActivityNotifications()
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
+        verifiesTerminalChildExitIgnoresStaleForegroundContext()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -4475,6 +4476,32 @@ private enum ShellRuntimeMetadataTests {
             controller.activityNotifications.first?.kind == .processExited,
             "runtime auto-closed process exit must preserve the notification kind"
         )
+    }
+
+    private static func verifiesTerminalChildExitIgnoresStaleForegroundContext() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+
+        controller.updateTerminalMetadata(
+            metadata(title: "make test", activeTaskState: .foregroundCommand),
+            for: "pane_2"
+        )
+        expect(
+            controller.pane(paneID: "pane_2")?.context?.processState == "foreground_command",
+            "test setup must project foreground command state before child exit"
+        )
+        expect(
+            controller.closeGuardImpact(for: .paneSlot("pane_2"))?.requiresConfirmation == true,
+            "foreground command pane must still be protected for user-initiated closes"
+        )
+
+        controller.updateTerminalMetadata(childExitMetadata(title: "make test", exitCode: 0), for: "pane_2")
+
+        expect(
+            controller.pane(paneID: "pane_2") == nil,
+            "child exit cleanup must bypass stale foreground close guard state"
+        )
+        expect(controller.pane(paneID: "pane_1") != nil, "child exit must preserve sibling panes")
     }
 
     private static func verifiesTerminalChildExitClosesSplitPane() {

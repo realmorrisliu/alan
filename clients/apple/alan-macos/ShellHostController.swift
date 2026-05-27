@@ -2994,7 +2994,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> Bool {
         guard processExited else { return false }
         guard pane(paneID: paneID) != nil else { return false }
-        return closePane(paneID: paneID) == .closed
+        return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
     func movePane(
