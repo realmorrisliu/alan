@@ -1138,6 +1138,14 @@ private struct ShellSettingsContentView: View {
     @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
     @AppStorage("alanShellDimsInactiveSplitPanes") private var dimsInactiveSplitPanes = true
+    @State private var localSummary = ShellSettingsLocalSummary.current()
+    @State private var remoteSnapshot = ShellSettingsRemoteSnapshot.unavailable(
+        reason: "Daemon unavailable"
+    )
+
+    private var snapshot: ShellSettingsSurfaceSnapshot {
+        ShellSettingsSurfaceSnapshot.make(remote: remoteSnapshot, local: localSummary)
+    }
 
     var body: some View {
         ZStack {
@@ -1145,72 +1153,23 @@ private struct ShellSettingsContentView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    header
-
-                    VStack(spacing: 0) {
-                        ShellSettingsRow(
-                            systemName: "circle.lefthalf.filled",
-                            title: "Appearance"
-                        ) {
-                            Picker("Appearance", selection: $appearanceMode) {
-                                ForEach(ShellAppearanceMode.allCases) { mode in
-                                    Text(mode.label).tag(mode)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(maxWidth: 240)
-                        }
-
-                        ShellSettingsDivider()
-
-                        ShellSettingsRow(
-                            systemName: "sidebar.left",
-                            title: "Sidebar"
-                        ) {
-                            Toggle("Show", isOn: sidebarVisible)
-                                .toggleStyle(.switch)
-                        }
-
-                        ShellSettingsDivider()
-
-                        ShellSettingsRow(
-                            systemName: "rectangle.split.2x1",
-                            title: "Inactive split dimming"
-                        ) {
-                            Toggle("Enabled", isOn: $dimsInactiveSplitPanes)
-                                .toggleStyle(.switch)
-                        }
-                    }
-                    .background {
-                        RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                            .fill(ShellPalette.panel.opacity(0.72))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                            .stroke(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
+                    ForEach(snapshot.sections) { section in
+                        ShellSettingsSectionView(
+                            section: section,
+                            appearanceMode: $appearanceMode,
+                            sidebarVisible: sidebarVisible,
+                            dimsInactiveSplitPanes: $dimsInactiveSplitPanes
+                        )
                     }
                 }
-                .frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: 720, alignment: .leading)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 24)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: descriptor.iconName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(ShellPalette.mutedInk)
-                .frame(width: 22, height: 22)
-
-            Text(descriptor.title)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(ShellPalette.ink)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        .task(id: descriptor.contentID ?? descriptor.title) {
+            await refreshSettingsSummaries()
         }
     }
 
@@ -1220,11 +1179,159 @@ private struct ShellSettingsContentView: View {
             set: { isSidebarCollapsed = !$0 }
         )
     }
+
+    @MainActor
+    private func refreshSettingsSummaries() async {
+        let local = ShellSettingsLocalSummary.current()
+        localSummary = local
+
+        do {
+            let client = try AlanAPIClient(baseURLString: local.daemonURL)
+            async let catalogResponse = client.connectionCatalog()
+            async let profilesResponse = client.listConnectionProfiles()
+            async let currentResponse = client.currentConnection()
+            async let skillsResponse = client.skillCatalog()
+
+            let (catalog, profiles, current, skills) = try await (
+                catalogResponse,
+                profilesResponse,
+                currentResponse,
+                skillsResponse
+            )
+            remoteSnapshot = ShellSettingsRemoteSnapshot(
+                accounts: ShellSettingsAccountsSummary(
+                    current: ShellSettingsConnectionSelection(
+                        defaultProfile: current.defaultProfile ?? profiles.defaultProfile,
+                        effectiveProfile: current.effectiveProfile,
+                        effectiveSource: current.effectiveSource
+                    ),
+                    profiles: profiles.profiles.map { profile in
+                        ShellSettingsConnectionProfile(
+                            profileID: profile.profileID,
+                            label: profile.label,
+                            provider: profile.provider,
+                            credentialStatus: profile.credentialStatus,
+                            settings: profile.settings,
+                            isDefault: profile.isDefault
+                        )
+                    },
+                    providers: catalog.providers.map { provider in
+                        ShellSettingsConnectionProvider(
+                            providerID: provider.providerID,
+                            displayName: provider.displayName,
+                            supportsBrowserLogin: provider.supportsBrowserLogin,
+                            supportsDeviceLogin: provider.supportsDeviceLogin,
+                            supportsSecretEntry: provider.supportsSecretEntry,
+                            supportsLogout: provider.supportsLogout,
+                            supportsTest: provider.supportsTest
+                        )
+                    },
+                    unavailableReason: nil
+                ),
+                capabilities: ShellSettingsCapabilitiesSummary(
+                    skills: skills.skills.map { skill in
+                        ShellSettingsSkillSummary(
+                            id: skill.id,
+                            name: skill.name,
+                            enabled: skill.enabled,
+                            allowImplicitInvocation: skill.allowImplicitInvocation,
+                            available: skill.available
+                        )
+                    },
+                    unavailableReason: nil
+                )
+            )
+        } catch {
+            remoteSnapshot = .unavailable(reason: "Daemon unavailable")
+        }
+    }
+}
+
+private struct ShellSettingsSectionView: View {
+    let section: ShellSettingsSectionModel
+    @Binding var appearanceMode: ShellAppearanceMode
+    let sidebarVisible: Binding<Bool>
+    @Binding var dimsInactiveSplitPanes: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(section.title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk)
+                .textCase(.uppercase)
+
+            VStack(spacing: 0) {
+                ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 {
+                        ShellSettingsDivider()
+                    }
+
+                    rowView(row)
+                }
+            }
+            .background {
+                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                    .fill(ShellPalette.panel.opacity(0.72))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
+                    .stroke(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: ShellSettingsRowModel) -> some View {
+        switch row.id {
+        case "appearance":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                Picker("Appearance", selection: $appearanceMode) {
+                    ForEach(ShellAppearanceMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 240)
+            }
+        case "sidebar":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                Toggle("Show", isOn: sidebarVisible)
+                    .toggleStyle(.switch)
+            }
+        case "inactiveSplitDimming":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                Toggle("Enabled", isOn: $dimsInactiveSplitPanes)
+                    .toggleStyle(.switch)
+            }
+        default:
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                ShellSettingsValueLabel(value: row.value, mutability: row.mutability)
+            }
+        }
+    }
 }
 
 private struct ShellSettingsRow<Accessory: View>: View {
     let systemName: String
     let title: String
+    let detail: String?
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
@@ -1234,10 +1341,22 @@ private struct ShellSettingsRow<Accessory: View>: View {
                 .foregroundStyle(ShellPalette.mutedInk)
                 .frame(width: 18, height: 18)
 
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(ShellPalette.ink)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(ShellPalette.ink)
+                    .lineLimit(1)
+
+                if let detail,
+                   !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(ShellPalette.mutedInk)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             Spacer(minLength: 16)
 
@@ -1245,7 +1364,38 @@ private struct ShellSettingsRow<Accessory: View>: View {
                 .font(.system(size: 12, weight: .medium))
         }
         .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .frame(minHeight: 48)
+    }
+}
+
+private struct ShellSettingsValueLabel: View {
+    let value: String?
+    let mutability: ShellSettingsRowMutability
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if mutability == .actionOnly {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(ShellPalette.mutedInk)
+            }
+
+            Text(value ?? "Unavailable")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(valueStyle)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: 230, alignment: .trailing)
+    }
+
+    private var valueStyle: some ShapeStyle {
+        if value == "Unavailable" {
+            return AnyShapeStyle(ShellPalette.mutedInk)
+        }
+        return AnyShapeStyle(ShellPalette.ink)
     }
 }
 

@@ -226,6 +226,94 @@ struct ReadEventsResponse: Decodable {
     }
 }
 
+struct ConnectionCatalogResponse: Decodable {
+    let providers: [ConnectionProviderDescriptorResponse]
+}
+
+struct ConnectionProviderDescriptorResponse: Decodable {
+    let providerID: String
+    let displayName: String
+    let supportsBrowserLogin: Bool
+    let supportsDeviceLogin: Bool
+    let supportsSecretEntry: Bool
+    let supportsLogout: Bool
+    let supportsTest: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case providerID = "provider_id"
+        case displayName = "display_name"
+        case supportsBrowserLogin = "supports_browser_login"
+        case supportsDeviceLogin = "supports_device_login"
+        case supportsSecretEntry = "supports_secret_entry"
+        case supportsLogout = "supports_logout"
+        case supportsTest = "supports_test"
+    }
+}
+
+struct ConnectionProfilesResponse: Decodable {
+    let defaultProfile: String?
+    let profiles: [ConnectionProfileSummaryResponse]
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultProfile = "default_profile"
+        case profiles
+    }
+}
+
+struct ConnectionProfileSummaryResponse: Decodable {
+    let profileID: String
+    let label: String?
+    let provider: String
+    let credentialID: String?
+    let settings: [String: String]
+    let credentialStatus: String
+    let isDefault: Bool
+    let source: String
+
+    private enum CodingKeys: String, CodingKey {
+        case profileID = "profile_id"
+        case label
+        case provider
+        case credentialID = "credential_id"
+        case settings
+        case credentialStatus = "credential_status"
+        case isDefault = "is_default"
+        case source
+    }
+}
+
+struct ConnectionCurrentStateResponse: Decodable {
+    let defaultProfile: String?
+    let effectiveProfile: String?
+    let effectiveSource: String
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultProfile = "default_profile"
+        case effectiveProfile = "effective_profile"
+        case effectiveSource = "effective_source"
+    }
+}
+
+struct SkillCatalogSnapshotResponse: Decodable {
+    let skills: [SkillCatalogSkillResponse]
+}
+
+struct SkillCatalogSkillResponse: Decodable {
+    let id: String
+    let name: String
+    let enabled: Bool
+    let allowImplicitInvocation: Bool
+    let available: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case enabled
+        case allowImplicitInvocation = "allow_implicit_invocation"
+        case available
+    }
+}
+
 struct ToolDecisionAudit: Decodable {
     let policySource: String
     let ruleID: String?

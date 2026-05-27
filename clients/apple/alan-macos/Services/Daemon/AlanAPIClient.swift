@@ -199,6 +199,62 @@ struct AlanAPIClient {
         return try decoder.decode(ReadEventsResponse.self, from: data)
     }
 
+    func connectionCatalog() async throws -> ConnectionCatalogResponse {
+        let requestURL = endpointURL(pathComponents: ["api", "v1", "connections", "catalog"])
+        let data = try await request(url: requestURL)
+        return try decoder.decode(ConnectionCatalogResponse.self, from: data)
+    }
+
+    func listConnectionProfiles() async throws -> ConnectionProfilesResponse {
+        let requestURL = endpointURL(pathComponents: ["api", "v1", "connections"])
+        let data = try await request(url: requestURL)
+        return try decoder.decode(ConnectionProfilesResponse.self, from: data)
+    }
+
+    func currentConnection(workspaceDir: String? = nil) async throws -> ConnectionCurrentStateResponse {
+        var components = URLComponents(
+            url: endpointURL(pathComponents: ["api", "v1", "connections", "current"]),
+            resolvingAgainstBaseURL: false
+        )
+        if let workspaceDir,
+           !workspaceDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            components?.queryItems = [URLQueryItem(name: "workspace_dir", value: workspaceDir)]
+        }
+        guard let requestURL = components?.url else {
+            throw AlanAPIError.invalidURL(baseURL.absoluteString)
+        }
+        let data = try await request(url: requestURL)
+        return try decoder.decode(ConnectionCurrentStateResponse.self, from: data)
+    }
+
+    func skillCatalog(
+        workspaceDir: String? = nil,
+        agentName: String? = nil
+    ) async throws -> SkillCatalogSnapshotResponse {
+        var components = URLComponents(
+            url: endpointURL(pathComponents: ["api", "v1", "skills", "catalog"]),
+            resolvingAgainstBaseURL: false
+        )
+        var queryItems: [URLQueryItem] = []
+        if let workspaceDir,
+           !workspaceDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            queryItems.append(URLQueryItem(name: "workspace_dir", value: workspaceDir))
+        }
+        if let agentName,
+           !agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            queryItems.append(URLQueryItem(name: "agent_name", value: agentName))
+        }
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let requestURL = components?.url else {
+            throw AlanAPIError.invalidURL(baseURL.absoluteString)
+        }
+        let data = try await request(url: requestURL)
+        return try decoder.decode(SkillCatalogSnapshotResponse.self, from: data)
+    }
+
     private func endpointURL(pathComponents: [String]) -> URL {
         pathComponents.reduce(baseURL) { partial, component in
             partial.appendingPathComponent(component)
