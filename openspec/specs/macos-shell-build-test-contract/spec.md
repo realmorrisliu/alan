@@ -865,3 +865,71 @@ direct-install update behavior when macOS auto-update support changes.
 - **WHEN** update behavior is tested for a Homebrew-managed install
 - **THEN** focused checks verify Alan does not let Sparkle replace the Homebrew-managed app bundle
 - **AND** focused checks verify the user-facing update path points to Homebrew instead
+
+### Requirement: Terminal Profile Changes Have Focused Verification
+Alan for macOS SHALL require focused verification for changes to Terminal
+Profile storage, profile-aware workspace persistence, launch resolution,
+inheritance, and UI before those changes are accepted.
+
+#### Scenario: Profile store tests run
+- **WHEN** Terminal Profile store behavior changes
+- **THEN** focused tests cover missing-store fallback, corrupt-store quarantine,
+  profile validation, default profile selection, and profile lookup
+
+#### Scenario: Workspace manifest tests cover profile references
+- **WHEN** workspace manifest fields for Terminal Profile references change
+- **THEN** focused manifest tests cover old-manifest compatibility, Space
+  profile references, terminal content profile references, missing local
+  profile references, and the rule that profile definitions are not embedded
+
+#### Scenario: Boot resolution tests cover launch modes
+- **WHEN** terminal boot-profile resolution changes for Terminal Profiles
+- **THEN** focused terminal runtime tests cover login shell, sudo Unix user,
+  sudo root, custom command, missing profile fallback, and non-secret
+  environment projection
+
+#### Scenario: Interaction tests cover inheritance
+- **WHEN** shell mutations or action routing change for Terminal Profiles
+- **THEN** focused shell action or automation tests cover Space profile binding,
+  new tab inheritance, split inheritance, explicit profile override, and
+  non-retroactive Space binding changes
+
+#### Scenario: UI smoke covers dev-channel restore
+- **WHEN** Terminal Profile Settings or sidebar affordances change
+- **THEN** validation includes a dev-channel fresh relaunch smoke path that
+  confirms profile references survive restart and missing-profile fallback is
+  visible without blocking the shell
+
+### Requirement: Managed Terminal Account Provisioning Has Focused Verification
+Alan for macOS SHALL require focused verification for Managed Terminal Account
+planning, sudoers generation, validation, execution boundaries, repair,
+rollback, and UI safety wording.
+
+#### Scenario: Dry-run planner tests run
+- **WHEN** provisioning planning behavior changes
+- **THEN** focused tests cover missing account, existing account, existing
+  sudoers entry, missing Terminal Profile, and already-ready account states
+
+#### Scenario: Sudoers generation tests run
+- **WHEN** sudoers rendering behavior changes
+- **THEN** focused tests cover generated rule scope, identifier escaping or
+  rejection, no passwordless root grant, no unrelated-user grant, and stable
+  Alan-owned file paths
+
+#### Scenario: Validation failure tests run
+- **WHEN** sudoers validation or non-interactive sudo verification behavior
+  changes
+- **THEN** focused tests cover validation failure, sudo failure, partial
+  provisioning state, and repair-plan generation
+
+#### Scenario: Rollback tests run
+- **WHEN** rollback behavior changes
+- **THEN** focused tests cover removal of Alan-owned sudoers/Profile integration
+- **AND** tests confirm account and home-directory deletion require a separate
+  destructive confirmation
+
+#### Scenario: UI safety tests run
+- **WHEN** Settings provisioning UI changes
+- **THEN** focused UI or model tests cover no GUI-autologin wording, privileged
+  plan preview, explicit confirmation, password redaction, ready state, and
+  repairable state

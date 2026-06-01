@@ -5,6 +5,7 @@ enum AlanShellControlCommandKind: String, Codable {
     case state
     case spaceList = "space.list"
     case spaceCreate = "space.create"
+    case spaceSetTerminalProfile = "space.set_terminal_profile"
     case tabList = "tab.list"
     case tabOpen = "tab.open"
     case tabClose = "tab.close"
@@ -65,6 +66,7 @@ struct AlanShellControlCommand: Codable {
     let sessionLabel: String?
     let projectLabel: String?
     let workingDirectory: String?
+    let terminalProfileID: String?
     let detail: String?
     let updatedAt: String?
     let afterEventID: String?
@@ -95,6 +97,7 @@ struct AlanShellControlCommand: Codable {
         case sessionLabel = "session_label"
         case projectLabel = "project_label"
         case workingDirectory = "working_directory"
+        case terminalProfileID = "terminal_profile_id"
         case detail
         case updatedAt = "updated_at"
         case afterEventID = "after_event_id"
