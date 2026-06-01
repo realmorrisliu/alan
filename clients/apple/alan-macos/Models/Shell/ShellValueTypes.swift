@@ -1329,7 +1329,7 @@ enum ManagedTerminalAccountPlanner {
         scope: ManagedTerminalAccountRollbackScope
     ) -> ManagedTerminalAccountPlan {
         var steps: [ManagedTerminalAccountPlanStep] = []
-        if case .alanOwnedValid = state.sudoers {
+        if shouldRemoveSudoersDropIn(request: request, sudoers: state.sudoers) {
             steps.append(step(.removeSudoersDropIn, "Remove Alan-owned sudoers drop-in", true))
         }
         if case .existingManaged = state.terminalProfile {
@@ -1398,6 +1398,19 @@ enum ManagedTerminalAccountPlanner {
         guard case .existingUnreadable = state.sudoers else { return false }
         guard case .failed(step: .nonInteractiveSudo, _) = state.verification else { return false }
         return true
+    }
+
+    private static func shouldRemoveSudoersDropIn(
+        request: ManagedTerminalAccountRequest,
+        sudoers: ManagedTerminalAccountSudoersState
+    ) -> Bool {
+        let expectedPath = ManagedTerminalAccountSudoersRule(request: request).filePath
+        switch sudoers {
+        case .alanOwnedValid(let path), .existingUnreadable(let path):
+            return path == expectedPath
+        case .missing, .alanOwnedInvalid, .unmanaged:
+            return false
+        }
     }
 }
 
@@ -1786,7 +1799,7 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         case .verifyTerminalEntry:
             return nil
         case .removeSudoersDropIn:
-            return "/bin/rm -f \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
+            return sudoersRemoveScript()
         case .deleteAccount:
             return "/usr/sbin/sysadminctl -deleteUser \(account)"
         case .deleteHomeDirectory:
@@ -1809,6 +1822,29 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         ALAN_SUDOERS
         /usr/sbin/visudo -cf "$temp_path"
         /usr/bin/install -o root -g wheel -m 0440 "$temp_path" \(shellQuote(rule.filePath))
+        """
+    }
+
+    private func sudoersRemoveScript() -> String {
+        let rule = ManagedTerminalAccountSudoersRule(request: request)
+        return """
+        set -eu
+        sudoers_path=\(shellQuote(rule.filePath))
+        if [ ! -e "$sudoers_path" ] && [ ! -L "$sudoers_path" ]; then
+          exit 0
+        fi
+        temp_dir="$(/usr/bin/mktemp -d /tmp/alan-terminal-sudoers-remove.XXXXXXXXXX)"
+        trap '/bin/rm -rf "$temp_dir"' 0 1 2 15
+        expected_path="$temp_dir/expected"
+        umask 077
+        /bin/cat > "$expected_path" <<'ALAN_SUDOERS'
+        \(rule.contents)
+        ALAN_SUDOERS
+        if ! /usr/bin/cmp -s "$expected_path" "$sudoers_path"; then
+          /bin/echo "Refusing to remove sudoers drop-in with unexpected contents." >&2
+          exit 1
+        fi
+        /bin/rm -f "$sudoers_path"
         """
     }
 

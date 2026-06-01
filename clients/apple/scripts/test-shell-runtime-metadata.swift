@@ -8763,6 +8763,7 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesManagedTerminalAccountExecutorAndRollbackSafety() {
         let request = ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris")
+        let rule = ManagedTerminalAccountSudoersRule(request: request)
         let plan = ManagedTerminalAccountPlanner.plan(
             request: request,
             state: ManagedTerminalAccountState(
@@ -8804,6 +8805,43 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !rollback.steps.map(\.kind).contains(.deleteHomeDirectory),
             "ordinary rollback must not delete home"
+        )
+
+        let unreadableRollback = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .existingUnreadable(path: rule.filePath),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .passed
+            ),
+            scope: .alanIntegrationOnly
+        )
+        expect(
+            unreadableRollback.steps.map(\.kind) == [.removeSudoersDropIn, .removeManagedTerminalProfile],
+            "ordinary rollback must remove unreadable Alan sudoers integration"
+        )
+        let unreadableRollbackRunner = CapturingPrivilegedCommandRunner()
+        let unreadableRollbackExecutor = ManagedTerminalAccountAuthorizedScriptExecutor(
+            request: request,
+            commandRunner: unreadableRollbackRunner,
+            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor()
+        )
+        _ = unreadableRollbackExecutor.apply(unreadableRollback)
+        let unreadableRemoveScript = unreadableRollbackRunner.scripts.first {
+            $0.contains(rule.filePath) && $0.contains("cmp -s")
+        } ?? ""
+        expect(
+            unreadableRemoveScript.contains(rule.contents),
+            "unreadable sudoers rollback must verify the expected Alan rule before deleting"
+        )
+        expect(
+            unreadableRemoveScript.contains("mktemp -d"),
+            "unreadable sudoers rollback must use a private temp file for verification"
+        )
+        expect(
+            unreadableRemoveScript.contains("Refusing to remove sudoers drop-in"),
+            "unreadable sudoers rollback must fail closed on unexpected contents"
         )
 
         let destructive = ManagedTerminalAccountPlanner.rollbackPlan(
