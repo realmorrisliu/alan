@@ -1165,6 +1165,7 @@ enum ManagedTerminalAccountPlanStatus: Equatable {
     case invalid([ManagedTerminalAccountValidationError])
     case requiresDestructiveConfirmation
     case sudoersConflict(path: String)
+    case terminalProfileConflict(profileID: String)
 }
 
 struct ManagedTerminalAccountPlan: Equatable {
@@ -1191,6 +1192,13 @@ enum ManagedTerminalAccountPlanner {
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .sudoersConflict(path: path),
+                steps: []
+            )
+        }
+        if case .existingUnmanaged(let profileID) = state.terminalProfile {
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .terminalProfileConflict(profileID: profileID),
                 steps: []
             )
         }
@@ -1250,12 +1258,14 @@ enum ManagedTerminalAccountPlanner {
         }
 
         switch state.terminalProfile {
-        case .missing, .existingUnmanaged:
+        case .missing:
             steps.append(step(.createOrUpdateTerminalProfile, "Create matching Terminal Profile", false))
         case .existingManaged:
             if state.verification != .passed {
                 steps.append(step(.createOrUpdateTerminalProfile, "Refresh matching Terminal Profile", false))
             }
+        case .existingUnmanaged:
+            break
         }
 
         if request.bindCurrentSpaceAfterSuccess {

@@ -260,7 +260,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             return "checkmark.seal"
         case .repair:
             return "wrench.and.screwdriver"
-        case .requiresDestructiveConfirmation, .invalid, .sudoersConflict:
+        case .requiresDestructiveConfirmation, .invalid, .sudoersConflict, .terminalProfileConflict:
             return "exclamationmark.triangle"
         case .readyToApply:
             return "person.crop.circle.badge.plus"
@@ -277,7 +277,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             return "Invalid"
         case .requiresDestructiveConfirmation:
             return "Confirm"
-        case .sudoersConflict:
+        case .sudoersConflict, .terminalProfileConflict:
             return "Conflict"
         case .readyToApply:
             return "Preview"
@@ -297,6 +297,8 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             return "\(target) rollback needs separate destructive confirmation."
         case .sudoersConflict(let path):
             return "\(target) has an existing non-Alan sudoers file at \(path)."
+        case .terminalProfileConflict(let profileID):
+            return "\(target) has an existing non-Alan Terminal Profile named \(profileID)."
         case .readyToApply:
             return "\(target) terminal entry plan is ready for explicit confirmation."
         }

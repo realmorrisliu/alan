@@ -8152,6 +8152,23 @@ private enum ShellRuntimeMetadataTests {
             unmanagedSudoersPlan.status == .sudoersConflict(path: sudoers.filePath),
             "unmanaged sudoers files must surface as conflicts"
         )
+        let unmanagedTerminalProfilePlan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: sudoers.filePath),
+                terminalProfile: .existingUnmanaged(profileID: "alan"),
+                verification: .passed
+            )
+        )
+        expect(
+            !unmanagedTerminalProfilePlan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
+            "unmanaged Terminal Profiles must not be overwritten by a generic repair plan"
+        )
+        expect(
+            unmanagedTerminalProfilePlan.status == .terminalProfileConflict(profileID: "alan"),
+            "unmanaged Terminal Profiles must surface as conflicts"
+        )
 
         let invalid = ManagedTerminalAccountRequest(accountName: "root", guiUserName: "morris")
         expect(
