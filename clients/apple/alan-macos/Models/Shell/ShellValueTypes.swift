@@ -1679,7 +1679,6 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
     let commandRunner: ManagedTerminalAccountPrivilegedCommandRunning
     let localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting
     let entryVerifier: ManagedTerminalAccountEntryVerifying
-    let passwordGenerator: () -> String
 
     init(
         request: ManagedTerminalAccountRequest,
@@ -1688,16 +1687,12 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting =
             ManagedTerminalAccountTerminalProfileEffectExecutor(),
         entryVerifier: ManagedTerminalAccountEntryVerifying =
-            ManagedTerminalAccountSudoEntryVerifier(),
-        passwordGenerator: @escaping () -> String = {
-            UUID().uuidString + UUID().uuidString
-        }
+            ManagedTerminalAccountSudoEntryVerifier()
     ) {
         self.request = request
         self.commandRunner = commandRunner
         self.localEffectExecutor = localEffectExecutor
         self.entryVerifier = entryVerifier
-        self.passwordGenerator = passwordGenerator
     }
 
     func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult {
@@ -1770,28 +1765,50 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
 
     private func script(for step: ManagedTerminalAccountPlanStepKind) -> String? {
         let account = shellQuote(request.accountName)
+        let accountRecord = shellQuote("/Users/\(request.accountName)")
         let home = shellQuote(request.homeDirectory)
         let shell = shellQuote(request.shell)
         switch step {
         case .createStandardAccount:
             let fullName = shellQuote(request.fullName ?? request.accountName)
-            let password = shellQuote(passwordGenerator())
+            let disabledAuthentication = shellQuote(";DisabledUser;")
             return """
-            /usr/sbin/sysadminctl -addUser \(account) -fullName \(fullName) -home \(home) -shell \(shell) -password \(password)
-            /usr/sbin/createhomedir -c -u \(account) >/dev/null 2>&1 || true
+            set -eu
+            account_name=\(account)
+            account_record=\(accountRecord)
+            account_home=\(home)
+            account_shell=\(shell)
+            account_full_name=\(fullName)
+            disabled_auth=\(disabledAuthentication)
+            next_uid="$(
+              /usr/bin/dscl . -list /Users UniqueID |
+                /usr/bin/awk '$2 ~ /^[0-9]+$/ && $2 >= 501 { if ($2 >= max) max=$2 } END { print (max ? max + 1 : 501) }'
+            )"
+            while /usr/bin/dscl . -search /Users UniqueID "$next_uid" >/dev/null 2>&1; do
+              next_uid=$((next_uid + 1))
+            done
+            /usr/bin/dscl . -create "$account_record"
+            /usr/bin/dscl . -create "$account_record" UserShell "$account_shell"
+            /usr/bin/dscl . -create "$account_record" RealName "$account_full_name"
+            /usr/bin/dscl . -create "$account_record" NFSHomeDirectory "$account_home"
+            /usr/bin/dscl . -create "$account_record" PrimaryGroupID 20
+            /usr/bin/dscl . -create "$account_record" UniqueID "$next_uid"
+            /usr/bin/dscl . -create "$account_record" GeneratedUID "$(/usr/bin/uuidgen)"
+            /usr/bin/dscl . -create "$account_record" AuthenticationAuthority "$disabled_auth"
+            /usr/sbin/createhomedir -c -u "$account_name" >/dev/null 2>&1 || true
             /usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true
             """
         case .repairAccountType:
             return "/usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true"
         case .repairHomeDirectory:
             return """
-            /usr/bin/dscl . -create /Users/\(request.accountName) NFSHomeDirectory \(home)
+            /usr/bin/dscl . -create \(accountRecord) NFSHomeDirectory \(home)
             /usr/sbin/createhomedir -c -u \(account) >/dev/null 2>&1 || true
             """
         case .repairShell:
-            return "/usr/bin/dscl . -create /Users/\(request.accountName) UserShell \(shell)"
+            return "/usr/bin/dscl . -create \(accountRecord) UserShell \(shell)"
         case .hideAccount:
-            return "/usr/bin/dscl . -create /Users/\(request.accountName) IsHidden 1"
+            return "/usr/bin/dscl . -create \(accountRecord) IsHidden 1"
         case .writeSudoersDropIn:
             return sudoersWriteScript()
         case .validateSudoers:

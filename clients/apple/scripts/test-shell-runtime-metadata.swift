@@ -328,6 +328,29 @@ private enum ShellRuntimeMetadataTests {
             profiledRuntimeProjection.pane.terminalProfileID == "alan",
             "terminal adapter runtime projection must preserve captured terminal profile id"
         )
+        let profiledDefaultCwdPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: nil,
+            process: pane.process,
+            attention: pane.attention,
+            context: pane.context,
+            viewport: pane.viewport,
+            activity: pane.activity,
+            alanBinding: pane.alanBinding,
+            terminalProfileID: "alan"
+        )
+        let profiledDefaultCwdRuntimeProjection = adapter.projectRuntime(
+            runtime,
+            for: profiledDefaultCwdPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledDefaultCwdRuntimeProjection.pane.cwd == nil,
+            "terminal adapter runtime projection must preserve nil cwd for profile-bound panes"
+        )
         let profiledBootProjection = adapter.projectBootContext(
             runtime: runtime,
             for: profiledPane,
@@ -336,6 +359,15 @@ private enum ShellRuntimeMetadataTests {
         expect(
             profiledBootProjection.pane.terminalProfileID == "alan",
             "terminal adapter boot projection must preserve captured terminal profile id"
+        )
+        let profiledDefaultCwdBootProjection = adapter.projectBootContext(
+            runtime: runtime,
+            for: profiledDefaultCwdPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledDefaultCwdBootProjection.pane.cwd == nil,
+            "terminal adapter boot projection must preserve nil cwd for profile-bound panes"
         )
 
         let binding = ShellAlanBinding(
@@ -366,6 +398,16 @@ private enum ShellRuntimeMetadataTests {
         expect(
             profiledBindingProjection.pane.terminalProfileID == "alan",
             "terminal adapter binding projection must preserve captured terminal profile id"
+        )
+        let profiledDefaultCwdBindingProjection = adapter.projectAlanBinding(
+            binding,
+            runtime: runtime,
+            for: profiledDefaultCwdPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledDefaultCwdBindingProjection.pane.cwd == nil,
+            "terminal adapter binding projection must preserve nil cwd for profile-bound panes"
         )
         expect(
             bindingProjection.pane.viewport?.summary == "alan is waiting for user input",
@@ -8702,8 +8744,7 @@ private enum ShellRuntimeMetadataTests {
                     return true
                 }
             ),
-            entryVerifier: StubTerminalEntryVerifier(result: .passed),
-            passwordGenerator: { "SECRET-PASSWORD" }
+            entryVerifier: StubTerminalEntryVerifier(result: .passed)
         )
         let plan = ManagedTerminalAccountPlanner.plan(
             request: ManagedTerminalAccountRequest(
@@ -8722,12 +8763,23 @@ private enum ShellRuntimeMetadataTests {
         let diagnostics = result.visibleDiagnostics.joined(separator: " ")
         expect(result.failedStep == nil, "authorized executor must complete captured privileged scripts")
         expect(
-            !diagnostics.contains("SECRET-PASSWORD"),
-            "authorized executor diagnostics must not expose generated account passwords"
+            !diagnostics.contains("account_password"),
+            "authorized executor diagnostics must not expose account password internals"
+        )
+        let accountCreationScript = privilegedRunner.scripts.first {
+            $0.contains("AuthenticationAuthority")
+        } ?? ""
+        expect(
+            !accountCreationScript.contains("sysadminctl") && !accountCreationScript.contains("-password"),
+            "authorized executor account creation must not place account passwords in process argv"
         )
         expect(
-            privilegedRunner.scripts.contains { $0.contains("sysadminctl -addUser") },
-            "authorized executor must route account creation through an explicit privileged script"
+            accountCreationScript.contains("dscl . -create"),
+            "authorized executor must route account creation through explicit local-directory commands"
+        )
+        expect(
+            accountCreationScript.contains("AuthenticationAuthority \"$disabled_auth\""),
+            "authorized executor must disable password login for managed terminal accounts"
         )
         expect(
             privilegedRunner.scripts.contains { $0.contains("visudo -cf") },

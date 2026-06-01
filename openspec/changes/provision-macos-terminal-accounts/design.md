@@ -68,11 +68,11 @@ OpenSpec change with a narrow privileged-change contract.
    operations behind a service boundary so a later signed privileged helper can
    replace shell execution without changing Settings or model semantics.
 
-4. **Create standard accounts with random non-reused passwords.**
+4. **Create standard terminal-only accounts without reusable passwords.**
 
-   Managed terminal accounts should be standard users, not admins. Alan may
-   generate a random high-entropy password to satisfy macOS local-account
-   creation requirements, but it should not persist that password. Terminal
+   Managed terminal accounts should be standard users, not admins. Alan should
+   provision them as terminal-only local users with password login disabled,
+   avoiding generated reusable passwords altogether where possible. Terminal
    entry uses sudo policy from the GUI user, not password login to the target
    account.
 
@@ -105,8 +105,9 @@ OpenSpec change with a narrow privileged-change contract.
 - **[Risk] Users confuse this with GUI automatic login.** -> Never use
   "autologin" in UI labels. State that the feature does not enable GUI
   automatic login.
-- **[Risk] Password handling leaks sensitive material.** -> Generate passwords
-  in-memory, avoid logging, avoid config persistence, and prefer interactive
+- **[Risk] Password handling leaks sensitive material.** -> Prefer disabled
+  password login for managed terminal accounts, avoid generated reusable
+  passwords, avoid logging, avoid config persistence, and prefer interactive
   administrator authorization where needed.
 - **[Risk] Sudoers syntax errors can break sudo.** -> Validate generated files
   with `visudo -cf` before relying on them and preserve backups for repair.
