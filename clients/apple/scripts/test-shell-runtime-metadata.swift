@@ -7370,6 +7370,47 @@ private enum ShellRuntimeMetadataTests {
             boot.workingDirectory == "/Users/alan",
             "profile default working directory must apply when pane cwd is absent"
         )
+        expect(
+            boot.command.arguments.contains("/usr/bin/env"),
+            "sudo user boot command must re-inject shell-control environment after sudo"
+        )
+        expect(
+            boot.command.arguments.contains { $0.hasPrefix("ALAN_SHELL_SOCKET=") },
+            "sudo user boot command must preserve the shell-control socket for the target shell"
+        )
+        expect(
+            boot.command.arguments.contains { $0.hasPrefix("ALAN_SHELL_BINDING_FILE=") },
+            "sudo user boot command must preserve the shell binding file for the target shell"
+        )
+
+        let rootPane = ShellPane(
+            paneID: "pane_root_profile",
+            tabID: "tab_profile",
+            spaceID: "space_profile",
+            launchTarget: .shell,
+            cwd: nil,
+            process: nil,
+            attention: .active,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil,
+            terminalProfileID: "root"
+        )
+        let rootBoot = AlanShellBootProfile.forPane(
+            rootPane,
+            shellState: state,
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            rootBoot.command.arguments.contains("/usr/bin/env"),
+            "sudo root boot command must re-inject shell-control environment after sudo"
+        )
+        expect(
+            rootBoot.command.arguments.contains { $0.hasPrefix("ALAN_SHELL_SOCKET=") },
+            "sudo root boot command must preserve the shell-control socket for the target shell"
+        )
 
         let projectedContext = ShellPaneProjectionService(fileManager: executableFileManager)
             .projectedContext(

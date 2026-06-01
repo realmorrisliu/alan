@@ -82,6 +82,59 @@ struct AlanCommandResolution: Equatable {
         ([launchPath] + arguments).map(AlanShellBootProfile.shellQuoted).joined(separator: " ")
     }
 
+    func reinjectingSudoEnvironment(_ environment: [String: String]) -> AlanCommandResolution {
+        guard strategy == .terminalProfileSudoUser || strategy == .terminalProfileSudoRoot else {
+            return self
+        }
+        let assignments = Self.sudoReinjectedEnvironmentAssignments(environment)
+        guard !assignments.isEmpty else {
+            return self
+        }
+
+        let reinjectedArguments = arguments
+            + ["/usr/bin/env"]
+            + assignments
+            + ["/bin/sh", "-lc", Self.sudoLoginShellCommand]
+        let reinjectedCommand = ([launchPath] + reinjectedArguments)
+            .map(AlanShellBootProfile.shellQuoted)
+            .joined(separator: " ")
+        return AlanCommandResolution(
+            strategy: strategy,
+            executablePath: executablePath,
+            launchPath: launchPath,
+            arguments: reinjectedArguments,
+            bootCommand: reinjectedCommand,
+            surfaceCommand: reinjectedCommand,
+            summary: summary,
+            detail: detail,
+            repoRoot: repoRoot,
+            candidates: candidates,
+            terminalProfile: terminalProfile,
+            terminalProfileState: terminalProfileState
+        )
+    }
+
+    private static let sudoLoginShellCommand = "exec \"${SHELL:-/bin/zsh}\" -l"
+
+    private static let sudoReinjectedEnvironmentAllowlist: Set<String> = [
+        "COLORTERM",
+        "TERMINFO",
+        "TERM_PROGRAM",
+    ]
+
+    private static func sudoReinjectedEnvironmentAssignments(
+        _ environment: [String: String]
+    ) -> [String] {
+        environment.keys.sorted().compactMap { key in
+            guard key.hasPrefix("ALAN_") || sudoReinjectedEnvironmentAllowlist.contains(key),
+                  let value = environment[key]
+            else {
+                return nil
+            }
+            return "\(key)=\(value)"
+        }
+    }
+
     static func resolve(
         for launchTarget: ShellLaunchTarget,
         fileManager: FileManager = .default,
@@ -561,7 +614,7 @@ struct AlanShellBootProfile: Equatable {
         // model creates them. Re-reading mutable Space bindings here can recreate
         // already-mounted panes under a different Unix identity after a Space rebind.
         let terminalProfileReference = pane.terminalProfileID
-        let command = AlanCommandResolution.resolve(
+        let resolvedCommand = AlanCommandResolution.resolve(
             for: pane.resolvedLaunchTarget,
             terminalProfileReference: terminalProfileReference,
             terminalProfiles: profileDocument,
@@ -570,7 +623,7 @@ struct AlanShellBootProfile: Equatable {
         )
         let cwd =
             pane.cwd
-            ?? command.terminalProfile?.defaultWorkingDirectory
+            ?? resolvedCommand.terminalProfile?.defaultWorkingDirectory
             ?? fileManager.homeDirectoryForCurrentUser.path
         let controlPlaneRoot = alanShellControlPlaneRootURL(
             windowID: shellState.windowID,
@@ -596,8 +649,8 @@ struct AlanShellBootProfile: Equatable {
             "ALAN_SHELL_CONTENT_ID": pane.terminalContentID,
             "ALAN_SHELL_BOOT_MODE": pane.resolvedLaunchTarget.rawValue,
             "ALAN_SHELL_LAUNCH_TARGET": pane.resolvedLaunchTarget.rawValue,
-            "ALAN_SHELL_LAUNCH_STRATEGY": command.strategy.rawValue,
-            "ALAN_TERMINAL_PROFILE_STATE": command.terminalProfileState.environmentValue,
+            "ALAN_SHELL_LAUNCH_STRATEGY": resolvedCommand.strategy.rawValue,
+            "ALAN_TERMINAL_PROFILE_STATE": resolvedCommand.terminalProfileState.environmentValue,
             "ALAN_SHELL_CONTROL_DIR": controlPlaneRoot.path,
             "ALAN_SHELL_BINDING_FILE": bindingFile.path,
             "ALAN_SHELL_STATE_FILE": controlPlaneRoot.appendingPathComponent("state.json").path,
@@ -608,17 +661,17 @@ struct AlanShellBootProfile: Equatable {
         if let terminalProfileReference {
             environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"] = terminalProfileReference
         }
-        if let terminalProfile = command.terminalProfile {
+        if let terminalProfile = resolvedCommand.terminalProfile {
             environment["ALAN_TERMINAL_PROFILE_ID"] = terminalProfile.id
             environment["ALAN_TERMINAL_PROFILE_KIND"] = terminalProfile.launch.kind.rawValue
             environment["ALAN_TERMINAL_PROFILE_TITLE"] = terminalProfile.title
         }
 
-        if let executablePath = command.executablePath {
+        if let executablePath = resolvedCommand.executablePath {
             environment["ALAN_SHELL_EXECUTABLE"] = executablePath
         }
 
-        if let repoRoot = command.repoRoot {
+        if let repoRoot = resolvedCommand.repoRoot {
             environment["ALAN_REPOSITORY_ROOT"] = repoRoot
         }
 
@@ -627,6 +680,8 @@ struct AlanShellBootProfile: Equatable {
         }
         environment["TERM_PROGRAM"] = "alan"
         environment["COLORTERM"] = "truecolor"
+
+        let command = resolvedCommand.reinjectingSudoEnvironment(environment)
 
         return AlanShellBootProfile(
             command: command,
