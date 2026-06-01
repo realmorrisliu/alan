@@ -8331,6 +8331,40 @@ private enum ShellRuntimeMetadataTests {
             state.terminalProfile == .existingManaged(profileID: "alan"),
             "local state discovery must link managed Terminal Profile state"
         )
+        let driftedProfiles = TerminalProfileDocument(
+            defaultProfileID: "alan",
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/old-alan",
+                    presentation: nil,
+                    managedTerminalAccountID: "alan"
+                ),
+            ]
+        )
+        let driftedProfileState = discoverer.discover(
+            request: request,
+            terminalProfiles: driftedProfiles
+        )
+        expect(
+            driftedProfileState.terminalProfile != .existingManaged(profileID: "alan"),
+            "managed Terminal Profile discovery must not treat stale default directories as ready"
+        )
+        let driftedProfilePlan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: driftedProfileState.account,
+                sudoers: driftedProfileState.sudoers,
+                terminalProfile: driftedProfileState.terminalProfile,
+                verification: .passed
+            )
+        )
+        expect(
+            driftedProfilePlan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
+            "stale managed Terminal Profiles must schedule a refresh even after readiness passes"
+        )
 
         let readiness = ManagedTerminalAccountReadinessVerifier.verify(
             request: request,

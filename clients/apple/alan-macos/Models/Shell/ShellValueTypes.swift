@@ -870,6 +870,7 @@ enum ManagedTerminalAccountSudoersState: Equatable {
 enum ManagedTerminalAccountProfileState: Equatable {
     case missing
     case existingManaged(profileID: String)
+    case existingManagedOutdated(profileID: String)
     case existingUnmanaged(profileID: String)
 }
 
@@ -1080,6 +1081,9 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
         if profile.managedTerminalAccountID == request.accountName,
            profile.launch == .sudoUser(unixUser: request.accountName)
         {
+            if profile.defaultWorkingDirectory != request.homeDirectory {
+                return .existingManagedOutdated(profileID: profile.id)
+            }
             return .existingManaged(profileID: profile.id)
         }
         return .existingUnmanaged(profileID: profile.id)
@@ -1289,6 +1293,9 @@ enum ManagedTerminalAccountPlanner {
             if state.verification != .passed {
                 steps.append(step(.createOrUpdateTerminalProfile, "Refresh matching Terminal Profile", false))
             }
+        case .existingManagedOutdated:
+            repairNeeded = true
+            steps.append(step(.createOrUpdateTerminalProfile, "Refresh matching Terminal Profile", false))
         case .existingUnmanaged:
             break
         }
@@ -1312,6 +1319,8 @@ enum ManagedTerminalAccountPlanner {
             steps.append(step(.removeSudoersDropIn, "Remove Alan-owned sudoers drop-in", true))
         }
         if case .existingManaged = state.terminalProfile {
+            steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
+        } else if case .existingManagedOutdated = state.terminalProfile {
             steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
         }
 
