@@ -7417,6 +7417,42 @@ private enum ShellRuntimeMetadataTests {
             recreatedMissingContext.terminalProfileTitle == nil,
             "pane context recreation must clear stale resolved terminal profile title"
         )
+
+        let loginShellDefaultDocument = TerminalProfileDocument(
+            defaultProfileID: TerminalProfileDefinition.loginShellFallback.id,
+            profiles: [
+                TerminalProfileDefinition.loginShellFallback,
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil
+                ),
+            ]
+        )
+        let reboundState = ShellStateSnapshot.bootstrapDefault(
+            windowID: "window_existing_pane",
+            workingDirectory: "/Users/morris"
+        ).settingTerminalProfile("alan", forSpaceID: "space_main")
+        guard let reboundPane = reboundState?.pane(paneID: "pane_1") else {
+            fail("rebound default state must keep the existing pane")
+        }
+        let reboundBoot = AlanShellBootProfile.forPane(
+            reboundPane,
+            shellState: reboundState ?? state,
+            terminalProfiles: loginShellDefaultDocument,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            reboundBoot.environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"] == nil,
+            "existing panes without a captured profile must not read mutable Space bindings"
+        )
+        expect(
+            reboundBoot.command.terminalProfile?.id != "alan",
+            "rebinding a Space must not relaunch an existing login-shell pane through the new profile"
+        )
     }
 
     private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {

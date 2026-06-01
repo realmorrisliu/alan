@@ -557,9 +557,10 @@ struct AlanShellBootProfile: Equatable {
                 fileManager: fileManager,
                 environment: processEnvironment
             ).load().document
-        let terminalProfileReference =
-            pane.terminalProfileID
-            ?? shellState.space(spaceID: pane.spaceID)?.terminalProfileID
+        // New panes capture Space defaults into `terminalProfileID` when the shell
+        // model creates them. Re-reading mutable Space bindings here can recreate
+        // already-mounted panes under a different Unix identity after a Space rebind.
+        let terminalProfileReference = pane.terminalProfileID
         let command = AlanCommandResolution.resolve(
             for: pane.resolvedLaunchTarget,
             terminalProfileReference: terminalProfileReference,
