@@ -304,6 +304,39 @@ private enum ShellRuntimeMetadataTests {
         expect(projection.pane.context?.inputReady == true, "terminal adapter must project input readiness")
         expect(projection.pane.attention == .active, "terminal adapter must project attention")
 
+        let profiledPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: pane.cwd,
+            process: pane.process,
+            attention: pane.attention,
+            context: pane.context,
+            viewport: pane.viewport,
+            activity: pane.activity,
+            alanBinding: pane.alanBinding,
+            terminalProfileID: "alan"
+        )
+        let profiledRuntimeProjection = adapter.projectRuntime(
+            runtime,
+            for: profiledPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledRuntimeProjection.pane.terminalProfileID == "alan",
+            "terminal adapter runtime projection must preserve captured terminal profile id"
+        )
+        let profiledBootProjection = adapter.projectBootContext(
+            runtime: runtime,
+            for: profiledPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledBootProjection.pane.terminalProfileID == "alan",
+            "terminal adapter boot projection must preserve captured terminal profile id"
+        )
+
         let binding = ShellAlanBinding(
             sessionID: "session_1",
             runStatus: "waiting",
@@ -322,6 +355,16 @@ private enum ShellRuntimeMetadataTests {
         expect(
             bindingProjection.pane.attention == .awaitingUser,
             "terminal adapter must project pending-yield attention"
+        )
+        let profiledBindingProjection = adapter.projectAlanBinding(
+            binding,
+            runtime: runtime,
+            for: profiledPane,
+            bootProfile: bootProfile
+        )
+        expect(
+            profiledBindingProjection.pane.terminalProfileID == "alan",
+            "terminal adapter binding projection must preserve captured terminal profile id"
         )
         expect(
             bindingProjection.pane.viewport?.summary == "alan is waiting for user input",
@@ -3406,6 +3449,29 @@ private enum ShellRuntimeMetadataTests {
         expect(
             mergedContext?.terminalProfileTitle == nil,
             "published state merge must clear stale resolved terminal profile title"
+        )
+
+        let authoritativeProfileState = stateWithContext(
+            windowID: "window_terminal_profile_refs",
+            context: staleContext,
+            spaceTerminalProfileID: "alan",
+            paneTerminalProfileID: "alan"
+        )
+        let incomingProfileState = stateWithContext(
+            windowID: "window_terminal_profile_refs",
+            context: incomingContext
+        )
+        let mergedProfileRefs = AlanShellPublishedStateMerger.merge(
+            authoritative: authoritativeProfileState,
+            incoming: incomingProfileState
+        )
+        expect(
+            mergedProfileRefs.space(spaceID: "space_1")?.terminalProfileID == "alan",
+            "published state merge must preserve captured space terminal profile id"
+        )
+        expect(
+            mergedProfileRefs.pane(paneID: "pane_1")?.terminalProfileID == "alan",
+            "published state merge must preserve captured pane terminal profile id"
         )
     }
 
@@ -8253,6 +8319,55 @@ private enum ShellRuntimeMetadataTests {
             destructive.status == .requiresDestructiveConfirmation,
             "account/home deletion must require separate destructive confirmation"
         )
+        let confirmedDestructive = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .passed
+            ),
+            scope: .deleteAccountAndHome(confirmation: "alan")
+        )
+        expect(
+            confirmedDestructive.steps.map(\.kind).contains(.deleteHomeDirectory),
+            "confirmed destructive rollback may delete the canonical managed home"
+        )
+
+        let customHomeRequest = ManagedTerminalAccountRequest(
+            accountName: "alan",
+            guiUserName: "morris",
+            homeDirectory: "/Users/unrelated"
+        )
+        let customHomeDestructive = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: customHomeRequest,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/unrelated", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .passed
+            ),
+            scope: .deleteAccountAndHome(confirmation: "alan")
+        )
+        expect(
+            customHomeDestructive.steps.map(\.kind).contains(.deleteAccount),
+            "custom-home destructive rollback may still delete the confirmed account"
+        )
+        expect(
+            !customHomeDestructive.steps.map(\.kind).contains(.deleteHomeDirectory),
+            "custom-home destructive rollback must not delete a non-canonical home directory"
+        )
+        let customHomeRunner = CapturingPrivilegedCommandRunner()
+        let customHomeExecutor = ManagedTerminalAccountAuthorizedScriptExecutor(
+            request: customHomeRequest,
+            commandRunner: customHomeRunner,
+            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor()
+        )
+        _ = customHomeExecutor.apply(customHomeDestructive)
+        expect(
+            !customHomeRunner.scripts.joined(separator: "\n").contains("/Users/unrelated"),
+            "custom-home destructive rollback must not emit rm -rf for a non-canonical home directory"
+        )
 
         let rollbackStoreURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("alan-managed-terminal-account-rollback-\(UUID().uuidString).json")
@@ -8543,7 +8658,8 @@ private enum ShellRuntimeMetadataTests {
         launchTarget: ShellLaunchTarget = .shell,
         process: ShellProcessBinding? = ShellProcessBinding(program: "fish", argvPreview: nil),
         attention: ShellAttentionState,
-        activity: TerminalActivitySnapshot? = nil
+        activity: TerminalActivitySnapshot? = nil,
+        terminalProfileID: String? = nil
     ) -> ShellPane {
         ShellPane(
             paneID: "pane_1",
@@ -8556,7 +8672,8 @@ private enum ShellRuntimeMetadataTests {
             context: context,
             viewport: viewport,
             activity: activity,
-            alanBinding: nil
+            alanBinding: nil,
+            terminalProfileID: terminalProfileID
         )
     }
 
@@ -8622,12 +8739,15 @@ private enum ShellRuntimeMetadataTests {
 
     private static func stateWithContext(
         windowID: String,
-        context: ShellContextSnapshot
+        context: ShellContextSnapshot,
+        spaceTerminalProfileID: String? = nil,
+        paneTerminalProfileID: String? = nil
     ) -> ShellStateSnapshot {
         let pane = pane(
             context: context,
             viewport: nil,
-            attention: .active
+            attention: .active,
+            terminalProfileID: paneTerminalProfileID
         )
         return ShellStateSnapshot(
             contractVersion: "0.1",
@@ -8653,7 +8773,8 @@ private enum ShellRuntimeMetadataTests {
                                 children: nil
                             )
                         )
-                    ]
+                    ],
+                    terminalProfileID: spaceTerminalProfileID
                 )
             ],
             panes: [pane]

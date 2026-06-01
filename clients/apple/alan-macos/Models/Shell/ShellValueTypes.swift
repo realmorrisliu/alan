@@ -718,6 +718,10 @@ struct ManagedTerminalAccountRequest: Equatable {
         self.bindCurrentSpaceAfterSuccess = bindCurrentSpaceAfterSuccess
     }
 
+    static func canonicalHomeDirectory(for accountName: String) -> String {
+        "/Users/\(accountName)"
+    }
+
     var terminalProfileID: String {
         accountName
     }
@@ -1287,14 +1291,36 @@ enum ManagedTerminalAccountPlanner {
                     steps: steps
                 )
             }
+            var destructiveSteps = [
+                step(.deleteAccount, "Delete terminal account", true),
+            ]
+            if canDeleteHomeDirectory(request: request, state: state) {
+                destructiveSteps.append(
+                    step(.deleteHomeDirectory, "Delete terminal account home directory", true)
+                )
+            }
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .readyToApply,
-                steps: steps + [
-                    step(.deleteAccount, "Delete terminal account", true),
-                    step(.deleteHomeDirectory, "Delete terminal account home directory", true),
-                ]
+                steps: steps + destructiveSteps
             )
+        }
+    }
+
+    private static func canDeleteHomeDirectory(
+        request: ManagedTerminalAccountRequest,
+        state: ManagedTerminalAccountState
+    ) -> Bool {
+        guard request.homeDirectory == ManagedTerminalAccountRequest.canonicalHomeDirectory(
+            for: request.accountName
+        ) else {
+            return false
+        }
+        switch state.account {
+        case .standard(let homeDirectory, _, _), .admin(let homeDirectory, _, _):
+            return homeDirectory == request.homeDirectory
+        case .missing, .invalid:
+            return false
         }
     }
 

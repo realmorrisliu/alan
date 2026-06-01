@@ -98,7 +98,8 @@ struct TerminalContentProjectionAdapter {
                 context: projectedContext,
                 viewport: viewport,
                 activity: pane.activity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: pane.activity
@@ -143,7 +144,8 @@ struct TerminalContentProjectionAdapter {
                 context: projectedContext,
                 viewport: pane.viewport,
                 activity: pane.activity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: pane.activity
@@ -201,7 +203,8 @@ struct TerminalContentProjectionAdapter {
                 context: projectedContext,
                 viewport: viewport,
                 activity: projectedActivity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: projectedActivity
