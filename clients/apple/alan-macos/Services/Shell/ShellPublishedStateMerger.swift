@@ -25,7 +25,8 @@ enum AlanShellPublishedStateMerger {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: mergedPanes.filter { $0.spaceID == space.spaceID }),
-                tabs: space.tabs
+                tabs: space.tabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -60,7 +61,8 @@ enum AlanShellPublishedStateMerger {
             context: merge(authoritativeContext: authoritativePane.context, incomingContext: incomingPane.context),
             viewport: merge(authoritativeViewport: authoritativePane.viewport, incomingViewport: incomingPane.viewport),
             activity: incomingPane.activity,
-            alanBinding: incomingPane.alanBinding ?? authoritativePane.alanBinding
+            alanBinding: incomingPane.alanBinding ?? authoritativePane.alanBinding,
+            terminalProfileID: incomingPane.terminalProfileID ?? authoritativePane.terminalProfileID
         )
     }
 
@@ -82,6 +84,21 @@ enum AlanShellPublishedStateMerger {
             incomingContext?.launchCommand ?? authoritativeContext?.launchCommand
         let launchStrategy =
             incomingContext?.launchStrategy ?? authoritativeContext?.launchStrategy
+        let incomingTerminalProfileResolution = incomingContext?.terminalProfileState != nil
+        let terminalProfileState =
+            incomingContext?.terminalProfileState ?? authoritativeContext?.terminalProfileState
+        let terminalProfileRequestedID = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileRequestedID
+            : authoritativeContext?.terminalProfileRequestedID
+        let terminalProfileID = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileID
+            : authoritativeContext?.terminalProfileID
+        let terminalProfileKind = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileKind
+            : authoritativeContext?.terminalProfileKind
+        let terminalProfileTitle = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileTitle
+            : authoritativeContext?.terminalProfileTitle
         let shellIntegrationSource =
             incomingContext?.shellIntegrationSource ?? authoritativeContext?.shellIntegrationSource
         let processState = incomingContext?.processState ?? authoritativeContext?.processState
@@ -110,6 +127,11 @@ enum AlanShellPublishedStateMerger {
             alanBindingFile: alanBindingFile,
             launchCommand: launchCommand,
             launchStrategy: launchStrategy,
+            terminalProfileState: terminalProfileState,
+            terminalProfileRequestedID: terminalProfileRequestedID,
+            terminalProfileID: terminalProfileID,
+            terminalProfileKind: terminalProfileKind,
+            terminalProfileTitle: terminalProfileTitle,
             shellIntegrationSource: shellIntegrationSource,
             processState: processState,
             rendererPhase: rendererPhase,

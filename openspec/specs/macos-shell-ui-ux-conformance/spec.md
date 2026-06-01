@@ -1054,3 +1054,107 @@ or explanatory panels to the terminal workflow.
 #### Scenario: Intent result activates app
 - **WHEN** an App Intent activates a shell target
 - **THEN** the window opens to the relevant space, tab, or pane using normal shell UI rather than a special automation debug surface
+
+### Requirement: Settings Manages Terminal Profiles Locally
+Alan macOS Settings SHALL provide a local Terminal Profiles surface for
+creating, editing, and choosing the default Terminal Profile without presenting
+Terminal Profiles as provider accounts.
+
+#### Scenario: Terminal Profiles appear in Settings
+- **WHEN** the user opens Settings
+- **THEN** alan shows Terminal Profiles as local terminal startup configuration
+- **AND** alan does not place Terminal Profiles under provider Accounts or label
+  them as connection profiles
+
+#### Scenario: Structured profile editing
+- **WHEN** the user edits a Terminal Profile
+- **THEN** alan provides structured controls for login shell, sudo Unix user,
+  sudo root, and custom command launch modes
+- **AND** required fields are validated before the profile is saved
+
+#### Scenario: Sudo behavior is explained without raw sudoers editing
+- **WHEN** the user configures a sudo Unix user or sudo root Terminal Profile
+- **THEN** alan explains that sudo prompts and passwordless sudo behavior are
+  controlled by the operating system
+- **AND** the Terminal Profile editor does not offer raw sudoers-file editing
+
+### Requirement: Spaces Expose Terminal Profile Binding
+The macOS shell UI SHALL let users view and change a Space's default Terminal
+Profile through compact shell-native affordances.
+
+#### Scenario: Space profile can be selected
+- **WHEN** the user opens a Space action menu or profile selector
+- **THEN** alan lists local Terminal Profiles by title and launch kind
+- **AND** selecting one updates the Space's default `terminal_profile_id`
+
+#### Scenario: Space profile hint stays quiet
+- **WHEN** a Space has a Terminal Profile binding
+- **THEN** alan may show a compact icon, color, or label hint in the sidebar
+- **AND** alan keeps the sidebar scannable and avoids turning Space rows into
+  dense configuration panels
+
+#### Scenario: Missing profile is visible
+- **WHEN** a Space or terminal content references a missing Terminal Profile
+- **THEN** alan shows a missing-profile state with the missing id
+- **AND** alan keeps terminal creation available through login-shell fallback
+
+### Requirement: Terminal Profile Details Stay Appropriately Redacted
+Alan macOS shell UI SHALL expose Terminal Profile identity in normal shell
+surfaces without leaking unnecessary command details.
+
+#### Scenario: Custom command is not shown in normal sidebar rows
+- **WHEN** a terminal content uses a `custom_command` Terminal Profile
+- **THEN** normal sidebar and pane chrome use the profile title or kind
+- **AND** the full custom command is shown only in Settings or explicit
+  diagnostics
+
+#### Scenario: Root profile is visibly distinct
+- **WHEN** terminal content uses a sudo root Terminal Profile
+- **THEN** alan presents a restrained but clear root identity indicator in
+  terminal chrome or status surfaces
+
+### Requirement: Settings Presents Managed Terminal Account Provisioning
+Alan macOS Settings SHALL provide a Managed Terminal Account flow for creating
+terminal-only local users and SHALL distinguish it from macOS GUI automatic
+login.
+
+#### Scenario: Provision action is local and explicit
+- **WHEN** the user opens Terminal Profile or local terminal identity settings
+- **THEN** alan offers an explicit action to create or repair a Managed Terminal
+  Account
+- **AND** alan labels the flow as terminal account provisioning, not autologin
+
+#### Scenario: GUI automatic login is not implied
+- **WHEN** the provisioning flow describes the result
+- **THEN** alan states that it does not enable macOS GUI automatic login
+- **AND** alan describes the result as passwordless terminal entry from the
+  current GUI user to the target Unix user
+
+#### Scenario: Privileged plan is reviewed before apply
+- **WHEN** the user reaches the apply step
+- **THEN** alan shows the planned privileged changes in compact user-facing
+  language
+- **AND** the user must confirm before alan applies account, sudoers, or Terminal
+  Profile changes
+
+### Requirement: Provisioning UI Surfaces Safety State
+Alan macOS Settings SHALL surface readiness, repair, and rollback state for
+Managed Terminal Accounts without exposing passwords or raw privileged command
+payloads in normal UI.
+
+#### Scenario: Ready account is shown
+- **WHEN** a Managed Terminal Account is verified ready
+- **THEN** alan shows the account as ready for terminal entry
+- **AND** alan links it to the matching Terminal Profile when one exists
+
+#### Scenario: Repairable account is shown
+- **WHEN** a Managed Terminal Account is partially provisioned or fails
+  verification
+- **THEN** alan shows a repairable state with the failed step
+- **AND** alan offers to preview a repair plan
+
+#### Scenario: Passwords are not displayed
+- **WHEN** provisioning uses generated or administrator-entered passwords
+- **THEN** alan does not show those passwords in Settings after the operation
+- **AND** alan does not write them into normal shell state, workspace manifests,
+  or Terminal Profile definitions

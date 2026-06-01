@@ -73,6 +73,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
     let viewport: ShellViewportSnapshot?
     let activity: TerminalActivitySnapshot?
     let alanBinding: ShellAlanBinding?
+    let terminalProfileID: String?
 
     var id: String { paneID }
 
@@ -87,7 +88,8 @@ struct ShellPane: Identifiable, Codable, Equatable {
         context: ShellContextSnapshot?,
         viewport: ShellViewportSnapshot?,
         activity: TerminalActivitySnapshot? = nil,
-        alanBinding: ShellAlanBinding?
+        alanBinding: ShellAlanBinding?,
+        terminalProfileID: String? = nil
     ) {
         self.paneID = paneID
         self.tabID = tabID
@@ -100,6 +102,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
         self.viewport = viewport
         self.activity = activity
         self.alanBinding = alanBinding
+        self.terminalProfileID = terminalProfileID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -114,6 +117,25 @@ struct ShellPane: Identifiable, Codable, Equatable {
         case viewport
         case activity
         case alanBinding = "alan_binding"
+        case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            paneID: try container.decode(String.self, forKey: .paneID),
+            tabID: try container.decode(String.self, forKey: .tabID),
+            spaceID: try container.decode(String.self, forKey: .spaceID),
+            launchTarget: try container.decodeIfPresent(ShellLaunchTarget.self, forKey: .launchTarget),
+            cwd: try container.decodeIfPresent(String.self, forKey: .cwd),
+            process: try container.decodeIfPresent(ShellProcessBinding.self, forKey: .process),
+            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
+            context: try container.decodeIfPresent(ShellContextSnapshot.self, forKey: .context),
+            viewport: try container.decodeIfPresent(ShellViewportSnapshot.self, forKey: .viewport),
+            activity: try container.decodeIfPresent(TerminalActivitySnapshot.self, forKey: .activity),
+            alanBinding: try container.decodeIfPresent(ShellAlanBinding.self, forKey: .alanBinding),
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+        )
     }
 }
 
@@ -393,17 +415,20 @@ struct ShellTerminalContentPayload: Codable, Equatable {
     let cwd: String?
     let title: String?
     let transcriptSnapshot: TerminalTranscriptSnapshot?
+    let terminalProfileID: String?
 
     init(
         launchTarget: ShellLaunchTarget,
         cwd: String?,
         title: String?,
-        transcriptSnapshot: TerminalTranscriptSnapshot? = nil
+        transcriptSnapshot: TerminalTranscriptSnapshot? = nil,
+        terminalProfileID: String? = nil
     ) {
         self.launchTarget = launchTarget
         self.cwd = cwd
         self.title = title
         self.transcriptSnapshot = transcriptSnapshot
+        self.terminalProfileID = terminalProfileID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -411,6 +436,21 @@ struct ShellTerminalContentPayload: Codable, Equatable {
         case cwd
         case title
         case transcriptSnapshot = "transcript_snapshot"
+        case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            launchTarget: try container.decode(ShellLaunchTarget.self, forKey: .launchTarget),
+            cwd: try container.decodeIfPresent(String.self, forKey: .cwd),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            transcriptSnapshot: try container.decodeIfPresent(
+                TerminalTranscriptSnapshot.self,
+                forKey: .transcriptSnapshot
+            ),
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+        )
     }
 }
 
@@ -1064,6 +1104,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
     let title: String
     let attention: ShellAttentionState
     let tabs: [ShellTab]
+    let terminalProfileID: String?
 
     var id: String { spaceID }
 
@@ -1072,6 +1113,32 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         case title
         case attention
         case tabs
+        case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(
+        spaceID: String,
+        title: String,
+        attention: ShellAttentionState,
+        tabs: [ShellTab],
+        terminalProfileID: String? = nil
+    ) {
+        self.spaceID = spaceID
+        self.title = title
+        self.attention = attention
+        self.tabs = tabs
+        self.terminalProfileID = terminalProfileID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            spaceID: try container.decode(String.self, forKey: .spaceID),
+            title: try container.decode(String.self, forKey: .title),
+            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
+            tabs: try container.decode([ShellTab].self, forKey: .tabs),
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+        )
     }
 }
 
@@ -1080,6 +1147,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
     let title: String
     let attention: ShellAttentionState
     let tabs: [ShellContentTab]
+    let terminalProfileID: String?
 
     var id: String { spaceID }
 
@@ -1088,6 +1156,32 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         case title
         case attention
         case tabs
+        case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(
+        spaceID: String,
+        title: String,
+        attention: ShellAttentionState,
+        tabs: [ShellContentTab],
+        terminalProfileID: String? = nil
+    ) {
+        self.spaceID = spaceID
+        self.title = title
+        self.attention = attention
+        self.tabs = tabs
+        self.terminalProfileID = terminalProfileID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            spaceID: try container.decode(String.self, forKey: .spaceID),
+            title: try container.decode(String.self, forKey: .title),
+            attention: try container.decode(ShellAttentionState.self, forKey: .attention),
+            tabs: try container.decode([ShellContentTab].self, forKey: .tabs),
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+        )
     }
 }
 
@@ -1313,7 +1407,8 @@ extension ShellContentStateSnapshot {
                         launchTarget: terminalPayload.launchTarget,
                         cwd: terminalPayload.cwd,
                         title: terminalPayload.title,
-                        transcriptSnapshot: transcriptSnapshot
+                        transcriptSnapshot: transcriptSnapshot,
+                        terminalProfileID: terminalPayload.terminalProfileID
                     )
                 ),
                 lifecycle: projected.lifecycle,
@@ -1342,7 +1437,8 @@ extension ShellContentStateSnapshot {
                         paneTree: ShellPaneSlotTreeNode.migrating(paneTree: tab.paneTree),
                         isPinned: tab.isPinned
                     )
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -1452,7 +1548,8 @@ extension ShellContentStateSnapshot {
                 attention: Self.strongestAttention(
                     in: materializedPaneSlots.filter { $0.spaceID == space.spaceID }
                 ),
-                tabs: tabs
+                tabs: tabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -1546,7 +1643,8 @@ private extension ShellPane {
                 visibleExcerpt: nil,
                 lastActivityAt: nil
             ),
-            alanBinding: nil
+            alanBinding: nil,
+            terminalProfileID: terminalPayload?.terminalProfileID
         )
     }
 
@@ -1589,7 +1687,8 @@ extension ShellContentInstance {
                 ShellTerminalContentPayload(
                     launchTarget: pane.resolvedLaunchTarget,
                     cwd: pane.cwd,
-                    title: title
+                    title: title,
+                    terminalProfileID: pane.terminalProfileID
                 )
             ),
             rendererState: terminalRendererState(for: pane)
