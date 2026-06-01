@@ -43,6 +43,18 @@ extension ShellStateSnapshot {
         return space(spaceID: targetSpaceID)?.terminalProfileID
     }
 
+    func terminalProfileIDForNewSplit(
+        from paneID: String,
+        explicit: String?
+    ) -> String? {
+        if let explicit {
+            return explicit
+        }
+        guard let pane = pane(paneID: paneID) else { return nil }
+        return pane.terminalProfileID
+            ?? terminalProfileIDForNewTerminal(in: pane.spaceID, explicit: nil)
+    }
+
     static func bootstrapDefault(
         windowID: String = "window_main",
         workingDirectory: String = defaultShellWorkingDirectory()

@@ -50,11 +50,13 @@ enum AlanShellLocalCommandExecutor {
             )
 
         case .spaceCreate:
+            let resolvedTerminalProfileID = command.terminalProfileID
+                ?? terminalProfileIDForWorkingDirectoryDeferral()
             let result = state.creatingSpace(
                 launchTarget: .shell,
                 title: command.title,
                 workingDirectory: command.cwd,
-                terminalProfileID: command.terminalProfileID
+                terminalProfileID: resolvedTerminalProfileID
             )
             return AlanShellLocalCommandResult(
                 response: response(
@@ -454,10 +456,15 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
+                let resolvedTerminalProfileID = state.terminalProfileIDForNewSplit(
+                    from: paneID,
+                    explicit: command.terminalProfileID
+                )
+                    ?? terminalProfileIDForWorkingDirectoryDeferral()
                 let result = try state.splittingPane(
                     paneID,
                     direction: direction,
-                    terminalProfileID: command.terminalProfileID
+                    terminalProfileID: resolvedTerminalProfileID
                 )
                 return AlanShellLocalCommandResult(
                     response: response(

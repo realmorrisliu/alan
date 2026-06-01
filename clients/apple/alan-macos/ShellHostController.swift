@@ -3047,14 +3047,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
-        if let explicit {
-            return explicit
-        }
-        guard let pane = shellState.pane(paneID: paneID) else {
-            return nil
-        }
-        return pane.terminalProfileID
-            ?? targetTerminalProfileID(in: pane.spaceID, explicit: nil)
+        shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
+            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
     }
 
     private func globalDefaultTerminalProfileIDForWorkingDirectoryDeferral() -> String? {

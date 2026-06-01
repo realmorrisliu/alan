@@ -7984,6 +7984,68 @@ private enum ShellRuntimeMetadataTests {
             localPane?.cwd == nil,
             "local tab.open using the global default profile must let the profile cwd win"
         )
+
+        let localSpaceResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-space-global-default-profile",
+                  "command": "space.create"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_space_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        let localSpacePane = localSpaceResult?.updatedState?.pane(
+            paneID: localSpaceResult?.response.paneID ?? ""
+        )
+        expect(localSpaceResult?.response.applied == true, "local space.create must apply")
+        expect(
+            localSpaceResult?.response.spaceID.flatMap {
+                localSpaceResult?.updatedState?.space(spaceID: $0)
+            }?.terminalProfileID == "alan",
+            "local space.create must bind the global default terminal profile"
+        )
+        expect(
+            localSpacePane?.terminalProfileID == "alan",
+            "local space.create must apply the global default profile to the first pane"
+        )
+        expect(
+            localSpacePane?.cwd == nil,
+            "local space.create using the global default profile must let the profile cwd win"
+        )
+
+        let localSplitResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-split-global-default-profile",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "horizontal"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_split_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        let localSplitPane = localSplitResult?.updatedState?.pane(
+            paneID: localSplitResult?.response.paneID ?? ""
+        )
+        expect(localSplitResult?.response.applied == true, "local pane.split must apply")
+        expect(
+            localSplitPane?.terminalProfileID == "alan",
+            "local pane.split must capture the global default terminal profile"
+        )
+        expect(
+            localSplitPane?.cwd == nil,
+            "local pane.split using the global default profile must let the profile cwd win"
+        )
     }
 
     private static func verifiesTerminalProfileControlPlaneOverrides() {
