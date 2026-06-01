@@ -67,7 +67,7 @@ private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTermin
     private var pendingContentTask: Task<Void, Never>?
     private weak var presentedHost: ShellHostController?
     private var representedPaneID: String?
-    private var keyAttemptCount = 0
+    private var panelKeyRequestBudget = ShellQuickTerminalPanelKeyRequestBudget()
 
     var isVisible: Bool {
         panel?.isVisible == true
@@ -83,7 +83,7 @@ private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTermin
         pendingContentTask?.cancel()
         presentedHost = host
         representedPaneID = pane.paneID
-        keyAttemptCount = 0
+        panelKeyRequestBudget.reset()
 
         let loadingView = ShellQuickTerminalPeakView(
             host: host,
@@ -101,7 +101,7 @@ private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTermin
         panel.setFrame(placement.frame, display: true)
         panel.collectionBehavior = placement.windowCollectionBehavior
         panel.orderFrontRegardless()
-        requestPanelKeyIfPossible(panel)
+        requestPanelKeyIfAllowed(panel, for: .presentation)
         installTerminalContentAfterPanelPresentation(host: host, paneID: pane.paneID)
     }
 
@@ -120,7 +120,7 @@ private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTermin
     func focusTerminal(paneID: String) {
         guard representedPaneID == paneID else { return }
         if let panel, panel.isVisible {
-            requestPanelKeyIfPossible(panel)
+            requestPanelKeyIfAllowed(panel, for: .terminalFocus)
         }
         presentedHost?.terminalRuntimeRegistry.requestFocus(for: paneID, retryBudget: 3)
     }
@@ -195,15 +195,17 @@ private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTermin
                 return
             }
             if let panel {
-                requestPanelKeyIfPossible(panel)
+                requestPanelKeyIfAllowed(panel, for: .presentation)
             }
             host.terminalRuntimeRegistry.requestFocus(for: paneID, retryBudget: 3)
         }
     }
 
-    private func requestPanelKeyIfPossible(_ panel: NSPanel) {
-        guard keyAttemptCount < 2 else { return }
-        keyAttemptCount += 1
+    private func requestPanelKeyIfAllowed(
+        _ panel: NSPanel,
+        for purpose: ShellQuickTerminalPanelKeyRequestBudget.Purpose
+    ) {
+        guard panelKeyRequestBudget.shouldRequestKey(for: purpose) else { return }
         panel.makeKey()
     }
 }

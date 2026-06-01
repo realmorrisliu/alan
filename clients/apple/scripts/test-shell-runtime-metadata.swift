@@ -54,6 +54,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalActiveCloseCancelPreservesRuntime()
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
         verifiesQuickTerminalFocusRefocusesExistingVisiblePeak()
+        verifiesQuickTerminalPanelKeyBudgetDoesNotBlockTerminalFocus()
         verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags()
         verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
@@ -2394,6 +2395,42 @@ private enum ShellRuntimeMetadataTests {
                 "focus:\(ShellQuickTerminalSlot.globalPaneID)",
             ],
             "unrelated visible-state refresh must not refocus after explicit quick-terminal focus"
+        )
+    }
+
+    private static func verifiesQuickTerminalPanelKeyBudgetDoesNotBlockTerminalFocus() {
+        var budget = ShellQuickTerminalPanelKeyRequestBudget(maximumPresentationAttempts: 2)
+
+        expect(
+            budget.shouldRequestKey(for: .presentation),
+            "first presentation key request must be allowed"
+        )
+        expect(
+            budget.shouldRequestKey(for: .presentation),
+            "second presentation key request must be allowed"
+        )
+        expect(
+            !budget.shouldRequestKey(for: .presentation),
+            "presentation key requests must remain bounded"
+        )
+        expect(
+            budget.shouldRequestKey(for: .terminalFocus),
+            "terminal focus must still request panel key after presentation attempts are exhausted"
+        )
+        expect(
+            budget.shouldRequestKey(for: .terminalFocus),
+            "repeated terminal focus requests must not consume the presentation budget"
+        )
+        expect(
+            budget.presentationAttemptCount == 2,
+            "terminal focus requests must not advance the presentation attempt count"
+        )
+
+        budget.reset()
+        expect(budget.presentationAttemptCount == 0, "reset must clear presentation key attempts")
+        expect(
+            budget.shouldRequestKey(for: .presentation),
+            "a new presentation must get a fresh key request budget"
         )
     }
 

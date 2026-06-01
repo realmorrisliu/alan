@@ -184,6 +184,35 @@ struct ShellQuickTerminalPeakPlacement: Equatable {
     }
 }
 
+struct ShellQuickTerminalPanelKeyRequestBudget {
+    enum Purpose {
+        case presentation
+        case terminalFocus
+    }
+
+    private(set) var presentationAttemptCount = 0
+    let maximumPresentationAttempts: Int
+
+    init(maximumPresentationAttempts: Int = 2) {
+        self.maximumPresentationAttempts = max(0, maximumPresentationAttempts)
+    }
+
+    mutating func reset() {
+        presentationAttemptCount = 0
+    }
+
+    mutating func shouldRequestKey(for purpose: Purpose) -> Bool {
+        switch purpose {
+        case .presentation:
+            guard presentationAttemptCount < maximumPresentationAttempts else { return false }
+            presentationAttemptCount += 1
+            return true
+        case .terminalFocus:
+            return true
+        }
+    }
+}
+
 enum ShellQuickTerminalPeakDismissalReason: Equatable {
     case hidden
     case removed
