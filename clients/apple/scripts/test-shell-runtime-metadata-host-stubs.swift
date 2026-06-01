@@ -22,6 +22,7 @@ final class AlanTerminalHostNSView: NSView {
         renderPriority: TerminalRuntimeRenderPriority,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
+        attachmentPolicy: TerminalHostAttachmentPolicy,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,

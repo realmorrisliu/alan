@@ -56,6 +56,11 @@ struct TerminalContentMount: Equatable {
     }
 }
 
+enum TerminalHostAttachmentPolicy: Equatable {
+    case immediate
+    case deferUntilWindowAttached
+}
+
 @MainActor
 final class TerminalRuntimeRegistry: ObservableObject {
     typealias MockDeliveryHandler = (String, String) -> TerminalRuntimeDeliveryResult
@@ -64,6 +69,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
     private var snapshotsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
     private var paneSlotIDByContentID: [String: String] = [:]
     private var contentIDByPaneSlotID: [String: String] = [:]
+    private var pendingFocusPaneSlotIDs: Set<String> = []
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
 
@@ -81,6 +87,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         isSelected: Bool,
         renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
+        attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
@@ -93,6 +100,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             isSelected: isSelected,
             renderPriority: renderPriority,
             activationDelegate: activationDelegate,
+            attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
@@ -107,6 +115,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         isSelected: Bool,
         renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
+        attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
@@ -123,6 +132,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             isSelected: isSelected,
             renderPriority: renderPriority,
             activationDelegate: activationDelegate,
+            attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
@@ -139,6 +149,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         isSelected: Bool,
         renderPriority: TerminalRuntimeRenderPriority = .foregroundInteractive,
         activationDelegate: TerminalHostActivationDelegate?,
+        attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
@@ -165,6 +176,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             renderPriority: renderPriority,
             surfaceHandle: surfaceHandle,
             activationDelegate: activationDelegate,
+            attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
@@ -393,8 +405,14 @@ final class TerminalRuntimeRegistry: ObservableObject {
             .dismissFindInteraction(refocusTerminal: refocusTerminal)
     }
 
-    func requestFocus(for paneID: String) {
-        hostViewsByContentID[terminalContentID(mountedAtPaneID: paneID)]?.focusTerminal()
+    func requestFocus(for paneID: String, retryBudget: Int = 0) {
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
+        if let hostView = hostViewsByContentID[contentID] {
+            hostView.focusTerminal()
+            return
+        }
+        guard retryBudget > 0 else { return }
+        pendingFocusPaneSlotIDs.insert(paneID)
     }
 
     var registeredContentIDs: Set<String> {
@@ -442,6 +460,9 @@ final class TerminalRuntimeRegistry: ObservableObject {
         unregisterHostView(hostView, excludingContentID: contentID)
         recordMount(contentID: contentID, paneSlotID: paneSlotID)
         hostViewsByContentID[contentID] = hostView
+        if pendingFocusPaneSlotIDs.remove(paneSlotID) != nil {
+            hostView.focusTerminal()
+        }
     }
 
     private func unregisterHostView(

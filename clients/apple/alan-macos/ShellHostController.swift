@@ -133,6 +133,16 @@ struct ShellQuickTerminalPeakPlacement: Equatable {
     let joinsAllSpaces: Bool
     let requiresMainWindow: Bool
 
+    var windowCollectionBehavior: NSWindow.CollectionBehavior {
+        var behavior: NSWindow.CollectionBehavior = [.fullScreenAuxiliary]
+        if joinsAllSpaces {
+            behavior.insert(.canJoinAllSpaces)
+        } else if followsActiveSpace {
+            behavior.insert(.moveToActiveSpace)
+        }
+        return behavior
+    }
+
     static func defaultPlacement(in visibleFrame: CGRect) -> ShellQuickTerminalPeakPlacement {
         ShellQuickTerminalPeakPlacement(
             frame: defaultFrame(in: visibleFrame),
@@ -244,8 +254,8 @@ final class ShellQuickTerminalPeakPresenter {
 
         switch slot.presentation {
         case .visible:
-            let shouldActivate = !window.isVisible || lastPresentedPaneID != pane.paneID
-            if shouldActivate {
+            let shouldPresent = !window.isVisible || lastPresentedPaneID != pane.paneID
+            if shouldPresent {
                 let tab = ShellQuickTerminalPeakModel.tab(for: pane)
                 let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
                 window.presentQuickTerminal(
@@ -255,7 +265,6 @@ final class ShellQuickTerminalPeakPresenter {
                     placement: placement
                 )
                 window.focusTerminal(paneID: pane.paneID)
-                host.terminalRuntimeRegistry.requestFocus(for: pane.paneID)
             }
             lastPresentedPaneID = pane.paneID
         case .hidden:
@@ -956,7 +965,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             workingDirectory: focusedPaneWorkingDirectory()
         )
         applyMutationResult(result)
-        terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
         return result.paneID
     }
 
@@ -973,11 +981,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func focusQuickTerminal() -> String? {
-        let paneID = showQuickTerminal()
-        if let paneID {
-            terminalRuntimeRegistry.requestFocus(for: paneID)
-        }
-        return paneID
+        showQuickTerminal()
     }
 
     @discardableResult

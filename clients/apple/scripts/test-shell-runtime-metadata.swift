@@ -3,6 +3,8 @@ import Darwin
 import Foundation
 
 #if os(macOS)
+import AppKit
+
 @main
 struct ShellRuntimeMetadataTestRunner {
     static func main() async {
@@ -27,6 +29,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesRuntimeRegistryPreservesInteractiveBehaviorAcrossPaneRemount()
         verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
         verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
+        verifiesRuntimeRegistryDeliversDeferredFocusAfterHostRegistration()
         verifiesTerminalLifecycleFinalizesClosedPaneAndPreservesSiblings()
         verifiesTerminalLifecycleFinalizesAllTabContentsOnce()
         verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes()
@@ -44,10 +47,14 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalTerminalCommandsStayRoutable()
         verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
         verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
+        verifiesQuickTerminalPeakPresenterOrdersPresentationBeforeFocus()
         verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection()
         verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
+        verifiesQuickTerminalPeakPresenterReleasesPresentationAfterPromotion()
         verifiesQuickTerminalActiveCloseCancelPreservesRuntime()
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
+        verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags()
+        verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
         verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
         verifiesQuickTerminalRenderPriorityStaysDetachedFromMainWindowVisibility()
@@ -1047,6 +1054,54 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesRuntimeRegistryDeliversDeferredFocusAfterHostRegistration() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let delayedMount = TerminalContentMount(
+            contentID: "content_delayed_focus",
+            paneSlotID: "pane_delayed_focus",
+            tabID: "tab_delayed_focus",
+            spaceID: "space_main"
+        )
+        let hostView = AlanTerminalHostNSView()
+
+        registry.requestFocus(for: "pane_delayed_focus", retryBudget: 3)
+        expect(hostView.focusCount == 0, "early focus must wait for host view registration")
+
+        registry.configureHostView(
+            hostView,
+            forTerminalContent: delayedMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        expect(
+            hostView.focusCount == 1,
+            "pending focus must be delivered exactly once when the host view registers"
+        )
+
+        registry.configureHostView(
+            hostView,
+            forTerminalContent: delayedMount,
+            pane: nil,
+            bootProfile: nil,
+            isSelected: true,
+            activationDelegate: nil,
+            onShellAction: nil,
+            onCloseRequest: nil,
+            onRuntimeUpdate: { _ in },
+            onMetadataUpdate: { _ in }
+        )
+        expect(
+            hostView.focusCount == 1,
+            "deferred focus must not continuously refocus after registration"
+        )
+    }
+
     private static func verifiesTerminalLifecycleFinalizesClosedPaneAndPreservesSiblings() {
         let controller = makeController()
         _ = controller.splitPane(paneID: "pane_1", placement: .right)
@@ -1441,8 +1496,8 @@ private enum ShellRuntimeMetadataTests {
             "workspace manifest restore must recreate the quick terminal slot"
         )
         expect(
-            restoredState.quickTerminal?.presentation == .visible,
-            "workspace manifest restore must preserve quick terminal presentation"
+            restoredState.quickTerminal?.presentation == .hidden,
+            "workspace manifest restore must not auto-present the quick terminal peak"
         )
         expect(
             restoredState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.cwd == "/repo/quick",
@@ -2059,6 +2114,36 @@ private enum ShellRuntimeMetadataTests {
         expect(controller.selectedTabID == selectedTabBefore, "peak presenter must not move the selected Alan tab")
     }
 
+    private static func verifiesQuickTerminalPeakPresenterOrdersPresentationBeforeFocus() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
+
+        _ = controller.showQuickTerminal()
+        presenter.synchronize()
+
+        expect(
+            window.events == [
+                "present:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+            ],
+            "Peak presenter must present the detached window before requesting terminal focus"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "regular pane update", cwd: "/repo/app"),
+            for: "pane_1"
+        )
+        presenter.synchronize()
+        expect(
+            window.events == [
+                "present:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+            ],
+            "visible Peak refresh must not continuously reorder or refocus"
+        )
+    }
+
     private static func verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection() {
         let controller = makeController()
         let focusedSpaceBefore = controller.shellState.focusedSpaceID
@@ -2154,6 +2239,37 @@ private enum ShellRuntimeMetadataTests {
         expect(quickHandle.teardownCount == 1, "explicit close must release the quick-terminal runtime")
     }
 
+    private static func verifiesQuickTerminalPeakPresenterReleasesPresentationAfterPromotion() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
+        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
+
+        _ = controller.showQuickTerminal()
+        let quickHandle = fakeSurfaceHandle(
+            for: ShellQuickTerminalSlot.globalPaneID,
+            controller: controller
+        )
+        presenter.synchronize()
+
+        expect(controller.promoteQuickTerminal(to: "space_2"), "promotion must move the quick terminal")
+        presenter.synchronize()
+
+        expect(
+            window.dismissalReasons.last == .removed,
+            "promotion must release the detached Peak presentation after the slot clears"
+        )
+        expect(controller.quickTerminalPane == nil, "promotion must clear the quick-terminal slot")
+        expect(
+            quickHandle.teardownCount == 0,
+            "promotion must move the runtime without finalizing the terminal process"
+        )
+        expect(
+            controller.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.spaceID == "space_2",
+            "promotion must move the existing quick-terminal pane into the target Space"
+        )
+    }
+
     private static func verifiesQuickTerminalActiveCloseCancelPreservesRuntime() {
         let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false])
         let controller = makeController(closeConfirmationPresenter: presenter)
@@ -2247,6 +2363,87 @@ private enum ShellRuntimeMetadataTests {
         expect(placement.frame.width >= 720, "normal displays should get a usable terminal width")
         expect(placement.frame.height >= 320, "normal displays should get a usable terminal height")
         expect(placement.requiresMainWindow == false, "peak placement must be detached from the main window")
+    }
+
+    private static func verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags() {
+        let visibleFrame = CGRect(x: 20, y: 40, width: 1_280, height: 760)
+        let allSpacesPlacement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrame)
+        let allSpacesBehavior = allSpacesPlacement.windowCollectionBehavior
+
+        expect(
+            allSpacesBehavior.contains(.canJoinAllSpaces),
+            "all-spaces peak behavior must join Spaces"
+        )
+        expect(
+            !allSpacesBehavior.contains(.moveToActiveSpace),
+            "all-spaces peak behavior must not also move to the active Space"
+        )
+        verifyAppKitAcceptsPeakCollectionBehavior(
+            allSpacesBehavior,
+            "all-spaces peak behavior must be accepted by AppKit"
+        )
+
+        let activeSpacePlacement = ShellQuickTerminalPeakPlacement(
+            frame: allSpacesPlacement.frame,
+            followsActiveSpace: true,
+            joinsAllSpaces: false,
+            requiresMainWindow: false
+        )
+        let activeSpaceBehavior = activeSpacePlacement.windowCollectionBehavior
+        expect(
+            activeSpaceBehavior.contains(.moveToActiveSpace),
+            "active-space peak behavior must move to the active Space"
+        )
+        expect(
+            !activeSpaceBehavior.contains(.canJoinAllSpaces),
+            "active-space peak behavior must not join all Spaces"
+        )
+        verifyAppKitAcceptsPeakCollectionBehavior(
+            activeSpaceBehavior,
+            "active-space peak behavior must be accepted by AppKit"
+        )
+    }
+
+    private static func verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering() {
+        let behavior = ShellQuickTerminalPeakPlacement
+            .defaultPlacement(in: CGRect(x: 20, y: 40, width: 1_280, height: 760))
+            .windowCollectionBehavior
+        let panel = QuickTerminalPeakHarnessPanel(
+            contentRect: CGRect(x: -10_000, y: -10_000, width: 160, height: 100),
+            styleMask: [.titled, .closable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.collectionBehavior = behavior
+        panel.isReleasedWhenClosed = false
+        panel.orderFrontRegardless()
+        panel.makeKey()
+
+        expect(panel.isVisible, "AppKit Peak harness must make the panel visible after ordering")
+        expect(panel.collectionBehavior == behavior, "AppKit Peak harness must preserve valid collection behavior")
+        expect(
+            panel.events.prefix(2) == ["orderFrontRegardless", "makeKey"],
+            "AppKit Peak harness must order the panel before requesting key focus"
+        )
+
+        panel.orderOut(nil)
+        expect(!panel.isVisible, "AppKit Peak harness must hide the panel on orderOut")
+        panel.close()
+    }
+
+    private static func verifyAppKitAcceptsPeakCollectionBehavior(
+        _ behavior: NSWindow.CollectionBehavior,
+        _ message: String
+    ) {
+        let panel = NSPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 160, height: 100),
+            styleMask: [.titled, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.collectionBehavior = behavior
+        expect(panel.collectionBehavior == behavior, message)
+        panel.close()
     }
 
     private static func verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal() {
@@ -9575,6 +9772,7 @@ private enum ShellRuntimeMetadataTests {
         private(set) var dismissalReasons: [ShellQuickTerminalPeakDismissalReason] = []
         private(set) var lastPlacement: ShellQuickTerminalPeakPlacement?
         private(set) var lastTabID: String?
+        private(set) var events: [String] = []
         private(set) var isVisible = false
 
         func presentQuickTerminal(
@@ -9585,6 +9783,7 @@ private enum ShellRuntimeMetadataTests {
         ) {
             isVisible = true
             presentedPaneIDs.append(pane.paneID)
+            events.append("present:\(pane.paneID)")
             lastTabID = tab.tabID
             lastPlacement = placement
         }
@@ -9592,10 +9791,29 @@ private enum ShellRuntimeMetadataTests {
         func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason) {
             isVisible = false
             dismissalReasons.append(reason)
+            events.append("dismiss:\(reason)")
         }
 
         func focusTerminal(paneID: String) {
             focusedPaneIDs.append(paneID)
+            events.append("focus:\(paneID)")
+        }
+    }
+
+    private final class QuickTerminalPeakHarnessPanel: NSPanel {
+        private(set) var events: [String] = []
+
+        override var canBecomeKey: Bool { true }
+        override var canBecomeMain: Bool { false }
+
+        override func orderFrontRegardless() {
+            events.append("orderFrontRegardless")
+            super.orderFrontRegardless()
+        }
+
+        override func makeKey() {
+            events.append("makeKey")
+            super.makeKey()
         }
     }
 
