@@ -2104,6 +2104,11 @@ require_pattern \
     "final class AlanShellDiagnostics" \
     "shell diagnostics routing must live in a dedicated shell service owner"
 
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellPerformanceDiagnostics.swift" \
+    "mach_port_deallocate\\(mach_task_self_, threadList\\[index\\]\\)" \
+    "performance diagnostics task_threads sampling must deallocate each returned thread port"
+
 reject_pattern \
     "clients/apple/alan-macos/ShellControlPlane.swift" \
     "final class AlanShellSocketServer|SO_RCVTIMEO|SO_SNDTIMEO|maxRequestBytes|command_timeout|enum AlanShellPublishedStateMerger|pollCommands\\(|pollBindings\\(|handleCommandFile\\(|appendEvent\\(|readEvents\\(|recordEvents\\(|recordDiagnostic\\(" \

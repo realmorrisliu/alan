@@ -81,6 +81,8 @@ struct ShellAutomationIntentOutcome: Equatable, Sendable {
             return "Closed tab."
         case .sendText:
             return deliveryDialog(prefix: "Text delivery accepted", result: nil)
+        case .sendKey:
+            return deliveryDialog(prefix: "Key delivery accepted", result: nil)
         case .readPaneSummary:
             return "Pane summary\(safeSummary)"
         case .activateAttentionItem:

@@ -1075,6 +1075,7 @@ final class AlanTerminalSurfaceController {
     private weak var scrollbackEngine: AlanTerminalScrollbackEngine?
     private weak var commandBufferEngine: AlanTerminalCommandBufferEngine?
     private weak var selectionEngine: AlanTerminalSelectionEngine?
+    private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
     private var semanticCommandState = AlanTerminalSemanticCommandState.placeholder
     private var latestRenderer = TerminalRendererSnapshot.placeholder
     private var latestMetadata = TerminalPaneMetadataSnapshot.placeholder
@@ -1082,7 +1083,8 @@ final class AlanTerminalSurfaceController {
     private var secureInput = false
     private var nativeScrollRowHeight: CGFloat = 1
 
-    init() {
+    init(diagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil) {
+        self.performanceDiagnosticsRecorder = diagnosticsRecorder
         nativeScrollViewAdapter.onVisibleRowChange = { [weak self] row in
             self?.scrollToNativeRow(row)
         }
@@ -1158,6 +1160,7 @@ final class AlanTerminalSurfaceController {
         onCloseRequest: @escaping (Bool) -> Void
     ) {
         guard let surfaceHandle else { return }
+        let attachStartedAt = performanceDiagnosticsStartTime()
         surfaceHandle.configure(mountedAtPaneID: surfaceHandle.paneID, bootProfile: bootProfile)
         surfaceHandle.updateRenderPriority(renderPriority, forceCatchUp: false)
         surfaceHandle.attach(
@@ -1167,6 +1170,13 @@ final class AlanTerminalSurfaceController {
             onDiagnosticsChange: { [weak self] snapshot in
                 guard let self else { return }
                 latestRenderer = snapshot
+                if performanceDiagnosticsStartTime() != nil {
+                    recordPerformanceDiagnostic(
+                        .terminalRendererUpdate,
+                        durationMs: 0,
+                        counts: AlanPerformanceDiagnosticCounts(events: snapshot.recentEvents.count)
+                    )
+                }
                 onDiagnosticsChange(snapshot)
             },
             onMetadataChange: { [weak self] metadata in
@@ -1176,6 +1186,13 @@ final class AlanTerminalSurfaceController {
             },
             onCloseRequest: onCloseRequest
         )
+        if let attachStartedAt {
+            recordPerformanceDiagnostic(
+                .terminalSurfaceAttach,
+                durationMs: performanceDurationMs(since: attachStartedAt),
+                priority: renderPriority
+            )
+        }
     }
 
     func detach() {
@@ -1193,7 +1210,15 @@ final class AlanTerminalSurfaceController {
     }
 
     func updateRenderer(_ renderer: TerminalRendererSnapshot) {
+        let updateStartedAt = performanceDiagnosticsStartTime()
         latestRenderer = renderer
+        if let updateStartedAt {
+            recordPerformanceDiagnostic(
+                .terminalRendererUpdate,
+                durationMs: performanceDurationMs(since: updateStartedAt),
+                counts: AlanPerformanceDiagnosticCounts(events: renderer.recentEvents.count)
+            )
+        }
     }
 
     func updateMetadata(_ metadata: TerminalPaneMetadataSnapshot) {
@@ -1482,8 +1507,69 @@ final class AlanTerminalSurfaceController {
     }
 
     private func applyScrollbackMetrics(_ metrics: AlanTerminalScrollbackMetrics) {
+        let updateStartedAt = performanceDiagnosticsStartTime()
         scrollbackAdapter.updateMetrics(metrics)
         notifySurfaceStateChanged()
+        if let updateStartedAt {
+            recordPerformanceDiagnostic(
+                .terminalScrollbackUpdate,
+                durationMs: performanceDurationMs(since: updateStartedAt),
+                counts: AlanPerformanceDiagnosticCounts(lines: metrics.totalRows)
+            )
+        }
+    }
+
+    private func recordPerformanceDiagnostic(
+        _ kind: AlanPerformanceDiagnosticEventKind,
+        durationMs: Double,
+        priority: TerminalRuntimeRenderPriority? = nil,
+        counts: AlanPerformanceDiagnosticCounts? = nil
+    ) {
+        if let performanceDiagnosticsRecorder {
+            guard performanceDiagnosticsRecorder.isEnabled else { return }
+        } else {
+            guard AlanPerformanceDiagnosticsController.shared.isEnabled else { return }
+        }
+        let resolvedPriority = priority ?? surfaceHandle?.renderPriority
+        let event = AlanPerformanceDiagnosticEvent(
+            kind: kind,
+            durationMs: durationMs,
+            paneID: surfaceHandle?.paneID,
+            contentID: surfaceHandle?.contentID,
+            priority: resolvedPriority?.diagnosticsValue,
+            visibility: resolvedPriority?.diagnosticsVisibility,
+            thread: Thread.isMainThread ? "main" : "background",
+            counts: counts
+        )
+        if let performanceDiagnosticsRecorder {
+            performanceDiagnosticsRecorder.record(event)
+        } else {
+            AlanPerformanceDiagnosticsController.shared.record(
+                kind,
+                durationMs: durationMs,
+                paneID: event.paneID,
+                contentID: event.contentID,
+                priority: event.priority,
+                visibility: event.visibility,
+                thread: event.thread,
+                counts: event.counts
+            )
+        }
+    }
+
+    private func performanceDurationMs(since start: DispatchTime) -> Double {
+        let end = DispatchTime.now()
+        let nanos = end.uptimeNanoseconds >= start.uptimeNanoseconds
+            ? end.uptimeNanoseconds - start.uptimeNanoseconds
+            : 0
+        return Double(nanos) / 1_000_000
+    }
+
+    private func performanceDiagnosticsStartTime() -> DispatchTime? {
+        if let performanceDiagnosticsRecorder {
+            return performanceDiagnosticsRecorder.isEnabled ? DispatchTime.now() : nil
+        }
+        return AlanPerformanceDiagnosticsController.shared.isEnabled ? DispatchTime.now() : nil
     }
 
     private func resetPerSurfaceStateForSurfaceChange() {

@@ -723,6 +723,21 @@ enum TerminalRuntimeRenderPriority: Int, Codable, Equatable, CaseIterable, Compa
     var isForegroundInteractive: Bool {
         self == .foregroundInteractive
     }
+
+    var diagnosticsValue: String {
+        switch self {
+        case .foregroundInteractive:
+            return "foregroundInteractive"
+        case .visibleBackground:
+            return "visibleBackground"
+        case .hiddenBackground:
+            return "hiddenBackground"
+        }
+    }
+
+    var diagnosticsVisibility: String {
+        isVisible ? "visible" : "hidden"
+    }
 }
 
 enum TerminalRenderRefreshReason: String, Equatable {
@@ -785,14 +800,19 @@ final class TerminalRenderCoordinator {
 
     private let lock = NSLock()
     private let automaticallyDrains: Bool
+    private let diagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
     private var pendingWakeupsByHost: [ObjectIdentifier: PendingWakeup] = [:]
     private var drainScheduled = false
     private var nextSequence = 0
 
     private var metrics = TerminalRenderCoordinatorMetrics()
 
-    init(automaticallyDrains: Bool = true) {
+    init(
+        automaticallyDrains: Bool = true,
+        diagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil
+    ) {
         self.automaticallyDrains = automaticallyDrains
+        self.diagnosticsRecorder = diagnosticsRecorder
     }
 
     func requestWakeup(
@@ -841,7 +861,15 @@ final class TerminalRenderCoordinator {
                 metrics.appTicks += 1
                 metrics.recordDrain(priority: priority)
             }
+            let tickStartedAt = performanceDiagnosticsStartTime()
             host.renderCoordinatorDrainAppTick()
+            if let tickStartedAt {
+                recordDiagnostics(
+                    kind: .ghosttyAppTick,
+                    durationMs: latencyMs(from: tickStartedAt, to: DispatchTime.now()),
+                    priority: priority
+                )
+            }
 
             guard pending.requiresSurfaceRefresh else { continue }
             let shouldRefresh = priority.isVisible || pending.reason == .catchUp
@@ -858,7 +886,17 @@ final class TerminalRenderCoordinator {
                     metrics.catchUpRefreshes += 1
                 }
             }
+            let refreshStartedAt = performanceDiagnosticsStartTime()
             host.renderCoordinatorRefreshSurface(reason: pending.reason)
+            if let refreshStartedAt {
+                recordDiagnostics(
+                    kind: pending.reason == .catchUp
+                        ? .terminalCatchUpRefresh
+                        : .ghosttySurfaceRefresh,
+                    durationMs: latencyMs(from: refreshStartedAt, to: DispatchTime.now()),
+                    priority: priority
+                )
+            }
         }
     }
 
@@ -900,6 +938,12 @@ final class TerminalRenderCoordinator {
         }
         lock.unlock()
 
+        recordDiagnostics(
+            kind: .ghosttyWakeup,
+            durationMs: 0,
+            priority: host.terminalRenderPriority
+        )
+
         guard shouldScheduleDrain else { return }
         DispatchQueue.main.async { [weak self] in
             self?.drainPending()
@@ -929,10 +973,50 @@ final class TerminalRenderCoordinator {
         return Double(nanos) / 1_000_000
     }
 
+    private func performanceDiagnosticsStartTime() -> DispatchTime? {
+        if let diagnosticsRecorder {
+            return diagnosticsRecorder.isEnabled ? DispatchTime.now() : nil
+        }
+        return AlanPerformanceDiagnosticsController.shared.isEnabled ? DispatchTime.now() : nil
+    }
+
     private func updateMetrics(_ update: (inout TerminalRenderCoordinatorMetrics) -> Void) {
         lock.lock()
         update(&metrics)
         lock.unlock()
+    }
+
+    private func recordDiagnostics(
+        kind: AlanPerformanceDiagnosticEventKind,
+        durationMs: Double,
+        priority: TerminalRuntimeRenderPriority
+    ) {
+        if let diagnosticsRecorder {
+            guard diagnosticsRecorder.isEnabled else { return }
+        } else {
+            guard AlanPerformanceDiagnosticsController.shared.isEnabled else { return }
+        }
+        let event = AlanPerformanceDiagnosticEvent(
+            kind: kind,
+            durationMs: durationMs,
+            priority: priority.diagnosticsValue,
+            visibility: priority.diagnosticsVisibility,
+            thread: Thread.isMainThread ? "main" : "background"
+        )
+        if let diagnosticsRecorder {
+            diagnosticsRecorder.record(event)
+        } else {
+            AlanPerformanceDiagnosticsController.shared.record(
+                event.kind,
+                durationMs: event.durationMs,
+                paneID: event.paneID,
+                contentID: event.contentID,
+                priority: event.priority,
+                visibility: event.visibility,
+                thread: event.thread,
+                counts: event.counts
+            )
+        }
     }
 }
 

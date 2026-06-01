@@ -100,7 +100,8 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         remote: ShellSettingsRemoteSnapshot,
         local: ShellSettingsLocalSummary,
         terminalProfiles: TerminalProfileSettingsSummary = .current(),
-        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary = .empty
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary = .empty,
+        diagnostics: ShellSettingsDiagnosticsSummary = .disabled
     ) -> ShellSettingsSurfaceSnapshot {
         ShellSettingsSurfaceSnapshot(
             sections: [
@@ -116,7 +117,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 ShellSettingsSectionModel(id: .accounts, rows: accountRows(remote.accounts)),
                 ShellSettingsSectionModel(id: .sessions, rows: sessionRows()),
                 ShellSettingsSectionModel(id: .capabilities, rows: capabilityRows(remote.capabilities)),
-                ShellSettingsSectionModel(id: .local, rows: localRows(local)),
+                ShellSettingsSectionModel(id: .local, rows: localRows(local, diagnostics: diagnostics)),
             ]
         )
     }
@@ -455,7 +456,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         ]
     }
 
-    private static func localRows(_ local: ShellSettingsLocalSummary) -> [ShellSettingsRowModel] {
+    private static func localRows(
+        _ local: ShellSettingsLocalSummary,
+        diagnostics: ShellSettingsDiagnosticsSummary
+    ) -> [ShellSettingsRowModel] {
         [
             ShellSettingsRowModel(
                 id: "appIdentity",
@@ -519,6 +523,22 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 title: "Shell control",
                 detail: "Local control namespace.",
                 value: local.shellControlNamespace
+            ),
+            ShellSettingsRowModel(
+                id: "performanceDiagnostics",
+                systemName: "speedometer",
+                title: "Performance Diagnostics",
+                detail: "Local performance trace. Terminal content is not recorded.",
+                value: diagnostics.isEnabled ? "Enabled" : "Disabled",
+                mutability: .editable
+            ),
+            ShellSettingsRowModel(
+                id: "performanceDiagnosticsExport",
+                systemName: "square.and.arrow.up",
+                title: "Export Recent Diagnostics",
+                detail: diagnostics.exportDetail,
+                value: "Export",
+                mutability: .actionOnly
             ),
         ]
     }
@@ -809,6 +829,31 @@ struct ShellSettingsLocalSummary: Equatable {
             return trimmed
         }
         return "Use \(decision.menuTitle) for this install."
+    }
+}
+
+struct ShellSettingsDiagnosticsSummary: Equatable {
+    let isEnabled: Bool
+    let retainedEventCount: Int
+    let stutterMarkerCount: Int
+    let lastExportURL: URL?
+
+    static let disabled = ShellSettingsDiagnosticsSummary(
+        isEnabled: false,
+        retainedEventCount: 0,
+        stutterMarkerCount: 0,
+        lastExportURL: nil
+    )
+
+    var exportDetail: String {
+        if retainedEventCount == 0 {
+            return isEnabled
+                ? "Exports the retained local trace after activity is captured."
+                : "Enable diagnostics to retain recent local performance events."
+        }
+
+        let markerLabel = stutterMarkerCount == 1 ? "marker" : "markers"
+        return "\(retainedEventCount) retained events, \(stutterMarkerCount) stutter \(markerLabel)."
     }
 }
 

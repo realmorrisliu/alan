@@ -1250,13 +1250,20 @@ private struct ShellSettingsContentView: View {
     @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
     @AppStorage("alanShellDimsInactiveSplitPanes") private var dimsInactiveSplitPanes = true
+    @AppStorage(AlanPerformanceDiagnosticsController.preferenceKey)
+    private var performanceDiagnosticsEnabled = false
     @State private var localSummary = ShellSettingsLocalSummary.current()
     @State private var remoteSnapshot = ShellSettingsRemoteSnapshot.unavailable(
         reason: "Daemon unavailable"
     )
+    @State private var lastDiagnosticsExportURL: URL?
 
     private var snapshot: ShellSettingsSurfaceSnapshot {
-        ShellSettingsSurfaceSnapshot.make(remote: remoteSnapshot, local: localSummary)
+        ShellSettingsSurfaceSnapshot.make(
+            remote: remoteSnapshot,
+            local: localSummary,
+            diagnostics: diagnosticsSummary
+        )
     }
 
     var body: some View {
@@ -1270,7 +1277,9 @@ private struct ShellSettingsContentView: View {
                             section: section,
                             appearanceMode: $appearanceMode,
                             sidebarVisible: sidebarVisible,
-                            dimsInactiveSplitPanes: $dimsInactiveSplitPanes
+                            dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
+                            performanceDiagnosticsEnabled: performanceDiagnosticsBinding,
+                            onExportPerformanceDiagnostics: exportPerformanceDiagnostics
                         )
                     }
                 }
@@ -1301,6 +1310,32 @@ private struct ShellSettingsContentView: View {
         Binding(
             get: { !isSidebarCollapsed },
             set: { isSidebarCollapsed = !$0 }
+        )
+    }
+
+    private var performanceDiagnosticsBinding: Binding<Bool> {
+        Binding(
+            get: { performanceDiagnosticsEnabled },
+            set: { nextValue in
+                performanceDiagnosticsEnabled = nextValue
+                AlanPerformanceDiagnosticsController.shared.setEnabled(nextValue)
+            }
+        )
+    }
+
+    private var diagnosticsSummary: ShellSettingsDiagnosticsSummary {
+        let summary = AlanPerformanceDiagnosticsController.shared.summarySnapshot()
+        return ShellSettingsDiagnosticsSummary(
+            isEnabled: performanceDiagnosticsEnabled,
+            retainedEventCount: AlanPerformanceDiagnosticsController.shared.eventsSnapshot().count,
+            stutterMarkerCount: summary.stutterMarkerCount,
+            lastExportURL: lastDiagnosticsExportURL
+        )
+    }
+
+    private func exportPerformanceDiagnostics() {
+        lastDiagnosticsExportURL = AlanPerformanceDiagnosticsExportPresenter.exportRecentDiagnostics(
+            installChannel: localSummary.channelLabel
         )
     }
 
@@ -1386,6 +1421,8 @@ private struct ShellSettingsSectionView: View {
     @Binding var appearanceMode: ShellAppearanceMode
     let sidebarVisible: Binding<Bool>
     @Binding var dimsInactiveSplitPanes: Bool
+    let performanceDiagnosticsEnabled: Binding<Bool>
+    let onExportPerformanceDiagnostics: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1449,6 +1486,25 @@ private struct ShellSettingsSectionView: View {
             ) {
                 Toggle("Enabled", isOn: $dimsInactiveSplitPanes)
                     .toggleStyle(.switch)
+            }
+        case "performanceDiagnostics":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                Toggle("Enabled", isOn: performanceDiagnosticsEnabled)
+                    .toggleStyle(.switch)
+            }
+        case "performanceDiagnosticsExport":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                Button("Export", action: onExportPerformanceDiagnostics)
+                    .buttonStyle(.bordered)
+                    .disabled(!performanceDiagnosticsEnabled.wrappedValue)
             }
         default:
             ShellSettingsRow(

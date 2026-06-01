@@ -41,6 +41,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesRenderCoordinatorCoalescesHiddenWakeups()
         verifiesRenderCoordinatorDrainsForegroundBeforeBackground()
         verifiesRenderCoordinatorCatchUpRefreshesHiddenSurface()
+        verifiesRenderCoordinatorRecordsDiagnosticsWithoutChangingDrainBehavior()
         verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates()
         print("Terminal runtime service tests passed.")
     }
@@ -222,6 +223,78 @@ private enum TerminalRuntimeServiceTests {
             "catch-up must refresh only after the terminal becomes visible"
         )
         expect(coordinator.metricsSnapshot().catchUpRefreshes == 1, "catch-up refresh must be counted")
+    }
+
+    private static func verifiesRenderCoordinatorRecordsDiagnosticsWithoutChangingDrainBehavior() {
+        var events: [String] = []
+        let recorder = AlanPerformanceDiagnosticsRecorder(
+            configuration: AlanPerformanceDiagnosticsConfiguration(maxEvents: 16)
+        )
+        recorder.setEnabled(true)
+        let coordinator = TerminalRenderCoordinator(
+            automaticallyDrains: false,
+            diagnosticsRecorder: recorder
+        )
+        let foreground = FakeRenderCoordinatorHost(
+            id: "foreground",
+            priority: .foregroundInteractive,
+            events: { events.append($0) }
+        )
+        let hidden = FakeRenderCoordinatorHost(
+            id: "hidden",
+            priority: .hiddenBackground,
+            events: { events.append($0) }
+        )
+
+        coordinator.requestWakeup(from: hidden)
+        coordinator.requestWakeup(from: foreground)
+        coordinator.requestCatchUp(from: hidden)
+        coordinator.drainPending()
+
+        expect(
+            events == [
+                "tick:foreground", "refresh:foreground:automatic",
+                "tick:hidden", "refresh:hidden:catch_up",
+            ],
+            "diagnostic probes must not change coordinator drain order or refresh decisions"
+        )
+
+        let diagnostics = recorder.eventsSnapshot()
+        let diagnosticKinds = diagnostics.map(\.kind)
+        expect(diagnosticKinds.contains(.ghosttyWakeup), "coordinator must record wakeup diagnostics")
+        expect(diagnosticKinds.contains(.ghosttyAppTick), "coordinator must record app tick diagnostics")
+        expect(
+            diagnosticKinds.contains(.ghosttySurfaceRefresh),
+            "coordinator must record surface refresh diagnostics"
+        )
+        expect(
+            diagnosticKinds.contains(.terminalCatchUpRefresh),
+            "coordinator must record catch-up refresh diagnostics"
+        )
+        expect(
+            diagnostics.contains {
+                $0.priority == "foregroundInteractive" && $0.visibility == "visible"
+            },
+            "coordinator diagnostics must include render priority and visibility"
+        )
+
+        AlanPerformanceDiagnosticsController.shared.setEnabled(false)
+        AlanPerformanceDiagnosticsController.shared.setEnabled(true)
+        defer { AlanPerformanceDiagnosticsController.shared.setEnabled(false) }
+        let sharedCoordinator = TerminalRenderCoordinator(automaticallyDrains: false)
+        let sharedHost = FakeRenderCoordinatorHost(
+            id: "shared",
+            priority: .foregroundInteractive,
+            events: { _ in }
+        )
+        sharedCoordinator.requestWakeup(from: sharedHost)
+        sharedCoordinator.drainPending()
+
+        let sharedKinds = AlanPerformanceDiagnosticsController.shared.eventsSnapshot().map(\.kind)
+        expect(
+            sharedKinds.contains(.ghosttyAppTick),
+            "app render coordinator must record Ghostty diagnostics into the shared controller"
+        )
     }
 
     private static func verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates() {

@@ -333,6 +333,7 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     func captureTranscriptText(in range: AlanTerminalBufferRange) -> String?
     func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot)
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult
+    func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult
     @discardableResult
     func teardown() -> AlanTerminalSurfaceTeardownStatus
 }
@@ -620,6 +621,73 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #endif
     }
 
+    func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
+        guard currentSnapshot.teardownStatus != .completed else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_runtime_closed",
+                    errorMessage: "The requested pane runtime has already closed.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        guard !currentSnapshot.metadata.processExited else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_child_exited",
+                    errorMessage: "The terminal process has exited.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        guard currentSnapshot.renderer.phase != .failed else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_renderer_failed",
+                    errorMessage: "The terminal renderer is not available.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        guard bootstrap.ensureReady().isReady else {
+            return recordDelivery(
+                .unavailable(
+                    errorMessage: bootstrap.diagnostics.failureReason ?? bootstrap.diagnostics.summary,
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        guard isSurfaceReady else {
+            return recordDelivery(
+                .unavailable(
+                    errorMessage: "The requested pane is not ready to receive terminal input.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+
+#if canImport(GhosttyKit)
+        guard liveHost.sendControlKey(key) else {
+            return recordDelivery(
+                .rejected(
+                    errorCode: "terminal_key_rejected",
+                    errorMessage: "The terminal did not accept the requested key.",
+                    runtimePhase: currentSnapshot.runtimePhase
+                )
+            )
+        }
+        return recordDelivery(.accepted(byteCount: 0, runtimePhase: currentSnapshot.runtimePhase))
+#else
+        return recordDelivery(
+            .rejected(
+                errorCode: "ghostty_unavailable",
+                errorMessage: "GhosttyKit is not linked into this build.",
+                runtimePhase: currentSnapshot.runtimePhase
+            )
+        )
+#endif
+    }
+
     @discardableResult
     func teardown() -> AlanTerminalSurfaceTeardownStatus {
         guard currentSnapshot.teardownStatus != .completed else { return .completed }
@@ -799,6 +867,10 @@ protocol AlanTerminalRuntimeService: AnyObject {
         forTerminalContentID contentID: String
     )
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult
+    func sendKey(
+        toTerminalContentID contentID: String,
+        key: TerminalRuntimeControlKey
+    ) -> TerminalRuntimeDeliveryResult
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus
     func finalizeTerminalContents(excluding activeContentIDs: Set<String>)
@@ -830,6 +902,13 @@ extension AlanTerminalRuntimeService {
         sendText(
             toTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
             text: text
+        )
+    }
+
+    func sendKey(to paneID: String, key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
+        sendKey(
+            toTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
+            key: key
         )
     }
 
@@ -1049,6 +1128,18 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         return handle.sendControlText(text)
     }
 
+    func sendKey(
+        toTerminalContentID contentID: String,
+        key: TerminalRuntimeControlKey
+    ) -> TerminalRuntimeDeliveryResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return .missingTarget(
+                errorMessage: "The requested terminal content does not have a service-owned runtime."
+            )
+        }
+        return handle.sendControlKey(key)
+    }
+
     @discardableResult
     func finalizeTerminalContent(_ contentID: String) -> AlanTerminalSurfaceTeardownStatus {
         restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
@@ -1110,6 +1201,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var teardownCount = 0
     private(set) var renderCatchUpRequestCount = 0
     private(set) var deliveredText: [String] = []
+    private(set) var deliveredKeys: [TerminalRuntimeControlKey] = []
     private(set) var searchActions: [String] = []
     private(set) var scrollActions: [String] = []
     var deliveryResult: TerminalRuntimeDeliveryResult?
@@ -1122,6 +1214,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
     private(set) var transcriptRingBufferLines: [String] = []
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
+    private var diagnosticsChangeHandler: ((TerminalRendererSnapshot) -> Void)?
     private var searchUpdateHandler: ((AlanTerminalSearchEngineUpdate) -> Void)?
     private var scrollbackUpdateHandler: ((AlanTerminalScrollbackMetrics) -> Void)?
     private var closeRequestHandler: ((Bool) -> Void)?
@@ -1179,6 +1272,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     ) {
         updateRenderPriority(renderPriority, forceCatchUp: false)
         attachCount += 1
+        diagnosticsChangeHandler = onDiagnosticsChange
         closeRequestHandler = onCloseRequest
         updateSnapshot(lifecyclePhase: .attached, attachedViewCount: 1)
         onDiagnosticsChange(currentSnapshot.renderer)
@@ -1187,8 +1281,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     func detach() {
         detachCount += 1
+        diagnosticsChangeHandler = nil
         closeRequestHandler = nil
         updateSnapshot(attachedViewCount: 0)
+    }
+
+    func emitDiagnosticsSnapshot(_ snapshot: TerminalRendererSnapshot) {
+        updateSnapshot(renderer: snapshot)
+        diagnosticsChangeHandler?(snapshot)
     }
 
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
@@ -1243,6 +1343,31 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         return result
     }
 
+    func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
+        guard !currentSnapshot.metadata.processExited else {
+            let result = TerminalRuntimeDeliveryResult.rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The terminal process has exited.",
+                runtimePhase: currentSnapshot.runtimePhase
+            )
+            updateSnapshot(lastDelivery: result)
+            return result
+        }
+        guard isSurfaceReady else {
+            let result = TerminalRuntimeDeliveryResult.unavailable(
+                errorMessage: "The requested pane is not ready to receive terminal input.",
+                runtimePhase: currentSnapshot.runtimePhase
+            )
+            updateSnapshot(lastDelivery: result)
+            return result
+        }
+        deliveredKeys.append(key)
+        let result = deliveryResult
+            ?? .accepted(byteCount: 0, runtimePhase: currentSnapshot.runtimePhase)
+        updateSnapshot(lastDelivery: result)
+        return result
+    }
+
     func markProcessExited(exitCode: Int) {
         let metadata = TerminalPaneMetadataSnapshot(
             title: currentSnapshot.metadata.title,
@@ -1275,6 +1400,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     private func updateSnapshot(
         lifecyclePhase: AlanTerminalSurfaceLifecyclePhase? = nil,
+        renderer: TerminalRendererSnapshot? = nil,
         metadata: TerminalPaneMetadataSnapshot? = nil,
         lastDelivery: TerminalRuntimeDeliveryResult? = nil,
         teardownStatus: AlanTerminalSurfaceTeardownStatus? = nil,
@@ -1284,7 +1410,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             contentID: contentID,
             paneID: paneID,
             lifecyclePhase: lifecyclePhase ?? currentSnapshot.lifecyclePhase,
-            renderer: currentSnapshot.renderer,
+            renderer: renderer ?? currentSnapshot.renderer,
             metadata: metadata ?? currentSnapshot.metadata,
             lastDelivery: lastDelivery ?? currentSnapshot.lastDelivery,
             teardownStatus: teardownStatus ?? currentSnapshot.teardownStatus,
@@ -1464,6 +1590,18 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
             )
         }
         return handle.sendControlText(text)
+    }
+
+    func sendKey(
+        toTerminalContentID contentID: String,
+        key: TerminalRuntimeControlKey
+    ) -> TerminalRuntimeDeliveryResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return .missingTarget(
+                errorMessage: "The requested terminal content does not have a fake terminal runtime."
+            )
+        }
+        return handle.sendControlKey(key)
     }
 
     @discardableResult

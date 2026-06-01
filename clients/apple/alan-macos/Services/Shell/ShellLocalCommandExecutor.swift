@@ -850,7 +850,9 @@ enum AlanShellLocalCommandExecutor {
                 mutate: { try $0.promotingQuickTerminal(to: targetSpaceID) }
             )
 
-        case .eventsRead:
+        case .terminalSendKey, .performanceDiagnosticsSetEnabled,
+            .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
+            .eventsRead:
             return nil
         }
     }

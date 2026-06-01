@@ -161,6 +161,10 @@ extension ShellHostController {
         spatialDirection: ShellSpatialFocusDirection? = nil,
         placement: ShellPaneSplitDirection? = nil,
         mountedContentInstanceID: String? = nil,
+        diagnosticsEnabled: Bool? = nil,
+        diagnosticsRetainedEventCount: Int? = nil,
+        diagnosticsStutterMarkerCount: Int? = nil,
+        diagnosticsBundlePath: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) -> AlanShellControlResponse {
@@ -217,6 +221,10 @@ extension ShellHostController {
             spatialDirection: spatialDirection,
             placement: placement,
             mountedContentInstanceID: contentProjection.contentID ?? mountedContentInstanceID,
+            diagnosticsEnabled: diagnosticsEnabled,
+            diagnosticsRetainedEventCount: diagnosticsRetainedEventCount,
+            diagnosticsStutterMarkerCount: diagnosticsStutterMarkerCount,
+            diagnosticsBundlePath: diagnosticsBundlePath,
             errorCode: errorCode,
             errorMessage: errorMessage
         )
@@ -900,6 +908,100 @@ extension ShellHostController {
                 errorMessage: delivery.errorMessage
             )
 
+        case .terminalSendKey:
+            let contentState = shellState.contentStateProjection()
+            let requestedPaneSlotID = command.paneSlotID ?? command.paneID
+            let target: TerminalSendTextTarget?
+            if let contentID = command.contentID {
+                target = contentState.terminalSendTextTarget(contentID: contentID)
+            } else if let requestedPaneSlotID {
+                target = contentState.terminalSendTextTarget(paneSlotID: requestedPaneSlotID)
+            } else {
+                target = nil
+            }
+
+            guard let target else {
+                let errorCode: String
+                if command.contentID == nil && requestedPaneSlotID == nil {
+                    errorCode = "terminal_target_required"
+                } else if command.contentID != nil {
+                    errorCode = "content_not_found"
+                } else {
+                    errorCode = "pane_not_found"
+                }
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: command.paneID,
+                    paneSlotID: command.paneSlotID,
+                    contentID: command.contentID,
+                    errorCode: errorCode,
+                    errorMessage: "terminal.send_key requires an existing terminal content target."
+                )
+            }
+
+            guard target.content.kind == .terminal else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    spaceID: target.paneSlot.spaceID,
+                    tabID: target.paneSlot.tabID,
+                    paneID: target.paneSlot.paneSlotID,
+                    paneSlotID: target.paneSlot.paneSlotID,
+                    contentID: target.content.contentID,
+                    contentKind: target.content.kind,
+                    errorCode: "unsupported_content",
+                    errorMessage: "terminal.send_key requires terminal content."
+                )
+            }
+
+            let keyName = command.key?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key: TerminalRuntimeControlKey?
+            switch keyName {
+            case "return", "enter":
+                key = .returnKey
+            default:
+                key = nil
+            }
+            guard let key else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    spaceID: target.paneSlot.spaceID,
+                    tabID: target.paneSlot.tabID,
+                    paneID: target.paneSlot.paneSlotID,
+                    paneSlotID: target.paneSlot.paneSlotID,
+                    contentID: target.content.contentID,
+                    errorCode: "terminal_key_unsupported",
+                    errorMessage: "terminal.send_key currently supports return."
+                )
+            }
+
+            let result = performShellAutomationCommand(
+                .sendKey(
+                    ShellAutomationSendKeyRequest(
+                        paneID: target.paneSlot.paneSlotID,
+                        terminalContentID: target.content.contentID,
+                        key: key
+                    )
+                )
+            )
+            let delivery = terminalDeliveryResult(from: result)
+            return response(
+                requestID: command.requestID,
+                applied: result.applied,
+                spaceID: target.paneSlot.spaceID,
+                tabID: target.paneSlot.tabID,
+                paneID: target.paneSlot.paneSlotID,
+                paneSlotID: target.paneSlot.paneSlotID,
+                contentID: target.content.contentID,
+                acceptedBytes: delivery.acceptedBytes,
+                deliveryCode: delivery.code.rawValue,
+                runtimePhase: delivery.runtimePhase,
+                errorCode: delivery.errorCode,
+                errorMessage: delivery.errorMessage
+            )
+
         case .terminalRenderMetrics:
             return response(
                 requestID: command.requestID,
@@ -1135,6 +1237,124 @@ extension ShellHostController {
                     errorCode: "events_unavailable",
                     errorMessage: "events.read is handled by the shell control plane."
                 )
+
+        case .performanceDiagnosticsSetEnabled:
+            guard let enabled = command.enabled else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "diagnostics_enabled_required",
+                    errorMessage: "enabled is required."
+                )
+            }
+            AlanPerformanceDiagnosticsController.shared.setEnabled(enabled)
+            let summary = AlanPerformanceDiagnosticsController.shared.summarySnapshot()
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                diagnosticsEnabled: AlanPerformanceDiagnosticsController.shared.isEnabled,
+                diagnosticsRetainedEventCount: AlanPerformanceDiagnosticsController.shared
+                    .eventsSnapshot().count,
+                diagnosticsStutterMarkerCount: summary.stutterMarkerCount
+            )
+
+        case .performanceDiagnosticsExportRecent:
+            guard let exportDirectory = command.exportDirectory?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !exportDirectory.isEmpty
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "diagnostics_export_directory_required",
+                    errorMessage: "export_directory is required."
+                )
+            }
+            do {
+                let bundleURL = try AlanPerformanceDiagnosticsController.shared.exportRecentDiagnostics(
+                    to: URL(fileURLWithPath: exportDirectory, isDirectory: true),
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                        as? String ?? "unknown",
+                    installChannel: AlanInstallChannel.current().installChannelID
+                )
+                let summary = AlanPerformanceDiagnosticsController.shared.summarySnapshot()
+                return response(
+                    requestID: command.requestID,
+                    applied: true,
+                    diagnosticsEnabled: AlanPerformanceDiagnosticsController.shared.isEnabled,
+                    diagnosticsRetainedEventCount: AlanPerformanceDiagnosticsController.shared
+                        .eventsSnapshot().count,
+                    diagnosticsStutterMarkerCount: summary.stutterMarkerCount,
+                    diagnosticsBundlePath: bundleURL.path
+                )
+            } catch {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "diagnostics_export_failed",
+                    errorMessage: error.localizedDescription
+                )
+            }
+
+        case .performanceDiagnosticsRecordChildPressure:
+            guard AlanPerformanceDiagnosticsController.shared.isEnabled else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    diagnosticsEnabled: false,
+                    errorCode: "diagnostics_disabled",
+                    errorMessage: "Performance diagnostics are disabled."
+                )
+            }
+            guard let cpuPercent = command.childCPUPercent else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    diagnosticsEnabled: true,
+                    errorCode: "diagnostics_child_cpu_required",
+                    errorMessage: "child_cpu_percent is required."
+                )
+            }
+
+            let role = command.childProcessRole?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            switch role {
+            case nil, "", "terminal_child", "terminalChild":
+                AlanPerformanceDiagnosticsController.shared.recordKnownTerminalChildProcesses(
+                    [
+                        AlanPerformanceChildProcessObservation(
+                            processID: 0,
+                            cpuPercent: cpuPercent,
+                            memoryBytes: command.childMemoryBytes,
+                            threadCount: command.childThreadCount
+                        )
+                    ]
+                )
+            case "unknown_child", "unknownChild":
+                AlanPerformanceDiagnosticsController.shared.recordUnknownChildPressure(
+                    cpuPercent: cpuPercent,
+                    memoryBytes: command.childMemoryBytes,
+                    threadCount: command.childThreadCount
+                )
+            default:
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    diagnosticsEnabled: true,
+                    errorCode: "diagnostics_child_role_unknown",
+                    errorMessage: "child_process_role must be terminal_child or unknown_child."
+                )
+            }
+
+            let summary = AlanPerformanceDiagnosticsController.shared.summarySnapshot()
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                diagnosticsEnabled: true,
+                diagnosticsRetainedEventCount: AlanPerformanceDiagnosticsController.shared
+                    .eventsSnapshot().count,
+                diagnosticsStutterMarkerCount: summary.stutterMarkerCount
+            )
         }
     }
 
