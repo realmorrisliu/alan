@@ -17,11 +17,37 @@ struct ShellAutomationCreateTabRequest: Equatable {
     let spaceID: String?
     let title: String?
     let workingDirectory: String?
+    let terminalProfileID: String?
+
+    init(
+        launchTarget: ShellLaunchTarget,
+        spaceID: String?,
+        title: String?,
+        workingDirectory: String?,
+        terminalProfileID: String? = nil
+    ) {
+        self.launchTarget = launchTarget
+        self.spaceID = spaceID
+        self.title = title
+        self.workingDirectory = workingDirectory
+        self.terminalProfileID = terminalProfileID
+    }
 }
 
 struct ShellAutomationPaneSplitRequest: Equatable {
     let paneID: String
     let placement: ShellPaneSplitDirection
+    let terminalProfileID: String?
+
+    init(
+        paneID: String,
+        placement: ShellPaneSplitDirection,
+        terminalProfileID: String? = nil
+    ) {
+        self.paneID = paneID
+        self.placement = placement
+        self.terminalProfileID = terminalProfileID
+    }
 }
 
 struct ShellAutomationSendTextRequest: Equatable {
