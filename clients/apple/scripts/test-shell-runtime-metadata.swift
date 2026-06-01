@@ -7923,6 +7923,42 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(readiness == .passed, "ready state must pass mandatory terminal-entry verification")
 
+        let unreadableSudoersDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
+            fileManager: UnreadableSudoersFixtureFileManager(paths: [rule.filePath]),
+            commandRunner: commandRunner,
+            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
+        )
+        let unreadableSudoersState = unreadableSudoersDiscoverer.discover(
+            request: request,
+            terminalProfiles: profiles
+        )
+        expect(
+            unreadableSudoersState.sudoers == .alanOwnedValid(path: rule.filePath),
+            "installed root-owned sudoers drop-ins may be unreadable to the GUI user but still discoverable"
+        )
+        let unreadableReadiness = ManagedTerminalAccountReadinessVerifier.verify(
+            request: request,
+            state: unreadableSudoersState,
+            entryVerifier: StubTerminalEntryVerifier(result: .passed)
+        )
+        expect(
+            unreadableReadiness == .passed,
+            "unreadable installed sudoers drop-ins must rely on terminal-entry verification for readiness"
+        )
+        let unreadableReadyPlan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: unreadableSudoersState.account,
+                sudoers: unreadableSudoersState.sudoers,
+                terminalProfile: unreadableSudoersState.terminalProfile,
+                verification: unreadableReadiness
+            )
+        )
+        expect(
+            !unreadableReadyPlan.steps.map(\.kind).contains(.writeSudoersDropIn),
+            "ready unreadable sudoers discovery must not keep reporting sudoers repair work"
+        )
+
         let invalidSudoers = ManagedTerminalAccountSudoersValidator.validate(
             contents: rule.contents,
             rule: rule,
@@ -8763,6 +8799,23 @@ private enum ShellRuntimeMetadataTests {
 
         override func contents(atPath path: String) -> Data? {
             files[path]?.data(using: .utf8)
+        }
+    }
+
+    private final class UnreadableSudoersFixtureFileManager: FileManager {
+        private let paths: Set<String>
+
+        init(paths: Set<String>) {
+            self.paths = paths
+            super.init()
+        }
+
+        override func fileExists(atPath path: String) -> Bool {
+            paths.contains(path)
+        }
+
+        override func contents(atPath path: String) -> Data? {
+            nil
         }
     }
 }

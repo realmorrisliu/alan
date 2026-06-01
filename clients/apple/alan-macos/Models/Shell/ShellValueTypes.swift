@@ -914,7 +914,10 @@ enum ManagedTerminalAccountSudoersValidator {
         guard let data = fileManager.contents(atPath: rule.filePath),
               let contents = String(data: data, encoding: .utf8)
         else {
-            return .alanOwnedInvalid(path: rule.filePath, message: "Unable to read sudoers drop-in.")
+            // Alan installs sudoers drop-ins as root:wheel 0440, so the GUI user
+            // may be unable to read contents during ordinary discovery. Readiness
+            // is still proven by the non-interactive sudo terminal-entry check.
+            return .alanOwnedValid(path: rule.filePath)
         }
 
         guard contents.contains(ManagedTerminalAccountSudoersRule.managedMarker) else {
