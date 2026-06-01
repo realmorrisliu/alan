@@ -7859,6 +7859,23 @@ private enum ShellRuntimeMetadataTests {
             !sudoers.contents.contains("ALL=(ALL)"),
             "sudoers rule must not grant passwordless root or all-user access"
         )
+        let unmanagedSudoersPlan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .unmanaged(path: sudoers.filePath),
+                terminalProfile: .missing,
+                verification: .notRun
+            )
+        )
+        expect(
+            !unmanagedSudoersPlan.steps.map(\.kind).contains(.writeSudoersDropIn),
+            "unmanaged sudoers files must not be overwritten by a generic repair plan"
+        )
+        expect(
+            unmanagedSudoersPlan.status == .sudoersConflict(path: sudoers.filePath),
+            "unmanaged sudoers files must surface as conflicts"
+        )
 
         let invalid = ManagedTerminalAccountRequest(accountName: "root", guiUserName: "morris")
         expect(

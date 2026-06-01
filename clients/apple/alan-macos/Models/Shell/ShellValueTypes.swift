@@ -1160,6 +1160,7 @@ enum ManagedTerminalAccountPlanStatus: Equatable {
     case repair
     case invalid([ManagedTerminalAccountValidationError])
     case requiresDestructiveConfirmation
+    case sudoersConflict(path: String)
 }
 
 struct ManagedTerminalAccountPlan: Equatable {
@@ -1181,6 +1182,13 @@ enum ManagedTerminalAccountPlanner {
         let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
         guard validationErrors.isEmpty else {
             return ManagedTerminalAccountPlan(request: request, status: .invalid(validationErrors), steps: [])
+        }
+        if case .unmanaged(let path) = state.sudoers {
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .sudoersConflict(path: path),
+                steps: []
+            )
         }
 
         var steps: [ManagedTerminalAccountPlanStep] = []
@@ -1216,13 +1224,13 @@ enum ManagedTerminalAccountPlanner {
         }
 
         switch state.sudoers {
-        case .missing, .alanOwnedInvalid, .unmanaged:
+        case .missing, .alanOwnedInvalid:
             if !needsCreate {
                 repairNeeded = true
             }
             steps.append(step(.writeSudoersDropIn, "Write Alan-owned sudoers drop-in", true))
             steps.append(step(.validateSudoers, "Validate sudoers syntax", true))
-        case .alanOwnedValid, .existingUnreadable:
+        case .alanOwnedValid, .existingUnreadable, .unmanaged:
             break
         }
 
