@@ -3467,8 +3467,8 @@ private enum ShellRuntimeMetadataTests {
             incoming: incomingProfileState
         )
         expect(
-            mergedProfileRefs.space(spaceID: "space_1")?.terminalProfileID == "alan",
-            "published state merge must preserve captured space terminal profile id"
+            mergedProfileRefs.space(spaceID: "space_1")?.terminalProfileID == nil,
+            "published state merge must let incoming nil clear a Space terminal profile id"
         )
         expect(
             mergedProfileRefs.pane(paneID: "pane_1")?.terminalProfileID == "alan",
@@ -7958,6 +7958,31 @@ private enum ShellRuntimeMetadataTests {
         expect(
             splitPane.cwd == nil,
             "splits using the global default terminal profile must let the profile cwd win"
+        )
+
+        let localResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-tab-global-default-profile",
+                  "command": "tab.open"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        let localPane = localResult?.updatedState?.pane(paneID: localResult?.response.paneID ?? "")
+        expect(localResult?.response.applied == true, "local tab.open must apply")
+        expect(
+            localPane?.terminalProfileID == "alan",
+            "local tab.open must capture the global default terminal profile"
+        )
+        expect(
+            localPane?.cwd == nil,
+            "local tab.open using the global default profile must let the profile cwd win"
         )
     }
 

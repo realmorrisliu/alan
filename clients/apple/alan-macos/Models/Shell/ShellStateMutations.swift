@@ -31,6 +31,18 @@ extension ShellStateSnapshot {
         FileManager.default.homeDirectoryForCurrentUser.path
     }
 
+    func terminalProfileIDForNewTerminal(
+        in requestedSpaceID: String?,
+        explicit: String?
+    ) -> String? {
+        if let explicit {
+            return explicit
+        }
+        let targetSpaceID = requestedSpaceID ?? focusedSpaceID ?? spaces.first?.spaceID
+        guard let targetSpaceID else { return nil }
+        return space(spaceID: targetSpaceID)?.terminalProfileID
+    }
+
     static func bootstrapDefault(
         windowID: String = "window_main",
         workingDirectory: String = defaultShellWorkingDirectory()

@@ -130,11 +130,16 @@ enum AlanShellLocalCommandExecutor {
 
         case .tabOpen:
             do {
+                let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
+                    in: command.spaceID,
+                    explicit: command.terminalProfileID
+                )
+                    ?? terminalProfileIDForWorkingDirectoryDeferral()
                 let result = try state.openingTerminalTab(
                     in: command.spaceID,
                     title: command.title,
                     workingDirectory: command.cwd,
-                    terminalProfileID: command.terminalProfileID
+                    terminalProfileID: resolvedTerminalProfileID
                 )
                 return AlanShellLocalCommandResult(
                     response: response(

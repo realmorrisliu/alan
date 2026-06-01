@@ -308,6 +308,31 @@ struct TerminalProfileDocument: Codable, Equatable {
     }
 }
 
+func terminalProfileIDForWorkingDirectoryDeferral(
+    channelApplicationSupportDirectoryName: String = TerminalProfileStore
+        .currentChannelApplicationSupportDirectoryName(),
+    fileManager: FileManager = .default,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> String? {
+    let document = TerminalProfileStore.defaultStore(
+        channelApplicationSupportDirectoryName: channelApplicationSupportDirectoryName,
+        fileManager: fileManager,
+        environment: environment
+    ).load().document
+    guard let profile = document.defaultProfile,
+          nonEmptyTerminalProfileWorkingDirectory(profile.defaultWorkingDirectory) != nil
+    else {
+        return nil
+    }
+    return profile.id
+}
+
+private func nonEmptyTerminalProfileWorkingDirectory(_ path: String?) -> String? {
+    guard let path else { return nil }
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 enum TerminalProfileValidationError: Error, Equatable {
     case missingID
     case duplicateID(String)

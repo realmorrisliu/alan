@@ -13,9 +13,6 @@ enum AlanShellPublishedStateMerger {
         let authoritativePanesByID = Dictionary(
             uniqueKeysWithValues: authoritative.panes.map { ($0.paneID, $0) }
         )
-        let authoritativeSpacesByID = Dictionary(
-            uniqueKeysWithValues: authoritative.spaces.map { ($0.spaceID, $0) }
-        )
         let mergedPanes = incoming.panes.map { pane in
             merge(authoritativePane: authoritativePanesByID[pane.paneID], incomingPane: pane)
         }
@@ -30,7 +27,6 @@ enum AlanShellPublishedStateMerger {
                 attention: strongestAttention(in: mergedPanes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
                 terminalProfileID: space.terminalProfileID
-                    ?? authoritativeSpacesByID[space.spaceID]?.terminalProfileID
             )
         }
 

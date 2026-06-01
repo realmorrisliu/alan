@@ -3042,17 +3042,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
-        if let explicit {
-            return explicit
-        }
-        let targetSpaceID = requestedSpaceID ?? shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
-        guard let targetSpaceID else { return nil }
-        if let spaceProfileID = shellState.spaces.first(where: { $0.spaceID == targetSpaceID })?
-            .terminalProfileID
-        {
-            return spaceProfileID
-        }
-        return globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+        shellState.terminalProfileIDForNewTerminal(in: requestedSpaceID, explicit: explicit)
+            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
     }
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
@@ -3067,17 +3058,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func globalDefaultTerminalProfileIDForWorkingDirectoryDeferral() -> String? {
-        let document = TerminalProfileStore.defaultStore(
+        terminalProfileIDForWorkingDirectoryDeferral(
             channelApplicationSupportDirectoryName: windowContext.installChannel
                 .applicationSupportDirectoryName,
             fileManager: fileManager
-        ).load().document
-        guard let profile = document.defaultProfile,
-              nonEmptyWorkingDirectory(profile.defaultWorkingDirectory) != nil
-        else {
-            return nil
-        }
-        return profile.id
+        )
     }
 
     func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {
