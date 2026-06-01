@@ -85,7 +85,7 @@ textwrap = "0.16"
 crossterm = "0.29"
 ratatui = "0.30"
 unicode-width = "0.2"
-vt100 = "0.15"
+vt100 = "0.16"
 
 # Testing
 tempfile = "3"
