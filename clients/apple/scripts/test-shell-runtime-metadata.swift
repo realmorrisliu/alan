@@ -53,6 +53,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesQuickTerminalPeakPresenterReleasesPresentationAfterPromotion()
         verifiesQuickTerminalActiveCloseCancelPreservesRuntime()
         verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
+        verifiesQuickTerminalFocusRefocusesExistingVisiblePeak()
         verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags()
         verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering()
         verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
@@ -74,6 +75,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
+        verifiesQuickTerminalFocusSocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -2355,6 +2357,46 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesQuickTerminalFocusRefocusesExistingVisiblePeak() {
+        let controller = makeController()
+        let window = FakeQuickTerminalPeakWindow()
+        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
+
+        _ = controller.showQuickTerminal()
+        presenter.synchronize()
+        let requestIDBefore = controller.quickTerminalFocusRequestID
+
+        _ = controller.focusQuickTerminal()
+        presenter.focusVisibleQuickTerminal()
+
+        expect(
+            controller.quickTerminalFocusRequestID == requestIDBefore &+ 1,
+            "explicit quick-terminal focus must emit a focus request when the Peak is already visible"
+        )
+        expect(
+            window.events == [
+                "present:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+            ],
+            "explicit quick-terminal focus must refocus the existing visible Peak"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "regular pane update", cwd: "/repo/app"),
+            for: "pane_1"
+        )
+        presenter.synchronize()
+        expect(
+            window.events == [
+                "present:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
+            ],
+            "unrelated visible-state refresh must not refocus after explicit quick-terminal focus"
+        )
+    }
+
     private static func verifiesQuickTerminalPeakPlacementFitsActiveDisplay() {
         let visibleFrame = CGRect(x: 20, y: 40, width: 1_280, height: 760)
         let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrame)
@@ -3187,6 +3229,38 @@ private enum ShellRuntimeMetadataTests {
         )
 
         expect(localResponse == nil, "pane.move socket requests must be routed to the host handler")
+    }
+
+    private static func verifiesQuickTerminalFocusSocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("quick-terminal-focus-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("quick_terminal.focus must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("quick_terminal.focus must not use local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-terminal-focus-host-routing-1",
+                  "command": "quick_terminal.focus"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "quick_terminal.focus socket requests must be routed to the host handler"
+        )
     }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {

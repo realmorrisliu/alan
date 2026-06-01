@@ -402,7 +402,7 @@ private extension AlanShellControlCommandKind {
         case .spaceCreate, .tabOpen, .tabPin, .tabReorder, .paneSplit,
             .paneMove, .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit,
             .paneEqualizeSplits, .paneZoom, .paneUnzoom, .terminalRenderMetrics,
-            .agentActivity:
+            .quickTerminalFocus, .agentActivity:
             return true
         default:
             return false

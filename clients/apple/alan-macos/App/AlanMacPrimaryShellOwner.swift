@@ -10,6 +10,7 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
     let host: ShellHostController
     private let quickTerminalPeakPresenter: ShellQuickTerminalPeakPresenter
     private var quickTerminalPeakStateSubscription: AnyCancellable?
+    private var quickTerminalPeakFocusSubscription: AnyCancellable?
 
     init(fileManager: FileManager = .default) {
         let windowContext = ShellWindowContext.make(
@@ -40,6 +41,13 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
                 peakPresenter?.synchronize()
             }
         }
+        quickTerminalPeakFocusSubscription = resolvedHost.$quickTerminalFocusRequestID
+            .dropFirst()
+            .sink { [weak peakPresenter] _ in
+                Task { @MainActor in
+                    peakPresenter?.focusVisibleQuickTerminal()
+                }
+            }
         quickTerminalPeakPresenter.synchronize()
     }
 

@@ -278,6 +278,21 @@ final class ShellQuickTerminalPeakPresenter {
     func windowDidResignKey() {
         // Terminal-first policy: focus loss is informational and never hides the Peak.
     }
+
+    func focusVisibleQuickTerminal() {
+        guard let slot = host.shellState.quickTerminal,
+              slot.presentation == .visible,
+              let pane = host.quickTerminalPane
+        else {
+            return
+        }
+        if !window.isVisible || lastPresentedPaneID != pane.paneID {
+            synchronize()
+            return
+        }
+        window.focusTerminal(paneID: pane.paneID)
+        lastPresentedPaneID = pane.paneID
+    }
 }
 
 @MainActor
@@ -388,6 +403,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
+    @Published private(set) var quickTerminalFocusRequestID: UInt64 = 0
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
     private let appIsActiveProvider: @MainActor () -> Bool
@@ -981,7 +997,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func focusQuickTerminal() -> String? {
-        showQuickTerminal()
+        let wasVisible = shellState.quickTerminal?.presentation == .visible
+        guard let paneID = showQuickTerminal() else { return nil }
+        if wasVisible {
+            quickTerminalFocusRequestID &+= 1
+        }
+        return paneID
     }
 
     @discardableResult
