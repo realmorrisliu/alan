@@ -94,6 +94,16 @@ struct ShellPaneProjectionService {
                 ?? existing?.alanBindingFile,
             launchCommand: bootProfile.launchCommandString,
             launchStrategy: bootProfile.command.strategy.rawValue,
+            terminalProfileState: bootProfile.environment["ALAN_TERMINAL_PROFILE_STATE"]
+                ?? existing?.terminalProfileState,
+            terminalProfileRequestedID: bootProfile.environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"]
+                ?? existing?.terminalProfileRequestedID,
+            terminalProfileID: bootProfile.environment["ALAN_TERMINAL_PROFILE_ID"]
+                ?? existing?.terminalProfileID,
+            terminalProfileKind: bootProfile.environment["ALAN_TERMINAL_PROFILE_KIND"]
+                ?? existing?.terminalProfileKind,
+            terminalProfileTitle: bootProfile.environment["ALAN_TERMINAL_PROFILE_TITLE"]
+                ?? existing?.terminalProfileTitle,
             shellIntegrationSource: "ghostty_shell_integration",
             processState: projectedProcessState(
                 processExited: projectedProcessExited,

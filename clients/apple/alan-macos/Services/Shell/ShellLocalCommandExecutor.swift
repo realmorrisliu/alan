@@ -53,7 +53,8 @@ enum AlanShellLocalCommandExecutor {
             let result = state.creatingSpace(
                 launchTarget: .shell,
                 title: command.title,
-                workingDirectory: command.cwd
+                workingDirectory: command.cwd,
+                terminalProfileID: command.terminalProfileID
             )
             return AlanShellLocalCommandResult(
                 response: response(
@@ -65,6 +66,51 @@ enum AlanShellLocalCommandExecutor {
                     paneID: result.paneID
                 ),
                 updatedState: result.state,
+                sideEffect: nil
+            )
+
+        case .spaceSetTerminalProfile:
+            guard let spaceID = command.spaceID ?? state.focusedSpaceID else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        errorCode: "space_required",
+                        errorMessage: "space_id is required."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            guard let nextState = state.settingTerminalProfile(
+                command.terminalProfileID,
+                forSpaceID: spaceID
+            ) else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        spaceID: spaceID,
+                        errorCode: "space_not_found",
+                        errorMessage: "The requested space does not exist."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
+            return AlanShellLocalCommandResult(
+                response: response(
+                    for: command,
+                    state: nextState,
+                    applied: true,
+                    snapshot: nextState,
+                    spaceID: spaceID,
+                    tabID: nextState.focusedTabID,
+                    paneID: nextState.focusedPaneID
+                ),
+                updatedState: nextState,
                 sideEffect: nil
             )
 
@@ -87,7 +133,8 @@ enum AlanShellLocalCommandExecutor {
                 let result = try state.openingTerminalTab(
                     in: command.spaceID,
                     title: command.title,
-                    workingDirectory: command.cwd
+                    workingDirectory: command.cwd,
+                    terminalProfileID: command.terminalProfileID
                 )
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -402,7 +449,11 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.splittingPane(paneID, direction: direction)
+                let result = try state.splittingPane(
+                    paneID,
+                    direction: direction,
+                    terminalProfileID: command.terminalProfileID
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,

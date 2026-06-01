@@ -82,6 +82,17 @@ enum AlanShellPublishedStateMerger {
             incomingContext?.launchCommand ?? authoritativeContext?.launchCommand
         let launchStrategy =
             incomingContext?.launchStrategy ?? authoritativeContext?.launchStrategy
+        let terminalProfileState =
+            incomingContext?.terminalProfileState ?? authoritativeContext?.terminalProfileState
+        let terminalProfileRequestedID =
+            incomingContext?.terminalProfileRequestedID
+                ?? authoritativeContext?.terminalProfileRequestedID
+        let terminalProfileID =
+            incomingContext?.terminalProfileID ?? authoritativeContext?.terminalProfileID
+        let terminalProfileKind =
+            incomingContext?.terminalProfileKind ?? authoritativeContext?.terminalProfileKind
+        let terminalProfileTitle =
+            incomingContext?.terminalProfileTitle ?? authoritativeContext?.terminalProfileTitle
         let shellIntegrationSource =
             incomingContext?.shellIntegrationSource ?? authoritativeContext?.shellIntegrationSource
         let processState = incomingContext?.processState ?? authoritativeContext?.processState
@@ -110,6 +121,11 @@ enum AlanShellPublishedStateMerger {
             alanBindingFile: alanBindingFile,
             launchCommand: launchCommand,
             launchStrategy: launchStrategy,
+            terminalProfileState: terminalProfileState,
+            terminalProfileRequestedID: terminalProfileRequestedID,
+            terminalProfileID: terminalProfileID,
+            terminalProfileKind: terminalProfileKind,
+            terminalProfileTitle: terminalProfileTitle,
             shellIntegrationSource: shellIntegrationSource,
             processState: processState,
             rendererPhase: rendererPhase,

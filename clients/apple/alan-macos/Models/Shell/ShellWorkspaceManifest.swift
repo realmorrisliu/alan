@@ -82,6 +82,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var createdAt: Date
     var updatedAt: Date
     var tabs: [ShellWorkspaceTabRecord]
+    var terminalProfileID: String? = nil
 
     var id: String { spaceID }
 
@@ -92,6 +93,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case tabs
+        case terminalProfileID = "terminal_profile_id"
     }
 }
 
@@ -179,6 +181,7 @@ struct ShellPaneRestoreRecord: Codable, Equatable, Identifiable {
     var launchTarget: ShellLaunchTarget
     var cwd: String?
     var title: String?
+    var terminalProfileID: String? = nil
 
     var id: String { paneID }
 
@@ -187,6 +190,7 @@ struct ShellPaneRestoreRecord: Codable, Equatable, Identifiable {
         case launchTarget = "launch_target"
         case cwd
         case title
+        case terminalProfileID = "terminal_profile_id"
     }
 }
 
@@ -273,6 +277,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var createdAt: Date
     var updatedAt: Date
     var tabs: [ShellContentWorkspaceTabRecord]
+    var terminalProfileID: String? = nil
 
     var id: String { spaceID }
 
@@ -283,6 +288,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case tabs
+        case terminalProfileID = "terminal_profile_id"
     }
 }
 
@@ -435,7 +441,8 @@ extension ShellContentTabRestoreSnapshot {
                         launchTarget: terminalPayload.launchTarget,
                         cwd: terminalPayload.cwd,
                         title: terminalPayload.title,
-                        transcriptSnapshot: transcriptSnapshot
+                        transcriptSnapshot: transcriptSnapshot,
+                        terminalProfileID: terminalPayload.terminalProfileID
                     )
                 )
             )
@@ -532,7 +539,8 @@ extension ShellWorkspaceManifest {
                             liveSnapshot: tab.liveSnapshot?.migratingTerminalPanesToContentContainers(),
                             activeTask: tab.activeTask
                         )
-                    }
+                    },
+                    terminalProfileID: space.terminalProfileID
                 )
             }
         )
@@ -598,7 +606,8 @@ extension ShellTabRestoreSnapshot {
                     ShellTerminalContentPayload(
                         launchTarget: pane.launchTarget,
                         cwd: pane.cwd,
-                        title: title
+                        title: title,
+                        terminalProfileID: pane.terminalProfileID
                     )
                 )
             )
@@ -710,7 +719,8 @@ struct ShellWorkspaceMaterializer {
                 attention: strongestAttention(
                     in: paneSlots.filter { $0.spaceID == space.spaceID }
                 ),
-                tabs: contentTabs
+                tabs: contentTabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -802,7 +812,8 @@ struct ShellWorkspaceMaterializer {
                 visibleExcerpt: nil,
                 lastActivityAt: nil
             ),
-            alanBinding: nil
+            alanBinding: nil,
+            terminalProfileID: terminalPayload.terminalProfileID
         )
         let slot = ShellQuickTerminalSlot(
             paneID: record.paneID,
@@ -825,7 +836,8 @@ struct ShellWorkspaceMaterializer {
                     launchTarget: terminalPayload.launchTarget,
                     cwd: terminalPayload.cwd ?? defaultWorkingDirectory,
                     title: terminalPayload.title,
-                    transcriptSnapshot: terminalPayload.transcriptSnapshot
+                    transcriptSnapshot: terminalPayload.transcriptSnapshot,
+                    terminalProfileID: terminalPayload.terminalProfileID
                 )
             )
         } else {
@@ -898,7 +910,8 @@ struct ShellWorkspaceMaterializer {
                     spaceID: space.spaceID,
                     title: space.title,
                     attention: strongestAttention(for: shellTabs, panes: panes),
-                    tabs: shellTabs
+                    tabs: shellTabs,
+                    terminalProfileID: space.terminalProfileID
                 )
             )
         }
@@ -952,7 +965,8 @@ struct ShellWorkspaceMaterializer {
                 visibleExcerpt: nil,
                 lastActivityAt: nil
             ),
-            alanBinding: nil
+            alanBinding: nil,
+            terminalProfileID: record.terminalProfileID
         )
     }
 

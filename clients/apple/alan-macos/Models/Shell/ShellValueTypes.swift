@@ -143,6 +143,1412 @@ enum ShellLaunchTarget: String, Codable, CaseIterable {
     case shell
 }
 
+enum TerminalProfileLaunchKind: String, Codable, CaseIterable {
+    case loginShell = "login_shell"
+    case sudoUser = "sudo_user"
+    case sudoRoot = "sudo_root"
+    case customCommand = "custom_command"
+}
+
+enum TerminalProfileLaunch: Codable, Equatable {
+    case loginShell
+    case sudoUser(unixUser: String)
+    case sudoRoot
+    case customCommand(String)
+
+    var kind: TerminalProfileLaunchKind {
+        switch self {
+        case .loginShell:
+            return .loginShell
+        case .sudoUser:
+            return .sudoUser
+        case .sudoRoot:
+            return .sudoRoot
+        case .customCommand:
+            return .customCommand
+        }
+    }
+
+    var unixUser: String? {
+        guard case .sudoUser(let unixUser) = self else { return nil }
+        return unixUser
+    }
+
+    var customCommand: String? {
+        guard case .customCommand(let command) = self else { return nil }
+        return command
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case unixUser = "unix_user"
+        case command
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(TerminalProfileLaunchKind.self, forKey: .kind) {
+        case .loginShell:
+            self = .loginShell
+        case .sudoUser:
+            self = .sudoUser(
+                unixUser: try container.decodeIfPresent(String.self, forKey: .unixUser) ?? ""
+            )
+        case .sudoRoot:
+            self = .sudoRoot
+        case .customCommand:
+            self = .customCommand(
+                try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        switch self {
+        case .loginShell, .sudoRoot:
+            break
+        case .sudoUser(let unixUser):
+            try container.encode(unixUser, forKey: .unixUser)
+        case .customCommand(let command):
+            try container.encode(command, forKey: .command)
+        }
+    }
+}
+
+struct TerminalProfilePresentation: Codable, Equatable {
+    let symbolName: String?
+    let colorName: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case symbolName = "symbol_name"
+        case colorName = "color_name"
+    }
+}
+
+struct TerminalProfileDefinition: Codable, Equatable, Identifiable {
+    let id: String
+    let title: String
+    let launch: TerminalProfileLaunch
+    let defaultWorkingDirectory: String?
+    let presentation: TerminalProfilePresentation?
+    let managedTerminalAccountID: String?
+
+    init(
+        id: String,
+        title: String,
+        launch: TerminalProfileLaunch,
+        defaultWorkingDirectory: String?,
+        presentation: TerminalProfilePresentation?,
+        managedTerminalAccountID: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.launch = launch
+        self.defaultWorkingDirectory = defaultWorkingDirectory
+        self.presentation = presentation
+        self.managedTerminalAccountID = managedTerminalAccountID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case launch
+        case defaultWorkingDirectory = "default_working_directory"
+        case presentation
+        case managedTerminalAccountID = "managed_terminal_account_id"
+    }
+
+    static let loginShellFallback = TerminalProfileDefinition(
+        id: "login_shell",
+        title: "Login shell",
+        launch: .loginShell,
+        defaultWorkingDirectory: nil,
+        presentation: TerminalProfilePresentation(symbolName: "terminal", colorName: nil)
+    )
+
+    var redactedDisplayDetail: String {
+        switch launch {
+        case .loginShell:
+            return "Login shell"
+        case .sudoUser(let unixUser):
+            return unixUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Sudo user"
+                : "Sudo user \(unixUser)"
+        case .sudoRoot:
+            return "Root shell"
+        case .customCommand:
+            return "Custom command"
+        }
+    }
+}
+
+struct TerminalProfileDocument: Codable, Equatable {
+    var defaultProfileID: String
+    var profiles: [TerminalProfileDefinition]
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultProfileID = "default_profile_id"
+        case profiles
+    }
+
+    static let fallback = TerminalProfileDocument(
+        defaultProfileID: TerminalProfileDefinition.loginShellFallback.id,
+        profiles: [TerminalProfileDefinition.loginShellFallback]
+    )
+
+    func profile(id: String?) -> TerminalProfileDefinition? {
+        guard let id else { return nil }
+        return profiles.first { $0.id == id }
+    }
+
+    var defaultProfile: TerminalProfileDefinition? {
+        profile(id: defaultProfileID) ?? profiles.first
+    }
+}
+
+enum TerminalProfileValidationError: Error, Equatable {
+    case missingID
+    case duplicateID(String)
+    case missingTitle(String)
+    case missingUnixUser(String)
+    case missingCustomCommand(String)
+    case missingDefaultProfile(String)
+    case unavailableExecutable(profileID: String, path: String)
+
+    var userMessage: String {
+        switch self {
+        case .missingID:
+            return "A Terminal Profile id is required."
+        case .duplicateID(let id):
+            return "Terminal Profile \(id) is duplicated."
+        case .missingTitle(let id):
+            return "Terminal Profile \(id) needs a title."
+        case .missingUnixUser(let id):
+            return "Terminal Profile \(id) needs a Unix user."
+        case .missingCustomCommand(let id):
+            return "Terminal Profile \(id) needs a custom command."
+        case .missingDefaultProfile(let id):
+            return "Default Terminal Profile \(id) is missing."
+        case .unavailableExecutable(let id, let path):
+            return "Terminal Profile \(id) cannot find executable \(path)."
+        }
+    }
+}
+
+struct TerminalProfileValidationResult: Equatable {
+    let errors: [TerminalProfileValidationError]
+
+    var isValid: Bool {
+        errors.isEmpty
+    }
+}
+
+enum TerminalProfileValidator {
+    static func validate(
+        _ document: TerminalProfileDocument,
+        fileManager: FileManager? = nil
+    ) -> TerminalProfileValidationResult {
+        var errors: [TerminalProfileValidationError] = []
+        var ids = Set<String>()
+
+        for profile in document.profiles {
+            let trimmedID = profile.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedID.isEmpty {
+                errors.append(.missingID)
+            } else if !ids.insert(trimmedID).inserted {
+                errors.append(.duplicateID(trimmedID))
+            }
+
+            if profile.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                errors.append(.missingTitle(profile.id))
+            }
+
+            switch profile.launch {
+            case .loginShell, .sudoRoot:
+                break
+            case .sudoUser(let unixUser):
+                if unixUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    errors.append(.missingUnixUser(profile.id))
+                }
+            case .customCommand(let command):
+                if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    errors.append(.missingCustomCommand(profile.id))
+                }
+            }
+
+            if let fileManager,
+               let executablePath = requiredExecutablePath(for: profile.launch),
+               !fileManager.isExecutableFile(atPath: executablePath)
+            {
+                errors.append(.unavailableExecutable(profileID: profile.id, path: executablePath))
+            }
+        }
+
+        if !document.defaultProfileID.isEmpty,
+           !ids.contains(document.defaultProfileID)
+        {
+            errors.append(.missingDefaultProfile(document.defaultProfileID))
+        }
+
+        return TerminalProfileValidationResult(errors: errors)
+    }
+
+    static func requiredExecutablePath(for launch: TerminalProfileLaunch) -> String? {
+        switch launch {
+        case .loginShell:
+            return nil
+        case .sudoUser, .sudoRoot:
+            return "/usr/bin/sudo"
+        case .customCommand:
+            return "/bin/zsh"
+        }
+    }
+}
+
+enum TerminalProfileStoreError: Error, Equatable {
+    case invalidDocument([TerminalProfileValidationError])
+}
+
+enum TerminalProfileStoreRecoveryKind: Equatable {
+    case corruptStoreQuarantined
+}
+
+struct TerminalProfileStoreRecovery: Equatable {
+    let kind: TerminalProfileStoreRecoveryKind
+    let evidenceURL: URL
+}
+
+struct TerminalProfileLoadResult: Equatable {
+    let document: TerminalProfileDocument
+    let recovery: TerminalProfileStoreRecovery?
+
+    var profiles: [TerminalProfileDefinition] {
+        document.profiles
+    }
+
+    func profile(id: String?) -> TerminalProfileDefinition? {
+        document.profile(id: id)
+    }
+}
+
+struct TerminalProfileEditorDraft: Equatable {
+    var id: String
+    var title: String
+    var launchKind: TerminalProfileLaunchKind
+    var unixUser: String
+    var customCommand: String
+    var defaultWorkingDirectory: String?
+    var presentation: TerminalProfilePresentation?
+    var managedTerminalAccountID: String?
+
+    init(
+        id: String = "",
+        title: String = "",
+        launchKind: TerminalProfileLaunchKind = .loginShell,
+        unixUser: String = "",
+        customCommand: String = "",
+        defaultWorkingDirectory: String? = nil,
+        presentation: TerminalProfilePresentation? = nil,
+        managedTerminalAccountID: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.launchKind = launchKind
+        self.unixUser = unixUser
+        self.customCommand = customCommand
+        self.defaultWorkingDirectory = defaultWorkingDirectory
+        self.presentation = presentation
+        self.managedTerminalAccountID = managedTerminalAccountID
+    }
+
+    init(profile: TerminalProfileDefinition) {
+        self.id = profile.id
+        self.title = profile.title
+        self.launchKind = profile.launch.kind
+        self.unixUser = profile.launch.unixUser ?? ""
+        self.customCommand = profile.launch.customCommand ?? ""
+        self.defaultWorkingDirectory = profile.defaultWorkingDirectory
+        self.presentation = profile.presentation
+        self.managedTerminalAccountID = profile.managedTerminalAccountID
+    }
+}
+
+struct TerminalProfileEditorResult: Equatable {
+    let definition: TerminalProfileDefinition?
+    let errors: [TerminalProfileValidationError]
+
+    var isValid: Bool {
+        definition != nil && errors.isEmpty
+    }
+}
+
+struct TerminalProfileDocumentEditorResult: Equatable {
+    let document: TerminalProfileDocument?
+    let errors: [TerminalProfileValidationError]
+
+    var isValid: Bool {
+        document != nil && errors.isEmpty
+    }
+}
+
+enum TerminalProfileEditor {
+    static func makeDefinition(from draft: TerminalProfileEditorDraft) -> TerminalProfileEditorResult {
+        let launch: TerminalProfileLaunch
+        switch draft.launchKind {
+        case .loginShell:
+            launch = .loginShell
+        case .sudoUser:
+            launch = .sudoUser(unixUser: draft.unixUser)
+        case .sudoRoot:
+            launch = .sudoRoot
+        case .customCommand:
+            launch = .customCommand(draft.customCommand)
+        }
+
+        let definition = TerminalProfileDefinition(
+            id: draft.id.trimmingCharacters(in: .whitespacesAndNewlines),
+            title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            launch: launch,
+            defaultWorkingDirectory: normalizedOptional(draft.defaultWorkingDirectory),
+            presentation: draft.presentation,
+            managedTerminalAccountID: normalizedOptional(draft.managedTerminalAccountID)
+        )
+        let document = TerminalProfileDocument(
+            defaultProfileID: definition.id,
+            profiles: [definition]
+        )
+        let validation = TerminalProfileValidator.validate(document)
+        return TerminalProfileEditorResult(
+            definition: validation.isValid ? definition : nil,
+            errors: validation.errors
+        )
+    }
+
+    static func upserting(
+        draft: TerminalProfileEditorDraft,
+        into document: TerminalProfileDocument
+    ) -> TerminalProfileDocumentEditorResult {
+        let editorResult = makeDefinition(from: draft)
+        guard let definition = editorResult.definition else {
+            return TerminalProfileDocumentEditorResult(
+                document: nil,
+                errors: editorResult.errors
+            )
+        }
+
+        var profiles = document.profiles
+        if let index = profiles.firstIndex(where: { $0.id == definition.id }) {
+            profiles[index] = definition
+        } else {
+            profiles.append(definition)
+        }
+        let nextDocument = TerminalProfileDocument(
+            defaultProfileID: document.defaultProfileID.isEmpty
+                ? definition.id
+                : document.defaultProfileID,
+            profiles: profiles
+        )
+        let validation = TerminalProfileValidator.validate(nextDocument)
+        return TerminalProfileDocumentEditorResult(
+            document: validation.isValid ? nextDocument : nil,
+            errors: validation.errors
+        )
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+struct TerminalProfileStore {
+    let fileManager: FileManager
+    let storeURL: URL
+
+    init(fileManager: FileManager = .default, storeURL: URL) {
+        self.fileManager = fileManager
+        self.storeURL = storeURL
+    }
+
+    static func defaultStore(
+        channelApplicationSupportDirectoryName: String = currentChannelApplicationSupportDirectoryName(),
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TerminalProfileStore {
+        let supportRoot = localApplicationSupportDirectory(
+            fileManager: fileManager,
+            environment: environment
+        )
+        let storeURL = supportRoot
+            .appendingPathComponent(channelApplicationSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent("terminal-profiles.json", isDirectory: false)
+        return TerminalProfileStore(fileManager: fileManager, storeURL: storeURL)
+    }
+
+    static func currentChannelApplicationSupportDirectoryName(
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if bundleIdentifier == "app.alanworks.macos.dev" || environment["ALAN_INSTALL_CHANNEL"] == "dev" {
+            return "alan-macos-dev"
+        }
+        return "alan-macos"
+    }
+
+    private static func localApplicationSupportDirectory(
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> URL {
+        if let override = environment["ALAN_MACOS_APPLICATION_SUPPORT_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !override.isEmpty
+        {
+            return URL(fileURLWithPath: NSString(string: override).expandingTildeInPath, isDirectory: true)
+        }
+
+        return fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+    }
+
+    func load() -> TerminalProfileLoadResult {
+        guard fileManager.fileExists(atPath: storeURL.path) else {
+            return TerminalProfileLoadResult(document: .fallback, recovery: nil)
+        }
+
+        do {
+            let data = try Data(contentsOf: storeURL)
+            let document = try JSONDecoder().decode(TerminalProfileDocument.self, from: data)
+            let validation = TerminalProfileValidator.validate(document)
+            guard validation.isValid else {
+                return TerminalProfileLoadResult(document: .fallback, recovery: nil)
+            }
+            return TerminalProfileLoadResult(document: document, recovery: nil)
+        } catch {
+            let evidenceURL = quarantineCorruptStore()
+            return TerminalProfileLoadResult(
+                document: .fallback,
+                recovery: TerminalProfileStoreRecovery(
+                    kind: .corruptStoreQuarantined,
+                    evidenceURL: evidenceURL
+                )
+            )
+        }
+    }
+
+    func save(_ document: TerminalProfileDocument) throws {
+        let validation = TerminalProfileValidator.validate(document)
+        guard validation.isValid else {
+            throw TerminalProfileStoreError.invalidDocument(validation.errors)
+        }
+        try fileManager.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(document)
+        try data.write(to: storeURL, options: .atomic)
+    }
+
+    private func quarantineCorruptStore() -> URL {
+        let stamp = ISO8601DateFormatter()
+            .string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let evidenceURL = storeURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("terminal-profiles.corrupt-\(stamp).json")
+        do {
+            if fileManager.fileExists(atPath: evidenceURL.path) {
+                try fileManager.removeItem(at: evidenceURL)
+            }
+            try fileManager.moveItem(at: storeURL, to: evidenceURL)
+        } catch {
+            try? fileManager.copyItem(at: storeURL, to: evidenceURL)
+        }
+        return evidenceURL
+    }
+}
+
+enum TerminalProfileResolutionState: Equatable {
+    case absent
+    case resolved
+    case missing(requestedID: String)
+    case unavailable(requestedID: String, reason: String)
+
+    var environmentValue: String {
+        switch self {
+        case .absent:
+            return "absent"
+        case .resolved:
+            return "resolved"
+        case .missing:
+            return "missing"
+        case .unavailable:
+            return "unavailable"
+        }
+    }
+}
+
+struct ManagedTerminalAccountRequest: Equatable {
+    let accountName: String
+    let guiUserName: String
+    let fullName: String?
+    let shell: String
+    let homeDirectory: String
+    let hideFromLoginWindow: Bool
+    let bindCurrentSpaceAfterSuccess: Bool
+
+    init(
+        accountName: String,
+        guiUserName: String,
+        fullName: String? = nil,
+        shell: String = "/bin/zsh",
+        homeDirectory: String? = nil,
+        hideFromLoginWindow: Bool = true,
+        bindCurrentSpaceAfterSuccess: Bool = false
+    ) {
+        self.accountName = accountName
+        self.guiUserName = guiUserName
+        self.fullName = fullName
+        self.shell = shell
+        self.homeDirectory = homeDirectory ?? "/Users/\(accountName)"
+        self.hideFromLoginWindow = hideFromLoginWindow
+        self.bindCurrentSpaceAfterSuccess = bindCurrentSpaceAfterSuccess
+    }
+
+    var terminalProfileID: String {
+        accountName
+    }
+}
+
+enum ManagedTerminalAccountValidationError: Equatable {
+    case invalidAccountName(String)
+    case invalidGUIUserName(String)
+    case reservedAccountName(String)
+    case invalidShell(String)
+}
+
+enum ManagedTerminalAccountIdentifierValidator {
+    private static let identifierPattern = #"^[A-Za-z_][A-Za-z0-9_-]{0,31}$"#
+    private static let reservedAccountNames: Set<String> = ["root", "daemon", "nobody"]
+
+    static func validate(_ request: ManagedTerminalAccountRequest) -> [ManagedTerminalAccountValidationError] {
+        var errors: [ManagedTerminalAccountValidationError] = []
+        if !matchesIdentifier(request.accountName) {
+            errors.append(.invalidAccountName(request.accountName))
+        }
+        if reservedAccountNames.contains(request.accountName.lowercased()) {
+            errors.append(.reservedAccountName(request.accountName))
+        }
+        if !matchesIdentifier(request.guiUserName) {
+            errors.append(.invalidGUIUserName(request.guiUserName))
+        }
+        if request.shell.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || request.shell.contains("\n")
+        {
+            errors.append(.invalidShell(request.shell))
+        }
+        return errors
+    }
+
+    private static func matchesIdentifier(_ value: String) -> Bool {
+        value.range(of: identifierPattern, options: .regularExpression) != nil
+    }
+}
+
+struct ManagedTerminalAccountCommandResult: Equatable {
+    let exitCode: Int32
+    let standardOutput: String
+    let standardError: String
+
+    var succeeded: Bool {
+        exitCode == 0
+    }
+
+    var combinedOutput: String {
+        [standardOutput, standardError]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+}
+
+protocol ManagedTerminalAccountCommandRunning {
+    func run(
+        executablePath: String,
+        arguments: [String]
+    ) -> ManagedTerminalAccountCommandResult
+}
+
+struct ManagedTerminalAccountProcessRunner: ManagedTerminalAccountCommandRunning {
+    func run(
+        executablePath: String,
+        arguments: [String]
+    ) -> ManagedTerminalAccountCommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return ManagedTerminalAccountCommandResult(
+                exitCode: 127,
+                standardOutput: "",
+                standardError: "\(error)"
+            )
+        }
+
+        let output = String(
+            data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        let error = String(
+            data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        return ManagedTerminalAccountCommandResult(
+            exitCode: process.terminationStatus,
+            standardOutput: output,
+            standardError: error
+        )
+    }
+}
+
+enum ManagedTerminalAccountRecord: Equatable {
+    case missing
+    case standard(homeDirectory: String, shell: String, hidden: Bool)
+    case admin(homeDirectory: String, shell: String, hidden: Bool)
+    case invalid(reason: String)
+}
+
+enum ManagedTerminalAccountSudoersState: Equatable {
+    case missing
+    case alanOwnedValid(path: String)
+    case alanOwnedInvalid(path: String, message: String)
+    case unmanaged(path: String)
+}
+
+enum ManagedTerminalAccountProfileState: Equatable {
+    case missing
+    case existingManaged(profileID: String)
+    case existingUnmanaged(profileID: String)
+}
+
+enum ManagedTerminalAccountVerificationStep: String, Equatable {
+    case accountLookup = "account_lookup"
+    case nonAdminAccount = "non_admin_account"
+    case homeDirectory = "home_directory"
+    case shell
+    case sudoersValidation = "sudoers_validation"
+    case nonInteractiveSudo = "non_interactive_sudo"
+}
+
+enum ManagedTerminalAccountVerificationStatus: Equatable {
+    case notRun
+    case passed
+    case failed(step: ManagedTerminalAccountVerificationStep, message: String)
+}
+
+struct ManagedTerminalAccountState: Equatable {
+    let account: ManagedTerminalAccountRecord
+    let sudoers: ManagedTerminalAccountSudoersState
+    let terminalProfile: ManagedTerminalAccountProfileState
+    let verification: ManagedTerminalAccountVerificationStatus
+}
+
+struct ManagedTerminalAccountSudoersValidationResult: Equatable {
+    let isValid: Bool
+    let message: String?
+
+    static let passed = ManagedTerminalAccountSudoersValidationResult(isValid: true, message: nil)
+
+    static func failed(_ message: String) -> ManagedTerminalAccountSudoersValidationResult {
+        ManagedTerminalAccountSudoersValidationResult(isValid: false, message: message)
+    }
+}
+
+protocol ManagedTerminalAccountSudoersSyntaxChecking {
+    func validateSudoersFile(atPath path: String) -> ManagedTerminalAccountSudoersValidationResult
+}
+
+struct ManagedTerminalAccountVisudoSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking {
+    let commandRunner: ManagedTerminalAccountCommandRunning
+
+    init(commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner()) {
+        self.commandRunner = commandRunner
+    }
+
+    func validateSudoersFile(atPath path: String) -> ManagedTerminalAccountSudoersValidationResult {
+        let result = commandRunner.run(
+            executablePath: "/usr/sbin/visudo",
+            arguments: ["-cf", path]
+        )
+        guard result.succeeded else {
+            let message = result.combinedOutput.isEmpty ? "visudo validation failed." : result.combinedOutput
+            return .failed(message)
+        }
+        return .passed
+    }
+}
+
+enum ManagedTerminalAccountSudoersValidator {
+    static func state(
+        request: ManagedTerminalAccountRequest,
+        fileManager: FileManager,
+        syntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking
+    ) -> ManagedTerminalAccountSudoersState {
+        let rule = ManagedTerminalAccountSudoersRule(request: request)
+        guard fileManager.fileExists(atPath: rule.filePath) else {
+            return .missing
+        }
+
+        guard let data = fileManager.contents(atPath: rule.filePath),
+              let contents = String(data: data, encoding: .utf8)
+        else {
+            return .alanOwnedInvalid(path: rule.filePath, message: "Unable to read sudoers drop-in.")
+        }
+
+        guard contents.contains(ManagedTerminalAccountSudoersRule.managedMarker) else {
+            return .unmanaged(path: rule.filePath)
+        }
+
+        let validation = validate(contents: contents, rule: rule, syntaxChecker: syntaxChecker)
+        if validation.isValid {
+            return .alanOwnedValid(path: rule.filePath)
+        }
+        return .alanOwnedInvalid(
+            path: rule.filePath,
+            message: validation.message ?? "Sudoers validation failed."
+        )
+    }
+
+    static func validate(
+        contents: String,
+        rule: ManagedTerminalAccountSudoersRule,
+        syntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking
+    ) -> ManagedTerminalAccountSudoersValidationResult {
+        let normalizedExpected = normalizedSudoersContents(rule.contents)
+        let normalizedActual = normalizedSudoersContents(contents)
+        guard normalizedActual == normalizedExpected else {
+            return .failed("Alan-owned sudoers drop-in does not match the requested terminal account.")
+        }
+        return syntaxChecker.validateSudoersFile(atPath: rule.filePath)
+    }
+
+    private static func normalizedSudoersContents(_ contents: String) -> String {
+        contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct ManagedTerminalAccountLocalStateDiscoverer {
+    let fileManager: FileManager
+    let commandRunner: ManagedTerminalAccountCommandRunning
+    let sudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking
+
+    init(
+        fileManager: FileManager = .default,
+        commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner(),
+        sudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking = ManagedTerminalAccountVisudoSyntaxChecker()
+    ) {
+        self.fileManager = fileManager
+        self.commandRunner = commandRunner
+        self.sudoersSyntaxChecker = sudoersSyntaxChecker
+    }
+
+    func discover(
+        request: ManagedTerminalAccountRequest,
+        terminalProfiles: TerminalProfileDocument
+    ) -> ManagedTerminalAccountState {
+        let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
+        guard validationErrors.isEmpty else {
+            return ManagedTerminalAccountState(
+                account: .invalid(reason: "Invalid managed terminal account request."),
+                sudoers: .missing,
+                terminalProfile: .missing,
+                verification: .notRun
+            )
+        }
+
+        return ManagedTerminalAccountState(
+            account: accountRecord(for: request),
+            sudoers: ManagedTerminalAccountSudoersValidator.state(
+                request: request,
+                fileManager: fileManager,
+                syntaxChecker: sudoersSyntaxChecker
+            ),
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles),
+            verification: .notRun
+        )
+    }
+
+    private func accountRecord(for request: ManagedTerminalAccountRequest) -> ManagedTerminalAccountRecord {
+        let dscl = commandRunner.run(
+            executablePath: "/usr/bin/dscl",
+            arguments: [
+                ".",
+                "-read",
+                "/Users/\(request.accountName)",
+                "NFSHomeDirectory",
+                "UserShell",
+                "IsHidden",
+            ]
+        )
+        guard dscl.succeeded else {
+            return .missing
+        }
+
+        let output = dscl.standardOutput
+        let home = propertyValue("NFSHomeDirectory", in: output) ?? request.homeDirectory
+        let shell = propertyValue("UserShell", in: output) ?? request.shell
+        let hidden = propertyValue("IsHidden", in: output) == "1"
+        let isAdmin = adminMembership(for: request.accountName)
+        if isAdmin {
+            return .admin(homeDirectory: home, shell: shell, hidden: hidden)
+        }
+        return .standard(homeDirectory: home, shell: shell, hidden: hidden)
+    }
+
+    private func adminMembership(for accountName: String) -> Bool {
+        let result = commandRunner.run(
+            executablePath: "/usr/sbin/dseditgroup",
+            arguments: ["-o", "checkmember", "-m", accountName, "admin"]
+        )
+        guard result.succeeded else { return false }
+        let output = result.combinedOutput.lowercased()
+        return output.contains("yes") || (output.contains("is a member") && !output.contains("not a member"))
+    }
+
+    private func propertyValue(_ key: String, in output: String) -> String? {
+        output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .compactMap { line -> String? in
+                let prefix = "\(key):"
+                guard line.hasPrefix(prefix) else { return nil }
+                let value = line.dropFirst(prefix.count)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+            .first
+    }
+
+    private func terminalProfileState(
+        for request: ManagedTerminalAccountRequest,
+        document: TerminalProfileDocument
+    ) -> ManagedTerminalAccountProfileState {
+        guard let profile = document.profile(id: request.terminalProfileID) else {
+            return .missing
+        }
+        if profile.managedTerminalAccountID == request.accountName,
+           profile.launch == .sudoUser(unixUser: request.accountName)
+        {
+            return .existingManaged(profileID: profile.id)
+        }
+        return .existingUnmanaged(profileID: profile.id)
+    }
+}
+
+protocol ManagedTerminalAccountEntryVerifying {
+    func verifyTerminalEntry(
+        request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountSudoersValidationResult
+}
+
+struct ManagedTerminalAccountSudoEntryVerifier: ManagedTerminalAccountEntryVerifying {
+    let commandRunner: ManagedTerminalAccountCommandRunning
+
+    init(commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner()) {
+        self.commandRunner = commandRunner
+    }
+
+    func verifyTerminalEntry(
+        request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountSudoersValidationResult {
+        let result = commandRunner.run(
+            executablePath: "/usr/bin/sudo",
+            arguments: ["-n", "-iu", request.accountName, "true"]
+        )
+        guard result.succeeded else {
+            let message = result.combinedOutput.isEmpty
+                ? "Non-interactive sudo verification failed."
+                : result.combinedOutput
+            return .failed(message)
+        }
+        return .passed
+    }
+}
+
+enum ManagedTerminalAccountReadinessVerifier {
+    static func verify(
+        request: ManagedTerminalAccountRequest,
+        state: ManagedTerminalAccountState,
+        entryVerifier: ManagedTerminalAccountEntryVerifying
+    ) -> ManagedTerminalAccountVerificationStatus {
+        switch state.account {
+        case .missing:
+            return .failed(step: .accountLookup, message: "Managed terminal account is missing.")
+        case .admin:
+            return .failed(step: .nonAdminAccount, message: "Managed terminal account must be standard.")
+        case .invalid(let reason):
+            return .failed(step: .accountLookup, message: reason)
+        case .standard(let homeDirectory, let shell, _):
+            if homeDirectory != request.homeDirectory {
+                return .failed(step: .homeDirectory, message: "Home directory does not match the plan.")
+            }
+            if shell != request.shell {
+                return .failed(step: .shell, message: "Login shell does not match the plan.")
+            }
+        }
+
+        switch state.sudoers {
+        case .alanOwnedValid:
+            break
+        case .alanOwnedInvalid(_, let message):
+            return .failed(step: .sudoersValidation, message: message)
+        case .missing:
+            return .failed(step: .sudoersValidation, message: "Alan-owned sudoers drop-in is missing.")
+        case .unmanaged:
+            return .failed(step: .sudoersValidation, message: "Sudoers drop-in is not Alan-owned.")
+        }
+
+        let entry = entryVerifier.verifyTerminalEntry(request: request)
+        guard entry.isValid else {
+            return .failed(
+                step: .nonInteractiveSudo,
+                message: entry.message ?? "Non-interactive sudo verification failed."
+            )
+        }
+        return .passed
+    }
+}
+
+enum ManagedTerminalAccountPlanStepKind: Equatable {
+    case createStandardAccount
+    case repairAccountType
+    case repairHomeDirectory
+    case repairShell
+    case hideAccount
+    case writeSudoersDropIn
+    case validateSudoers
+    case verifyTerminalEntry
+    case createOrUpdateTerminalProfile
+    case bindCurrentSpace
+    case removeSudoersDropIn
+    case removeManagedTerminalProfile
+    case deleteAccount
+    case deleteHomeDirectory
+}
+
+struct ManagedTerminalAccountPlanStep: Equatable {
+    let kind: ManagedTerminalAccountPlanStepKind
+    let summary: String
+    let requiresPrivilege: Bool
+}
+
+enum ManagedTerminalAccountPlanStatus: Equatable {
+    case readyToApply
+    case alreadyReady
+    case repair
+    case invalid([ManagedTerminalAccountValidationError])
+    case requiresDestructiveConfirmation
+}
+
+struct ManagedTerminalAccountPlan: Equatable {
+    let request: ManagedTerminalAccountRequest
+    let status: ManagedTerminalAccountPlanStatus
+    let steps: [ManagedTerminalAccountPlanStep]
+}
+
+enum ManagedTerminalAccountRollbackScope: Equatable {
+    case alanIntegrationOnly
+    case deleteAccountAndHome(confirmation: String?)
+}
+
+enum ManagedTerminalAccountPlanner {
+    static func plan(
+        request: ManagedTerminalAccountRequest,
+        state: ManagedTerminalAccountState
+    ) -> ManagedTerminalAccountPlan {
+        let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
+        guard validationErrors.isEmpty else {
+            return ManagedTerminalAccountPlan(request: request, status: .invalid(validationErrors), steps: [])
+        }
+
+        var steps: [ManagedTerminalAccountPlanStep] = []
+        var needsCreate = false
+        var repairNeeded = false
+
+        switch state.account {
+        case .missing:
+            needsCreate = true
+            steps.append(step(.createStandardAccount, "Create standard local terminal account", true))
+            if request.hideFromLoginWindow {
+                steps.append(step(.hideAccount, "Hide terminal account from login window lists", true))
+            }
+        case .admin:
+            repairNeeded = true
+            steps.append(step(.repairAccountType, "Repair account so it is not an administrator", true))
+        case .invalid(let reason):
+            repairNeeded = true
+            steps.append(step(.repairAccountType, "Repair account state: \(reason)", true))
+        case .standard(let homeDirectory, let shell, let hidden):
+            if homeDirectory != request.homeDirectory {
+                repairNeeded = true
+                steps.append(step(.repairHomeDirectory, "Repair terminal account home directory", true))
+            }
+            if shell != request.shell {
+                repairNeeded = true
+                steps.append(step(.repairShell, "Repair terminal account shell", true))
+            }
+            if request.hideFromLoginWindow && !hidden {
+                repairNeeded = true
+                steps.append(step(.hideAccount, "Hide terminal account from login window lists", true))
+            }
+        }
+
+        switch state.sudoers {
+        case .missing, .alanOwnedInvalid, .unmanaged:
+            if !needsCreate {
+                repairNeeded = true
+            }
+            steps.append(step(.writeSudoersDropIn, "Write Alan-owned sudoers drop-in", true))
+            steps.append(step(.validateSudoers, "Validate sudoers syntax", true))
+        case .alanOwnedValid:
+            break
+        }
+
+        if state.verification != .passed {
+            if !needsCreate {
+                repairNeeded = true
+            }
+            steps.append(step(.verifyTerminalEntry, "Verify passwordless terminal entry", true))
+        }
+
+        switch state.terminalProfile {
+        case .missing, .existingUnmanaged:
+            steps.append(step(.createOrUpdateTerminalProfile, "Create matching Terminal Profile", false))
+        case .existingManaged:
+            if state.verification != .passed {
+                steps.append(step(.createOrUpdateTerminalProfile, "Refresh matching Terminal Profile", false))
+            }
+        }
+
+        if request.bindCurrentSpaceAfterSuccess {
+            steps.append(step(.bindCurrentSpace, "Bind current Space after confirmation", false))
+        }
+
+        let status: ManagedTerminalAccountPlanStatus =
+            steps.isEmpty ? .alreadyReady : (repairNeeded ? .repair : .readyToApply)
+        return ManagedTerminalAccountPlan(request: request, status: status, steps: steps)
+    }
+
+    static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        state: ManagedTerminalAccountState,
+        scope: ManagedTerminalAccountRollbackScope
+    ) -> ManagedTerminalAccountPlan {
+        var steps: [ManagedTerminalAccountPlanStep] = []
+        if case .alanOwnedValid = state.sudoers {
+            steps.append(step(.removeSudoersDropIn, "Remove Alan-owned sudoers drop-in", true))
+        }
+        if case .existingManaged = state.terminalProfile {
+            steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
+        }
+
+        switch scope {
+        case .alanIntegrationOnly:
+            return ManagedTerminalAccountPlan(request: request, status: .readyToApply, steps: steps)
+        case .deleteAccountAndHome(let confirmation):
+            guard confirmation == request.accountName else {
+                return ManagedTerminalAccountPlan(
+                    request: request,
+                    status: .requiresDestructiveConfirmation,
+                    steps: steps
+                )
+            }
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .readyToApply,
+                steps: steps + [
+                    step(.deleteAccount, "Delete terminal account", true),
+                    step(.deleteHomeDirectory, "Delete terminal account home directory", true),
+                ]
+            )
+        }
+    }
+
+    private static func step(
+        _ kind: ManagedTerminalAccountPlanStepKind,
+        _ summary: String,
+        _ requiresPrivilege: Bool
+    ) -> ManagedTerminalAccountPlanStep {
+        ManagedTerminalAccountPlanStep(
+            kind: kind,
+            summary: summary,
+            requiresPrivilege: requiresPrivilege
+        )
+    }
+}
+
+struct ManagedTerminalAccountSudoersRule: Equatable {
+    static let managedMarker = "# Managed by Alan for terminal account entry. Do not edit by hand."
+
+    let request: ManagedTerminalAccountRequest
+
+    var fileName: String {
+        "alan-terminal-\(request.guiUserName)-to-\(request.accountName)"
+    }
+
+    var filePath: String {
+        "/etc/sudoers.d/\(fileName)"
+    }
+
+    var contents: String {
+        """
+        \(Self.managedMarker)
+        \(request.guiUserName) ALL=(\(request.accountName)) NOPASSWD: ALL
+        """
+    }
+}
+
+struct ManagedTerminalAccountApplyResult: Equatable {
+    let completedSteps: [ManagedTerminalAccountPlanStepKind]
+    let failedStep: ManagedTerminalAccountPlanStepKind?
+    let cancelled: Bool
+    let visibleDiagnostics: [String]
+
+    static func cancelled(before steps: [ManagedTerminalAccountPlanStepKind]) -> ManagedTerminalAccountApplyResult {
+        ManagedTerminalAccountApplyResult(
+            completedSteps: [],
+            failedStep: steps.first,
+            cancelled: true,
+            visibleDiagnostics: ["Provisioning cancelled before privileged changes."]
+        )
+    }
+}
+
+protocol ManagedTerminalAccountPrivilegedExecuting {
+    func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult
+}
+
+final class ManagedTerminalAccountFakeExecutor: ManagedTerminalAccountPrivilegedExecuting {
+    var failAt: ManagedTerminalAccountPlanStepKind?
+    var cancelBeforeApply = false
+
+    func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult {
+        let stepKinds = plan.steps.map(\.kind)
+        if cancelBeforeApply {
+            return .cancelled(before: stepKinds)
+        }
+
+        var completed: [ManagedTerminalAccountPlanStepKind] = []
+        for step in plan.steps {
+            if step.kind == failAt {
+                return ManagedTerminalAccountApplyResult(
+                    completedSteps: completed,
+                    failedStep: step.kind,
+                    cancelled: false,
+                    visibleDiagnostics: ["Step failed: \(step.summary). Credentials redacted."]
+                )
+            }
+            completed.append(step.kind)
+        }
+        return ManagedTerminalAccountApplyResult(
+            completedSteps: completed,
+            failedStep: nil,
+            cancelled: false,
+            visibleDiagnostics: ["Provisioning plan applied. Credentials redacted."]
+        )
+    }
+}
+
+struct ManagedTerminalAccountPrivilegedCommandResult: Equatable {
+    let succeeded: Bool
+    let redactedMessage: String
+}
+
+protocol ManagedTerminalAccountPrivilegedCommandRunning {
+    func runPrivilegedShellScript(
+        _ script: String,
+        redactedDescription: String
+    ) -> ManagedTerminalAccountPrivilegedCommandResult
+}
+
+struct ManagedTerminalAccountAppleScriptPrivilegeRunner: ManagedTerminalAccountPrivilegedCommandRunning {
+    let commandRunner: ManagedTerminalAccountCommandRunning
+
+    init(commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner()) {
+        self.commandRunner = commandRunner
+    }
+
+    func runPrivilegedShellScript(
+        _ script: String,
+        redactedDescription: String
+    ) -> ManagedTerminalAccountPrivilegedCommandResult {
+        let result = commandRunner.run(
+            executablePath: "/usr/bin/osascript",
+            arguments: [
+                "-e",
+                "do shell script \(appleScriptStringLiteral(script)) with administrator privileges",
+            ]
+        )
+        return ManagedTerminalAccountPrivilegedCommandResult(
+            succeeded: result.succeeded,
+            redactedMessage: result.succeeded
+                ? "\(redactedDescription) completed."
+                : "\(redactedDescription) failed. Credentials redacted."
+        )
+    }
+
+    private func appleScriptStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        return "\"\(escaped)\""
+    }
+}
+
+struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPrivilegedExecuting {
+    let request: ManagedTerminalAccountRequest
+    let commandRunner: ManagedTerminalAccountPrivilegedCommandRunning
+    let passwordGenerator: () -> String
+
+    init(
+        request: ManagedTerminalAccountRequest,
+        commandRunner: ManagedTerminalAccountPrivilegedCommandRunning =
+            ManagedTerminalAccountAppleScriptPrivilegeRunner(),
+        passwordGenerator: @escaping () -> String = {
+            UUID().uuidString + UUID().uuidString
+        }
+    ) {
+        self.request = request
+        self.commandRunner = commandRunner
+        self.passwordGenerator = passwordGenerator
+    }
+
+    func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult {
+        var completed: [ManagedTerminalAccountPlanStepKind] = []
+        var diagnostics: [String] = []
+
+        for step in plan.steps {
+            guard let script = script(for: step.kind) else {
+                completed.append(step.kind)
+                continue
+            }
+            let result = commandRunner.runPrivilegedShellScript(
+                script,
+                redactedDescription: step.summary
+            )
+            diagnostics.append(result.redactedMessage)
+            guard result.succeeded else {
+                return ManagedTerminalAccountApplyResult(
+                    completedSteps: completed,
+                    failedStep: step.kind,
+                    cancelled: false,
+                    visibleDiagnostics: diagnostics
+                )
+            }
+            completed.append(step.kind)
+        }
+
+        return ManagedTerminalAccountApplyResult(
+            completedSteps: completed,
+            failedStep: nil,
+            cancelled: false,
+            visibleDiagnostics: diagnostics.isEmpty
+                ? ["Provisioning plan completed. Credentials redacted."]
+                : diagnostics
+        )
+    }
+
+    private func script(for step: ManagedTerminalAccountPlanStepKind) -> String? {
+        let account = shellQuote(request.accountName)
+        let home = shellQuote(request.homeDirectory)
+        let shell = shellQuote(request.shell)
+        switch step {
+        case .createStandardAccount:
+            let fullName = shellQuote(request.fullName ?? request.accountName)
+            let password = shellQuote(passwordGenerator())
+            return """
+            /usr/sbin/sysadminctl -addUser \(account) -fullName \(fullName) -home \(home) -shell \(shell) -password \(password)
+            /usr/sbin/createhomedir -c -u \(account) >/dev/null 2>&1 || true
+            /usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true
+            """
+        case .repairAccountType:
+            return "/usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true"
+        case .repairHomeDirectory:
+            return """
+            /usr/bin/dscl . -create /Users/\(request.accountName) NFSHomeDirectory \(home)
+            /usr/sbin/createhomedir -c -u \(account) >/dev/null 2>&1 || true
+            """
+        case .repairShell:
+            return "/usr/bin/dscl . -create /Users/\(request.accountName) UserShell \(shell)"
+        case .hideAccount:
+            return "/usr/bin/dscl . -create /Users/\(request.accountName) IsHidden 1"
+        case .writeSudoersDropIn:
+            return sudoersWriteScript()
+        case .validateSudoers:
+            return "/usr/sbin/visudo -cf \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
+        case .verifyTerminalEntry:
+            return "/usr/bin/sudo -n -iu \(account) true"
+        case .removeSudoersDropIn:
+            return "/bin/rm -f \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
+        case .deleteAccount:
+            return "/usr/sbin/sysadminctl -deleteUser \(account)"
+        case .deleteHomeDirectory:
+            return "/bin/rm -rf \(home)"
+        case .createOrUpdateTerminalProfile, .bindCurrentSpace, .removeManagedTerminalProfile:
+            return nil
+        }
+    }
+
+    private func sudoersWriteScript() -> String {
+        let rule = ManagedTerminalAccountSudoersRule(request: request)
+        let tempPath = "/tmp/\(rule.fileName).sudoers"
+        return """
+        /bin/cat > \(shellQuote(tempPath)) <<'ALAN_SUDOERS'
+        \(rule.contents)
+        ALAN_SUDOERS
+        /usr/sbin/visudo -cf \(shellQuote(tempPath))
+        /usr/bin/install -o root -g wheel -m 0440 \(shellQuote(tempPath)) \(shellQuote(rule.filePath))
+        /bin/rm -f \(shellQuote(tempPath))
+        """
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}
+
+enum ManagedTerminalAccountProfileHandoff {
+    static func profileDefinition(
+        for request: ManagedTerminalAccountRequest,
+        state: ManagedTerminalAccountState
+    ) -> TerminalProfileDefinition? {
+        guard state.verification == .passed else { return nil }
+        return TerminalProfileDefinition(
+            id: request.terminalProfileID,
+            title: request.fullName ?? request.accountName,
+            launch: .sudoUser(unixUser: request.accountName),
+            defaultWorkingDirectory: request.homeDirectory,
+            presentation: TerminalProfilePresentation(
+                symbolName: "person.crop.circle",
+                colorName: nil
+            ),
+            managedTerminalAccountID: request.accountName
+        )
+    }
+}
+
 enum ShellTabActiveTaskState: String, Codable, Equatable, CaseIterable {
     case inactive
     case foregroundCommand = "foreground_command"
@@ -744,6 +2150,11 @@ struct ShellContextSnapshot: Codable, Equatable {
     let alanBindingFile: String?
     let launchCommand: String?
     let launchStrategy: String?
+    let terminalProfileState: String?
+    let terminalProfileRequestedID: String?
+    let terminalProfileID: String?
+    let terminalProfileKind: String?
+    let terminalProfileTitle: String?
     let shellIntegrationSource: String?
     let processState: String?
     let rendererPhase: String?
@@ -767,6 +2178,11 @@ struct ShellContextSnapshot: Codable, Equatable {
         alanBindingFile: String?,
         launchCommand: String? = nil,
         launchStrategy: String?,
+        terminalProfileState: String? = nil,
+        terminalProfileRequestedID: String? = nil,
+        terminalProfileID: String? = nil,
+        terminalProfileKind: String? = nil,
+        terminalProfileTitle: String? = nil,
         shellIntegrationSource: String?,
         processState: String?,
         rendererPhase: String? = nil,
@@ -789,6 +2205,11 @@ struct ShellContextSnapshot: Codable, Equatable {
         self.alanBindingFile = alanBindingFile
         self.launchCommand = launchCommand
         self.launchStrategy = launchStrategy
+        self.terminalProfileState = terminalProfileState
+        self.terminalProfileRequestedID = terminalProfileRequestedID
+        self.terminalProfileID = terminalProfileID
+        self.terminalProfileKind = terminalProfileKind
+        self.terminalProfileTitle = terminalProfileTitle
         self.shellIntegrationSource = shellIntegrationSource
         self.processState = processState
         self.rendererPhase = rendererPhase
@@ -813,6 +2234,11 @@ struct ShellContextSnapshot: Codable, Equatable {
         case alanBindingFile = "alan_binding_file"
         case launchCommand = "launch_command"
         case launchStrategy = "launch_strategy"
+        case terminalProfileState = "terminal_profile_state"
+        case terminalProfileRequestedID = "terminal_profile_requested_id"
+        case terminalProfileID = "terminal_profile_id"
+        case terminalProfileKind = "terminal_profile_kind"
+        case terminalProfileTitle = "terminal_profile_title"
         case shellIntegrationSource = "shell_integration_source"
         case processState = "process_state"
         case rendererPhase = "renderer_phase"

@@ -137,7 +137,8 @@ extension ShellStateSnapshot {
                 context: current.context,
                 viewport: current.viewport,
                 activity: nil,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
     }
@@ -182,7 +183,8 @@ extension ShellStateSnapshot {
                 context: current.context,
                 viewport: current.viewport,
                 activity: activity,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
         let nextSpaces = rebuildingAttention(in: spaces, panes: updatedPanes)
@@ -202,6 +204,7 @@ extension ShellStateSnapshot {
         launchTarget: ShellLaunchTarget,
         title: String?,
         workingDirectory: String?,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -217,7 +220,8 @@ extension ShellStateSnapshot {
             launchTarget: launchTarget,
             workingDirectory: workingDirectory ?? defaultWorkingDirectory,
             summary: "new shell space scaffolded",
-            now: now
+            now: now,
+            terminalProfileID: terminalProfileID
         )
         let tab = ShellTab(
             tabID: tabID,
@@ -235,7 +239,8 @@ extension ShellStateSnapshot {
             spaceID: spaceID,
             title: title ?? "Space \(spaceIndex)",
             attention: .active,
-            tabs: [tab]
+            tabs: [tab],
+            terminalProfileID: terminalProfileID
         )
         let nextPanes = panes + [pane]
         let nextSpaces = rebuildingAttention(in: spaces + [space], panes: nextPanes)
@@ -255,6 +260,7 @@ extension ShellStateSnapshot {
     func creatingTerminalSpace(
         title: String?,
         workingDirectory: String?,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -263,9 +269,41 @@ extension ShellStateSnapshot {
             launchTarget: .shell,
             title: title,
             workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
+        )
+    }
+
+    func settingTerminalProfile(
+        _ terminalProfileID: String?,
+        forSpaceID targetSpaceID: String
+    ) -> ShellStateSnapshot? {
+        guard spaces.contains(where: { $0.spaceID == targetSpaceID }) else {
+            return nil
+        }
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs,
+                terminalProfileID: terminalProfileID
+            )
+        }
+        return ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: focusedSpaceID,
+            focusedTabID: focusedTabID,
+            focusedPaneID: focusedPaneID,
+            spaces: nextSpaces,
+            panes: panes,
+            paneSlots: paneSlots,
+            contents: contents,
+            quickTerminal: quickTerminal
         )
     }
 
@@ -326,6 +364,7 @@ extension ShellStateSnapshot {
     func openingContentTab(
         _ contentIntent: ShellContentIntent,
         in requestedSpaceID: String?,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -345,6 +384,7 @@ extension ShellStateSnapshot {
 
         let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
         let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
+        let resolvedTerminalProfileID = terminalProfileID ?? targetSpace.terminalProfileID
         let prepared = makeContentMount(
             contentIntent,
             paneID: paneID,
@@ -356,7 +396,8 @@ extension ShellStateSnapshot {
             ),
             terminalSummary: Self.defaultTerminalSummary(for: contentIntent),
             defaultWorkingDirectory: defaultWorkingDirectory,
-            now: now
+            now: now,
+            terminalProfileID: resolvedTerminalProfileID
         )
         let tab = ShellTab(
             tabID: tabID,
@@ -376,7 +417,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                tabs: space.tabs + [tab]
+                tabs: space.tabs + [tab],
+                terminalProfileID: space.terminalProfileID
             )
         }
         let nextPanes = panes + [prepared.pane]
@@ -400,6 +442,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -411,6 +454,7 @@ extension ShellStateSnapshot {
                 workingDirectory: workingDirectory
             ),
             in: requestedSpaceID,
+            terminalProfileID: terminalProfileID,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -421,6 +465,7 @@ extension ShellStateSnapshot {
         in requestedSpaceID: String?,
         title: String?,
         workingDirectory: String?,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -430,6 +475,7 @@ extension ShellStateSnapshot {
             in: requestedSpaceID,
             title: title,
             workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -610,7 +656,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                tabs: space.tabs + [newTab]
+                tabs: space.tabs + [newTab],
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -633,7 +680,8 @@ extension ShellStateSnapshot {
                     lastActivityAt: formatter.string(from: now)
                 ),
                 activity: current.activity,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
 
@@ -663,6 +711,7 @@ extension ShellStateSnapshot {
         _ paneID: String,
         direction: ShellSplitDirection,
         contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -671,6 +720,7 @@ extension ShellStateSnapshot {
             paneID,
             placement: .defaultPlacement(for: direction),
             contentIntent: contentIntent,
+            terminalProfileID: terminalProfileID,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -681,6 +731,7 @@ extension ShellStateSnapshot {
         _ paneID: String,
         placement: ShellPaneSplitDirection,
         contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -708,6 +759,10 @@ extension ShellStateSnapshot {
                 title: nil,
                 workingDirectory: pane.cwd
             )
+        let resolvedTerminalProfileID =
+            terminalProfileID
+            ?? pane.terminalProfileID
+            ?? space(spaceID: pane.spaceID)?.terminalProfileID
         let prepared = makeContentMount(
             resolvedContentIntent,
             paneID: newPaneID,
@@ -716,7 +771,8 @@ extension ShellStateSnapshot {
             defaultTerminalTitle: Self.defaultViewportTitle(for: pane.resolvedLaunchTarget),
             terminalSummary: "new split scaffolded",
             defaultWorkingDirectory: pane.cwd ?? defaultWorkingDirectory,
-            now: now
+            now: now,
+            terminalProfileID: resolvedTerminalProfileID
         )
         let updatedTab = ShellTab(
             tabID: tab.tabID,
@@ -740,7 +796,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
         let nextPanes = panes + [prepared.pane]
@@ -825,7 +882,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
         let nextPanes = panes.filter { $0.paneID != paneID }
@@ -905,7 +963,8 @@ extension ShellStateSnapshot {
                         return [existingTab]
                     }
                     return [updatedSourceTab, newTab]
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
         let formatter = ISO8601DateFormatter()
@@ -927,7 +986,8 @@ extension ShellStateSnapshot {
                     lastActivityAt: formatter.string(from: now)
                 ),
                 activity: current.activity,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
 
@@ -1024,7 +1084,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                tabs: nextTabs
+                tabs: nextTabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -1046,7 +1107,8 @@ extension ShellStateSnapshot {
                     lastActivityAt: formatter.string(from: now)
                 ),
                 activity: current.activity,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
 
@@ -1120,7 +1182,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -1172,7 +1235,8 @@ extension ShellStateSnapshot {
             spaceID: sourceSpace.spaceID,
             title: sourceSpace.title,
             attention: sourceSpace.attention,
-            tabs: sourceSpace.tabs.filter { $0.tabID != tabID }
+            tabs: sourceSpace.tabs.filter { $0.tabID != tabID },
+            terminalProfileID: sourceSpace.terminalProfileID
         )
 
         let targetSpaceAfterRemoval = nextSpaces[targetSpaceIndex]
@@ -1191,7 +1255,8 @@ extension ShellStateSnapshot {
             spaceID: targetSpaceAfterRemoval.spaceID,
             title: targetSpaceAfterRemoval.title,
             attention: targetSpaceAfterRemoval.attention,
-            tabs: targetTabs
+            tabs: targetTabs,
+            terminalProfileID: targetSpaceAfterRemoval.terminalProfileID
         )
 
         let nextPanes = panes.map { pane in
@@ -1210,7 +1275,8 @@ extension ShellStateSnapshot {
                 context: pane.context,
                 viewport: pane.viewport,
                 activity: pane.activity,
-                alanBinding: pane.alanBinding
+                alanBinding: pane.alanBinding,
+                terminalProfileID: pane.terminalProfileID
             )
         }
 
@@ -1325,7 +1391,8 @@ extension ShellStateSnapshot {
                 context: current.context,
                 viewport: current.viewport,
                 activity: current.activity,
-                alanBinding: current.alanBinding
+                alanBinding: current.alanBinding,
+                terminalProfileID: current.terminalProfileID
             )
         }
 
@@ -1368,7 +1435,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs.map { tab in
                     tab.tabID == updatedTab.tabID ? updatedTab : tab
-                }
+                },
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -1400,7 +1468,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: space.attention,
-                tabs: remainingTabs
+                tabs: remainingTabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
@@ -1524,7 +1593,8 @@ extension ShellStateSnapshot {
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
-                tabs: space.tabs
+                tabs: space.tabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
     }
@@ -1589,7 +1659,8 @@ extension ShellStateSnapshot {
         defaultTerminalTitle: String,
         terminalSummary: String,
         defaultWorkingDirectory: String,
-        now: Date
+        now: Date,
+        terminalProfileID: String?
     ) -> ShellPreparedContentMount {
         switch contentIntent {
         case .terminal(let launchTarget, let title, let workingDirectory):
@@ -1600,7 +1671,8 @@ extension ShellStateSnapshot {
                 launchTarget: launchTarget,
                 workingDirectory: workingDirectory ?? defaultWorkingDirectory,
                 summary: terminalSummary,
-                now: now
+                now: now,
+                terminalProfileID: terminalProfileID
             )
             return ShellPreparedContentMount(
                 pane: pane,
@@ -1693,7 +1765,8 @@ extension ShellStateSnapshot {
         launchTarget: ShellLaunchTarget,
         workingDirectory: String,
         summary: String,
-        now: Date
+        now: Date,
+        terminalProfileID: String? = nil
     ) -> ShellPane {
         let formatter = ISO8601DateFormatter()
         return ShellPane(
@@ -1711,7 +1784,8 @@ extension ShellStateSnapshot {
                 visibleExcerpt: nil,
                 lastActivityAt: formatter.string(from: now)
             ),
-            alanBinding: nil
+            alanBinding: nil,
+            terminalProfileID: terminalProfileID
         )
     }
 

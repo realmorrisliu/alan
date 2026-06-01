@@ -1014,6 +1014,12 @@ private struct ShellSidebarSpaceHeader: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.82))
                 .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            if let space {
+                terminalProfileMenu(for: space)
+            }
         }
         .padding(.horizontal, ShellSidebarMetrics.rowInset)
         .padding(.vertical, 5)
@@ -1039,6 +1045,73 @@ private struct ShellSidebarSpaceHeader: View {
         }
 
         return "terminal"
+    }
+
+    private func terminalProfileMenu(for space: ShellSpace) -> some View {
+        let profiles = TerminalProfileStore.defaultStore().load().profiles
+        let current = profiles.first { $0.id == space.terminalProfileID }
+        return Menu {
+            Button("Default") {
+                _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
+            }
+
+            ForEach(profiles, id: \.id) { profile in
+                Button(profileMenuTitle(profile)) {
+                    _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: currentProfileSymbol(space: space, profile: current))
+                    .font(.system(size: 10, weight: .semibold))
+                if let current {
+                    Text(current.title)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(profileForegroundStyle(space: space, profile: current))
+            .frame(maxWidth: 96, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func profileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
+        "\(profile.title) · \(profile.launch.kind.rawValue)"
+    }
+
+    private func currentProfileSymbol(
+        space: ShellSpace,
+        profile: TerminalProfileDefinition?
+    ) -> String {
+        guard let profile else {
+            return space.terminalProfileID == nil ? "terminal" : "questionmark.circle"
+        }
+        switch profile.launch {
+        case .loginShell:
+            return "terminal"
+        case .sudoUser:
+            return "person.crop.circle"
+        case .sudoRoot:
+            return "exclamationmark.triangle"
+        case .customCommand:
+            return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+
+    private func profileForegroundStyle(
+        space: ShellSpace,
+        profile: TerminalProfileDefinition?
+    ) -> Color {
+        if space.terminalProfileID != nil, profile == nil {
+            return .orange
+        }
+        if profile?.launch == .sudoRoot {
+            return .red
+        }
+        return ShellPalette.sidebarMutedInk.opacity(0.72)
     }
 
     private func contentIconName(for content: ShellContentInstance) -> String {

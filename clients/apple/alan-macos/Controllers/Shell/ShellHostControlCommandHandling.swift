@@ -283,13 +283,39 @@ extension ShellHostController {
             guard let spaceID = createSpace(
                 launchTarget: .shell,
                 title: command.title,
-                workingDirectory: command.cwd
+                workingDirectory: command.cwd,
+                terminalProfileID: command.terminalProfileID
             ) else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
                     errorCode: "space_create_failed",
                     errorMessage: failureMessage
+                )
+            }
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: spaceID,
+                paneID: shellState.focusedPaneID
+            )
+
+        case .spaceSetTerminalProfile:
+            guard let spaceID = command.spaceID ?? shellState.focusedSpaceID else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "space_required",
+                    errorMessage: "space_id is required."
+                )
+            }
+            guard setTerminalProfile(command.terminalProfileID, forSpaceID: spaceID) else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    spaceID: spaceID,
+                    errorCode: "space_not_found",
+                    errorMessage: "The requested space does not exist."
                 )
             }
             return response(
@@ -314,7 +340,8 @@ extension ShellHostController {
                         launchTarget: .shell,
                         spaceID: command.spaceID,
                         title: command.title,
-                        workingDirectory: command.cwd
+                        workingDirectory: command.cwd,
+                        terminalProfileID: command.terminalProfileID
                     )
                 )
             )
@@ -585,7 +612,8 @@ extension ShellHostController {
                 .splitPane(
                     ShellAutomationPaneSplitRequest(
                         paneID: paneID,
-                        placement: .defaultPlacement(for: direction)
+                        placement: .defaultPlacement(for: direction),
+                        terminalProfileID: command.terminalProfileID
                     )
                 )
             )

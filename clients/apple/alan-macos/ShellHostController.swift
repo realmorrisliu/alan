@@ -1046,12 +1046,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func createSpace(
         launchTarget: ShellLaunchTarget = .shell,
         title: String? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         let result = shellState.creatingSpace(
             launchTarget: launchTarget,
             title: title,
             workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID,
             reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
         )
         applyMutationResult(result)
@@ -1059,8 +1061,29 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    func createTerminalSpace(title: String? = nil, workingDirectory: String? = nil) -> String? {
-        createSpace(launchTarget: .shell, title: title, workingDirectory: workingDirectory)
+    func createTerminalSpace(
+        title: String? = nil,
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
+    ) -> String? {
+        createSpace(
+            launchTarget: .shell,
+            title: title,
+            workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID
+        )
+    }
+
+    @discardableResult
+    func setTerminalProfile(_ terminalProfileID: String?, forSpaceID spaceID: String) -> Bool {
+        guard let nextState = shellState.settingTerminalProfile(
+            terminalProfileID,
+            forSpaceID: spaceID
+        ) else {
+            return false
+        }
+        adoptStateFromControlPlane(nextState)
+        return true
     }
 
     @discardableResult
@@ -1189,13 +1212,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             title: nil,
             workingDirectory: nil
         ),
-        in spaceID: String? = nil
+        in spaceID: String? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         let result: ShellStateMutationResult
         do {
             result = try shellState.openingContentTab(
                 contentIntent,
                 in: spaceID,
+                terminalProfileID: terminalProfileID,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
@@ -1210,7 +1235,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         launchTarget: ShellLaunchTarget = .shell,
         in spaceID: String? = nil,
         title: String? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         openContentTab(
             .terminal(
@@ -1218,7 +1244,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 title: title,
                 workingDirectory: workingDirectory
             ),
-            in: spaceID
+            in: spaceID,
+            terminalProfileID: terminalProfileID
         )
     }
 
@@ -1226,7 +1253,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func openTerminalTab(
         in spaceID: String? = nil,
         title: String? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         let resolvedWorkingDirectory = workingDirectory
             ?? focusedPaneWorkingDirectory()
@@ -1234,7 +1262,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             launchTarget: .shell,
             in: spaceID,
             title: title,
-            workingDirectory: resolvedWorkingDirectory
+            workingDirectory: resolvedWorkingDirectory,
+            terminalProfileID: terminalProfileID
         )
     }
 
@@ -1264,24 +1293,28 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func splitFocusedPane(
         direction: ShellSplitDirection,
-        contentIntent: ShellContentIntent? = nil
+        contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         splitFocusedPane(
             placement: .defaultPlacement(for: direction),
-            contentIntent: contentIntent
+            contentIntent: contentIntent,
+            terminalProfileID: terminalProfileID
         )
     }
 
     @discardableResult
     func splitFocusedPane(
         placement: ShellPaneSplitDirection,
-        contentIntent: ShellContentIntent? = nil
+        contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         guard let focusedPaneID = shellState.focusedPaneID else { return nil }
         return splitPane(
             paneID: focusedPaneID,
             placement: placement,
-            contentIntent: contentIntent
+            contentIntent: contentIntent,
+            terminalProfileID: terminalProfileID
         )
     }
 
@@ -1289,12 +1322,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func splitPane(
         paneID: String,
         direction: ShellSplitDirection,
-        contentIntent: ShellContentIntent? = nil
+        contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         splitPane(
             paneID: paneID,
             placement: .defaultPlacement(for: direction),
-            contentIntent: contentIntent
+            contentIntent: contentIntent,
+            terminalProfileID: terminalProfileID
         )
     }
 
@@ -1302,7 +1337,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func splitPane(
         paneID: String,
         placement: ShellPaneSplitDirection,
-        contentIntent: ShellContentIntent? = nil
+        contentIntent: ShellContentIntent? = nil,
+        terminalProfileID: String? = nil
     ) -> String? {
         let result: ShellStateMutationResult
         do {
@@ -1310,6 +1346,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 paneID,
                 placement: placement,
                 contentIntent: contentIntent,
+                terminalProfileID: terminalProfileID,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
@@ -2124,7 +2161,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
-                tabs: tabs
+                tabs: tabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
     }
@@ -2207,7 +2245,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 context: projectedContext,
                 viewport: pane.viewport,
                 activity: pane.activity,
-                alanBinding: pane.alanBinding
+                alanBinding: pane.alanBinding,
+                terminalProfileID: pane.terminalProfileID
             )
         }
 
@@ -2216,7 +2255,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
-                tabs: space.tabs
+                tabs: space.tabs,
+                terminalProfileID: space.terminalProfileID
             )
         }
 
@@ -2493,12 +2533,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return ShellContentWorkspaceSpaceRecord(
                 spaceID: space.spaceID,
                 title: space.title,
-                order: existingSpace?.order ?? index,
-                createdAt: existingSpace?.createdAt ?? now,
-                updatedAt: now,
-                tabs: tabRecords
-            )
-        }
+                    order: existingSpace?.order ?? index,
+                    createdAt: existingSpace?.createdAt ?? now,
+                    updatedAt: now,
+                    tabs: tabRecords,
+                    terminalProfileID: space.terminalProfileID
+                )
+            }
 
         var manifest = ShellContentWorkspaceManifest(
             schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
@@ -2559,18 +2600,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
             ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
         let title = projectedContent.title
+        let launchTarget = terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget
+        let cwd = terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory
+        let payloadTitle = terminalPayload?.title ?? title
+        let terminalProfileID = terminalPayload?.terminalProfileID ?? pane.terminalProfileID
+        let payload = ShellTerminalContentPayload(
+            launchTarget: launchTarget,
+            cwd: cwd,
+            title: payloadTitle,
+            transcriptSnapshot: transcriptSnapshot,
+            terminalProfileID: terminalProfileID
+        )
         let content = ShellContentRestoreRecord(
             contentID: contentID,
             kind: .terminal,
             title: title,
-            payload: .terminal(
-                ShellTerminalContentPayload(
-                    launchTarget: terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget,
-                    cwd: terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory,
-                    title: terminalPayload?.title ?? title,
-                    transcriptSnapshot: transcriptSnapshot
-                )
-            )
+            payload: .terminal(payload)
         )
         let snapshot = ShellContentTabRestoreSnapshot(
             paneTree: ShellPaneSlotTreeNode(
@@ -3187,7 +3232,8 @@ extension ShellHostController: ShellAutomationCommandHandling {
                 tabID = openTerminalTab(
                     in: request.spaceID,
                     title: request.title,
-                    workingDirectory: request.workingDirectory
+                    workingDirectory: request.workingDirectory,
+                    terminalProfileID: request.terminalProfileID
                 )
             }
             guard let tabID else {
@@ -3209,7 +3255,11 @@ extension ShellHostController: ShellAutomationCommandHandling {
             guard pane(paneID: request.paneID) != nil else {
                 return shellAutomationMissingPaneResult(request.paneID)
             }
-            guard let paneID = splitPane(paneID: request.paneID, placement: request.placement) else {
+            guard let paneID = splitPane(
+                paneID: request.paneID,
+                placement: request.placement,
+                terminalProfileID: request.terminalProfileID
+            ) else {
                 return shellAutomationMissingPaneResult(request.paneID)
             }
             return shellAutomationResult(

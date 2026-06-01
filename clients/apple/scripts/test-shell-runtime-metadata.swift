@@ -155,6 +155,15 @@ private enum ShellRuntimeMetadataTests {
         verifiesWorkspaceManifestSyncCapturesLiveTerminalTranscript()
         verifiesTabOrganizationPersistsOrderPinAndSpaceOwnership()
         verifiesManifestActiveTaskProjection()
+        verifiesTerminalProfileStoreFallbackValidationAndCorruptRecovery()
+        verifiesTerminalProfileLaunchResolutionAndEnvironmentProjection()
+        verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip()
+        verifiesTerminalProfileInheritanceForSpacesTabsAndSplits()
+        verifiesTerminalProfileControlPlaneOverrides()
+        verifiesTerminalProfileSettingsRowsStaySeparateFromProviderAccounts()
+        verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff()
+        verifiesManagedTerminalAccountDiscoveryVerificationAndAuthorizedExecutor()
+        verifiesManagedTerminalAccountExecutorAndRollbackSafety()
         print("Shell runtime metadata tests passed.")
     }
 
@@ -7041,6 +7050,885 @@ private enum ShellRuntimeMetadataTests {
         expect(activeTask(in: alanPendingURL) == .alanPendingYield, "alan pending yield must protect tab")
     }
 
+    private static func verifiesTerminalProfileStoreFallbackValidationAndCorruptRecovery() {
+        let fileManager = FileManager.default
+        let root = temporaryDirectory(named: "terminal-profile-store")
+        defer { try? fileManager.removeItem(at: root) }
+        let storeURL = root.appendingPathComponent("terminal-profiles.json")
+        let store = TerminalProfileStore(fileManager: fileManager, storeURL: storeURL)
+
+        let missingLoad = store.load()
+        expect(
+            missingLoad.document.defaultProfileID == TerminalProfileDefinition.loginShellFallback.id,
+            "missing profile store must use login-shell fallback"
+        )
+        expect(
+            missingLoad.profiles.first?.launch.kind == .loginShell,
+            "missing profile store must provide login-shell launch"
+        )
+
+        let alan = TerminalProfileDefinition(
+            id: "alan",
+            title: "Alan",
+            launch: .sudoUser(unixUser: "alan"),
+            defaultWorkingDirectory: "/Users/alan",
+            presentation: TerminalProfilePresentation(
+                symbolName: "person.crop.circle",
+                colorName: "green"
+            )
+        )
+        let custom = TerminalProfileDefinition(
+            id: "bootstrap",
+            title: "Bootstrap",
+            launch: .customCommand("echo token=redacted"),
+            defaultWorkingDirectory: nil,
+            presentation: nil
+        )
+        expect(
+            (try? store.save(TerminalProfileDocument(defaultProfileID: "alan", profiles: [alan, custom]))) != nil,
+            "valid profile document must save"
+        )
+        let savedLoad = store.load()
+        expect(savedLoad.document.defaultProfileID == "alan", "saved default terminal profile must round-trip")
+        expect(
+            savedLoad.profile(id: "bootstrap")?.redactedDisplayDetail == "Custom command",
+            "custom command summary must stay redacted"
+        )
+
+        let invalid = TerminalProfileDefinition(
+            id: "bad",
+            title: "Bad",
+            launch: .sudoUser(unixUser: ""),
+            defaultWorkingDirectory: nil,
+            presentation: nil
+        )
+        let validation = TerminalProfileValidator.validate(
+            TerminalProfileDocument(defaultProfileID: "bad", profiles: [invalid])
+        )
+        expect(
+            validation.errors.contains(.missingUnixUser("bad")),
+            "sudo_user profile without Unix user must be rejected"
+        )
+
+        try? "not json".write(to: storeURL, atomically: true, encoding: .utf8)
+        let corruptLoad = store.load()
+        expect(
+            corruptLoad.recovery?.kind == .corruptStoreQuarantined,
+            "corrupt profile store must be quarantined"
+        )
+        expect(
+            fileManager.fileExists(atPath: corruptLoad.recovery?.evidenceURL.path ?? ""),
+            "corrupt evidence file must be preserved"
+        )
+        expect(
+            corruptLoad.document.profiles == [TerminalProfileDefinition.loginShellFallback],
+            "corrupt profile store must fall back to login shell"
+        )
+    }
+
+    private static func verifiesTerminalProfileLaunchResolutionAndEnvironmentProjection() {
+        let document = TerminalProfileDocument(
+            defaultProfileID: "alan",
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil
+                ),
+                TerminalProfileDefinition(
+                    id: "root",
+                    title: "Root",
+                    launch: .sudoRoot,
+                    defaultWorkingDirectory: nil,
+                    presentation: nil
+                ),
+                TerminalProfileDefinition(
+                    id: "custom",
+                    title: "Custom",
+                    launch: .customCommand("echo hello"),
+                    defaultWorkingDirectory: "/tmp",
+                    presentation: nil
+                ),
+            ]
+        )
+        let executableFileManager = AlwaysExecutableFileManager()
+
+        let sudo = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "alan",
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(sudo.terminalProfile?.id == "alan", "sudo user resolution must keep profile id")
+        expect(sudo.launchPath == "/usr/bin/sudo", "sudo user profile must launch sudo directly")
+        expect(sudo.arguments == ["-iu", "alan"], "sudo user profile must use structured sudo arguments")
+        expect(
+            sudo.surfaceCommand == "'/usr/bin/sudo' '-iu' 'alan'",
+            "sudo user profile must pass command through Ghostty surface config"
+        )
+
+        let root = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "root",
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(root.arguments == ["-i"], "sudo root profile must use structured sudo -i")
+
+        let custom = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "custom",
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            custom.launchPath == "/bin/zsh" && custom.arguments == ["-lc", "echo hello"],
+            "custom command profile must use login-shell runner"
+        )
+        expect(custom.surfaceCommand == "echo hello", "custom command must remain the Ghostty command payload")
+
+        let missing = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "lab",
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            missing.terminalProfileState == .missing(requestedID: "lab"),
+            "missing profile must be reported"
+        )
+        expect(missing.strategy == .loginShellEnv, "missing profile must fall back to login shell")
+
+        let pane = ShellPane(
+            paneID: "pane_profile",
+            tabID: "tab_profile",
+            spaceID: "space_profile",
+            launchTarget: .shell,
+            cwd: nil,
+            process: nil,
+            attention: .active,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil,
+            terminalProfileID: "alan"
+        )
+        let state = ShellStateSnapshot.bootstrapDefault(windowID: "window_profile")
+        let boot = AlanShellBootProfile.forPane(
+            pane,
+            shellState: state,
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            boot.environment["ALAN_TERMINAL_PROFILE_ID"] == "alan",
+            "boot environment must expose terminal profile id"
+        )
+        expect(
+            boot.environment["ALAN_TERMINAL_PROFILE_KIND"] == "sudo_user",
+            "boot environment must expose terminal profile kind"
+        )
+        expect(
+            boot.environment["ALAN_TERMINAL_PROFILE_STATE"] == "resolved",
+            "boot environment must expose resolved profile state"
+        )
+        expect(
+            boot.workingDirectory == "/Users/alan",
+            "profile default working directory must apply when pane cwd is absent"
+        )
+
+        let projectedContext = ShellPaneProjectionService(fileManager: executableFileManager)
+            .projectedContext(
+                for: pane,
+                bootProfile: boot,
+                workingDirectory: nil,
+                processExited: nil,
+                lastCommandExitCode: nil,
+                lastMetadataAt: nil,
+                existing: nil
+            )
+        expect(
+            projectedContext.terminalProfileState == "resolved",
+            "pane context must expose resolved terminal profile state"
+        )
+        expect(
+            projectedContext.terminalProfileID == "alan",
+            "pane context must expose resolved terminal profile id"
+        )
+        expect(
+            projectedContext.terminalProfileKind == "sudo_user",
+            "pane context must expose terminal profile launch kind"
+        )
+
+        let missingPane = ShellPane(
+            paneID: "pane_missing_profile",
+            tabID: "tab_profile",
+            spaceID: "space_profile",
+            launchTarget: .shell,
+            cwd: nil,
+            process: nil,
+            attention: .active,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil,
+            terminalProfileID: "lab"
+        )
+        let missingBoot = AlanShellBootProfile.forPane(
+            missingPane,
+            shellState: state,
+            terminalProfiles: document,
+            fileManager: executableFileManager,
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        let missingContext = ShellPaneProjectionService(fileManager: executableFileManager)
+            .projectedContext(
+                for: missingPane,
+                bootProfile: missingBoot,
+                workingDirectory: nil,
+                processExited: nil,
+                lastCommandExitCode: nil,
+                lastMetadataAt: nil,
+                existing: nil
+            )
+        expect(
+            missingContext.terminalProfileState == "missing",
+            "pane context must expose missing terminal profile state"
+        )
+        expect(
+            missingContext.terminalProfileRequestedID == "lab",
+            "pane context must preserve missing terminal profile id"
+        )
+        expect(
+            missingContext.terminalProfileID == nil,
+            "missing profile fallback must not claim a resolved profile id"
+        )
+    }
+
+    private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {
+        let now = Date(timeIntervalSince1970: 2_001)
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_profiles",
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_main",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Alan",
+                    order: 0,
+                    createdAt: now,
+                    updatedAt: now,
+                    tabs: [
+                        ShellContentWorkspaceTabRecord(
+                            tabID: "tab_main",
+                            title: "Shell",
+                            kind: .terminal,
+                            createdAt: now,
+                            lastActivatedAt: now,
+                            lastActivityAt: now,
+                            isPinned: false,
+                            pinSnapshot: nil,
+                            liveSnapshot: ShellContentTabRestoreSnapshot(
+                                paneTree: ShellPaneSlotTreeNode(
+                                    nodeID: "node_pane_1",
+                                    kind: .pane,
+                                    direction: nil,
+                                    paneSlotID: "pane_1",
+                                    children: nil
+                                ),
+                                paneSlots: [
+                                    ShellPaneSlotRestoreRecord(
+                                        paneSlotID: "pane_1",
+                                        contentID: "content_pane_1"
+                                    )
+                                ],
+                                contents: [
+                                    ShellContentRestoreRecord(
+                                        contentID: "content_pane_1",
+                                        kind: .terminal,
+                                        title: "Alan shell",
+                                        payload: .terminal(
+                                            ShellTerminalContentPayload(
+                                                launchTarget: .shell,
+                                                cwd: "/Users/alan",
+                                                title: "Alan shell",
+                                                terminalProfileID: "alan"
+                                            )
+                                        )
+                                    )
+                                ]
+                            ),
+                            activeTask: .inactive
+                        )
+                    ],
+                    terminalProfileID: "alan"
+                )
+            ]
+        )
+
+        let data = try? JSONEncoder().encode(manifest)
+        guard let data,
+              let decoded = try? JSONDecoder().decode(ShellContentWorkspaceManifest.self, from: data)
+        else {
+            fail("profile manifest must encode and decode")
+        }
+        expect(
+            decoded.spaces.first?.terminalProfileID == "alan",
+            "space terminal_profile_id must round-trip"
+        )
+        let payload = terminalPayload(
+            in: decoded.spaces.first?.tabs.first?.liveSnapshot,
+            contentID: "content_pane_1"
+        )
+        expect(
+            payload?.terminalProfileID == "alan",
+            "terminal content terminal_profile_id must round-trip"
+        )
+
+        let json = String(decoding: data, as: UTF8.self)
+        expect(!json.contains("sudo -iu"), "workspace manifest must not embed terminal profile command definitions")
+        expect(!json.contains("unix_user"), "workspace manifest must not embed terminal profile Unix-user definitions")
+
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: decoded,
+            defaultWorkingDirectory: "/Users/morris",
+            now: now
+        )
+        expect(
+            state.space(spaceID: "space_main")?.terminalProfileID == "alan",
+            "materialized space must preserve missing local profile reference"
+        )
+        expect(
+            state.pane(paneID: "pane_1")?.terminalProfileID == "alan",
+            "materialized pane must preserve terminal profile reference"
+        )
+        expect(
+            state.contentStateProjection().content(contentID: "content_pane_1")?.payload.terminal?.terminalProfileID == "alan",
+            "content projection must preserve terminal profile reference"
+        )
+
+        let legacyJSON = """
+        {"schema_version":1,"content_contract_version":"\(ShellContentStateSnapshot.currentContractVersion)","window_id":"legacy","selected_space_id":null,"selected_tab_id":null,"spaces":[]}
+        """
+        expect(
+            (try? JSONDecoder().decode(ShellContentWorkspaceManifest.self, from: Data(legacyJSON.utf8))) != nil,
+            "old manifest without terminal_profile_id must decode"
+        )
+    }
+
+    private static func verifiesTerminalProfileInheritanceForSpacesTabsAndSplits() {
+        let now = Date(timeIntervalSince1970: 2_100)
+        let base = ShellStateSnapshot.bootstrapDefault(
+            windowID: "window_inheritance",
+            workingDirectory: "/Users/morris"
+        )
+        let createdSpace = base.creatingTerminalSpace(
+            title: "Alan",
+            workingDirectory: nil,
+            terminalProfileID: "alan",
+            now: now
+        ).state
+        guard let alanSpaceID = createdSpace.focusedSpaceID,
+              let alanPaneID = createdSpace.focusedPaneID
+        else {
+            fail("space creation must focus new terminal content")
+        }
+        expect(
+            createdSpace.space(spaceID: alanSpaceID)?.terminalProfileID == "alan",
+            "new space must bind selected profile"
+        )
+        expect(
+            createdSpace.pane(paneID: alanPaneID)?.terminalProfileID == "alan",
+            "first terminal in profile-bound space must use profile"
+        )
+
+        let inheritedTab = try? createdSpace.openingTerminalTab(
+            in: alanSpaceID,
+            title: nil,
+            workingDirectory: nil,
+            now: now
+        ).state
+        expect(
+            inheritedTab?.pane(paneID: inheritedTab?.focusedPaneID ?? "")?.terminalProfileID == "alan",
+            "new tab must inherit space profile"
+        )
+
+        let overrideTab = try? createdSpace.openingTerminalTab(
+            in: alanSpaceID,
+            title: nil,
+            workingDirectory: nil,
+            terminalProfileID: "root",
+            now: now
+        ).state
+        expect(
+            overrideTab?.pane(paneID: overrideTab?.focusedPaneID ?? "")?.terminalProfileID == "root",
+            "explicit tab profile must override space profile"
+        )
+
+        let split = try? createdSpace.splittingPane(
+            alanPaneID,
+            placement: .right,
+            now: now
+        ).state
+        expect(
+            split?.pane(paneID: split?.focusedPaneID ?? "")?.terminalProfileID == "alan",
+            "split must inherit focused pane profile"
+        )
+
+        let rebound = createdSpace.settingTerminalProfile("univer", forSpaceID: alanSpaceID)
+        expect(
+            rebound?.pane(paneID: alanPaneID)?.terminalProfileID == "alan",
+            "space binding changes must not rewrite existing panes"
+        )
+        let reboundTab = try? rebound?.openingTerminalTab(
+            in: alanSpaceID,
+            title: nil,
+            workingDirectory: nil,
+            now: now
+        ).state
+        expect(
+            reboundTab?.pane(paneID: reboundTab?.focusedPaneID ?? "")?.terminalProfileID == "univer",
+            "new tabs after binding change must use new profile"
+        )
+    }
+
+    private static func verifiesTerminalProfileControlPlaneOverrides() {
+        let controller = makeController()
+        let createSpaceResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "space-profile",
+                  "command": "space.create",
+                  "title": "Root",
+                  "terminal_profile_id": "root"
+                }
+                """
+            )
+        )
+        expect(createSpaceResponse.applied == true, "space.create with terminal_profile_id must apply")
+        guard let createdSpaceID = createSpaceResponse.spaceID,
+              let createdPaneID = createSpaceResponse.paneID
+        else {
+            fail("space.create must return created ids")
+        }
+        expect(
+            controller.shellState.space(spaceID: createdSpaceID)?.terminalProfileID == "root",
+            "space.create must bind terminal profile to the new Space"
+        )
+        expect(
+            controller.shellState.pane(paneID: createdPaneID)?.terminalProfileID == "root",
+            "space.create must apply terminal profile to first terminal"
+        )
+
+        let bindResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "space-bind-profile",
+                  "command": "space.set_terminal_profile",
+                  "space_id": "\(createdSpaceID)",
+                  "terminal_profile_id": "univer"
+                }
+                """
+            )
+        )
+        expect(bindResponse.applied == true, "space.set_terminal_profile must apply")
+        expect(
+            controller.shellState.space(spaceID: createdSpaceID)?.terminalProfileID == "univer",
+            "space.set_terminal_profile must update the Space binding"
+        )
+        expect(
+            controller.shellState.pane(paneID: createdPaneID)?.terminalProfileID == "root",
+            "space.set_terminal_profile must not retroactively rewrite existing terminals"
+        )
+
+        let tabResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "tab-profile",
+                  "command": "tab.open",
+                  "space_id": "\(createdSpaceID)",
+                  "terminal_profile_id": "alan"
+                }
+                """
+            )
+        )
+        expect(tabResponse.applied == true, "tab.open terminal_profile_id override must apply")
+        expect(
+            controller.shellState.pane(paneID: tabResponse.paneID ?? "")?.terminalProfileID == "alan",
+            "tab.open explicit terminal_profile_id must override Space profile"
+        )
+
+        let splitResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "split-profile",
+                  "command": "pane.split",
+                  "pane_id": "\(tabResponse.paneID ?? createdPaneID)",
+                  "direction": "horizontal",
+                  "terminal_profile_id": "lab"
+                }
+                """
+            )
+        )
+        expect(splitResponse.applied == true, "pane.split terminal_profile_id override must apply")
+        expect(
+            controller.shellState.pane(paneID: splitResponse.paneID ?? "")?.terminalProfileID == "lab",
+            "pane.split explicit terminal_profile_id must override inherited profile"
+        )
+    }
+
+    private static func verifiesTerminalProfileSettingsRowsStaySeparateFromProviderAccounts() {
+        let terminalProfiles = TerminalProfileSettingsSummary(
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil
+                ),
+                TerminalProfileDefinition(
+                    id: "custom",
+                    title: "Bootstrap",
+                    launch: .customCommand("echo hidden-secret"),
+                    defaultWorkingDirectory: nil,
+                    presentation: nil
+                ),
+            ],
+            defaultProfileID: "alan",
+            recoveryMessage: nil
+        )
+        let terminalAccounts = ManagedTerminalAccountSettingsSummary(
+            plans: [
+                ManagedTerminalAccountPlanner.plan(
+                    request: ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris"),
+                    state: ManagedTerminalAccountState(
+                        account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                        sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
+                        terminalProfile: .existingManaged(profileID: "alan"),
+                        verification: .passed
+                    )
+                )
+            ]
+        )
+        let snapshot = ShellSettingsSurfaceSnapshot.make(
+            remote: .unavailable(reason: "Daemon unavailable"),
+            local: .current(),
+            terminalProfiles: terminalProfiles,
+            managedTerminalAccounts: terminalAccounts
+        )
+        let sectionTitles = snapshot.sections.map(\.title)
+        expect(sectionTitles.contains("Terminal Profiles"), "Settings must include Terminal Profiles as local startup configuration")
+        expect(sectionTitles.contains("Terminal Accounts"), "Settings must include Managed Terminal Account provisioning")
+        expect(
+            snapshot.sections.first(where: { $0.id == .accounts })?.visibleText.contains("Alan") == false,
+            "Terminal Profiles must not be listed under provider Accounts"
+        )
+        let visibleText = snapshot.visibleText.joined(separator: " ")
+        expect(!visibleText.contains("echo hidden-secret"), "normal Settings rows must redact full custom commands")
+        expect(!visibleText.lowercased().contains("autologin"), "Settings copy must avoid GUI autologin wording")
+        expect(visibleText.contains("terminal entry"), "Settings copy must describe terminal account entry")
+
+        let invalidDraft = TerminalProfileEditorDraft(
+            id: "alan",
+            title: "Alan",
+            launchKind: .sudoUser
+        )
+        expect(
+            TerminalProfileEditor.makeDefinition(from: invalidDraft).errors.contains(.missingUnixUser("alan")),
+            "Terminal Profile editor must validate structured sudo_user fields"
+        )
+
+        let customDraft = TerminalProfileEditorDraft(
+            id: "bootstrap",
+            title: "Bootstrap",
+            launchKind: .customCommand,
+            customCommand: "echo hidden-secret"
+        )
+        let edited = TerminalProfileEditor.upserting(
+            draft: customDraft,
+            into: TerminalProfileDocument.fallback
+        )
+        expect(edited.isValid, "Terminal Profile editor must upsert valid custom-command drafts")
+        expect(
+            edited.document?.profile(id: "bootstrap")?.redactedDisplayDetail.contains("hidden-secret") == false,
+            "Terminal Profile editor models must keep custom commands redacted for normal display"
+        )
+    }
+
+    private static func verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff() {
+        let request = ManagedTerminalAccountRequest(
+            accountName: "alan",
+            guiUserName: "morris",
+            fullName: "Alan Terminal",
+            shell: "/bin/zsh",
+            homeDirectory: "/Users/alan",
+            hideFromLoginWindow: true,
+            bindCurrentSpaceAfterSuccess: true
+        )
+        let missingState = ManagedTerminalAccountState(
+            account: .missing,
+            sudoers: .missing,
+            terminalProfile: .missing,
+            verification: .notRun
+        )
+        let plan = ManagedTerminalAccountPlanner.plan(request: request, state: missingState)
+        expect(
+            plan.steps.map(\.kind).contains(.createStandardAccount),
+            "missing account plan must create a standard account"
+        )
+        expect(
+            plan.steps.map(\.kind).contains(.writeSudoersDropIn),
+            "missing account plan must write Alan-owned sudoers"
+        )
+        expect(
+            plan.steps.map(\.kind).contains(.verifyTerminalEntry),
+            "missing account plan must verify terminal entry"
+        )
+        expect(
+            plan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
+            "ready path must include terminal profile handoff"
+        )
+
+        let sudoers = ManagedTerminalAccountSudoersRule(request: request)
+        expect(
+            sudoers.filePath == "/etc/sudoers.d/alan-terminal-morris-to-alan",
+            "sudoers path must be deterministic and Alan-owned"
+        )
+        expect(
+            sudoers.contents.contains("morris ALL=(alan) NOPASSWD: ALL"),
+            "sudoers rule must allow GUI user to target account"
+        )
+        expect(
+            !sudoers.contents.contains("ALL=(ALL)"),
+            "sudoers rule must not grant passwordless root or all-user access"
+        )
+
+        let invalid = ManagedTerminalAccountRequest(accountName: "root", guiUserName: "morris")
+        expect(
+            ManagedTerminalAccountIdentifierValidator.validate(invalid)
+                .contains(.reservedAccountName("root")),
+            "root target account must be rejected"
+        )
+
+        let readyState = ManagedTerminalAccountState(
+            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+            sudoers: .alanOwnedValid(path: sudoers.filePath),
+            terminalProfile: .missing,
+            verification: .passed
+        )
+        let handoff = ManagedTerminalAccountProfileHandoff.profileDefinition(
+            for: request,
+            state: readyState
+        )
+        expect(handoff?.id == "alan", "ready account must create matching profile id")
+        expect(
+            handoff?.launch == .sudoUser(unixUser: "alan"),
+            "ready account profile must use sudo_user launch"
+        )
+
+        let failedState = ManagedTerminalAccountState(
+            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+            sudoers: .alanOwnedValid(path: sudoers.filePath),
+            terminalProfile: .missing,
+            verification: .failed(step: .nonInteractiveSudo, message: "sudo requires password")
+        )
+        expect(
+            ManagedTerminalAccountProfileHandoff.profileDefinition(for: request, state: failedState) == nil,
+            "failed verification must suppress ready profile creation"
+        )
+    }
+
+    private static func verifiesManagedTerminalAccountDiscoveryVerificationAndAuthorizedExecutor() {
+        let request = ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris")
+        let rule = ManagedTerminalAccountSudoersRule(request: request)
+        let commandRunner = StubManagedTerminalAccountCommandRunner(
+            responses: [
+                "/usr/bin/dscl . -read /Users/alan NFSHomeDirectory UserShell IsHidden":
+                    ManagedTerminalAccountCommandResult(
+                        exitCode: 0,
+                        standardOutput: """
+                        NFSHomeDirectory: /Users/alan
+                        UserShell: /bin/zsh
+                        IsHidden: 1
+                        """,
+                        standardError: ""
+                    ),
+                "/usr/sbin/dseditgroup -o checkmember -m alan admin":
+                    ManagedTerminalAccountCommandResult(
+                        exitCode: 0,
+                        standardOutput: "no alan is not a member of admin",
+                        standardError: ""
+                    ),
+            ]
+        )
+        let fileManager = SudoersFixtureFileManager(files: [rule.filePath: rule.contents])
+        let profiles = TerminalProfileDocument(
+            defaultProfileID: "alan",
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil,
+                    managedTerminalAccountID: "alan"
+                ),
+            ]
+        )
+        let discoverer = ManagedTerminalAccountLocalStateDiscoverer(
+            fileManager: fileManager,
+            commandRunner: commandRunner,
+            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
+        )
+        let state = discoverer.discover(request: request, terminalProfiles: profiles)
+
+        expect(
+            state.account == .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+            "local state discovery must parse account home, shell, hidden, and admin state"
+        )
+        expect(
+            state.sudoers == .alanOwnedValid(path: rule.filePath),
+            "local state discovery must validate Alan-owned sudoers drop-ins"
+        )
+        expect(
+            state.terminalProfile == .existingManaged(profileID: "alan"),
+            "local state discovery must link managed Terminal Profile state"
+        )
+
+        let readiness = ManagedTerminalAccountReadinessVerifier.verify(
+            request: request,
+            state: state,
+            entryVerifier: StubTerminalEntryVerifier(result: .passed)
+        )
+        expect(readiness == .passed, "ready state must pass mandatory terminal-entry verification")
+
+        let invalidSudoers = ManagedTerminalAccountSudoersValidator.validate(
+            contents: rule.contents,
+            rule: rule,
+            syntaxChecker: StubSudoersSyntaxChecker(result: .failed("syntax error"))
+        )
+        expect(!invalidSudoers.isValid, "sudoers validation helper must surface visudo failure")
+
+        let adminReadiness = ManagedTerminalAccountReadinessVerifier.verify(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .admin(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: rule.filePath),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .notRun
+            ),
+            entryVerifier: StubTerminalEntryVerifier(result: .passed)
+        )
+        expect(
+            adminReadiness == .failed(step: .nonAdminAccount, message: "Managed terminal account must be standard."),
+            "readiness verification must reject admin target accounts"
+        )
+
+        let privilegedRunner = CapturingPrivilegedCommandRunner()
+        let executor = ManagedTerminalAccountAuthorizedScriptExecutor(
+            request: request,
+            commandRunner: privilegedRunner,
+            passwordGenerator: { "SECRET-PASSWORD" }
+        )
+        let plan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .missing,
+                sudoers: .missing,
+                terminalProfile: .missing,
+                verification: .notRun
+            )
+        )
+        let result = executor.apply(plan)
+        let diagnostics = result.visibleDiagnostics.joined(separator: " ")
+        expect(result.failedStep == nil, "authorized executor must complete captured privileged scripts")
+        expect(
+            !diagnostics.contains("SECRET-PASSWORD"),
+            "authorized executor diagnostics must not expose generated account passwords"
+        )
+        expect(
+            privilegedRunner.scripts.contains { $0.contains("sysadminctl -addUser") },
+            "authorized executor must route account creation through an explicit privileged script"
+        )
+        expect(
+            privilegedRunner.scripts.contains { $0.contains("visudo -cf") },
+            "authorized executor must validate sudoers before marking privileged steps complete"
+        )
+    }
+
+    private static func verifiesManagedTerminalAccountExecutorAndRollbackSafety() {
+        let request = ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris")
+        let plan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: false),
+                sudoers: .missing,
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .failed(step: .sudoersValidation, message: "missing sudoers")
+            )
+        )
+        let executor = ManagedTerminalAccountFakeExecutor()
+        let result = executor.apply(plan)
+        expect(
+            result.completedSteps == plan.steps.map(\.kind),
+            "fake executor must apply requested steps in order"
+        )
+        expect(
+            !result.visibleDiagnostics.joined(separator: " ").contains("password"),
+            "executor diagnostics must redact credential wording"
+        )
+
+        let rollback = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .passed
+            ),
+            scope: .alanIntegrationOnly
+        )
+        expect(
+            rollback.steps.map(\.kind) == [.removeSudoersDropIn, .removeManagedTerminalProfile],
+            "ordinary rollback must only remove Alan-owned integration"
+        )
+        expect(
+            !rollback.steps.map(\.kind).contains(.deleteAccount),
+            "ordinary rollback must not delete account"
+        )
+        expect(
+            !rollback.steps.map(\.kind).contains(.deleteHomeDirectory),
+            "ordinary rollback must not delete home"
+        )
+
+        let destructive = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
+                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
+                terminalProfile: .existingManaged(profileID: "alan"),
+                verification: .passed
+            ),
+            scope: .deleteAccountAndHome(confirmation: nil)
+        )
+        expect(
+            destructive.status == .requiresDestructiveConfirmation,
+            "account/home deletion must require separate destructive confirmation"
+        )
+    }
+
     private static func makeController(
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
@@ -7605,6 +8493,20 @@ private enum ShellRuntimeMetadataTests {
         ).events ?? []
     }
 
+    private static func temporaryDirectory(named name: String) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name)-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private static func terminalPayload(
+        in snapshot: ShellContentTabRestoreSnapshot?,
+        contentID: String
+    ) -> ShellTerminalContentPayload? {
+        snapshot?.contents.first { $0.contentID == contentID }?.payload.terminal
+    }
+
     private static func expect(
         _ condition: @autoclosure () -> Bool,
         _ message: String
@@ -7617,6 +8519,83 @@ private enum ShellRuntimeMetadataTests {
     private static func fail(_ message: String) -> Never {
         fputs("error: \(message)\n", stderr)
         exit(1)
+    }
+
+    private final class AlwaysExecutableFileManager: FileManager {
+        override func fileExists(atPath path: String) -> Bool {
+            true
+        }
+
+        override func isExecutableFile(atPath path: String) -> Bool {
+            true
+        }
+    }
+
+    private struct StubManagedTerminalAccountCommandRunner: ManagedTerminalAccountCommandRunning {
+        let responses: [String: ManagedTerminalAccountCommandResult]
+
+        func run(
+            executablePath: String,
+            arguments: [String]
+        ) -> ManagedTerminalAccountCommandResult {
+            let key = ([executablePath] + arguments).joined(separator: " ")
+            return responses[key]
+                ?? ManagedTerminalAccountCommandResult(
+                    exitCode: 1,
+                    standardOutput: "",
+                    standardError: "missing stub response for \(key)"
+                )
+        }
+    }
+
+    private struct StubSudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking {
+        let result: ManagedTerminalAccountSudoersValidationResult
+
+        func validateSudoersFile(atPath path: String) -> ManagedTerminalAccountSudoersValidationResult {
+            result
+        }
+    }
+
+    private struct StubTerminalEntryVerifier: ManagedTerminalAccountEntryVerifying {
+        let result: ManagedTerminalAccountSudoersValidationResult
+
+        func verifyTerminalEntry(
+            request: ManagedTerminalAccountRequest
+        ) -> ManagedTerminalAccountSudoersValidationResult {
+            result
+        }
+    }
+
+    private final class CapturingPrivilegedCommandRunner: ManagedTerminalAccountPrivilegedCommandRunning {
+        private(set) var scripts: [String] = []
+
+        func runPrivilegedShellScript(
+            _ script: String,
+            redactedDescription: String
+        ) -> ManagedTerminalAccountPrivilegedCommandResult {
+            scripts.append(script)
+            return ManagedTerminalAccountPrivilegedCommandResult(
+                succeeded: true,
+                redactedMessage: "\(redactedDescription) completed with credentials redacted."
+            )
+        }
+    }
+
+    private final class SudoersFixtureFileManager: FileManager {
+        private let files: [String: String]
+
+        init(files: [String: String]) {
+            self.files = files
+            super.init()
+        }
+
+        override func fileExists(atPath path: String) -> Bool {
+            files[path] != nil
+        }
+
+        override func contents(atPath path: String) -> Data? {
+            files[path]?.data(using: .utf8)
+        }
     }
 }
 #endif
