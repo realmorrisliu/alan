@@ -17,11 +17,11 @@ Terminal Profiles as provider accounts.
   sudo root, and custom command launch modes
 - **AND** required fields are validated before the profile is saved
 
-#### Scenario: Sudo behavior is explained without editing sudoers
+#### Scenario: Sudo behavior is explained without raw sudoers editing
 - **WHEN** the user configures a sudo Unix user or sudo root Terminal Profile
 - **THEN** alan explains that sudo prompts and passwordless sudo behavior are
   controlled by the operating system
-- **AND** alan does not offer to edit sudoers files from Settings
+- **AND** the Terminal Profile editor does not offer raw sudoers-file editing
 
 ### Requirement: Spaces Expose Terminal Profile Binding
 The macOS shell UI SHALL let users view and change a Space's default Terminal
