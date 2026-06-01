@@ -82,17 +82,21 @@ enum AlanShellPublishedStateMerger {
             incomingContext?.launchCommand ?? authoritativeContext?.launchCommand
         let launchStrategy =
             incomingContext?.launchStrategy ?? authoritativeContext?.launchStrategy
+        let incomingTerminalProfileResolution = incomingContext?.terminalProfileState != nil
         let terminalProfileState =
             incomingContext?.terminalProfileState ?? authoritativeContext?.terminalProfileState
-        let terminalProfileRequestedID =
-            incomingContext?.terminalProfileRequestedID
-                ?? authoritativeContext?.terminalProfileRequestedID
-        let terminalProfileID =
-            incomingContext?.terminalProfileID ?? authoritativeContext?.terminalProfileID
-        let terminalProfileKind =
-            incomingContext?.terminalProfileKind ?? authoritativeContext?.terminalProfileKind
-        let terminalProfileTitle =
-            incomingContext?.terminalProfileTitle ?? authoritativeContext?.terminalProfileTitle
+        let terminalProfileRequestedID = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileRequestedID
+            : authoritativeContext?.terminalProfileRequestedID
+        let terminalProfileID = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileID
+            : authoritativeContext?.terminalProfileID
+        let terminalProfileKind = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileKind
+            : authoritativeContext?.terminalProfileKind
+        let terminalProfileTitle = incomingTerminalProfileResolution
+            ? incomingContext?.terminalProfileTitle
+            : authoritativeContext?.terminalProfileTitle
         let shellIntegrationSource =
             incomingContext?.shellIntegrationSource ?? authoritativeContext?.shellIntegrationSource
         let processState = incomingContext?.processState ?? authoritativeContext?.processState

@@ -1513,14 +1513,17 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
 
     private func sudoersWriteScript() -> String {
         let rule = ManagedTerminalAccountSudoersRule(request: request)
-        let tempPath = "/tmp/\(rule.fileName).sudoers"
         return """
-        /bin/cat > \(shellQuote(tempPath)) <<'ALAN_SUDOERS'
+        set -eu
+        temp_dir="$(/usr/bin/mktemp -d /tmp/alan-terminal-sudoers.XXXXXXXXXX)"
+        trap '/bin/rm -rf "$temp_dir"' 0 1 2 15
+        temp_path="$temp_dir/sudoers"
+        umask 077
+        /bin/cat > "$temp_path" <<'ALAN_SUDOERS'
         \(rule.contents)
         ALAN_SUDOERS
-        /usr/sbin/visudo -cf \(shellQuote(tempPath))
-        /usr/bin/install -o root -g wheel -m 0440 \(shellQuote(tempPath)) \(shellQuote(rule.filePath))
-        /bin/rm -f \(shellQuote(tempPath))
+        /usr/sbin/visudo -cf "$temp_path"
+        /usr/bin/install -o root -g wheel -m 0440 "$temp_path" \(shellQuote(rule.filePath))
         """
     }
 

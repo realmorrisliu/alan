@@ -81,6 +81,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAgentActivityControlCommandProjectsOntoPane()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
+        verifiesPublishedStateMergeClearsTerminalProfileMetadata()
         verifiesPublishedStateMergePreservesContentContainers()
         verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
@@ -3345,6 +3346,66 @@ private enum ShellRuntimeMetadataTests {
         expect(
             merged.pane(paneID: "pane_1")?.activity == nil,
             "published state merge must allow incoming nil activity to clear stale activity"
+        )
+    }
+
+    private static func verifiesPublishedStateMergeClearsTerminalProfileMetadata() {
+        let staleContext = context(
+            processState: "running",
+            rendererHealth: "healthy",
+            surfaceReadiness: "ready",
+            terminalProfileState: "resolved",
+            terminalProfileRequestedID: "alan",
+            terminalProfileID: "alan",
+            terminalProfileKind: "sudo_user",
+            terminalProfileTitle: "Alan",
+            lastCommandExitCode: nil
+        )
+        let incomingContext = context(
+            processState: "running",
+            rendererHealth: "healthy",
+            surfaceReadiness: "ready",
+            terminalProfileState: "missing",
+            terminalProfileRequestedID: "lab",
+            terminalProfileID: nil,
+            terminalProfileKind: nil,
+            terminalProfileTitle: nil,
+            lastCommandExitCode: nil
+        )
+        let authoritative = stateWithContext(
+            windowID: "window_terminal_profile_merge",
+            context: staleContext
+        )
+        let incoming = stateWithContext(
+            windowID: "window_terminal_profile_merge",
+            context: incomingContext
+        )
+
+        let merged = AlanShellPublishedStateMerger.merge(
+            authoritative: authoritative,
+            incoming: incoming
+        )
+        let mergedContext = merged.pane(paneID: "pane_1")?.context
+
+        expect(
+            mergedContext?.terminalProfileState == "missing",
+            "published state merge must accept incoming terminal profile resolution state"
+        )
+        expect(
+            mergedContext?.terminalProfileRequestedID == "lab",
+            "published state merge must accept incoming terminal profile requested id"
+        )
+        expect(
+            mergedContext?.terminalProfileID == nil,
+            "published state merge must clear stale resolved terminal profile id"
+        )
+        expect(
+            mergedContext?.terminalProfileKind == nil,
+            "published state merge must clear stale resolved terminal profile kind"
+        )
+        expect(
+            mergedContext?.terminalProfileTitle == nil,
+            "published state merge must clear stale resolved terminal profile title"
         )
     }
 
@@ -7308,6 +7369,54 @@ private enum ShellRuntimeMetadataTests {
             missingContext.terminalProfileID == nil,
             "missing profile fallback must not claim a resolved profile id"
         )
+
+        let staleResolvedContext = ShellContextSnapshot(
+            workingDirectoryName: "alan",
+            repositoryRoot: nil,
+            gitBranch: nil,
+            controlPath: nil,
+            alanBindingFile: nil,
+            launchStrategy: "terminal_profile_sudo_user",
+            terminalProfileState: "resolved",
+            terminalProfileRequestedID: "alan",
+            terminalProfileID: "alan",
+            terminalProfileKind: "sudo_user",
+            terminalProfileTitle: "Alan",
+            shellIntegrationSource: "ghostty_shell_integration",
+            processState: "running",
+            lastMetadataAt: nil,
+            lastCommandExitCode: nil
+        )
+        let recreatedMissingContext = ShellPaneProjectionService(fileManager: executableFileManager)
+            .projectedContext(
+                for: missingPane,
+                bootProfile: missingBoot,
+                workingDirectory: nil,
+                processExited: nil,
+                lastCommandExitCode: nil,
+                lastMetadataAt: nil,
+                existing: staleResolvedContext
+            )
+        expect(
+            recreatedMissingContext.terminalProfileState == "missing",
+            "pane context recreation must replace stale terminal profile state"
+        )
+        expect(
+            recreatedMissingContext.terminalProfileRequestedID == "lab",
+            "pane context recreation must replace stale terminal profile requested id"
+        )
+        expect(
+            recreatedMissingContext.terminalProfileID == nil,
+            "pane context recreation must clear stale resolved terminal profile id"
+        )
+        expect(
+            recreatedMissingContext.terminalProfileKind == nil,
+            "pane context recreation must clear stale resolved terminal profile kind"
+        )
+        expect(
+            recreatedMissingContext.terminalProfileTitle == nil,
+            "pane context recreation must clear stale resolved terminal profile title"
+        )
     }
 
     private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {
@@ -7866,6 +7975,15 @@ private enum ShellRuntimeMetadataTests {
             privilegedRunner.scripts.contains { $0.contains("visudo -cf") },
             "authorized executor must validate sudoers before marking privileged steps complete"
         )
+        let sudoersScript = privilegedRunner.scripts.first { $0.contains(rule.contents) } ?? ""
+        expect(
+            sudoersScript.contains("mktemp -d"),
+            "authorized executor must create sudoers content in a private temporary directory"
+        )
+        expect(
+            !sudoersScript.contains("/tmp/\(rule.fileName).sudoers"),
+            "authorized executor must not write sudoers content through a deterministic /tmp path"
+        )
     }
 
     private static func verifiesManagedTerminalAccountExecutorAndRollbackSafety() {
@@ -8208,6 +8326,11 @@ private enum ShellRuntimeMetadataTests {
         processState: String,
         rendererHealth: String,
         surfaceReadiness: String,
+        terminalProfileState: String? = nil,
+        terminalProfileRequestedID: String? = nil,
+        terminalProfileID: String? = nil,
+        terminalProfileKind: String? = nil,
+        terminalProfileTitle: String? = nil,
         lastCommandExitCode: Int?
     ) -> ShellContextSnapshot {
         ShellContextSnapshot(
@@ -8217,6 +8340,11 @@ private enum ShellRuntimeMetadataTests {
             controlPath: nil,
             alanBindingFile: nil,
             launchStrategy: nil,
+            terminalProfileState: terminalProfileState,
+            terminalProfileRequestedID: terminalProfileRequestedID,
+            terminalProfileID: terminalProfileID,
+            terminalProfileKind: terminalProfileKind,
+            terminalProfileTitle: terminalProfileTitle,
             shellIntegrationSource: "ghostty_shell_integration",
             processState: processState,
             rendererHealth: rendererHealth,
@@ -8248,6 +8376,46 @@ private enum ShellRuntimeMetadataTests {
             activeTaskState: activeTaskState,
             activity: activity,
             clearsActivity: clearsActivity
+        )
+    }
+
+    private static func stateWithContext(
+        windowID: String,
+        context: ShellContextSnapshot
+    ) -> ShellStateSnapshot {
+        let pane = pane(
+            context: context,
+            viewport: nil,
+            attention: .active
+        )
+        return ShellStateSnapshot(
+            contractVersion: "0.1",
+            windowID: windowID,
+            focusedSpaceID: "space_1",
+            focusedTabID: "tab_1",
+            focusedPaneID: "pane_1",
+            spaces: [
+                ShellSpace(
+                    spaceID: "space_1",
+                    title: "Main",
+                    attention: pane.attention,
+                    tabs: [
+                        ShellTab(
+                            tabID: "tab_1",
+                            kind: .terminal,
+                            title: "alan",
+                            paneTree: ShellPaneTreeNode(
+                                nodeID: "node_pane_1",
+                                kind: .pane,
+                                direction: nil,
+                                paneID: "pane_1",
+                                children: nil
+                            )
+                        )
+                    ]
+                )
+            ],
+            panes: [pane]
         )
     }
 

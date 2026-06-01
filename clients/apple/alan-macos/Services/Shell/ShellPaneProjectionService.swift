@@ -82,6 +82,23 @@ struct ShellPaneProjectionService {
             metadataProcessExited: processExited,
             surfaceState: runtime?.surfaceState
         )
+        let bootProfileHasTerminalProfileState = bootProfile.environment.keys.contains(
+            "ALAN_TERMINAL_PROFILE_STATE"
+        )
+        let terminalProfileState = bootProfile.environment["ALAN_TERMINAL_PROFILE_STATE"]
+            ?? existing?.terminalProfileState
+        let terminalProfileRequestedID = bootProfileHasTerminalProfileState
+            ? bootProfile.environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"]
+            : existing?.terminalProfileRequestedID
+        let terminalProfileID = bootProfileHasTerminalProfileState
+            ? bootProfile.environment["ALAN_TERMINAL_PROFILE_ID"]
+            : existing?.terminalProfileID
+        let terminalProfileKind = bootProfileHasTerminalProfileState
+            ? bootProfile.environment["ALAN_TERMINAL_PROFILE_KIND"]
+            : existing?.terminalProfileKind
+        let terminalProfileTitle = bootProfileHasTerminalProfileState
+            ? bootProfile.environment["ALAN_TERMINAL_PROFILE_TITLE"]
+            : existing?.terminalProfileTitle
 
         return ShellContextSnapshot(
             workingDirectoryName: workingDirectoryName(for: resolvedWorkingDirectory)
@@ -94,16 +111,11 @@ struct ShellPaneProjectionService {
                 ?? existing?.alanBindingFile,
             launchCommand: bootProfile.launchCommandString,
             launchStrategy: bootProfile.command.strategy.rawValue,
-            terminalProfileState: bootProfile.environment["ALAN_TERMINAL_PROFILE_STATE"]
-                ?? existing?.terminalProfileState,
-            terminalProfileRequestedID: bootProfile.environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"]
-                ?? existing?.terminalProfileRequestedID,
-            terminalProfileID: bootProfile.environment["ALAN_TERMINAL_PROFILE_ID"]
-                ?? existing?.terminalProfileID,
-            terminalProfileKind: bootProfile.environment["ALAN_TERMINAL_PROFILE_KIND"]
-                ?? existing?.terminalProfileKind,
-            terminalProfileTitle: bootProfile.environment["ALAN_TERMINAL_PROFILE_TITLE"]
-                ?? existing?.terminalProfileTitle,
+            terminalProfileState: terminalProfileState,
+            terminalProfileRequestedID: terminalProfileRequestedID,
+            terminalProfileID: terminalProfileID,
+            terminalProfileKind: terminalProfileKind,
+            terminalProfileTitle: terminalProfileTitle,
             shellIntegrationSource: "ghostty_shell_integration",
             processState: projectedProcessState(
                 processExited: projectedProcessExited,
