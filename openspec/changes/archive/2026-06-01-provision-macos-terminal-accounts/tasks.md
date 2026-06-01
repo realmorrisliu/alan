@@ -51,4 +51,4 @@
 - [x] 7.4 Run `openspec validate provision-macos-terminal-accounts --strict`.
 - [x] 7.5 Review the diff for accidental GUI automatic-login behavior, admin-account defaults, password persistence, passwordless root grants, raw sudoers injection, and workspace-manifest leakage.
 - [x] 7.6 Prepare implementation PRs in dependency order: model/planner, sudoers/executor, verification/profile handoff, Settings UI.
-- [ ] 7.7 After implementation is merged, sync accepted spec deltas into `openspec/specs/` before archiving.
+- [x] 7.7 After implementation is merged, sync accepted spec deltas into `openspec/specs/` before archiving.
