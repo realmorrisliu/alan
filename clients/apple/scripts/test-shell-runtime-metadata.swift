@@ -8159,6 +8159,10 @@ private enum ShellRuntimeMetadataTests {
             "missing account plan must verify terminal entry"
         )
         expect(
+            plan.steps.first(where: { $0.kind == .verifyTerminalEntry })?.requiresPrivilege == false,
+            "terminal-entry verification must run as the GUI user, not inside a privileged shell"
+        )
+        expect(
             plan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
             "ready path must include terminal profile handoff"
         )
@@ -8399,6 +8403,7 @@ private enum ShellRuntimeMetadataTests {
                     return true
                 }
             ),
+            entryVerifier: StubTerminalEntryVerifier(result: .passed),
             passwordGenerator: { "SECRET-PASSWORD" }
         )
         let plan = ManagedTerminalAccountPlanner.plan(
@@ -8428,6 +8433,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             privilegedRunner.scripts.contains { $0.contains("visudo -cf") },
             "authorized executor must validate sudoers before marking privileged steps complete"
+        )
+        expect(
+            !privilegedRunner.scripts.contains { $0.contains("/usr/bin/sudo -n -iu") },
+            "authorized executor must not run terminal-entry verification through the privileged runner"
         )
         let sudoersScript = privilegedRunner.scripts.first { $0.contains(rule.contents) } ?? ""
         expect(

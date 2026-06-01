@@ -1254,7 +1254,7 @@ enum ManagedTerminalAccountPlanner {
                 steps.append(step(.writeSudoersDropIn, "Write Alan-owned sudoers drop-in", true))
                 steps.append(step(.validateSudoers, "Validate sudoers syntax", true))
             }
-            steps.append(step(.verifyTerminalEntry, "Verify passwordless terminal entry", true))
+            steps.append(step(.verifyTerminalEntry, "Verify passwordless terminal entry", false))
         }
 
         switch state.terminalProfile {
@@ -1617,6 +1617,7 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
     let request: ManagedTerminalAccountRequest
     let commandRunner: ManagedTerminalAccountPrivilegedCommandRunning
     let localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting
+    let entryVerifier: ManagedTerminalAccountEntryVerifying
     let passwordGenerator: () -> String
 
     init(
@@ -1625,6 +1626,8 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
             ManagedTerminalAccountAppleScriptPrivilegeRunner(),
         localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting =
             ManagedTerminalAccountTerminalProfileEffectExecutor(),
+        entryVerifier: ManagedTerminalAccountEntryVerifying =
+            ManagedTerminalAccountSudoEntryVerifier(),
         passwordGenerator: @escaping () -> String = {
             UUID().uuidString + UUID().uuidString
         }
@@ -1632,6 +1635,7 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         self.request = request
         self.commandRunner = commandRunner
         self.localEffectExecutor = localEffectExecutor
+        self.entryVerifier = entryVerifier
         self.passwordGenerator = passwordGenerator
     }
 
@@ -1640,6 +1644,21 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         var diagnostics: [String] = []
 
         for step in plan.steps {
+            if step.kind == .verifyTerminalEntry {
+                let verification = entryVerifier.verifyTerminalEntry(request: request)
+                guard verification.isValid else {
+                    diagnostics.append("\(step.summary) failed. Credentials redacted.")
+                    return ManagedTerminalAccountApplyResult(
+                        completedSteps: completed,
+                        failedStep: step.kind,
+                        cancelled: false,
+                        visibleDiagnostics: diagnostics
+                    )
+                }
+                diagnostics.append("\(step.summary) completed.")
+                completed.append(step.kind)
+                continue
+            }
             guard let script = script(for: step.kind) else {
                 guard let result = localEffectExecutor.apply(step.kind, request: request) else {
                     diagnostics.append("Step has no executor: \(step.summary).")
@@ -1717,7 +1736,7 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
         case .validateSudoers:
             return "/usr/sbin/visudo -cf \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
         case .verifyTerminalEntry:
-            return "/usr/bin/sudo -n -iu \(account) true"
+            return nil
         case .removeSudoersDropIn:
             return "/bin/rm -f \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
         case .deleteAccount:
