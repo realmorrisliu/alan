@@ -11,6 +11,7 @@ struct TerminalHostView: NSViewRepresentable {
     let renderPriority: TerminalRuntimeRenderPriority
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
+    var attachmentPolicy: TerminalHostAttachmentPolicy = .immediate
     let onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?
     let onCloseRequest: ((Bool) -> Void)?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
@@ -24,6 +25,7 @@ struct TerminalHostView: NSViewRepresentable {
             isSelected: isSelected,
             renderPriority: renderPriority,
             activationDelegate: activationDelegate,
+            attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
@@ -40,6 +42,7 @@ struct TerminalHostView: NSViewRepresentable {
             isSelected: isSelected,
             renderPriority: renderPriority,
             activationDelegate: activationDelegate,
+            attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,

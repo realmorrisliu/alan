@@ -381,26 +381,128 @@ struct TerminalPaneView: View {
 
 struct ShellQuickTerminalPeakView: View {
     @ObservedObject var host: ShellHostController
+    let paneID: String
+    let terminalContentEnabled: Bool
 
     var body: some View {
         ZStack {
             ShellMaterialBackgroundView(.windowBackdrop)
                 .ignoresSafeArea()
 
-            if let pane = host.quickTerminalPane {
-                TerminalPaneView(
+            if let pane = host.shellState.pane(paneID: paneID),
+               host.shellState.quickTerminal?.paneID == pane.paneID
+            {
+                QuickTerminalContentView(
                     host: host,
-                    tab: ShellQuickTerminalPeakModel.tab(for: pane),
-                    spaceID: ShellQuickTerminalSlot.globalSpaceID,
-                    selectedPaneID: pane.paneID,
-                    terminalSurfaceInsets: EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
-                    onClosePane: { _ in
-                        _ = host.requestCloseQuickTerminal()
-                    }
+                    pane: pane,
+                    terminalContentEnabled: terminalContentEnabled
                 )
+            } else {
+                Color.clear
             }
         }
         .frame(minWidth: 520, minHeight: 280)
+    }
+}
+
+private struct QuickTerminalContentView: View {
+    @ObservedObject var host: ShellHostController
+    let pane: ShellPane
+    let terminalContentEnabled: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            chrome
+            terminalSurface
+        }
+        .padding(10)
+    }
+
+    private var chrome: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 12)
+
+            Button {
+                promoteQuickTerminal()
+            } label: {
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Open in Space")
+            .disabled(promoteTargetSpaceID == nil)
+
+            Button {
+                _ = host.requestCloseQuickTerminal()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Close Quick Terminal")
+        }
+        .padding(.horizontal, 2)
+        .frame(height: 30)
+    }
+
+    private var terminalSurface: some View {
+        ZStack {
+            ShellPalette.terminal
+
+            if terminalContentEnabled {
+                TerminalHostView(
+                    pane: pane,
+                    terminalContentMount: TerminalContentMount(pane: pane),
+                    bootProfile: host.bootProfile(for: pane),
+                    isSelected: true,
+                    renderPriority: host.terminalRenderPriority(for: pane),
+                    runtimeRegistry: host.terminalRuntimeRegistry,
+                    activationDelegate: host,
+                    attachmentPolicy: .deferUntilWindowAttached,
+                    onShellAction: { actionID, target in
+                        host.performShellAction(actionID, target: target, source: .terminalHost)
+                    },
+                    onCloseRequest: { requiresConfirmation in
+                        guard !requiresConfirmation else { return }
+                        _ = host.requestCloseQuickTerminal()
+                    },
+                    onRuntimeUpdate: host.updateTerminalRuntime,
+                    onMetadataUpdate: { metadata in
+                        host.updateTerminalMetadata(metadata, for: pane.paneID)
+                    }
+                )
+                .id(pane.paneID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+                .strokeBorder(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
+        }
+    }
+
+    private var title: String {
+        pane.viewport?.title ?? "Quick Terminal"
+    }
+
+    private var promoteTargetSpaceID: String? {
+        host.selectedSpace?.spaceID
+            ?? host.shellState.focusedSpaceID
+            ?? host.shellState.spaces.first?.spaceID
+    }
+
+    private func promoteQuickTerminal() {
+        guard let targetSpaceID = promoteTargetSpaceID else { return }
+        _ = host.promoteQuickTerminal(to: targetSpaceID)
     }
 }
 

@@ -8,9 +8,9 @@ import AppKit
 @MainActor
 final class AlanMacPrimaryShellOwner: ObservableObject {
     let host: ShellHostController
-    private let quickTerminalPeakWindow: ShellQuickTerminalPeakPanelWindow
     private let quickTerminalPeakPresenter: ShellQuickTerminalPeakPresenter
     private var quickTerminalPeakStateSubscription: AnyCancellable?
+    private var quickTerminalPeakFocusSubscription: AnyCancellable?
 
     init(fileManager: FileManager = .default) {
         let windowContext = ShellWindowContext.make(
@@ -22,10 +22,9 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
             windowContext: windowContext,
             startupMode: .workspaceManifest
         )
-        let peakWindow = ShellQuickTerminalPeakPanelWindow()
         let peakPresenter = ShellQuickTerminalPeakPresenter(
             host: resolvedHost,
-            window: peakWindow
+            window: QuickTerminalPeakWindowPresenter()
         )
         #if canImport(AppIntents)
         ShellAutomationEntityStore.install(snapshotProvider: { [weak resolvedHost] in
@@ -36,13 +35,19 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
         )
         #endif
         host = resolvedHost
-        quickTerminalPeakWindow = peakWindow
         quickTerminalPeakPresenter = peakPresenter
         quickTerminalPeakStateSubscription = resolvedHost.$shellState.sink { [weak peakPresenter] _ in
             Task { @MainActor in
                 peakPresenter?.synchronize()
             }
         }
+        quickTerminalPeakFocusSubscription = resolvedHost.$quickTerminalFocusRequestID
+            .dropFirst()
+            .sink { [weak peakPresenter] _ in
+                Task { @MainActor in
+                    peakPresenter?.focusVisibleQuickTerminal()
+                }
+            }
         quickTerminalPeakPresenter.synchronize()
     }
 
@@ -55,10 +60,14 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
 }
 
 @MainActor
-private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTerminalPeakWindowing, NSWindowDelegate {
+private final class QuickTerminalPeakWindowPresenter: NSObject, ShellQuickTerminalPeakWindowing, NSWindowDelegate {
     var onDismissRequest: (() -> Void)?
-    private var panel: NSPanel?
+    private var panel: QuickTerminalPeakPanel?
     private var hostingController: NSHostingController<ShellQuickTerminalPeakView>?
+    private var pendingContentTask: Task<Void, Never>?
+    private weak var presentedHost: ShellHostController?
+    private var representedPaneID: String?
+    private var panelKeyRequestBudget = ShellQuickTerminalPanelKeyRequestBudget()
 
     var isVisible: Bool {
         panel?.isVisible == true
@@ -66,37 +75,54 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
 
     func presentQuickTerminal(
         host: ShellHostController,
-        pane _: ShellPane,
+        pane: ShellPane,
         tab _: ShellTab,
         placement: ShellQuickTerminalPeakPlacement
     ) {
         let panel = ensurePanel()
+        pendingContentTask?.cancel()
+        presentedHost = host
+        representedPaneID = pane.paneID
+        panelKeyRequestBudget.reset()
+
+        let loadingView = ShellQuickTerminalPeakView(
+            host: host,
+            paneID: pane.paneID,
+            terminalContentEnabled: false
+        )
         if let hostingController {
-            hostingController.rootView = ShellQuickTerminalPeakView(host: host)
+            hostingController.rootView = loadingView
         } else {
-            let hostingController = NSHostingController(rootView: ShellQuickTerminalPeakView(host: host))
+            let hostingController = NSHostingController(rootView: loadingView)
             self.hostingController = hostingController
             panel.contentViewController = hostingController
         }
 
         panel.setFrame(placement.frame, display: true)
-        panel.collectionBehavior = collectionBehavior(for: placement)
-        orderFrontQuickTerminal(panel)
+        panel.collectionBehavior = placement.windowCollectionBehavior
+        panel.orderFrontRegardless()
+        requestPanelKeyIfAllowed(panel, for: .presentation)
+        installTerminalContentAfterPanelPresentation(host: host, paneID: pane.paneID)
     }
 
     func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason) {
+        pendingContentTask?.cancel()
+        pendingContentTask = nil
         panel?.orderOut(nil)
         if reason == .removed {
             panel?.contentViewController = nil
             hostingController = nil
+            presentedHost = nil
+            representedPaneID = nil
         }
     }
 
     func focusTerminal(paneID: String) {
-        guard let panel else {
-            return
+        guard representedPaneID == paneID else { return }
+        if let panel, panel.isVisible {
+            requestPanelKeyIfAllowed(panel, for: .terminalFocus)
         }
-        orderFrontQuickTerminal(panel)
+        presentedHost?.terminalRuntimeRegistry.requestFocus(for: paneID, retryBudget: 3)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -108,12 +134,12 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
         // Intentionally no-op. Focus loss must not hide the quick terminal Peak.
     }
 
-    private func ensurePanel() -> NSPanel {
+    private func ensurePanel() -> QuickTerminalPeakPanel {
         if let panel {
             return panel
         }
 
-        let panel = NSPanel(
+        let panel = QuickTerminalPeakPanel(
             contentRect: CGRect(x: 0, y: 0, width: 840, height: 360),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
@@ -126,11 +152,9 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
         panel.hidesOnDeactivate = false
         panel.isFloatingPanel = true
         panel.level = .floating
-        panel.collectionBehavior = collectionBehavior(
-            for: ShellQuickTerminalPeakPlacement.defaultPlacement(
-                in: ShellQuickTerminalPeakPlacement.activeVisibleFrame()
-            )
-        )
+        panel.collectionBehavior = ShellQuickTerminalPeakPlacement.defaultPlacement(
+            in: ShellQuickTerminalPeakPlacement.activeVisibleFrame()
+        ).windowCollectionBehavior
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -144,19 +168,50 @@ private final class ShellQuickTerminalPeakPanelWindow: NSObject, ShellQuickTermi
         return panel
     }
 
-    private func orderFrontQuickTerminal(_ panel: NSPanel) {
-        panel.orderFrontRegardless()
-        panel.makeKey()
+    private func installTerminalContentAfterPanelPresentation(
+        host: ShellHostController,
+        paneID: String
+    ) {
+        pendingContentTask = Task { @MainActor [weak self, weak host] in
+            await Task.yield()
+            guard let self,
+                  let host,
+                  !Task.isCancelled,
+                  representedPaneID == paneID,
+                  panel?.isVisible == true
+            else {
+                return
+            }
+            hostingController?.rootView = ShellQuickTerminalPeakView(
+                host: host,
+                paneID: paneID,
+                terminalContentEnabled: true
+            )
+            await Task.yield()
+            guard !Task.isCancelled,
+                  representedPaneID == paneID,
+                  panel?.isVisible == true
+            else {
+                return
+            }
+            if let panel {
+                requestPanelKeyIfAllowed(panel, for: .presentation)
+            }
+            host.terminalRuntimeRegistry.requestFocus(for: paneID, retryBudget: 3)
+        }
     }
 
-    private func collectionBehavior(
-        for placement: ShellQuickTerminalPeakPlacement
-    ) -> NSWindow.CollectionBehavior {
-        var behavior: NSWindow.CollectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
-        if placement.joinsAllSpaces {
-            behavior.insert(.canJoinAllSpaces)
-        }
-        return behavior
+    private func requestPanelKeyIfAllowed(
+        _ panel: NSPanel,
+        for purpose: ShellQuickTerminalPanelKeyRequestBudget.Purpose
+    ) {
+        guard panelKeyRequestBudget.shouldRequestKey(for: purpose) else { return }
+        panel.makeKey()
     }
+}
+
+private final class QuickTerminalPeakPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 #endif

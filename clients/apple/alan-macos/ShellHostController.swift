@@ -133,6 +133,16 @@ struct ShellQuickTerminalPeakPlacement: Equatable {
     let joinsAllSpaces: Bool
     let requiresMainWindow: Bool
 
+    var windowCollectionBehavior: NSWindow.CollectionBehavior {
+        var behavior: NSWindow.CollectionBehavior = [.fullScreenAuxiliary]
+        if joinsAllSpaces {
+            behavior.insert(.canJoinAllSpaces)
+        } else if followsActiveSpace {
+            behavior.insert(.moveToActiveSpace)
+        }
+        return behavior
+    }
+
     static func defaultPlacement(in visibleFrame: CGRect) -> ShellQuickTerminalPeakPlacement {
         ShellQuickTerminalPeakPlacement(
             frame: defaultFrame(in: visibleFrame),
@@ -171,6 +181,35 @@ struct ShellQuickTerminalPeakPlacement: Equatable {
             width: targetWidth,
             height: targetHeight
         ).integral
+    }
+}
+
+struct ShellQuickTerminalPanelKeyRequestBudget {
+    enum Purpose {
+        case presentation
+        case terminalFocus
+    }
+
+    private(set) var presentationAttemptCount = 0
+    let maximumPresentationAttempts: Int
+
+    init(maximumPresentationAttempts: Int = 2) {
+        self.maximumPresentationAttempts = max(0, maximumPresentationAttempts)
+    }
+
+    mutating func reset() {
+        presentationAttemptCount = 0
+    }
+
+    mutating func shouldRequestKey(for purpose: Purpose) -> Bool {
+        switch purpose {
+        case .presentation:
+            guard presentationAttemptCount < maximumPresentationAttempts else { return false }
+            presentationAttemptCount += 1
+            return true
+        case .terminalFocus:
+            return true
+        }
     }
 }
 
@@ -244,8 +283,8 @@ final class ShellQuickTerminalPeakPresenter {
 
         switch slot.presentation {
         case .visible:
-            let shouldActivate = !window.isVisible || lastPresentedPaneID != pane.paneID
-            if shouldActivate {
+            let shouldPresent = !window.isVisible || lastPresentedPaneID != pane.paneID
+            if shouldPresent {
                 let tab = ShellQuickTerminalPeakModel.tab(for: pane)
                 let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
                 window.presentQuickTerminal(
@@ -255,7 +294,6 @@ final class ShellQuickTerminalPeakPresenter {
                     placement: placement
                 )
                 window.focusTerminal(paneID: pane.paneID)
-                host.terminalRuntimeRegistry.requestFocus(for: pane.paneID)
             }
             lastPresentedPaneID = pane.paneID
         case .hidden:
@@ -268,6 +306,21 @@ final class ShellQuickTerminalPeakPresenter {
 
     func windowDidResignKey() {
         // Terminal-first policy: focus loss is informational and never hides the Peak.
+    }
+
+    func focusVisibleQuickTerminal() {
+        guard let slot = host.shellState.quickTerminal,
+              slot.presentation == .visible,
+              let pane = host.quickTerminalPane
+        else {
+            return
+        }
+        if !window.isVisible || lastPresentedPaneID != pane.paneID {
+            synchronize()
+            return
+        }
+        window.focusTerminal(paneID: pane.paneID)
+        lastPresentedPaneID = pane.paneID
     }
 }
 
@@ -379,6 +432,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
+    @Published private(set) var quickTerminalFocusRequestID: UInt64 = 0
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
     private let appIsActiveProvider: @MainActor () -> Bool
@@ -956,7 +1010,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             workingDirectory: focusedPaneWorkingDirectory()
         )
         applyMutationResult(result)
-        terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
         return result.paneID
     }
 
@@ -973,9 +1026,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func focusQuickTerminal() -> String? {
-        let paneID = showQuickTerminal()
-        if let paneID {
-            terminalRuntimeRegistry.requestFocus(for: paneID)
+        let wasVisible = shellState.quickTerminal?.presentation == .visible
+        guard let paneID = showQuickTerminal() else { return nil }
+        if wasVisible {
+            quickTerminalFocusRequestID &+= 1
         }
         return paneID
     }

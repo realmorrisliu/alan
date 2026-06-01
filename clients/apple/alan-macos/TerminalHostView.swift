@@ -22,6 +22,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var terminalContentID: String?
     private var bootProfile: AlanShellBootProfile?
     private var isSelected = false
+    private var attachmentPolicy: TerminalHostAttachmentPolicy = .immediate
     private var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var shellActionHandler: ((ShellActionID, ShellActionTarget) -> Void)?
@@ -39,6 +40,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var hasTornDownRuntime = false
     private var pendingFocusRequest = false
     private var needsWindowAttachmentFocus = false
+    private var needsDeferredSurfaceAttachment = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -94,6 +96,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         super.viewDidMoveToWindow()
         installWindowObservers()
         window?.acceptsMouseMovedEvents = true
+        if window != nil, needsDeferredSurfaceAttachment {
+            scheduleDeferredSurfaceAttachment()
+        } else if window == nil {
+            needsDeferredSurfaceAttachment = false
+        }
         if window != nil, needsWindowAttachmentFocus {
             needsWindowAttachmentFocus = false
             focusTerminalSoon()
@@ -143,6 +150,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         renderPriority: TerminalRuntimeRenderPriority,
         surfaceHandle: AlanTerminalSurfaceHandle?,
         activationDelegate: TerminalHostActivationDelegate?,
+        attachmentPolicy: TerminalHostAttachmentPolicy,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
@@ -156,6 +164,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         self.terminalContentID = terminalContentID
         self.bootProfile = bootProfile
         self.isSelected = isSelected
+        self.attachmentPolicy = attachmentPolicy
         self.renderPriority = renderPriority
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
@@ -387,6 +396,11 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func synchronizeLiveHost() {
+        guard canSynchronizeLiveHost else {
+            needsDeferredSurfaceAttachment = true
+            publishRuntimeSnapshot()
+            return
+        }
 #if canImport(GhosttyKit)
         guard let canvasView = canvasView as? AlanGhosttyCanvasView else { return }
         surfaceController.attach(
@@ -416,6 +430,26 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             }
         )
 #endif
+    }
+
+    private var canSynchronizeLiveHost: Bool {
+        attachmentPolicy == .immediate || window != nil
+    }
+
+    private func scheduleDeferredSurfaceAttachment() {
+        guard window != nil else {
+            needsDeferredSurfaceAttachment = true
+            return
+        }
+        needsDeferredSurfaceAttachment = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard window != nil else {
+                needsDeferredSurfaceAttachment = true
+                return
+            }
+            synchronizeLiveHost()
+        }
     }
 
     private func reportCloseRequest(requiresConfirmation: Bool) {
@@ -575,7 +609,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     func focusTerminal() {
-        requestTerminalFocus()
+        focusTerminalSoon()
     }
 
     private func activateTerminalHostForMouseEvent() {

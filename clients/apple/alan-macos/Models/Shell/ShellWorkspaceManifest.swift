@@ -817,7 +817,9 @@ struct ShellWorkspaceMaterializer {
         )
         let slot = ShellQuickTerminalSlot(
             paneID: record.paneID,
-            presentation: record.presentation,
+            // The detached Peak panel is transient UI; restore its runtime and content
+            // without presenting the panel during app launch.
+            presentation: .hidden,
             lastWorkingDirectory: lastWorkingDirectory
         )
         return (slot, pane, content)
