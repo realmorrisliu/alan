@@ -7568,7 +7568,7 @@ private enum ShellRuntimeMetadataTests {
                                         payload: .terminal(
                                             ShellTerminalContentPayload(
                                                 launchTarget: .shell,
-                                                cwd: "/Users/alan",
+                                                cwd: nil,
                                                 title: "Alan shell",
                                                 terminalProfileID: "alan"
                                             )
@@ -7621,8 +7621,16 @@ private enum ShellRuntimeMetadataTests {
             "materialized pane must preserve terminal profile reference"
         )
         expect(
+            state.pane(paneID: "pane_1")?.cwd == nil,
+            "materialized profile pane must preserve nil cwd so the profile default working directory can win"
+        )
+        expect(
             state.contentStateProjection().content(contentID: "content_pane_1")?.payload.terminal?.terminalProfileID == "alan",
             "content projection must preserve terminal profile reference"
+        )
+        expect(
+            state.contentStateProjection().content(contentID: "content_pane_1")?.payload.terminal?.cwd == nil,
+            "content projection must preserve nil cwd for profile-bound panes"
         )
 
         let legacyJSON = """

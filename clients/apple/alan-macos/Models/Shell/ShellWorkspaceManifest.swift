@@ -834,7 +834,11 @@ struct ShellWorkspaceMaterializer {
             payload = .terminal(
                 ShellTerminalContentPayload(
                     launchTarget: terminalPayload.launchTarget,
-                    cwd: terminalPayload.cwd ?? defaultWorkingDirectory,
+                    cwd: restoredWorkingDirectory(
+                        terminalPayload.cwd,
+                        terminalProfileID: terminalPayload.terminalProfileID,
+                        defaultWorkingDirectory: defaultWorkingDirectory
+                    ),
                     title: terminalPayload.title,
                     transcriptSnapshot: terminalPayload.transcriptSnapshot,
                     terminalProfileID: terminalPayload.terminalProfileID
@@ -955,7 +959,11 @@ struct ShellWorkspaceMaterializer {
             tabID: tabID,
             spaceID: spaceID,
             launchTarget: launchTarget,
-            cwd: record.cwd ?? defaultWorkingDirectory,
+            cwd: restoredWorkingDirectory(
+                record.cwd,
+                terminalProfileID: record.terminalProfileID,
+                defaultWorkingDirectory: defaultWorkingDirectory
+            ),
             process: nil,
             attention: tabID == selectedTabID ? .active : .idle,
             context: nil,
@@ -974,6 +982,17 @@ struct ShellWorkspaceMaterializer {
         _ tabs: [ShellWorkspaceTabRecord]
     ) -> [ShellWorkspaceTabRecord] {
         tabs.filter(\.isPinned) + tabs.filter { !$0.isPinned }
+    }
+
+    private static func restoredWorkingDirectory(
+        _ workingDirectory: String?,
+        terminalProfileID: String?,
+        defaultWorkingDirectory: String
+    ) -> String? {
+        if terminalProfileID != nil {
+            return workingDirectory
+        }
+        return workingDirectory ?? defaultWorkingDirectory
     }
 
     private static func organizedTabs(
