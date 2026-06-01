@@ -7933,8 +7933,8 @@ private enum ShellRuntimeMetadataTests {
             terminalProfiles: profiles
         )
         expect(
-            unreadableSudoersState.sudoers == .alanOwnedValid(path: rule.filePath),
-            "installed root-owned sudoers drop-ins may be unreadable to the GUI user but still discoverable"
+            unreadableSudoersState.sudoers == .existingUnreadable(path: rule.filePath),
+            "installed root-owned sudoers drop-ins may be unreadable without being classified as Alan-owned"
         )
         let unreadableReadiness = ManagedTerminalAccountReadinessVerifier.verify(
             request: request,
@@ -7957,6 +7957,19 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !unreadableReadyPlan.steps.map(\.kind).contains(.writeSudoersDropIn),
             "ready unreadable sudoers discovery must not keep reporting sudoers repair work"
+        )
+        let unreadableFailedPlan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            state: ManagedTerminalAccountState(
+                account: unreadableSudoersState.account,
+                sudoers: unreadableSudoersState.sudoers,
+                terminalProfile: unreadableSudoersState.terminalProfile,
+                verification: .failed(step: .nonInteractiveSudo, message: "sudo requires password")
+            )
+        )
+        expect(
+            unreadableFailedPlan.steps.map(\.kind).contains(.writeSudoersDropIn),
+            "unreadable sudoers discovery with failed terminal-entry verification must schedule repair"
         )
 
         let invalidSudoers = ManagedTerminalAccountSudoersValidator.validate(
@@ -7982,13 +7995,31 @@ private enum ShellRuntimeMetadataTests {
         )
 
         let privilegedRunner = CapturingPrivilegedCommandRunner()
+        let localRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("alan-managed-terminal-account-effects-\(UUID().uuidString)", isDirectory: true)
+        let localStore = TerminalProfileStore(
+            fileManager: FileManager.default,
+            storeURL: localRoot.appendingPathComponent("terminal-profiles.json")
+        )
+        var boundProfileID: String?
         let executor = ManagedTerminalAccountAuthorizedScriptExecutor(
             request: request,
             commandRunner: privilegedRunner,
+            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(
+                store: localStore,
+                currentSpaceBinder: { profileID in
+                    boundProfileID = profileID
+                    return true
+                }
+            ),
             passwordGenerator: { "SECRET-PASSWORD" }
         )
         let plan = ManagedTerminalAccountPlanner.plan(
-            request: request,
+            request: ManagedTerminalAccountRequest(
+                accountName: "alan",
+                guiUserName: "morris",
+                bindCurrentSpaceAfterSuccess: true
+            ),
             state: ManagedTerminalAccountState(
                 account: .missing,
                 sudoers: .missing,
@@ -8019,6 +8050,19 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !sudoersScript.contains("/tmp/\(rule.fileName).sudoers"),
             "authorized executor must not write sudoers content through a deterministic /tmp path"
+        )
+        let managedProfile = localStore.load().document.profile(id: "alan")
+        expect(
+            managedProfile?.managedTerminalAccountID == "alan",
+            "authorized executor must create the managed Terminal Profile handoff"
+        )
+        expect(
+            managedProfile?.launch == .sudoUser(unixUser: "alan"),
+            "authorized executor profile handoff must use sudo_user launch"
+        )
+        expect(
+            boundProfileID == "alan",
+            "authorized executor must route bind-current-space handoff through the injected binder"
         )
     }
 
@@ -8080,6 +8124,39 @@ private enum ShellRuntimeMetadataTests {
         expect(
             destructive.status == .requiresDestructiveConfirmation,
             "account/home deletion must require separate destructive confirmation"
+        )
+
+        let rollbackStoreURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan-managed-terminal-account-rollback-\(UUID().uuidString).json")
+        let rollbackStore = TerminalProfileStore(fileManager: .default, storeURL: rollbackStoreURL)
+        let managedProfile = TerminalProfileDefinition(
+            id: "alan",
+            title: "Alan",
+            launch: .sudoUser(unixUser: "alan"),
+            defaultWorkingDirectory: "/Users/alan",
+            presentation: nil,
+            managedTerminalAccountID: "alan"
+        )
+        do {
+            try rollbackStore.save(
+                TerminalProfileDocument(defaultProfileID: "alan", profiles: [managedProfile])
+            )
+        } catch {
+            fail("rollback profile store setup must save: \(error)")
+        }
+        let rollbackExecutor = ManagedTerminalAccountAuthorizedScriptExecutor(
+            request: request,
+            commandRunner: CapturingPrivilegedCommandRunner(),
+            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(store: rollbackStore)
+        )
+        let rollbackResult = rollbackExecutor.apply(rollback)
+        expect(
+            rollbackResult.completedSteps.contains(.removeManagedTerminalProfile),
+            "authorized executor rollback must execute managed Terminal Profile removal"
+        )
+        expect(
+            rollbackStore.load().document.profile(id: "alan") == nil,
+            "managed Terminal Profile rollback must remove the Alan-owned profile"
         )
     }
 

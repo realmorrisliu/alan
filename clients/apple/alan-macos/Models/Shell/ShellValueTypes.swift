@@ -835,6 +835,7 @@ enum ManagedTerminalAccountSudoersState: Equatable {
     case alanOwnedValid(path: String)
     case alanOwnedInvalid(path: String, message: String)
     case unmanaged(path: String)
+    case existingUnreadable(path: String)
 }
 
 enum ManagedTerminalAccountProfileState: Equatable {
@@ -914,10 +915,7 @@ enum ManagedTerminalAccountSudoersValidator {
         guard let data = fileManager.contents(atPath: rule.filePath),
               let contents = String(data: data, encoding: .utf8)
         else {
-            // Alan installs sudoers drop-ins as root:wheel 0440, so the GUI user
-            // may be unable to read contents during ordinary discovery. Readiness
-            // is still proven by the non-interactive sudo terminal-entry check.
-            return .alanOwnedValid(path: rule.filePath)
+            return .existingUnreadable(path: rule.filePath)
         }
 
         guard contents.contains(ManagedTerminalAccountSudoersRule.managedMarker) else {
@@ -1112,7 +1110,7 @@ enum ManagedTerminalAccountReadinessVerifier {
         }
 
         switch state.sudoers {
-        case .alanOwnedValid:
+        case .alanOwnedValid, .existingUnreadable:
             break
         case .alanOwnedInvalid(_, let message):
             return .failed(step: .sudoersValidation, message: message)
@@ -1224,13 +1222,17 @@ enum ManagedTerminalAccountPlanner {
             }
             steps.append(step(.writeSudoersDropIn, "Write Alan-owned sudoers drop-in", true))
             steps.append(step(.validateSudoers, "Validate sudoers syntax", true))
-        case .alanOwnedValid:
+        case .alanOwnedValid, .existingUnreadable:
             break
         }
 
         if state.verification != .passed {
             if !needsCreate {
                 repairNeeded = true
+            }
+            if shouldRepairUnreadableSudoers(state) {
+                steps.append(step(.writeSudoersDropIn, "Write Alan-owned sudoers drop-in", true))
+                steps.append(step(.validateSudoers, "Validate sudoers syntax", true))
             }
             steps.append(step(.verifyTerminalEntry, "Verify passwordless terminal entry", true))
         }
@@ -1298,6 +1300,12 @@ enum ManagedTerminalAccountPlanner {
             summary: summary,
             requiresPrivilege: requiresPrivilege
         )
+    }
+
+    private static func shouldRepairUnreadableSudoers(_ state: ManagedTerminalAccountState) -> Bool {
+        guard case .existingUnreadable = state.sudoers else { return false }
+        guard case .failed(step: .nonInteractiveSudo, _) = state.verification else { return false }
+        return true
     }
 }
 
@@ -1378,6 +1386,147 @@ struct ManagedTerminalAccountPrivilegedCommandResult: Equatable {
     let redactedMessage: String
 }
 
+struct ManagedTerminalAccountLocalEffectResult: Equatable {
+    let succeeded: Bool
+    let redactedMessage: String
+
+    static func succeeded(_ redactedMessage: String) -> ManagedTerminalAccountLocalEffectResult {
+        ManagedTerminalAccountLocalEffectResult(succeeded: true, redactedMessage: redactedMessage)
+    }
+
+    static func failed(_ redactedMessage: String) -> ManagedTerminalAccountLocalEffectResult {
+        ManagedTerminalAccountLocalEffectResult(succeeded: false, redactedMessage: redactedMessage)
+    }
+}
+
+protocol ManagedTerminalAccountLocalEffectExecuting {
+    func apply(
+        _ step: ManagedTerminalAccountPlanStepKind,
+        request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountLocalEffectResult?
+}
+
+struct ManagedTerminalAccountTerminalProfileEffectExecutor: ManagedTerminalAccountLocalEffectExecuting {
+    let store: TerminalProfileStore
+    let currentSpaceBinder: ((String) -> Bool)?
+
+    init(
+        store: TerminalProfileStore = .defaultStore(),
+        currentSpaceBinder: ((String) -> Bool)? = nil
+    ) {
+        self.store = store
+        self.currentSpaceBinder = currentSpaceBinder
+    }
+
+    func apply(
+        _ step: ManagedTerminalAccountPlanStepKind,
+        request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountLocalEffectResult? {
+        switch step {
+        case .createOrUpdateTerminalProfile:
+            return createOrUpdateTerminalProfile(for: request)
+        case .bindCurrentSpace:
+            return bindCurrentSpace(to: request.terminalProfileID)
+        case .removeManagedTerminalProfile:
+            return removeManagedTerminalProfile(for: request)
+        case .createStandardAccount, .repairAccountType, .repairHomeDirectory, .repairShell,
+                .hideAccount, .writeSudoersDropIn, .validateSudoers, .verifyTerminalEntry,
+                .removeSudoersDropIn, .deleteAccount, .deleteHomeDirectory:
+            return nil
+        }
+    }
+
+    private func createOrUpdateTerminalProfile(
+        for request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountLocalEffectResult {
+        var document = store.load().document
+        let profile = TerminalProfileDefinition(
+            id: request.terminalProfileID,
+            title: request.fullName ?? request.accountName,
+            launch: .sudoUser(unixUser: request.accountName),
+            defaultWorkingDirectory: request.homeDirectory,
+            presentation: TerminalProfilePresentation(
+                symbolName: "person.crop.circle",
+                colorName: nil
+            ),
+            managedTerminalAccountID: request.accountName
+        )
+
+        if let index = document.profiles.firstIndex(where: { $0.id == profile.id }) {
+            document.profiles[index] = profile
+        } else {
+            document.profiles.append(profile)
+        }
+
+        let nextDocument = TerminalProfileDocument(
+            defaultProfileID: document.defaultProfileID.isEmpty
+                ? profile.id
+                : document.defaultProfileID,
+            profiles: document.profiles
+        )
+        return save(
+            nextDocument,
+            successMessage: "Terminal Profile handoff completed. Credentials redacted.",
+            failureMessage: "Terminal Profile handoff failed. Credentials redacted."
+        )
+    }
+
+    private func bindCurrentSpace(to profileID: String) -> ManagedTerminalAccountLocalEffectResult {
+        guard let currentSpaceBinder else {
+            return .failed("Current Space binding is unavailable. Credentials redacted.")
+        }
+        guard currentSpaceBinder(profileID) else {
+            return .failed("Current Space binding failed. Credentials redacted.")
+        }
+        return .succeeded("Current Space binding completed. Credentials redacted.")
+    }
+
+    private func removeManagedTerminalProfile(
+        for request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountLocalEffectResult {
+        let document = store.load().document
+        let remainingProfiles = document.profiles.filter {
+            $0.managedTerminalAccountID != request.accountName
+        }
+
+        guard remainingProfiles.count != document.profiles.count else {
+            return .succeeded("Managed Terminal Profile was already absent. Credentials redacted.")
+        }
+
+        let nextDocument: TerminalProfileDocument
+        if remainingProfiles.isEmpty {
+            nextDocument = .fallback
+        } else {
+            let defaultProfileID = remainingProfiles.contains { $0.id == document.defaultProfileID }
+                ? document.defaultProfileID
+                : remainingProfiles[0].id
+            nextDocument = TerminalProfileDocument(
+                defaultProfileID: defaultProfileID,
+                profiles: remainingProfiles
+            )
+        }
+
+        return save(
+            nextDocument,
+            successMessage: "Managed Terminal Profile removal completed. Credentials redacted.",
+            failureMessage: "Managed Terminal Profile removal failed. Credentials redacted."
+        )
+    }
+
+    private func save(
+        _ document: TerminalProfileDocument,
+        successMessage: String,
+        failureMessage: String
+    ) -> ManagedTerminalAccountLocalEffectResult {
+        do {
+            try store.save(document)
+            return .succeeded(successMessage)
+        } catch {
+            return .failed(failureMessage)
+        }
+    }
+}
+
 protocol ManagedTerminalAccountPrivilegedCommandRunning {
     func runPrivilegedShellScript(
         _ script: String,
@@ -1423,18 +1572,22 @@ struct ManagedTerminalAccountAppleScriptPrivilegeRunner: ManagedTerminalAccountP
 struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPrivilegedExecuting {
     let request: ManagedTerminalAccountRequest
     let commandRunner: ManagedTerminalAccountPrivilegedCommandRunning
+    let localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting
     let passwordGenerator: () -> String
 
     init(
         request: ManagedTerminalAccountRequest,
         commandRunner: ManagedTerminalAccountPrivilegedCommandRunning =
             ManagedTerminalAccountAppleScriptPrivilegeRunner(),
+        localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting =
+            ManagedTerminalAccountTerminalProfileEffectExecutor(),
         passwordGenerator: @escaping () -> String = {
             UUID().uuidString + UUID().uuidString
         }
     ) {
         self.request = request
         self.commandRunner = commandRunner
+        self.localEffectExecutor = localEffectExecutor
         self.passwordGenerator = passwordGenerator
     }
 
@@ -1444,6 +1597,24 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
 
         for step in plan.steps {
             guard let script = script(for: step.kind) else {
+                guard let result = localEffectExecutor.apply(step.kind, request: request) else {
+                    diagnostics.append("Step has no executor: \(step.summary).")
+                    return ManagedTerminalAccountApplyResult(
+                        completedSteps: completed,
+                        failedStep: step.kind,
+                        cancelled: false,
+                        visibleDiagnostics: diagnostics
+                    )
+                }
+                diagnostics.append(result.redactedMessage)
+                guard result.succeeded else {
+                    return ManagedTerminalAccountApplyResult(
+                        completedSteps: completed,
+                        failedStep: step.kind,
+                        cancelled: false,
+                        visibleDiagnostics: diagnostics
+                    )
+                }
                 completed.append(step.kind)
                 continue
             }
