@@ -218,7 +218,11 @@ extension ShellStateSnapshot {
             tabID: tabID,
             spaceID: spaceID,
             launchTarget: launchTarget,
-            workingDirectory: workingDirectory ?? defaultWorkingDirectory,
+            workingDirectory: terminalPaneWorkingDirectory(
+                requested: workingDirectory,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                terminalProfileID: terminalProfileID
+            ),
             summary: "new shell space scaffolded",
             now: now,
             terminalProfileID: terminalProfileID
@@ -752,17 +756,17 @@ extension ShellStateSnapshot {
             prefix: "node",
             existing: spaces.flatMap(\.tabs).flatMap { $0.paneTree.nodeIDs }
         )
+        let resolvedTerminalProfileID =
+            terminalProfileID
+            ?? pane.terminalProfileID
+            ?? space(spaceID: pane.spaceID)?.terminalProfileID
         let resolvedContentIntent =
             contentIntent
             ?? .terminal(
                 launchTarget: pane.resolvedLaunchTarget,
                 title: nil,
-                workingDirectory: pane.cwd
+                workingDirectory: resolvedTerminalProfileID == nil ? pane.cwd : nil
             )
-        let resolvedTerminalProfileID =
-            terminalProfileID
-            ?? pane.terminalProfileID
-            ?? space(spaceID: pane.spaceID)?.terminalProfileID
         let prepared = makeContentMount(
             resolvedContentIntent,
             paneID: newPaneID,
@@ -1669,7 +1673,11 @@ extension ShellStateSnapshot {
                 tabID: tabID,
                 spaceID: spaceID,
                 launchTarget: launchTarget,
-                workingDirectory: workingDirectory ?? defaultWorkingDirectory,
+                workingDirectory: terminalPaneWorkingDirectory(
+                    requested: workingDirectory,
+                    defaultWorkingDirectory: defaultWorkingDirectory,
+                    terminalProfileID: terminalProfileID
+                ),
                 summary: terminalSummary,
                 now: now,
                 terminalProfileID: terminalProfileID
@@ -1758,12 +1766,26 @@ extension ShellStateSnapshot {
         }
     }
 
+    private func terminalPaneWorkingDirectory(
+        requested workingDirectory: String?,
+        defaultWorkingDirectory: String,
+        terminalProfileID: String?
+    ) -> String? {
+        if let workingDirectory {
+            return workingDirectory
+        }
+        if terminalProfileID != nil {
+            return nil
+        }
+        return defaultWorkingDirectory
+    }
+
     private func makeTerminalPane(
         paneID: String,
         tabID: String,
         spaceID: String,
         launchTarget: ShellLaunchTarget,
-        workingDirectory: String,
+        workingDirectory: String?,
         summary: String,
         now: Date,
         terminalProfileID: String? = nil

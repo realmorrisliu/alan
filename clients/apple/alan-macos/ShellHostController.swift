@@ -1256,8 +1256,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        let resolvedWorkingDirectory = workingDirectory
-            ?? focusedPaneWorkingDirectory()
+        let resolvedWorkingDirectory =
+            workingDirectory
+            ?? (targetTerminalProfileID(in: spaceID, explicit: terminalProfileID) == nil
+                ? focusedPaneWorkingDirectory()
+                : nil)
         return openTab(
             launchTarget: .shell,
             in: spaceID,
@@ -3024,6 +3027,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
         return nonEmptyWorkingDirectory(runtimeCwd)
             ?? nonEmptyWorkingDirectory(pane.cwd)
+    }
+
+    private func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
+        if let explicit {
+            return explicit
+        }
+        let targetSpaceID = requestedSpaceID ?? shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
+        guard let targetSpaceID else { return nil }
+        return shellState.spaces.first { $0.spaceID == targetSpaceID }?.terminalProfileID
     }
 
     func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {

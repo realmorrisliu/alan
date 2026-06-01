@@ -7570,6 +7570,26 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesTerminalProfileInheritanceForSpacesTabsAndSplits() {
         let now = Date(timeIntervalSince1970: 2_100)
+        let terminalProfiles = TerminalProfileDocument(
+            defaultProfileID: "alan",
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil
+                ),
+                TerminalProfileDefinition(
+                    id: "root",
+                    title: "Root",
+                    launch: .sudoRoot,
+                    defaultWorkingDirectory: "/var/root",
+                    presentation: nil
+                ),
+            ]
+        )
+        let executableFileManager = AlwaysExecutableFileManager()
         let base = ShellStateSnapshot.bootstrapDefault(
             windowID: "window_inheritance",
             workingDirectory: "/Users/morris"
@@ -7593,6 +7613,23 @@ private enum ShellRuntimeMetadataTests {
             createdSpace.pane(paneID: alanPaneID)?.terminalProfileID == "alan",
             "first terminal in profile-bound space must use profile"
         )
+        expect(
+            createdSpace.pane(paneID: alanPaneID)?.cwd == nil,
+            "profile-bound space without explicit cwd must let profile default working directory apply"
+        )
+        let firstPaneBoot = createdSpace.pane(paneID: alanPaneID).map {
+            AlanShellBootProfile.forPane(
+                $0,
+                shellState: createdSpace,
+                terminalProfiles: terminalProfiles,
+                fileManager: executableFileManager,
+                environment: ["SHELL": "/bin/zsh"]
+            )
+        }
+        expect(
+            firstPaneBoot?.workingDirectory == "/Users/alan",
+            "profile-bound space boot must use profile default working directory"
+        )
 
         let inheritedTab = try? createdSpace.openingTerminalTab(
             in: alanSpaceID,
@@ -7600,9 +7637,27 @@ private enum ShellRuntimeMetadataTests {
             workingDirectory: nil,
             now: now
         ).state
+        let inheritedPane = inheritedTab?.focusedPaneID.flatMap { inheritedTab?.pane(paneID: $0) }
         expect(
-            inheritedTab?.pane(paneID: inheritedTab?.focusedPaneID ?? "")?.terminalProfileID == "alan",
+            inheritedPane?.terminalProfileID == "alan",
             "new tab must inherit space profile"
+        )
+        expect(
+            inheritedPane?.cwd == nil,
+            "profile-inherited tab without explicit cwd must let profile default working directory apply"
+        )
+        let inheritedBoot = inheritedPane.map {
+            AlanShellBootProfile.forPane(
+                $0,
+                shellState: inheritedTab ?? createdSpace,
+                terminalProfiles: terminalProfiles,
+                fileManager: executableFileManager,
+                environment: ["SHELL": "/bin/zsh"]
+            )
+        }
+        expect(
+            inheritedBoot?.workingDirectory == "/Users/alan",
+            "profile-inherited tab boot must use profile default working directory"
         )
 
         let overrideTab = try? createdSpace.openingTerminalTab(
@@ -7616,6 +7671,22 @@ private enum ShellRuntimeMetadataTests {
             overrideTab?.pane(paneID: overrideTab?.focusedPaneID ?? "")?.terminalProfileID == "root",
             "explicit tab profile must override space profile"
         )
+        expect(
+            overrideTab?.focusedPaneID.flatMap { overrideTab?.pane(paneID: $0) }?.cwd == nil,
+            "explicit profile tab without explicit cwd must let profile default working directory apply"
+        )
+
+        let explicitCwdTab = try? createdSpace.openingTerminalTab(
+            in: alanSpaceID,
+            title: nil,
+            workingDirectory: "/explicit/project",
+            terminalProfileID: "root",
+            now: now
+        ).state
+        expect(
+            explicitCwdTab?.focusedPaneID.flatMap { explicitCwdTab?.pane(paneID: $0) }?.cwd == "/explicit/project",
+            "explicit cwd must still override profile default working directory"
+        )
 
         let split = try? createdSpace.splittingPane(
             alanPaneID,
@@ -7625,6 +7696,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             split?.pane(paneID: split?.focusedPaneID ?? "")?.terminalProfileID == "alan",
             "split must inherit focused pane profile"
+        )
+        expect(
+            split?.focusedPaneID.flatMap { split?.pane(paneID: $0) }?.cwd == nil,
+            "profile-inherited split without explicit cwd must let profile default working directory apply"
         )
 
         let rebound = createdSpace.settingTerminalProfile("univer", forSpaceID: alanSpaceID)
