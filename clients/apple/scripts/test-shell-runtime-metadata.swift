@@ -160,6 +160,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalProfileLaunchResolutionAndEnvironmentProjection()
         verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip()
         verifiesTerminalProfileInheritanceForSpacesTabsAndSplits()
+        verifiesGlobalDefaultTerminalProfileDefersWorkingDirectory()
         verifiesTerminalProfileControlPlaneOverrides()
         verifiesTerminalProfileSettingsRowsStaySeparateFromProviderAccounts()
         verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff()
@@ -7793,6 +7794,80 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesGlobalDefaultTerminalProfileDefersWorkingDirectory() {
+        let previousSupportRoot = ProcessInfo.processInfo.environment[
+            "ALAN_MACOS_APPLICATION_SUPPORT_DIR"
+        ]
+        let previousInstallChannel = ProcessInfo.processInfo.environment["ALAN_INSTALL_CHANNEL"]
+        let supportRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan-global-profile-\(UUID().uuidString)", isDirectory: true)
+        setenv("ALAN_MACOS_APPLICATION_SUPPORT_DIR", supportRoot.path, 1)
+        setenv("ALAN_INSTALL_CHANNEL", "stable", 1)
+        defer {
+            restoreEnvironmentValue(previousSupportRoot, forKey: "ALAN_MACOS_APPLICATION_SUPPORT_DIR")
+            restoreEnvironmentValue(previousInstallChannel, forKey: "ALAN_INSTALL_CHANNEL")
+        }
+
+        let terminalProfiles = TerminalProfileDocument(
+            defaultProfileID: "alan",
+            profiles: [
+                TerminalProfileDefinition.loginShellFallback,
+                TerminalProfileDefinition(
+                    id: "alan",
+                    title: "Alan",
+                    launch: .sudoUser(unixUser: "alan"),
+                    defaultWorkingDirectory: "/Users/alan",
+                    presentation: nil
+                ),
+            ]
+        )
+        let store = TerminalProfileStore.defaultStore(
+            environment: [
+                "ALAN_MACOS_APPLICATION_SUPPORT_DIR": supportRoot.path,
+                "ALAN_INSTALL_CHANNEL": "stable",
+            ]
+        )
+        do {
+            try store.save(terminalProfiles)
+        } catch {
+            fail("global default terminal profile test must save profile store: \(error)")
+        }
+
+        let controller = makeController(
+            windowID: "global_default_profile",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let tabID = controller.openTerminalTab(),
+              let paneID = controller.shellState.tab(tabID: tabID)?.paneTree.paneIDs.first,
+              let pane = controller.shellState.pane(paneID: paneID)
+        else {
+            fail("global default terminal profile test must open a terminal tab")
+        }
+
+        expect(
+            pane.terminalProfileID == "alan",
+            "new tabs must capture the global default terminal profile"
+        )
+        expect(
+            pane.cwd == nil,
+            "new tabs using the global default terminal profile must let the profile cwd win"
+        )
+        let boot = AlanShellBootProfile.forPane(
+            pane,
+            shellState: controller.shellState,
+            terminalProfiles: terminalProfiles,
+            fileManager: AlwaysExecutableFileManager(),
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            boot.workingDirectory == "/Users/alan",
+            "global default terminal profile boot must use the profile default working directory"
+        )
+    }
+
     private static func verifiesTerminalProfileControlPlaneOverrides() {
         let controller = makeController()
         let createSpaceResponse = controller.handleControlPlaneCommand(
@@ -8657,6 +8732,14 @@ private enum ShellRuntimeMetadataTests {
             return nil
         }
         return snapshot.contents.first { $0.contentID == paneSlot.contentID }
+    }
+
+    private static func restoreEnvironmentValue(_ value: String?, forKey key: String) {
+        if let value {
+            setenv(key, value, 1)
+        } else {
+            unsetenv(key)
+        }
     }
 
     private static func pane(

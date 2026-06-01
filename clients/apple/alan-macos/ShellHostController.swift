@@ -1256,9 +1256,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
+        let resolvedTerminalProfileID = targetTerminalProfileID(
+            in: spaceID,
+            explicit: terminalProfileID
+        )
         let resolvedWorkingDirectory =
             workingDirectory
-            ?? (targetTerminalProfileID(in: spaceID, explicit: terminalProfileID) == nil
+            ?? (resolvedTerminalProfileID == nil
                 ? focusedPaneWorkingDirectory()
                 : nil)
         return openTab(
@@ -1266,7 +1270,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             in: spaceID,
             title: title,
             workingDirectory: resolvedWorkingDirectory,
-            terminalProfileID: terminalProfileID
+            terminalProfileID: resolvedTerminalProfileID
         )
     }
 
@@ -2242,7 +2246,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
-                cwd: pane.cwd ?? bootProfile.workingDirectory,
+                cwd: pane.terminalProfileID == nil
+                    ? pane.cwd ?? bootProfile.workingDirectory
+                    : pane.cwd,
                 process: pane.process,
                 attention: pane.attention,
                 context: projectedContext,
@@ -3035,7 +3041,26 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
         let targetSpaceID = requestedSpaceID ?? shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
         guard let targetSpaceID else { return nil }
-        return shellState.spaces.first { $0.spaceID == targetSpaceID }?.terminalProfileID
+        if let spaceProfileID = shellState.spaces.first(where: { $0.spaceID == targetSpaceID })?
+            .terminalProfileID
+        {
+            return spaceProfileID
+        }
+        return globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+    }
+
+    private func globalDefaultTerminalProfileIDForWorkingDirectoryDeferral() -> String? {
+        let document = TerminalProfileStore.defaultStore(
+            channelApplicationSupportDirectoryName: windowContext.installChannel
+                .applicationSupportDirectoryName,
+            fileManager: fileManager
+        ).load().document
+        guard let profile = document.defaultProfile,
+              nonEmptyWorkingDirectory(profile.defaultWorkingDirectory) != nil
+        else {
+            return nil
+        }
+        return profile.id
     }
 
     func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {
