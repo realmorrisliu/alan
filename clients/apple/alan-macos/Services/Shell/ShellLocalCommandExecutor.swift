@@ -51,7 +51,7 @@ enum AlanShellLocalCommandExecutor {
 
         case .spaceCreate:
             let resolvedTerminalProfileID = command.terminalProfileID
-                ?? terminalProfileIDForWorkingDirectoryDeferral()
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
             let result = state.creatingSpace(
                 launchTarget: .shell,
                 title: command.title,
@@ -136,7 +136,7 @@ enum AlanShellLocalCommandExecutor {
                     in: command.spaceID,
                     explicit: command.terminalProfileID
                 )
-                    ?? terminalProfileIDForWorkingDirectoryDeferral()
+                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
                 let result = try state.openingTerminalTab(
                     in: command.spaceID,
                     title: command.title,
@@ -460,7 +460,7 @@ enum AlanShellLocalCommandExecutor {
                     from: paneID,
                     explicit: command.terminalProfileID
                 )
-                    ?? terminalProfileIDForWorkingDirectoryDeferral()
+                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
                 let result = try state.splittingPane(
                     paneID,
                     direction: direction,

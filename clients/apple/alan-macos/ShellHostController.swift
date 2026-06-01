@@ -1050,7 +1050,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalProfileID: String? = nil
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
-            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+            ?? globalDefaultTerminalProfileIDForPaneCapture()
         let result = shellState.creatingSpace(
             launchTarget: launchTarget,
             title: title,
@@ -3043,16 +3043,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewTerminal(in: requestedSpaceID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+            ?? globalDefaultTerminalProfileIDForPaneCapture()
     }
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+            ?? globalDefaultTerminalProfileIDForPaneCapture()
     }
 
-    private func globalDefaultTerminalProfileIDForWorkingDirectoryDeferral() -> String? {
-        terminalProfileIDForWorkingDirectoryDeferral(
+    private func globalDefaultTerminalProfileIDForPaneCapture() -> String? {
+        terminalProfileIDForGlobalDefaultPaneCapture(
             channelApplicationSupportDirectoryName: windowContext.installChannel
                 .applicationSupportDirectoryName,
             fileManager: fileManager

@@ -8046,6 +8046,184 @@ private enum ShellRuntimeMetadataTests {
             localSplitPane?.cwd == nil,
             "local pane.split using the global default profile must let the profile cwd win"
         )
+
+        let noCwdDefaultProfiles = TerminalProfileDocument(
+            defaultProfileID: "root",
+            profiles: [
+                TerminalProfileDefinition.loginShellFallback,
+                TerminalProfileDefinition(
+                    id: "root",
+                    title: "Root",
+                    launch: .sudoRoot,
+                    defaultWorkingDirectory: nil,
+                    presentation: nil
+                ),
+            ]
+        )
+        do {
+            try store.save(noCwdDefaultProfiles)
+        } catch {
+            fail("no-cwd global default terminal profile test must save profile store: \(error)")
+        }
+
+        func expectCapturedNoCwdRootProfile(_ pane: ShellPane?, _ label: String) {
+            expect(
+                pane?.terminalProfileID == "root",
+                "\(label) must capture the no-cwd global default terminal profile"
+            )
+            expect(
+                pane?.cwd == nil,
+                "\(label) must not persist inherited cwd once the default profile is captured"
+            )
+        }
+
+        let noCwdTabController = makeController(
+            windowID: "global_default_no_cwd_profile_tab",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_no_cwd_profile_tab",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let noCwdTabID = noCwdTabController.openTerminalTab(),
+              let noCwdTabPaneID = noCwdTabController.shellState.tab(tabID: noCwdTabID)?
+                .paneTree.paneIDs.first,
+              let noCwdTabPane = noCwdTabController.shellState.pane(paneID: noCwdTabPaneID)
+        else {
+            fail("no-cwd global default terminal profile test must open a terminal tab")
+        }
+        expectCapturedNoCwdRootProfile(noCwdTabPane, "new tabs")
+        let noCwdBoot = AlanShellBootProfile.forPane(
+            noCwdTabPane,
+            shellState: noCwdTabController.shellState,
+            terminalProfiles: noCwdDefaultProfiles,
+            fileManager: AlwaysExecutableFileManager(),
+            environment: ["SHELL": "/bin/zsh"]
+        )
+        expect(
+            noCwdBoot.environment["ALAN_TERMINAL_PROFILE_ID"] == "root",
+            "captured no-cwd global default profile must boot through the original profile"
+        )
+        expect(
+            noCwdBoot.environment["ALAN_TERMINAL_PROFILE_KIND"] == "sudo_root",
+            "captured no-cwd global default profile must preserve its launch kind"
+        )
+
+        let noCwdSpaceController = makeController(
+            windowID: "global_default_no_cwd_profile_space",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_no_cwd_profile_space",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let noCwdSpaceID = noCwdSpaceController.createTerminalSpace(title: "Root"),
+              let noCwdSpacePaneID = noCwdSpaceController.shellState.space(spaceID: noCwdSpaceID)?
+                .tabs.first?.paneTree.paneIDs.first
+        else {
+            fail("no-cwd global default terminal profile test must create a terminal Space")
+        }
+        expect(
+            noCwdSpaceController.shellState.space(spaceID: noCwdSpaceID)?.terminalProfileID
+                == "root",
+            "new Spaces must bind the no-cwd global default terminal profile"
+        )
+        expectCapturedNoCwdRootProfile(
+            noCwdSpaceController.shellState.pane(paneID: noCwdSpacePaneID),
+            "new Spaces"
+        )
+
+        let noCwdSplitController = makeController(
+            windowID: "global_default_no_cwd_profile_split",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_no_cwd_profile_split",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let noCwdFocusedPaneID = noCwdSplitController.shellState.focusedPaneID,
+              let noCwdSplitPaneID = noCwdSplitController.splitPane(
+                paneID: noCwdFocusedPaneID,
+                placement: .right
+              )
+        else {
+            fail("no-cwd global default terminal profile test must split a terminal pane")
+        }
+        expectCapturedNoCwdRootProfile(
+            noCwdSplitController.shellState.pane(paneID: noCwdSplitPaneID),
+            "splits"
+        )
+
+        let noCwdLocalTabResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-tab-no-cwd-global-default-profile",
+                  "command": "tab.open"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_no_cwd_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        expect(noCwdLocalTabResult?.response.applied == true, "local no-cwd tab.open must apply")
+        expectCapturedNoCwdRootProfile(
+            noCwdLocalTabResult?.updatedState?.pane(
+                paneID: noCwdLocalTabResult?.response.paneID ?? ""
+            ),
+            "local tab.open"
+        )
+
+        let noCwdLocalSpaceResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-space-no-cwd-global-default-profile",
+                  "command": "space.create"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_space_no_cwd_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        expect(noCwdLocalSpaceResult?.response.applied == true, "local no-cwd space.create must apply")
+        expect(
+            noCwdLocalSpaceResult?.response.spaceID.flatMap {
+                noCwdLocalSpaceResult?.updatedState?.space(spaceID: $0)
+            }?.terminalProfileID == "root",
+            "local space.create must bind the no-cwd global default terminal profile"
+        )
+        expectCapturedNoCwdRootProfile(
+            noCwdLocalSpaceResult?.updatedState?.pane(
+                paneID: noCwdLocalSpaceResult?.response.paneID ?? ""
+            ),
+            "local space.create"
+        )
+
+        let noCwdLocalSplitResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-split-no-cwd-global-default-profile",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "horizontal"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_split_no_cwd_global_default_profile",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        expect(noCwdLocalSplitResult?.response.applied == true, "local no-cwd pane.split must apply")
+        expectCapturedNoCwdRootProfile(
+            noCwdLocalSplitResult?.updatedState?.pane(
+                paneID: noCwdLocalSplitResult?.response.paneID ?? ""
+            ),
+            "local pane.split"
+        )
     }
 
     private static func verifiesTerminalProfileControlPlaneOverrides() {

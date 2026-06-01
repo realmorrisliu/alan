@@ -308,7 +308,7 @@ struct TerminalProfileDocument: Codable, Equatable {
     }
 }
 
-func terminalProfileIDForWorkingDirectoryDeferral(
+func terminalProfileIDForGlobalDefaultPaneCapture(
     channelApplicationSupportDirectoryName: String = TerminalProfileStore
         .currentChannelApplicationSupportDirectoryName(),
     fileManager: FileManager = .default,
@@ -320,11 +320,25 @@ func terminalProfileIDForWorkingDirectoryDeferral(
         environment: environment
     ).load().document
     guard let profile = document.defaultProfile,
-          nonEmptyTerminalProfileWorkingDirectory(profile.defaultWorkingDirectory) != nil
+          shouldCaptureGlobalDefaultTerminalProfile(profile)
     else {
         return nil
     }
     return profile.id
+}
+
+private func shouldCaptureGlobalDefaultTerminalProfile(
+    _ profile: TerminalProfileDefinition
+) -> Bool {
+    if nonEmptyTerminalProfileWorkingDirectory(profile.defaultWorkingDirectory) != nil {
+        return true
+    }
+    switch profile.launch {
+    case .loginShell:
+        return false
+    case .sudoUser, .sudoRoot, .customCommand:
+        return true
+    }
 }
 
 private func nonEmptyTerminalProfileWorkingDirectory(_ path: String?) -> String? {
