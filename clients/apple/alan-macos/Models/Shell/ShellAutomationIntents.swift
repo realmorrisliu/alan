@@ -137,23 +137,27 @@ enum ShellAutomationIntentRouter {
     static func createTerminalTab(
         spaceID: String? = nil,
         title: String? = nil,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
     ) -> ShellAutomationIntentOutcome {
         perform(.createTab(ShellAutomationCreateTabRequest(
             launchTarget: .shell,
             spaceID: spaceID,
             title: title,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID
         )))
     }
 
     static func splitPane(
         _ pane: AlanShellPaneEntity,
-        direction: ShellPaneSplitDirection
+        direction: ShellPaneSplitDirection,
+        terminalProfileID: String? = nil
     ) -> ShellAutomationIntentOutcome {
         perform(.splitPane(ShellAutomationPaneSplitRequest(
             paneID: pane.id,
-            placement: direction
+            placement: direction,
+            terminalProfileID: terminalProfileID
         )))
     }
 
@@ -237,11 +241,15 @@ struct AlanCreateTerminalTabIntent: AppIntent {
     @Parameter(title: "Working Directory")
     var workingDirectory: String?
 
+    @Parameter(title: "Terminal Profile ID")
+    var terminalProfileID: String?
+
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.createTerminalTab(
             spaceID: space?.id,
             title: tabTitle,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID
         )
         return try shellAutomationIntentResult(outcome)
     }
@@ -258,10 +266,14 @@ struct AlanSplitPaneIntent: AppIntent {
     @Parameter(title: "Direction")
     var direction: AlanShellPaneSplitDirectionOption
 
+    @Parameter(title: "Terminal Profile ID")
+    var terminalProfileID: String?
+
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let outcome = await ShellAutomationIntentRouter.splitPane(
             pane,
-            direction: direction.shellDirection
+            direction: direction.shellDirection,
+            terminalProfileID: terminalProfileID
         )
         return try shellAutomationIntentResult(outcome)
     }

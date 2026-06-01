@@ -29,6 +29,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testWorkspaceContextUsesRegistryForWorkspaceScopedRequests()
             try testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot()
             try testUnavailableRemoteSummariesStayCompact()
+            try testTerminalProfilesAndAccountsStayLocalAndRedacted()
             print("Shell settings surface tests passed.")
         } catch {
             fputs("Shell settings surface tests failed: \(error)\n", stderr)
@@ -40,12 +41,13 @@ struct ShellSettingsSurfaceTestRunner {
 private func testDefaultSectionOrderAndInterfaceMutability() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
         remote: .unavailable(reason: "Daemon unavailable"),
-        local: stableLocalSummary()
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles()
     )
 
     try expect(
         snapshot.sections.map(\.id) == ShellSettingsSectionID.defaultOrder,
-        "settings sections must render in Interface, Accounts, Sessions, Capabilities, Local order"
+        "settings sections must render local Terminal Profiles before provider Accounts"
     )
 
     let interface = try requireSection(.interface, in: snapshot)
@@ -112,7 +114,8 @@ private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throw
     )
     let snapshot = ShellSettingsSurfaceSnapshot.make(
         remote: ShellSettingsRemoteSnapshot(accounts: accounts, capabilities: capabilities),
-        local: stableLocalSummary()
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles()
     )
     let visibleText = snapshot.visibleText.joined(separator: "\n")
 
@@ -149,7 +152,8 @@ private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throw
 private func testDevChannelLocalRowsUseDevIdentity() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
         remote: .unavailable(reason: "Daemon unavailable"),
-        local: devLocalSummary()
+        local: devLocalSummary(),
+        terminalProfiles: testTerminalProfiles()
     )
     let localText = try requireSection(.local, in: snapshot).visibleText.joined(separator: "\n")
 
@@ -273,7 +277,8 @@ private func testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot() throws {
 private func testUnavailableRemoteSummariesStayCompact() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
         remote: .unavailable(reason: "Connection refused"),
-        local: stableLocalSummary()
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles()
     )
     let text = snapshot.visibleText.joined(separator: "\n")
 
@@ -282,6 +287,49 @@ private func testUnavailableRemoteSummariesStayCompact() throws {
     try expect(
         !text.contains("thinking_budget_tokens"),
         "sessions summary must not expose deprecated thinking budget controls"
+    )
+}
+
+private func testTerminalProfilesAndAccountsStayLocalAndRedacted() throws {
+    let accountPlan = ManagedTerminalAccountPlanner.plan(
+        request: ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris"),
+        state: ManagedTerminalAccountState(
+            account: .missing,
+            sudoers: .missing,
+            terminalProfile: .missing,
+            verification: .notRun
+        )
+    )
+    let snapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: .unavailable(reason: "Daemon unavailable"),
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles(),
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: [accountPlan])
+    )
+    let profileSection = try requireSection(.terminalProfiles, in: snapshot)
+    let accountSection = try requireSection(.terminalAccounts, in: snapshot)
+    let providerSection = try requireSection(.accounts, in: snapshot)
+    let visibleText = snapshot.visibleText.joined(separator: "\n")
+
+    try expect(
+        profileSection.visibleText.contains("Terminal Profiles"),
+        "Terminal Profiles must render as local startup configuration"
+    )
+    try expect(
+        !providerSection.visibleText.contains("Alan"),
+        "Terminal Profiles must stay out of provider Accounts"
+    )
+    try expect(
+        !visibleText.contains("echo hidden-secret"),
+        "Settings must not expose full custom command text in normal rows"
+    )
+    try expect(
+        !visibleText.lowercased().contains("autologin"),
+        "Settings copy must not use autologin wording"
+    )
+    try expect(
+        accountSection.visibleText.joined(separator: " ").contains("terminal entry"),
+        "Managed Terminal Account rows must describe terminal entry"
     )
 }
 
@@ -306,6 +354,30 @@ private func stableLocalSummary() -> ShellSettingsLocalSummary {
             userMessage: ""
         ),
         homeDirectory: URL(fileURLWithPath: "/Users/test", isDirectory: true)
+    )
+}
+
+private func testTerminalProfiles() -> TerminalProfileSettingsSummary {
+    TerminalProfileSettingsSummary(
+        profiles: [
+            TerminalProfileDefinition.loginShellFallback,
+            TerminalProfileDefinition(
+                id: "alan",
+                title: "Alan",
+                launch: .sudoUser(unixUser: "alan"),
+                defaultWorkingDirectory: "/Users/alan",
+                presentation: nil
+            ),
+            TerminalProfileDefinition(
+                id: "custom",
+                title: "Bootstrap",
+                launch: .customCommand("echo hidden-secret"),
+                defaultWorkingDirectory: nil,
+                presentation: nil
+            ),
+        ],
+        defaultProfileID: "alan",
+        recoveryMessage: nil
     )
 }
 

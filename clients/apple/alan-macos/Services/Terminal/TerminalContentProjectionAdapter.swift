@@ -92,13 +92,18 @@ struct TerminalContentProjectionAdapter {
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
-                cwd: pane.cwd ?? bootProfile.workingDirectory,
+                cwd: projectedPaneWorkingDirectory(
+                    for: pane,
+                    workingDirectory: pane.cwd,
+                    bootProfile: bootProfile
+                ),
                 process: pane.process,
                 attention: projectedBinding?.pendingYield == true ? .awaitingUser : pane.attention,
                 context: projectedContext,
                 viewport: viewport,
                 activity: pane.activity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: pane.activity
@@ -137,13 +142,18 @@ struct TerminalContentProjectionAdapter {
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
-                cwd: pane.cwd ?? bootProfile.workingDirectory,
+                cwd: projectedPaneWorkingDirectory(
+                    for: pane,
+                    workingDirectory: pane.cwd,
+                    bootProfile: bootProfile
+                ),
                 process: pane.process,
                 attention: pane.attention,
                 context: projectedContext,
                 viewport: pane.viewport,
                 activity: pane.activity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: pane.activity
@@ -190,7 +200,11 @@ struct TerminalContentProjectionAdapter {
                 tabID: pane.tabID,
                 spaceID: pane.spaceID,
                 launchTarget: pane.launchTarget,
-                cwd: workingDirectory ?? bootProfile.workingDirectory,
+                cwd: projectedPaneWorkingDirectory(
+                    for: pane,
+                    workingDirectory: workingDirectory,
+                    bootProfile: bootProfile
+                ),
                 process: pane.process,
                 attention: paneProjection.projectedAttention(
                     metadataAttention: metadata.attention,
@@ -201,11 +215,23 @@ struct TerminalContentProjectionAdapter {
                 context: projectedContext,
                 viewport: viewport,
                 activity: projectedActivity,
-                alanBinding: projectedBinding
+                alanBinding: projectedBinding,
+                terminalProfileID: pane.terminalProfileID
             ),
             processExited: processExited,
             activity: projectedActivity
         )
+    }
+
+    private func projectedPaneWorkingDirectory(
+        for pane: ShellPane,
+        workingDirectory: String?,
+        bootProfile: AlanShellBootProfile
+    ) -> String? {
+        if pane.terminalProfileID != nil {
+            return pane.cwd
+        }
+        return workingDirectory ?? bootProfile.workingDirectory
     }
 }
 #endif

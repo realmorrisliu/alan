@@ -3,6 +3,8 @@ import Foundation
 #if os(macOS)
 enum ShellSettingsSectionID: String, CaseIterable, Equatable {
     case interface
+    case terminalProfiles
+    case terminalAccounts
     case accounts
     case sessions
     case capabilities
@@ -10,6 +12,8 @@ enum ShellSettingsSectionID: String, CaseIterable, Equatable {
 
     static let defaultOrder: [ShellSettingsSectionID] = [
         .interface,
+        .terminalProfiles,
+        .terminalAccounts,
         .accounts,
         .sessions,
         .capabilities,
@@ -20,6 +24,10 @@ enum ShellSettingsSectionID: String, CaseIterable, Equatable {
         switch self {
         case .interface:
             return "Interface"
+        case .terminalProfiles:
+            return "Terminal Profiles"
+        case .terminalAccounts:
+            return "Terminal Accounts"
         case .accounts:
             return "Accounts"
         case .sessions:
@@ -90,11 +98,21 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
 
     static func make(
         remote: ShellSettingsRemoteSnapshot,
-        local: ShellSettingsLocalSummary
+        local: ShellSettingsLocalSummary,
+        terminalProfiles: TerminalProfileSettingsSummary = .current(),
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary = .empty
     ) -> ShellSettingsSurfaceSnapshot {
         ShellSettingsSurfaceSnapshot(
             sections: [
                 ShellSettingsSectionModel(id: .interface, rows: interfaceRows()),
+                ShellSettingsSectionModel(
+                    id: .terminalProfiles,
+                    rows: terminalProfileRows(terminalProfiles)
+                ),
+                ShellSettingsSectionModel(
+                    id: .terminalAccounts,
+                    rows: managedTerminalAccountRows(managedTerminalAccounts)
+                ),
                 ShellSettingsSectionModel(id: .accounts, rows: accountRows(remote.accounts)),
                 ShellSettingsSectionModel(id: .sessions, rows: sessionRows()),
                 ShellSettingsSectionModel(id: .capabilities, rows: capabilityRows(remote.capabilities)),
@@ -128,6 +146,162 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 mutability: .editable
             ),
         ]
+    }
+
+    private static func terminalProfileRows(
+        _ summary: TerminalProfileSettingsSummary
+    ) -> [ShellSettingsRowModel] {
+        var rows: [ShellSettingsRowModel] = [
+            ShellSettingsRowModel(
+                id: "terminalProfilesDefault",
+                systemName: "terminal",
+                title: "Default Terminal Profile",
+                detail: "Local startup identity for new terminal content.",
+                value: summary.defaultProfileTitle ?? "Login shell",
+                mutability: .editable
+            ),
+            ShellSettingsRowModel(
+                id: "terminalProfilesCreate",
+                systemName: "plus.circle",
+                title: "New Terminal Profile",
+                detail: "Structured launch mode with local validation.",
+                value: "Create",
+                mutability: .actionOnly
+            )
+        ]
+
+        if let recoveryMessage = summary.recoveryMessage {
+            rows.append(
+                ShellSettingsRowModel(
+                    id: "terminalProfilesRecovery",
+                    systemName: "exclamationmark.triangle",
+                    title: "Profile store recovery",
+                    detail: recoveryMessage,
+                    value: "Fallback active"
+                )
+            )
+        }
+
+        rows.append(
+            contentsOf: summary.profiles.map { profile in
+                ShellSettingsRowModel(
+                    id: "terminalProfile.\(profile.id)",
+                    systemName: terminalProfileSystemName(profile),
+                    title: profile.title,
+                    detail: profile.redactedDisplayDetail,
+                    value: profile.id == summary.defaultProfileID ? "Default" : profile.launch.kind.rawValue,
+                    mutability: .editable
+                )
+            }
+        )
+        rows.append(
+            ShellSettingsRowModel(
+                id: "terminalProfilesSudoGuidance",
+                systemName: "lock.shield",
+                title: "Sudo behavior",
+                detail: "Prompts and passwordless sudo are controlled by macOS sudo policy.",
+                value: "System managed"
+            )
+        )
+        return rows
+    }
+
+    private static func managedTerminalAccountRows(
+        _ summary: ManagedTerminalAccountSettingsSummary
+    ) -> [ShellSettingsRowModel] {
+        guard !summary.plans.isEmpty else {
+            return [
+                ShellSettingsRowModel(
+                    id: "terminalAccountProvision",
+                    systemName: "person.crop.circle.badge.plus",
+                    title: "Managed terminal account",
+                    detail: "Create a terminal-only local user for passwordless terminal entry.",
+                    value: "Preview plan",
+                    mutability: .actionOnly
+                ),
+                ShellSettingsRowModel(
+                    id: "terminalAccountLoginBoundary",
+                    systemName: "macwindow.badge.plus",
+                    title: "Mac login session",
+                    detail: "This flow leaves the Mac login session setting unchanged.",
+                    value: "Not changed"
+                ),
+            ]
+        }
+
+        return summary.plans.map { plan in
+            ShellSettingsRowModel(
+                id: "terminalAccount.\(plan.request.accountName)",
+                systemName: terminalAccountSystemName(plan),
+                title: "Managed terminal account",
+                detail: terminalAccountDetail(plan),
+                value: terminalAccountStatusLabel(plan),
+                mutability: .actionOnly
+            )
+        }
+    }
+
+    private static func terminalProfileSystemName(_ profile: TerminalProfileDefinition) -> String {
+        switch profile.launch {
+        case .loginShell:
+            return "terminal"
+        case .sudoUser:
+            return "person.crop.circle"
+        case .sudoRoot:
+            return "exclamationmark.triangle"
+        case .customCommand:
+            return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+
+    private static func terminalAccountSystemName(_ plan: ManagedTerminalAccountPlan) -> String {
+        switch plan.status {
+        case .alreadyReady:
+            return "checkmark.seal"
+        case .repair:
+            return "wrench.and.screwdriver"
+        case .requiresDestructiveConfirmation, .invalid, .sudoersConflict, .terminalProfileConflict:
+            return "exclamationmark.triangle"
+        case .readyToApply:
+            return "person.crop.circle.badge.plus"
+        }
+    }
+
+    private static func terminalAccountStatusLabel(_ plan: ManagedTerminalAccountPlan) -> String {
+        switch plan.status {
+        case .alreadyReady:
+            return "Ready"
+        case .repair:
+            return "Repairable"
+        case .invalid:
+            return "Invalid"
+        case .requiresDestructiveConfirmation:
+            return "Confirm"
+        case .sudoersConflict, .terminalProfileConflict:
+            return "Conflict"
+        case .readyToApply:
+            return "Preview"
+        }
+    }
+
+    private static func terminalAccountDetail(_ plan: ManagedTerminalAccountPlan) -> String {
+        let target = plan.request.accountName
+        switch plan.status {
+        case .alreadyReady:
+            return "\(target) is ready for terminal entry and linked to its Terminal Profile."
+        case .repair:
+            return "\(target) needs repair before terminal entry is ready."
+        case .invalid:
+            return "\(target) needs a valid local account identifier."
+        case .requiresDestructiveConfirmation:
+            return "\(target) rollback needs separate destructive confirmation."
+        case .sudoersConflict(let path):
+            return "\(target) has an existing non-Alan sudoers file at \(path)."
+        case .terminalProfileConflict(let profileID):
+            return "\(target) has an existing non-Alan Terminal Profile named \(profileID)."
+        case .readyToApply:
+            return "\(target) terminal entry plan is ready for explicit confirmation."
+        }
     }
 
     private static func accountRows(
@@ -412,6 +586,35 @@ struct ShellSettingsRemoteSnapshot: Equatable {
             capabilities: .unavailable(reason: reason)
         )
     }
+}
+
+struct TerminalProfileSettingsSummary: Equatable {
+    let profiles: [TerminalProfileDefinition]
+    let defaultProfileID: String
+    let recoveryMessage: String?
+
+    static func current(
+        store: TerminalProfileStore = .defaultStore()
+    ) -> TerminalProfileSettingsSummary {
+        let load = store.load()
+        return TerminalProfileSettingsSummary(
+            profiles: load.profiles,
+            defaultProfileID: load.document.defaultProfileID,
+            recoveryMessage: load.recovery.map { _ in
+                "The local Terminal Profile store was unreadable and has been preserved."
+            }
+        )
+    }
+
+    var defaultProfileTitle: String? {
+        profiles.first { $0.id == defaultProfileID }?.title
+    }
+}
+
+struct ManagedTerminalAccountSettingsSummary: Equatable {
+    let plans: [ManagedTerminalAccountPlan]
+
+    static let empty = ManagedTerminalAccountSettingsSummary(plans: [])
 }
 
 struct ShellSettingsAccountsSummary: Equatable {
