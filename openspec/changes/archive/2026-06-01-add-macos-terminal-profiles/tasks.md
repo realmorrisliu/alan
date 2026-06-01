@@ -47,4 +47,4 @@
 - [x] 6.4 Run `openspec validate add-macos-terminal-profiles --strict`.
 - [x] 6.5 Review the diff for accidental provider connection-profile changes, workspace manifest leakage of local profile definitions, and secret/custom-command exposure in normal shell chrome.
 - [x] 6.6 Prepare PR slices in dependency order: model/store/manifest, launch/interactions, UI, then visual/docs polish if needed.
-- [ ] 6.7 After implementation is merged, sync accepted spec deltas into `openspec/specs/` before archiving.
+- [x] 6.7 After implementation is merged, sync accepted spec deltas into `openspec/specs/` before archiving.
