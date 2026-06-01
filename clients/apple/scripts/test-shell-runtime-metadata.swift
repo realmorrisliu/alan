@@ -7866,6 +7866,58 @@ private enum ShellRuntimeMetadataTests {
             boot.workingDirectory == "/Users/alan",
             "global default terminal profile boot must use the profile default working directory"
         )
+
+        let spaceController = makeController(
+            windowID: "global_default_profile_space",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_profile_space",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let createdSpaceID = spaceController.createTerminalSpace(title: "Alan"),
+              let createdPaneID = spaceController.shellState.space(spaceID: createdSpaceID)?
+                .tabs.first?.paneTree.paneIDs.first,
+              let createdPane = spaceController.shellState.pane(paneID: createdPaneID)
+        else {
+            fail("global default terminal profile test must create a terminal Space")
+        }
+        expect(
+            spaceController.shellState.space(spaceID: createdSpaceID)?.terminalProfileID == "alan",
+            "new Spaces must capture the global default terminal profile"
+        )
+        expect(
+            createdPane.terminalProfileID == "alan",
+            "first pane in a global-default Space must capture the global default profile"
+        )
+        expect(
+            createdPane.cwd == nil,
+            "new Spaces using the global default terminal profile must let the profile cwd win"
+        )
+
+        let splitController = makeController(
+            windowID: "global_default_profile_split",
+            shellState: .bootstrapDefault(
+                windowID: "global_default_profile_split",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        guard let focusedPaneID = splitController.shellState.focusedPaneID,
+              let splitPaneID = splitController.splitPane(
+                paneID: focusedPaneID,
+                placement: .right
+              ),
+              let splitPane = splitController.shellState.pane(paneID: splitPaneID)
+        else {
+            fail("global default terminal profile test must split a terminal pane")
+        }
+        expect(
+            splitPane.terminalProfileID == "alan",
+            "splits from unprofiled panes must capture the global default terminal profile"
+        )
+        expect(
+            splitPane.cwd == nil,
+            "splits using the global default terminal profile must let the profile cwd win"
+        )
     }
 
     private static func verifiesTerminalProfileControlPlaneOverrides() {

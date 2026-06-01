@@ -1049,11 +1049,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
+        let resolvedTerminalProfileID = terminalProfileID
+            ?? globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
         let result = shellState.creatingSpace(
             launchTarget: launchTarget,
             title: title,
             workingDirectory: workingDirectory,
-            terminalProfileID: terminalProfileID,
+            terminalProfileID: resolvedTerminalProfileID,
             reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
         )
         applyMutationResult(result)
@@ -1347,13 +1349,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         contentIntent: ShellContentIntent? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
+        let resolvedTerminalProfileID = targetTerminalProfileID(
+            forSplitFromPaneID: paneID,
+            explicit: terminalProfileID
+        )
         let result: ShellStateMutationResult
         do {
             result = try shellState.splittingPane(
                 paneID,
                 placement: placement,
                 contentIntent: contentIntent,
-                terminalProfileID: terminalProfileID,
+                terminalProfileID: resolvedTerminalProfileID,
                 reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
             )
         } catch {
@@ -3047,6 +3053,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return spaceProfileID
         }
         return globalDefaultTerminalProfileIDForWorkingDirectoryDeferral()
+    }
+
+    private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
+        if let explicit {
+            return explicit
+        }
+        guard let pane = shellState.pane(paneID: paneID) else {
+            return nil
+        }
+        return pane.terminalProfileID
+            ?? targetTerminalProfileID(in: pane.spaceID, explicit: nil)
     }
 
     private func globalDefaultTerminalProfileIDForWorkingDirectoryDeferral() -> String? {
