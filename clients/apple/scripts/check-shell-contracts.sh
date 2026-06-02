@@ -2050,6 +2050,46 @@ require_pattern \
     "focused Apple shell tests must include settings surface coverage"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "@State private var selectedGroup = ShellSettingsNavigationGroup\\.general" \
+    "Settings content must default internal navigation selection to General"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "case agent" \
+    "Settings navigation model must include Agent as a first-class group"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "case system" \
+    "Settings navigation model must include System as a first-class group"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "ShellSettingsGroupSectionModel" \
+    "Settings navigation model must support task-oriented group sections"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "agentSelector" \
+    "Settings Agent group must expose the supported Alan agent affordance"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "ShellSettingsNavigationView\\(" \
+    "Settings content must render a compact internal navigation view"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "selectedGroupModel" \
+    "Settings content must render only the selected navigation group"
+
+reject_pattern \
+    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "ForEach\\(snapshot\\.sections\\)" \
+    "Settings content must not render every section in one continuous scroll"
+
+require_pattern \
     "clients/apple/scripts/check-shell-app-intents-metadata.sh" \
     "AlanCreateTerminalTabIntent" \
     "App Intent metadata review must cover generated Shortcuts action names"

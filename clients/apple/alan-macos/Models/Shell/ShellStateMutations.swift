@@ -87,7 +87,8 @@ extension ShellStateSnapshot {
                                 children: nil
                             )
                         )
-                    ]
+                    ],
+                    selectedTabID: tabID
                 )
             ],
             panes: [
@@ -268,6 +269,7 @@ extension ShellStateSnapshot {
             title: title ?? "Space \(spaceIndex)",
             attention: .active,
             tabs: [tab],
+            selectedTabID: tabID,
             terminalProfileID: terminalProfileID
         )
         let nextPanes = panes + [pane]
@@ -318,6 +320,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: space.attention,
                 tabs: space.tabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: terminalProfileID
             )
         }
@@ -446,6 +449,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: space.attention,
                 tabs: space.tabs + [tab],
+                selectedTabID: tabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -685,6 +689,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: space.attention,
                 tabs: space.tabs + [newTab],
+                selectedTabID: newTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -825,6 +830,7 @@ extension ShellStateSnapshot {
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -911,6 +917,7 @@ extension ShellStateSnapshot {
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -992,6 +999,7 @@ extension ShellStateSnapshot {
                     }
                     return [updatedSourceTab, newTab]
                 },
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1113,6 +1121,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: space.attention,
                 tabs: nextTabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1211,6 +1220,7 @@ extension ShellStateSnapshot {
                 tabs: space.tabs.map { existingTab in
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1264,6 +1274,7 @@ extension ShellStateSnapshot {
             title: sourceSpace.title,
             attention: sourceSpace.attention,
             tabs: sourceSpace.tabs.filter { $0.tabID != tabID },
+            selectedTabID: sourceSpace.selectedTabID,
             terminalProfileID: sourceSpace.terminalProfileID
         )
 
@@ -1284,6 +1295,7 @@ extension ShellStateSnapshot {
             title: targetSpaceAfterRemoval.title,
             attention: targetSpaceAfterRemoval.attention,
             tabs: targetTabs,
+            selectedTabID: targetSpaceAfterRemoval.selectedTabID,
             terminalProfileID: targetSpaceAfterRemoval.terminalProfileID
         )
 
@@ -1464,6 +1476,7 @@ extension ShellStateSnapshot {
                 tabs: space.tabs.map { tab in
                     tab.tabID == updatedTab.tabID ? updatedTab : tab
                 },
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1497,6 +1510,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: space.attention,
                 tabs: remainingTabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1553,6 +1567,11 @@ extension ShellStateSnapshot {
         let focusedPane = resolvedFocusedPaneID.flatMap { candidate in
             panes.first(where: { $0.paneID == candidate })
         }
+        let repairedSpaces = spaces.map { space in
+            space.repairingSelectedTabID(
+                preferredTabID: focusedPane?.spaceID == space.spaceID ? focusedPane?.tabID : nil
+            )
+        }
         let retained = retainedContentRecords(in: spaces, panes: panes)
         let nextPaneSlots = (retained.paneSlots ?? []) + additionalPaneSlots
         let nextContents = (retained.contents ?? []) + additionalContents
@@ -1567,7 +1586,7 @@ extension ShellStateSnapshot {
             focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
             focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
-            spaces: spaces,
+            spaces: repairedSpaces,
             panes: panes,
             paneSlots: nextPaneSlots.isEmpty ? nil : nextPaneSlots,
             contents: nextContents.isEmpty ? nil : nextContents,
@@ -1622,6 +1641,7 @@ extension ShellStateSnapshot {
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
+                selectedTabID: space.resolvedSelectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1984,7 +2004,8 @@ extension ShellStateSnapshot {
                             ]
                         )
                     )
-                ]
+                ],
+                selectedTabID: "tab_main"
             )
         ],
         panes: [

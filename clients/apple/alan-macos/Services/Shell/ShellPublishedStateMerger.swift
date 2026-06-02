@@ -20,13 +20,21 @@ enum AlanShellPublishedStateMerger {
         let focusedPane = focusedPaneID.flatMap { candidate in
             mergedPanes.first(where: { $0.paneID == candidate })
         }
+        let authoritativeSpacesByID = Dictionary(
+            uniqueKeysWithValues: authoritative.spaces.map { ($0.spaceID, $0) }
+        )
         let mergedSpaces = incoming.spaces.map { space in
-            ShellSpace(
+            let authoritativeSpace = authoritativeSpacesByID[space.spaceID]
+            return ShellSpace(
                 spaceID: space.spaceID,
                 title: space.title,
                 attention: strongestAttention(in: mergedPanes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
+                selectedTabID: space.selectedTabID ?? authoritativeSpace?.selectedTabID,
                 terminalProfileID: space.terminalProfileID
+            )
+            .repairingSelectedTabID(
+                preferredTabID: focusedPane?.spaceID == space.spaceID ? focusedPane?.tabID : nil
             )
         }
 

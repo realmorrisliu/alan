@@ -1261,6 +1261,7 @@ private struct ShellSettingsContentView: View {
         reason: "Daemon unavailable"
     )
     @State private var lastDiagnosticsExportURL: URL?
+    @State private var selectedGroup = ShellSettingsNavigationGroup.general
 
     private var snapshot: ShellSettingsSurfaceSnapshot {
         ShellSettingsSurfaceSnapshot.make(
@@ -1270,28 +1271,64 @@ private struct ShellSettingsContentView: View {
         )
     }
 
+    private var settingsGroups: [ShellSettingsNavigationGroupModel] {
+        snapshot.navigationGroups
+    }
+
+    private var selectedGroupModel: ShellSettingsNavigationGroupModel {
+        settingsGroups.first { $0.id == selectedGroup }
+            ?? settingsGroups.first
+            ?? ShellSettingsNavigationGroupModel(id: .general, sections: [])
+    }
+
     var body: some View {
         ZStack {
-            ShellPalette.workspace
+            ShellSettingsBackdrop()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(snapshot.sections) { section in
-                        ShellSettingsSectionView(
-                            section: section,
-                            appearanceMode: $appearanceMode,
-                            sidebarVisible: sidebarVisible,
-                            dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
-                            performanceDiagnosticsEnabled: performanceDiagnosticsBinding,
-                            onExportPerformanceDiagnostics: exportPerformanceDiagnostics
-                        )
-                    }
+            HStack(alignment: .top, spacing: 0) {
+                ShellSettingsNavigationView(
+                    groups: settingsGroups,
+                    selectedGroup: $selectedGroup
+                )
+                .frame(width: ShellSettingsMetrics.navigationWidth, alignment: .topLeading)
+                .padding(.leading, ShellSettingsMetrics.navigationLeadingPadding)
+                .padding(.trailing, ShellSettingsMetrics.navigationTrailingPadding)
+                .padding(.top, ShellSettingsMetrics.navigationTopPadding)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
+                .background {
+                    ShellSettingsNavigationRailBackground()
                 }
-                .frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                ZStack(alignment: .topLeading) {
+                    ShellSettingsDetailBackground()
+
+                    ShellSettingsPageSheet {
+                        ScrollView {
+                            ShellSettingsGroupView(
+                                group: selectedGroupModel,
+                                appearanceMode: $appearanceMode,
+                                sidebarVisible: sidebarVisible,
+                                dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
+                                performanceDiagnosticsEnabled: performanceDiagnosticsBinding,
+                                onExportPerformanceDiagnostics: exportPerformanceDiagnostics
+                            )
+                            .frame(maxWidth: ShellSettingsMetrics.contentWidth, alignment: .leading)
+                            .padding(.horizontal, ShellSettingsMetrics.pageContentHorizontalPadding)
+                            .padding(.top, ShellSettingsMetrics.pageContentTopPadding)
+                            .padding(.bottom, ShellSettingsMetrics.pageContentBottomPadding)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                    .padding(.leading, ShellSettingsMetrics.pageSheetOuterLeadingInset)
+                    .padding(.top, ShellSettingsMetrics.pageSheetOuterTopInset)
+                    .padding(.trailing, ShellSettingsMetrics.pageSheetOuterTrailingInset)
+                    .padding(.bottom, ShellSettingsMetrics.pageSheetOuterBottomInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task(id: refreshTaskID) {
             await refreshSettingsSummaries()
@@ -1420,8 +1457,92 @@ private struct ShellSettingsContentView: View {
     }
 }
 
-private struct ShellSettingsSectionView: View {
-    let section: ShellSettingsSectionModel
+private struct ShellSettingsBackdrop: View {
+    var body: some View {
+        ZStack {
+            ShellPalette.settingsPane
+            ShellPalette.windowBackdropTint.opacity(0.025)
+        }
+    }
+}
+
+private struct ShellSettingsNavigationRailBackground: View {
+    var body: some View {
+        Color.clear
+    }
+}
+
+private struct ShellSettingsDetailBackground: View {
+    var body: some View {
+        Color.clear
+    }
+}
+
+private struct ShellSettingsNavigationView: View {
+    let groups: [ShellSettingsNavigationGroupModel]
+    @Binding var selectedGroup: ShellSettingsNavigationGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ShellSettingsMetrics.navigationRowSpacing) {
+            ForEach(groups) { group in
+                Button {
+                    selectedGroup = group.id
+                } label: {
+                    HStack(spacing: ShellSettingsMetrics.navigationRowContentSpacing) {
+                        Image(systemName: group.systemName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(iconStyle(for: group))
+                            .frame(width: 16, height: 16)
+
+                        Text(group.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(textStyle(for: group))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, ShellSettingsMetrics.navigationRowHorizontalPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: ShellSettingsMetrics.navigationRowHeight)
+                    .contentShape(Rectangle())
+                    .background {
+                        if group.id == selectedGroup {
+                            RoundedRectangle(
+                                cornerRadius: ShellSettingsMetrics.navigationSelectionCornerRadius,
+                                style: .continuous
+                            )
+                                .fill(ShellPalette.settingsSheet.opacity(0.88))
+                                .shadow(
+                                    color: ShellPalette.line.opacity(0.10),
+                                    radius: 0.8,
+                                    x: 0,
+                                    y: 0.5
+                                )
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(group.title)
+                .accessibilityLabel(Text(group.title))
+            }
+        }
+    }
+
+    private func iconStyle(for group: ShellSettingsNavigationGroupModel) -> some ShapeStyle {
+        group.id == selectedGroup
+            ? AnyShapeStyle(ShellPalette.accent)
+            : AnyShapeStyle(ShellPalette.mutedInk)
+    }
+
+    private func textStyle(for group: ShellSettingsNavigationGroupModel) -> some ShapeStyle {
+        group.id == selectedGroup
+            ? AnyShapeStyle(ShellPalette.ink)
+            : AnyShapeStyle(ShellPalette.mutedInk)
+    }
+}
+
+private struct ShellSettingsGroupView: View {
+    let group: ShellSettingsNavigationGroupModel
     @Binding var appearanceMode: ShellAppearanceMode
     let sidebarVisible: Binding<Bool>
     @Binding var dimsInactiveSplitPanes: Bool
@@ -1429,10 +1550,48 @@ private struct ShellSettingsSectionView: View {
     let onExportPerformanceDiagnostics: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 24) {
+            Text(group.title)
+                .font(.system(size: 23, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(group.sections) { section in
+                    ShellSettingsSectionView(
+                        section: section,
+                        appearanceMode: $appearanceMode,
+                        sidebarVisible: sidebarVisible,
+                        dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
+                        performanceDiagnosticsEnabled: performanceDiagnosticsEnabled,
+                        onExportPerformanceDiagnostics: onExportPerformanceDiagnostics
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct ShellSettingsVerticalDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(ShellPalette.line.opacity(0.13))
+            .frame(width: 0.8)
+    }
+}
+
+private struct ShellSettingsSectionView: View {
+    let section: ShellSettingsGroupSectionModel
+    @Binding var appearanceMode: ShellAppearanceMode
+    let sidebarVisible: Binding<Bool>
+    @Binding var dimsInactiveSplitPanes: Bool
+    let performanceDiagnosticsEnabled: Binding<Bool>
+    let onExportPerformanceDiagnostics: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(section.title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(ShellPalette.mutedInk)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ShellPalette.mutedInk.opacity(0.92))
                 .textCase(.uppercase)
 
             VStack(spacing: 0) {
@@ -1443,14 +1602,6 @@ private struct ShellSettingsSectionView: View {
 
                     rowView(row)
                 }
-            }
-            .background {
-                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                    .fill(ShellPalette.panel.opacity(0.72))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: ShellRadii.row, style: .continuous)
-                    .stroke(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
             }
         }
     }
@@ -1471,7 +1622,8 @@ private struct ShellSettingsSectionView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 240)
+                .controlSize(.small)
+                .frame(width: 186)
             }
         case "sidebar":
             ShellSettingsRow(
@@ -1479,8 +1631,10 @@ private struct ShellSettingsSectionView: View {
                 title: row.title,
                 detail: row.detail
             ) {
-                Toggle("Show", isOn: sidebarVisible)
+                Toggle(row.title, isOn: sidebarVisible)
+                    .labelsHidden()
                     .toggleStyle(.switch)
+                    .controlSize(.small)
             }
         case "inactiveSplitDimming":
             ShellSettingsRow(
@@ -1488,8 +1642,10 @@ private struct ShellSettingsSectionView: View {
                 title: row.title,
                 detail: row.detail
             ) {
-                Toggle("Enabled", isOn: $dimsInactiveSplitPanes)
+                Toggle(row.title, isOn: $dimsInactiveSplitPanes)
+                    .labelsHidden()
                     .toggleStyle(.switch)
+                    .controlSize(.small)
             }
         case "performanceDiagnostics":
             ShellSettingsRow(
@@ -1497,8 +1653,10 @@ private struct ShellSettingsSectionView: View {
                 title: row.title,
                 detail: row.detail
             ) {
-                Toggle("Enabled", isOn: performanceDiagnosticsEnabled)
+                Toggle(row.title, isOn: performanceDiagnosticsEnabled)
+                    .labelsHidden()
                     .toggleStyle(.switch)
+                    .controlSize(.small)
             }
         case "performanceDiagnosticsExport":
             ShellSettingsRow(
@@ -1508,7 +1666,16 @@ private struct ShellSettingsSectionView: View {
             ) {
                 Button("Export", action: onExportPerformanceDiagnostics)
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(!performanceDiagnosticsEnabled.wrappedValue)
+            }
+        case "agentSelector":
+            ShellSettingsRow(
+                systemName: row.systemName,
+                title: row.title,
+                detail: row.detail
+            ) {
+                ShellSettingsAgentSelector()
             }
         default:
             ShellSettingsRow(
@@ -1529,12 +1696,7 @@ private struct ShellSettingsRow<Accessory: View>: View {
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ShellPalette.mutedInk)
-                .frame(width: 18, height: 18)
-
+        HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
@@ -1545,21 +1707,41 @@ private struct ShellSettingsRow<Accessory: View>: View {
                    !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
                     Text(detail)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11.5, weight: .regular))
                         .foregroundStyle(ShellPalette.mutedInk)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 16)
 
             accessory()
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: ShellSettingsMetrics.accessoryColumnWidth, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(minHeight: 48)
+        .padding(.vertical, 10)
+        .frame(minHeight: ShellSettingsMetrics.rowMinHeight)
+    }
+}
+
+private struct ShellSettingsAgentSelector: View {
+    var body: some View {
+        Text("Alan")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(ShellPalette.ink)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                    .fill(ShellPalette.panel.opacity(0.86))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                    .stroke(ShellPalette.line.opacity(0.24), lineWidth: 0.8)
+            )
+            .accessibilityLabel(Text("Alan"))
     }
 }
 
@@ -1582,7 +1764,7 @@ private struct ShellSettingsValueLabel: View {
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: 230, alignment: .trailing)
+        .frame(maxWidth: ShellSettingsMetrics.valueColumnWidth, alignment: .trailing)
     }
 
     private var valueStyle: some ShapeStyle {
@@ -1596,9 +1778,101 @@ private struct ShellSettingsValueLabel: View {
 private struct ShellSettingsDivider: View {
     var body: some View {
         Rectangle()
-            .fill(ShellPalette.line.opacity(0.22))
+            .fill(ShellPalette.line.opacity(0.14))
             .frame(height: 0.8)
-            .padding(.leading, 44)
+            .padding(.leading, ShellSettingsMetrics.rowDividerLeadingPadding)
+    }
+}
+
+private enum ShellSettingsMetrics {
+    static let navigationWidth: CGFloat = 126
+    static let navigationLeadingPadding: CGFloat = 8
+    static let navigationTrailingPadding: CGFloat = 4
+    static let navigationTopPadding: CGFloat = 2
+    static let navigationRowHeight: CGFloat = 28
+    static let navigationRowSpacing: CGFloat = 2
+    static let navigationRowHorizontalPadding: CGFloat = 7
+    static let navigationRowContentSpacing: CGFloat = 7
+    static let navigationSelectionCornerRadius: CGFloat = 8
+    static let contentWidth: CGFloat = 720
+    static let pageSheetOuterLeadingInset: CGFloat = 4
+    static let pageSheetOuterTopInset: CGFloat = 0
+    static let pageSheetOuterTrailingInset: CGFloat = 8
+    static let pageSheetOuterBottomInset: CGFloat = 8
+    static let pageSheetCornerRadius: CGFloat = 8
+    static let pageContentHorizontalPadding: CGFloat = 32
+    static let pageContentTopPadding: CGFloat = 30
+    static let pageContentBottomPadding: CGFloat = 30
+    static let rowMinHeight: CGFloat = 58
+    static let rowDividerLeadingPadding: CGFloat = 0
+    static let accessoryColumnWidth: CGFloat = 214
+    static let valueColumnWidth: CGFloat = 196
+}
+
+private struct ShellSettingsPageSheet<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    private let shape = RoundedRectangle(
+        cornerRadius: ShellSettingsMetrics.pageSheetCornerRadius,
+        style: .continuous
+    )
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ShellSettingsPageSheetBackground()
+            content()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipShape(shape)
+    }
+}
+
+private struct ShellSettingsPageSheetBackground: View {
+    private let shape = RoundedRectangle(
+        cornerRadius: ShellSettingsMetrics.pageSheetCornerRadius,
+        style: .continuous
+    )
+
+    var body: some View {
+        shape
+            .fill(ShellPalette.settingsSheet)
+            .overlay {
+                shape
+                    .strokeBorder(ShellPalette.line.opacity(0.24), lineWidth: 0.6)
+            }
+            .overlay {
+                shape
+                    .inset(by: 0.7)
+                    .strokeBorder(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.black.opacity(0.050), location: 0.00),
+                                .init(color: Color.black.opacity(0.020), location: 0.12),
+                                .init(color: Color.clear, location: 0.22),
+                                .init(color: Color.clear, location: 1.00),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            }
+            .overlay {
+                shape
+                    .inset(by: 1.3)
+                    .strokeBorder(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.white.opacity(0.58), location: 0.00),
+                                .init(color: Color.white.opacity(0.18), location: 0.14),
+                                .init(color: Color.clear, location: 0.24),
+                                .init(color: Color.clear, location: 1.00),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.45
+                    )
+            }
     }
 }
 
@@ -1644,7 +1918,7 @@ private struct ShellContentPaneTitleBarView: View {
         .padding(.trailing, ShellPaneTitleBarMetrics.horizontalTrailingPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: ShellPaneTitleBarMetrics.height)
-        .background(ShellPalette.workspace)
+        .background(titleBarBackground)
         .contentShape(Rectangle())
         .onTapGesture(perform: onFocusPane)
         .contextMenu {
@@ -1711,7 +1985,11 @@ private struct ShellContentPaneTitleBarView: View {
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: true)
         .help(isZoomed ? "Unzoom pane" : "Zoom pane")
-        .accessibilityLabel(isZoomed ? "Unzoom pane" : "Zoom pane")
+            .accessibilityLabel(isZoomed ? "Unzoom pane" : "Zoom pane")
+    }
+
+    private var titleBarBackground: Color {
+        descriptor.renderKind == .settings ? ShellPalette.settingsPane : ShellPalette.workspace
     }
 }
 

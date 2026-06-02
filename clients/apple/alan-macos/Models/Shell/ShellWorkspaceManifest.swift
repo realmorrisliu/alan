@@ -55,6 +55,7 @@ struct ShellWorkspaceManifest: Codable, Equatable {
                     order: 0,
                     createdAt: now,
                     updatedAt: now,
+                    selectedTabID: tabID,
                     tabs: [
                         ShellWorkspaceTabRecord(
                             tabID: tabID,
@@ -81,6 +82,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var order: Int
     var createdAt: Date
     var updatedAt: Date
+    var selectedTabID: String? = nil
     var tabs: [ShellWorkspaceTabRecord]
     var terminalProfileID: String? = nil
 
@@ -92,8 +94,29 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case order
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case selectedTabID = "selected_tab_id"
         case tabs
         case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(
+        spaceID: String,
+        title: String,
+        order: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        selectedTabID: String? = nil,
+        tabs: [ShellWorkspaceTabRecord],
+        terminalProfileID: String? = nil
+    ) {
+        self.spaceID = spaceID
+        self.title = title
+        self.order = order
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.selectedTabID = selectedTabID
+        self.tabs = tabs
+        self.terminalProfileID = terminalProfileID
     }
 }
 
@@ -253,6 +276,16 @@ extension ShellContentWorkspaceManifest {
             selectedSpaceID = spaces.first?.spaceID
         }
 
+        for index in spaces.indices {
+            let legacySelectedTabID =
+                spaces[index].spaceID == selectedSpaceID ? selectedTabID : nil
+            spaces[index].selectedTabID = repairedSelectedTabID(
+                spaces[index].selectedTabID,
+                legacySelectedTabID: legacySelectedTabID,
+                tabs: spaces[index].tabs.map(\.tabID)
+            )
+        }
+
         guard let selectedSpaceID,
               let selectedSpace = spaces.first(where: { $0.spaceID == selectedSpaceID })
         else {
@@ -260,13 +293,21 @@ extension ShellContentWorkspaceManifest {
             return
         }
 
-        let selectedTabStillExists = selectedTabID.map { selectedTabID in
-            selectedSpace.tabs.contains { $0.tabID == selectedTabID }
-        } ?? false
+        selectedTabID = selectedSpace.selectedTabID
+    }
 
-        if !selectedTabStillExists {
-            selectedTabID = selectedSpace.tabs.first?.tabID
+    private func repairedSelectedTabID(
+        _ selectedTabID: String?,
+        legacySelectedTabID: String?,
+        tabs: [String]
+    ) -> String? {
+        if let selectedTabID, tabs.contains(selectedTabID) {
+            return selectedTabID
         }
+        if let legacySelectedTabID, tabs.contains(legacySelectedTabID) {
+            return legacySelectedTabID
+        }
+        return tabs.first
     }
 }
 
@@ -276,6 +317,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var order: Int
     var createdAt: Date
     var updatedAt: Date
+    var selectedTabID: String? = nil
     var tabs: [ShellContentWorkspaceTabRecord]
     var terminalProfileID: String? = nil
 
@@ -287,8 +329,29 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case order
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case selectedTabID = "selected_tab_id"
         case tabs
         case terminalProfileID = "terminal_profile_id"
+    }
+
+    init(
+        spaceID: String,
+        title: String,
+        order: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        selectedTabID: String? = nil,
+        tabs: [ShellContentWorkspaceTabRecord],
+        terminalProfileID: String? = nil
+    ) {
+        self.spaceID = spaceID
+        self.title = title
+        self.order = order
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.selectedTabID = selectedTabID
+        self.tabs = tabs
+        self.terminalProfileID = terminalProfileID
     }
 }
 
@@ -526,6 +589,7 @@ extension ShellWorkspaceManifest {
                     order: space.order,
                     createdAt: space.createdAt,
                     updatedAt: space.updatedAt,
+                    selectedTabID: space.selectedTabID,
                     tabs: space.tabs.map { tab in
                         ShellContentWorkspaceTabRecord(
                             tabID: tab.tabID,
@@ -569,6 +633,16 @@ extension ShellWorkspaceManifest {
             selectedSpaceID = spaces.first?.spaceID
         }
 
+        for index in spaces.indices {
+            let legacySelectedTabID =
+                spaces[index].spaceID == selectedSpaceID ? selectedTabID : nil
+            spaces[index].selectedTabID = repairedSelectedTabID(
+                spaces[index].selectedTabID,
+                legacySelectedTabID: legacySelectedTabID,
+                tabs: spaces[index].tabs.map(\.tabID)
+            )
+        }
+
         guard let selectedSpaceID,
               let selectedSpace = spaces.first(where: { $0.spaceID == selectedSpaceID })
         else {
@@ -576,13 +650,21 @@ extension ShellWorkspaceManifest {
             return
         }
 
-        let selectedTabStillExists = selectedTabID.map { selectedTabID in
-            selectedSpace.tabs.contains { $0.tabID == selectedTabID }
-        } ?? false
+        selectedTabID = selectedSpace.selectedTabID
+    }
 
-        if !selectedTabStillExists {
-            selectedTabID = selectedSpace.tabs.first?.tabID
+    private func repairedSelectedTabID(
+        _ selectedTabID: String?,
+        legacySelectedTabID: String?,
+        tabs: [String]
+    ) -> String? {
+        if let selectedTabID, tabs.contains(selectedTabID) {
+            return selectedTabID
         }
+        if let legacySelectedTabID, tabs.contains(legacySelectedTabID) {
+            return legacySelectedTabID
+        }
+        return tabs.first
     }
 }
 
@@ -720,6 +802,7 @@ struct ShellWorkspaceMaterializer {
                     in: paneSlots.filter { $0.spaceID == space.spaceID }
                 ),
                 tabs: contentTabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -917,6 +1000,7 @@ struct ShellWorkspaceMaterializer {
                     title: space.title,
                     attention: strongestAttention(for: shellTabs, panes: panes),
                     tabs: shellTabs,
+                    selectedTabID: space.selectedTabID,
                     terminalProfileID: space.terminalProfileID
                 )
             )

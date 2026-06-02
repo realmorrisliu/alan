@@ -14,8 +14,11 @@ private enum ShellWorkspaceManifestTests {
     static func run() throws {
         try verifiesMissingManifestCreatesDefaultWithoutMigratingShellState()
         try verifiesCorruptManifestIsQuarantined()
+        try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
         try verifiesMaterializerPreservesEmptySelectedSpace()
         try verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs()
+        try verifiesMaterializerPreservesInactiveSpaceSelection()
+        try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
         try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
@@ -95,6 +98,50 @@ private enum ShellWorkspaceManifestTests {
         _ = try decoder.decode(
             ShellContentWorkspaceManifest.self,
             from: Data(contentsOf: manifestURL)
+        )
+    }
+
+    private static func verifiesOldManifestDecodesWithoutSpaceLocalSelection() throws {
+        let firstTab = makeContentTab(
+            tabID: "tab_first",
+            title: "First",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/first/project",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let secondTab = makeContentTab(
+            tabID: "tab_second",
+            title: "Second",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/second/project",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let oldManifest = makeContentManifest(selectedTabID: secondTab.tabID, tabs: [firstTab, secondTab])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(oldManifest)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let selectedTabFieldCount = text.components(separatedBy: "\"selected_tab_id\"").count - 1
+        expect(
+            selectedTabFieldCount == 1,
+            "old-manifest setup must include only the global selected tab field"
+        )
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        decoded.repairSelection()
+
+        expect(decoded.selectedTabID == "tab_second", "old manifest must keep global selected tab")
+        expect(
+            decoded.spaces.first?.selectedTabID == "tab_second",
+            "old manifest repair must seed selected space remembered tab from global selected tab"
         )
     }
 
@@ -178,6 +225,167 @@ private enum ShellWorkspaceManifestTests {
         expect(state.focusedTabID == nil, "selected empty space must not focus another space's tab")
         expect(state.focusedPaneID == nil, "selected empty space must not focus another space's pane")
         expect(state.pane(paneID: "pane_tab_other") != nil, "other space panes must still materialize")
+    }
+
+    private static func verifiesMaterializerPreservesInactiveSpaceSelection() throws {
+        let mainFirst = makeContentTab(
+            tabID: "tab_main_first",
+            title: "Main First",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/main/first",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let mainSecond = makeContentTab(
+            tabID: "tab_main_second",
+            title: "Main Second",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/main/second",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let otherFirst = makeContentTab(
+            tabID: "tab_other_first",
+            title: "Other First",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/other/first",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_other",
+            selectedTabID: "tab_other_first",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_main_second",
+                    tabs: [mainFirst, mainSecond]
+                ),
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_other",
+                    title: "Other",
+                    order: 1,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_other_first",
+                    tabs: [otherFirst]
+                ),
+            ]
+        )
+
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: manifest,
+            defaultWorkingDirectory: "/tmp",
+            now: referenceDate
+        )
+
+        expect(state.focusedSpaceID == "space_other", "materializer must restore globally selected space")
+        expect(state.focusedTabID == "tab_other_first", "materializer must restore globally selected tab")
+        expect(
+            state.space(spaceID: "space_main")?.selectedTabID == "tab_main_second",
+            "materializer must preserve inactive space remembered tab"
+        )
+    }
+
+    private static func verifiesManifestRoundTripPreservesSpaceLocalSelection() throws {
+        let mainFirst = makeContentTab(
+            tabID: "tab_roundtrip_main_first",
+            title: "Main First",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/main/first",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let mainSecond = makeContentTab(
+            tabID: "tab_roundtrip_main_second",
+            title: "Main Second",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/main/second",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let otherFirst = makeContentTab(
+            tabID: "tab_roundtrip_other_first",
+            title: "Other First",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/other/first",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let otherSecond = makeContentTab(
+            tabID: "tab_roundtrip_other_second",
+            title: "Other Second",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/other/second",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_other",
+            selectedTabID: "tab_roundtrip_other_second",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_roundtrip_main_second",
+                    tabs: [mainFirst, mainSecond]
+                ),
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_other",
+                    title: "Other",
+                    order: 1,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_roundtrip_other_second",
+                    tabs: [otherFirst, otherSecond]
+                ),
+            ]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(manifest)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        decoded.repairSelection()
+
+        expect(decoded.selectedSpaceID == "space_other", "round trip must preserve globally selected space")
+        expect(decoded.selectedTabID == "tab_roundtrip_other_second", "round trip must preserve active tab")
+        expect(
+            decoded.spaces.first { $0.spaceID == "space_main" }?.selectedTabID == "tab_roundtrip_main_second",
+            "round trip must preserve main space remembered tab"
+        )
+        expect(
+            decoded.spaces.first { $0.spaceID == "space_other" }?.selectedTabID == "tab_roundtrip_other_second",
+            "round trip must preserve other space remembered tab"
+        )
     }
 
     private static func verifiesPinnedSnapshotWinsOverLaterLiveSnapshot() throws {

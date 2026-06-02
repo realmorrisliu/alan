@@ -90,6 +90,41 @@ sign_path() {
     codesign "${args[@]}" "$path"
 }
 
+thin_macho_to_arm64() {
+    local path="$1"
+    local archs
+
+    [[ -f "$path" ]] || fail "Mach-O binary is missing: $path"
+    archs="$(lipo -archs "$path")" || fail "could not inspect architectures for $path"
+    if [[ " $archs " == *" arm64 "* && "$archs" != "arm64" ]]; then
+        lipo -thin arm64 "$path" -output "$path"
+    elif [[ "$archs" != "arm64" ]]; then
+        fail "$path does not contain arm64 architecture; found: $archs"
+    fi
+}
+
+thin_sparkle_to_arm64() {
+    local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+    local version_dir
+    local binaries
+
+    [[ -d "$framework" ]] || fail "Sparkle.framework was not embedded in $ALAN_APP_BUNDLE_NAME"
+    version_dir="$(alan_sparkle_version_dir "$framework")" ||
+        fail "Sparkle.framework version directory was not found in $framework"
+
+    binaries=(
+        "$version_dir/Autoupdate"
+        "$version_dir/Updater.app/Contents/MacOS/Updater"
+        "$version_dir/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
+        "$version_dir/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+        "$version_dir/Sparkle"
+    )
+
+    for binary in "${binaries[@]}"; do
+        thin_macho_to_arm64 "$binary"
+    done
+}
+
 sign_sparkle_code() {
     local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
     local version_dir
@@ -121,6 +156,7 @@ require_command cargo
 require_command xcodebuild
 require_command codesign
 require_command ditto
+require_command lipo
 require_command shasum
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then
     require_command security
@@ -144,6 +180,7 @@ xcodebuild \
     -configuration Release \
     -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
+    ARCHS=arm64 \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
     PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
@@ -162,6 +199,9 @@ chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+
+printf 'Thinning Sparkle framework to arm64...\n'
+thin_sparkle_to_arm64
 
 printf 'Signing Sparkle framework and helper...\n'
 sign_sparkle_code

@@ -136,6 +136,14 @@ enum ShellPalette {
         light: (0.979, 0.98, 0.989),
         dark: (0.050, 0.056, 0.070)
     )
+    static let settingsPane = Color.shellAdaptive(
+        light: (0.954, 0.957, 0.970),
+        dark: (0.054, 0.061, 0.076)
+    )
+    static let settingsSheet = Color.shellAdaptive(
+        light: (0.996, 0.997, 1.0),
+        dark: (0.118, 0.132, 0.160)
+    )
     static let terminal = Color.shellAdaptive(
         light: (0.10, 0.12, 0.16),
         dark: (0.050, 0.061, 0.076)

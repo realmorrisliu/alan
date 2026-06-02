@@ -95,6 +95,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
         verifiesPublishedStateMergeClearsTerminalProfileMetadata()
+        verifiesPublishedStateMergePreservesSpaceSelection()
         verifiesPublishedStateMergePreservesContentContainers()
         verifiesPaneRebuildMutationsPreserveActivity()
         verifiesTabSidebarActivityProjectionUsesHighestPriorityPane()
@@ -138,8 +139,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesShellActionTabNavigationTargetsCurrentSelection()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
+        verifiesSpaceSelectionRestoresRememberedTab()
         verifiesShellActionSpaceSelectionReportsMissingTargets()
         verifiesSplitTabSelectionUsesStablePaneWithoutChangingLayout()
+        verifiesWorkspaceManifestRestoresInactiveSpaceSelection()
         verifiesContentStateProjectionSeparatesPaneSlotsAndContent()
         verifiesContentRenderingRegistryRoutesSupportedKinds()
         verifiesContentAwareSidebarProjectionUsesNonTerminalLabels()
@@ -4068,6 +4071,49 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesPublishedStateMergePreservesSpaceSelection() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(title: "Main Second")
+        _ = controller.createTerminalSpace(title: "Other", workingDirectory: "/tmp")
+        let authoritative = controller.shellState
+
+        let incomingSpaces = authoritative.spaces.map { space in
+            ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs,
+                terminalProfileID: space.terminalProfileID
+            )
+        }
+        let incoming = ShellStateSnapshot(
+            contractVersion: authoritative.contractVersion,
+            windowID: authoritative.windowID,
+            focusedSpaceID: authoritative.focusedSpaceID,
+            focusedTabID: authoritative.focusedTabID,
+            focusedPaneID: authoritative.focusedPaneID,
+            spaces: incomingSpaces,
+            panes: authoritative.panes,
+            paneSlots: authoritative.paneSlots,
+            contents: authoritative.contents,
+            quickTerminal: authoritative.quickTerminal
+        )
+
+        let merged = AlanShellPublishedStateMerger.merge(
+            authoritative: authoritative,
+            incoming: incoming
+        )
+
+        expect(
+            merged.space(spaceID: "space_main")?.selectedTabID == "tab_2",
+            "published state merge must preserve inactive Space tab selection from authoritative state"
+        )
+        expect(
+            merged.space(spaceID: "space_2")?.selectedTabID == "tab_3",
+            "published state merge must keep the focused Space selection aligned with incoming focus"
+        )
+    }
+
     private static func verifiesPublishedStateMergePreservesContentContainers() {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PublishedStateMerge-\(UUID().uuidString).md")
@@ -5407,6 +5453,35 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesSpaceSelectionRestoresRememberedTab() {
+        let controller = makeController()
+        _ = controller.openTerminalTab(title: "Second")
+
+        expect(
+            controller.selectedSpaceID == "space_main",
+            "test setup must start in the main space"
+        )
+        expect(
+            controller.selectedTabID == "tab_2",
+            "test setup must select the second tab in the main space"
+        )
+
+        _ = controller.createTerminalSpace(title: "Other", workingDirectory: "/tmp")
+        expect(controller.selectedSpaceID == "space_2", "test setup must switch to the second space")
+
+        controller.select(spaceID: "space_main")
+
+        expect(controller.selectedSpaceID == "space_main", "space selection must return to the main space")
+        expect(
+            controller.selectedTabID == "tab_2",
+            "returning to a space must restore its remembered selected tab instead of the first tab"
+        )
+        expect(
+            controller.shellState.focusedPaneID == "pane_2",
+            "restored space tab selection must commit authoritative pane focus"
+        )
+    }
+
     private static func verifiesShellActionSpaceSelectionReportsMissingTargets() {
         let controller = makeController()
         let selectedSpaceBefore = controller.selectedSpaceID
@@ -5420,6 +5495,65 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedSpaceID == selectedSpaceBefore,
             "missing numeric space shortcuts must not change the selected space"
+        )
+    }
+
+    private static func verifiesWorkspaceManifestRestoresInactiveSpaceSelection() {
+        let windowID = "space_selection_restore_\(UUID().uuidString)"
+        let url = manifestURL("space-selection-restore")
+        let store = ShellWorkspaceManifestStore(manifestURL: url)
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/tmp",
+                now: Date(timeIntervalSince1970: 120)
+            )
+        )
+
+        _ = controller.openTerminalTab(title: "Main Second")
+        _ = controller.createTerminalSpace(title: "Second Space", workingDirectory: "/tmp")
+
+        guard let savedManifest = decodeManifest(at: url) else {
+            fail("space selection changes must persist workspace manifest")
+        }
+        expect(
+            savedManifest.spaces.first { $0.spaceID == "space_main" }?.selectedTabID == "tab_2",
+            "manifest must remember the selected tab for an inactive space"
+        )
+        expect(
+            savedManifest.spaces.first { $0.spaceID == "space_2" }?.selectedTabID == "tab_3",
+            "manifest must remember the selected tab for the active space"
+        )
+        expect(savedManifest.selectedSpaceID == "space_2", "manifest must keep active restart space")
+        expect(savedManifest.selectedTabID == "tab_3", "manifest must keep active restart tab")
+
+        let restoredContext = ShellWindowContext.make(
+            windowID: windowID,
+            terminalRuntimeRegistry: TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        )
+        let restored = ShellHostController.live(
+            windowContext: restoredContext,
+            startupMode: .workspaceManifest,
+            workspaceManifestURL: url,
+            defaultWorkingDirectory: "/tmp",
+            now: Date(timeIntervalSince1970: 121)
+        )
+
+        expect(restored.selectedSpaceID == "space_2", "restart must restore globally selected space")
+        expect(restored.selectedTabID == "tab_3", "restart must restore globally selected tab")
+
+        restored.select(spaceID: "space_main")
+
+        expect(restored.selectedSpaceID == "space_main", "restored controller must switch to inactive space")
+        expect(
+            restored.selectedTabID == "tab_2",
+            "restored inactive space must use its remembered tab instead of the first tab"
+        )
+        expect(
+            restored.shellState.focusedPaneID == "pane_2",
+            "restored inactive space tab selection must commit pane focus"
         )
     }
 

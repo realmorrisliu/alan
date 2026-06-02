@@ -40,6 +40,97 @@ enum ShellSettingsSectionID: String, CaseIterable, Equatable {
     }
 }
 
+enum ShellSettingsNavigationGroup: String, CaseIterable, Equatable, Identifiable {
+    case general
+    case terminal
+    case agent
+    case system
+
+    static let defaultOrder: [ShellSettingsNavigationGroup] = [
+        .general,
+        .terminal,
+        .agent,
+        .system,
+    ]
+
+    var id: ShellSettingsNavigationGroup { self }
+
+    var title: String {
+        switch self {
+        case .general:
+            return "General"
+        case .terminal:
+            return "Terminal"
+        case .agent:
+            return "Agent"
+        case .system:
+            return "System"
+        }
+    }
+
+    var systemName: String {
+        switch self {
+        case .general:
+            return "slider.horizontal.3"
+        case .terminal:
+            return "terminal"
+        case .agent:
+            return "sparkles"
+        case .system:
+            return "gearshape.2"
+        }
+    }
+}
+
+enum ShellSettingsGroupSectionID: String, Equatable, Identifiable {
+    case interface
+    case profiles
+    case localIdentity
+    case agent
+    case connection
+    case runtimeDefaults
+    case skills
+    case skillSources
+    case entryPoints
+    case app
+    case localRuntime
+    case storage
+    case diagnostics
+
+    var id: ShellSettingsGroupSectionID { self }
+
+    var title: String {
+        switch self {
+        case .interface:
+            return "Interface"
+        case .profiles:
+            return "Profiles"
+        case .localIdentity:
+            return "Local Identity"
+        case .agent:
+            return "Agent"
+        case .connection:
+            return "Connection"
+        case .runtimeDefaults:
+            return "Runtime Defaults"
+        case .skills:
+            return "Skills"
+        case .skillSources:
+            return "Skill Sources"
+        case .entryPoints:
+            return "Entry Points"
+        case .app:
+            return "App"
+        case .localRuntime:
+            return "Local Runtime"
+        case .storage:
+            return "Storage"
+        case .diagnostics:
+            return "Diagnostics"
+        }
+    }
+}
+
 enum ShellSettingsRowMutability: Equatable {
     case editable
     case readOnly
@@ -93,6 +184,33 @@ struct ShellSettingsSectionModel: Identifiable, Equatable {
     }
 }
 
+struct ShellSettingsNavigationGroupModel: Identifiable, Equatable {
+    let id: ShellSettingsNavigationGroup
+    let sections: [ShellSettingsGroupSectionModel]
+
+    var title: String { id.title }
+    var systemName: String { id.systemName }
+
+    var rows: [ShellSettingsRowModel] {
+        sections.flatMap(\.rows)
+    }
+
+    var visibleText: [String] {
+        [title] + sections.flatMap(\.visibleText)
+    }
+}
+
+struct ShellSettingsGroupSectionModel: Identifiable, Equatable {
+    let id: ShellSettingsGroupSectionID
+    let rows: [ShellSettingsRowModel]
+
+    var title: String { id.title }
+
+    var visibleText: [String] {
+        [title] + rows.flatMap(\.visibleText)
+    }
+}
+
 struct ShellSettingsSurfaceSnapshot: Equatable {
     let sections: [ShellSettingsSectionModel]
 
@@ -126,24 +244,171 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         sections.flatMap(\.visibleText)
     }
 
+    var navigationGroups: [ShellSettingsNavigationGroupModel] {
+        return ShellSettingsNavigationGroup.defaultOrder.map { group in
+            ShellSettingsNavigationGroupModel(
+                id: group,
+                sections: groupSections(for: group)
+            )
+        }
+    }
+
+    private var allRows: [ShellSettingsRowModel] {
+        sections.flatMap(\.rows)
+    }
+
+    private var rowsByID: [String: ShellSettingsRowModel] {
+        Dictionary(uniqueKeysWithValues: allRows.map { ($0.id, $0) })
+    }
+
+    private func groupSections(
+        for group: ShellSettingsNavigationGroup
+    ) -> [ShellSettingsGroupSectionModel] {
+        let rowLookup = rowsByID
+        switch group {
+        case .general:
+            return [
+                section(
+                    .interface,
+                    rowIDs: ["appearance", "sidebar", "inactiveSplitDimming"],
+                    rowsByID: rowLookup
+                ),
+            ].compactMap { $0 }
+        case .terminal:
+            return [
+                section(
+                    .profiles,
+                    rows: rows(
+                        rowIDs: [
+                            "terminalProfilesDefault",
+                            "terminalProfilesCreate",
+                            "terminalProfilesRecovery",
+                        ],
+                        matchingPrefix: "terminalProfile.",
+                        rowsByID: rowLookup
+                    )
+                ),
+                section(
+                    .localIdentity,
+                    rows: rows(
+                        rowIDs: [
+                            "terminalAccountProvision",
+                            "terminalAccountLoginBoundary",
+                            "terminalProfilesSudoGuidance",
+                        ],
+                        matchingPrefix: "terminalAccount.",
+                        rowsByID: rowLookup
+                    )
+                ),
+            ].compactMap { $0 }
+        case .agent:
+            return [
+                ShellSettingsGroupSectionModel(id: .agent, rows: [Self.agentSelectorRow()]),
+                section(
+                    .connection,
+                    rowIDs: [
+                        "accountsUnavailable",
+                        "selectedProfile",
+                        "provider",
+                        "model",
+                        "credential",
+                        "accountActions",
+                    ],
+                    rowsByID: rowLookup
+                ),
+                section(
+                    .runtimeDefaults,
+                    rowIDs: ["governance", "reasoningEffort", "streamingMode", "recoveryMode"],
+                    rowsByID: rowLookup
+                ),
+                section(
+                    .skills,
+                    rowIDs: [
+                        "capabilitiesUnavailable",
+                        "enabledSkills",
+                        "implicitInvocation",
+                        "unavailableSkills",
+                    ],
+                    rowsByID: rowLookup
+                ),
+                section(.skillSources, rowIDs: ["publicSkills"], rowsByID: rowLookup),
+                section(.entryPoints, rowIDs: ["cliTool"], rowsByID: rowLookup),
+            ].compactMap { $0 }
+        case .system:
+            return [
+                section(.app, rowIDs: ["appIdentity", "installChannel", "updates"], rowsByID: rowLookup),
+                section(
+                    .localRuntime,
+                    rowIDs: ["daemonEndpoint", "applicationSupport", "shellControl"],
+                    rowsByID: rowLookup
+                ),
+                section(.storage, rowIDs: ["dataRoot"], rowsByID: rowLookup),
+                section(
+                    .diagnostics,
+                    rowIDs: ["performanceDiagnostics", "performanceDiagnosticsExport"],
+                    rowsByID: rowLookup
+                ),
+            ].compactMap { $0 }
+        }
+    }
+
+    private func section(
+        _ id: ShellSettingsGroupSectionID,
+        rowIDs: [String],
+        rowsByID: [String: ShellSettingsRowModel]
+    ) -> ShellSettingsGroupSectionModel? {
+        section(id, rows: rowIDs.compactMap { rowsByID[$0] })
+    }
+
+    private func section(
+        _ id: ShellSettingsGroupSectionID,
+        rows: [ShellSettingsRowModel]
+    ) -> ShellSettingsGroupSectionModel? {
+        guard !rows.isEmpty else { return nil }
+        return ShellSettingsGroupSectionModel(id: id, rows: rows)
+    }
+
+    private func rows(
+        rowIDs: [String],
+        matchingPrefix prefix: String,
+        rowsByID: [String: ShellSettingsRowModel]
+    ) -> [ShellSettingsRowModel] {
+        let explicitRows = rowIDs.compactMap { rowsByID[$0] }
+        let dynamicRows = allRows.filter { $0.id.hasPrefix(prefix) }
+        return explicitRows + dynamicRows
+    }
+
+    private static func agentSelectorRow() -> ShellSettingsRowModel {
+        ShellSettingsRowModel(
+            id: "agentSelector",
+            systemName: "sparkles",
+            title: "Agent",
+            detail: "Alan is the currently configurable agent.",
+            value: "Alan"
+        )
+    }
+
     private static func interfaceRows() -> [ShellSettingsRowModel] {
         [
             ShellSettingsRowModel(
                 id: "appearance",
                 systemName: "circle.lefthalf.filled",
                 title: "Appearance",
+                detail: "Follow the system appearance or pin Alan to light or dark.",
                 mutability: .editable
             ),
             ShellSettingsRowModel(
                 id: "sidebar",
                 systemName: "sidebar.left",
                 title: "Sidebar",
+                detail: "Show the workspace sidebar in shell windows.",
                 mutability: .editable
             ),
             ShellSettingsRowModel(
                 id: "inactiveSplitDimming",
                 systemName: "rectangle.split.2x1",
                 title: "Inactive split dimming",
+                detail: "Dim inactive terminal splits so the focused pane stays prominent.",
                 mutability: .editable
             ),
         ]
@@ -506,7 +771,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             ShellSettingsRowModel(
                 id: "publicSkills",
                 systemName: "folder.badge.gearshape",
-                title: "Public skills",
+                title: "Skill package path",
                 detail: "Package install root for this channel.",
                 value: local.globalSkillsDisplayPath
             ),
