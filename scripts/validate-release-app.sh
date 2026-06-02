@@ -29,9 +29,24 @@ fail() {
     exit 1
 }
 
+require_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        fail "required command '$1' was not found"
+    fi
+}
+
 require_executable() {
     local path="$1"
     [[ -x "$path" ]] || fail "expected executable at $path"
+}
+
+require_arm64_macho() {
+    local path="$1"
+    local archs
+
+    [[ -f "$path" ]] || fail "Mach-O binary is missing: $path"
+    archs="$(lipo -archs "$path")" || fail "could not inspect architectures for $path"
+    [[ "$archs" == "arm64" ]] || fail "$path must be arm64-only; found: $archs"
 }
 
 require_developer_id_signature() {
@@ -88,8 +103,16 @@ require_manifest_checksum() {
     fi
 }
 
+require_command codesign
+require_command lipo
+require_command shasum
+if [[ "${ALAN_VALIDATE_NOTARIZATION:-0}" == "1" ]]; then
+    require_command xcrun
+fi
+
 [[ -d "$APP_BUNDLE" ]] || fail "app bundle not found: $APP_BUNDLE"
-require_executable "$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
+APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
+require_executable "$APP_EXECUTABLE"
 require_executable "$ALAN_BIN"
 [[ -d "$SPARKLE_FRAMEWORK" ]] || fail "Sparkle.framework not found in release app"
 
@@ -99,11 +122,19 @@ SPARKLE_AUTOUPDATE="$SPARKLE_VERSION_DIR/Autoupdate"
 SPARKLE_UPDATER_APP="$SPARKLE_VERSION_DIR/Updater.app"
 SPARKLE_DOWNLOADER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
 SPARKLE_INSTALLER_XPC="$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+SPARKLE_FRAMEWORK_BIN="$SPARKLE_VERSION_DIR/Sparkle"
+SPARKLE_UPDATER_BIN="$SPARKLE_UPDATER_APP/Contents/MacOS/Updater"
+SPARKLE_DOWNLOADER_BIN="$SPARKLE_DOWNLOADER_XPC/Contents/MacOS/Downloader"
+SPARKLE_INSTALLER_BIN="$SPARKLE_INSTALLER_XPC/Contents/MacOS/Installer"
 
 require_executable "$SPARKLE_AUTOUPDATE"
 [[ -d "$SPARKLE_UPDATER_APP" ]] || fail "Sparkle Updater.app not found in release app"
 [[ -d "$SPARKLE_DOWNLOADER_XPC" ]] || fail "Sparkle Downloader.xpc not found in release app"
 [[ -d "$SPARKLE_INSTALLER_XPC" ]] || fail "Sparkle Installer.xpc not found in release app"
+require_executable "$SPARKLE_FRAMEWORK_BIN"
+require_executable "$SPARKLE_UPDATER_BIN"
+require_executable "$SPARKLE_DOWNLOADER_BIN"
+require_executable "$SPARKLE_INSTALLER_BIN"
 [[ -f "$MANIFEST" ]] || fail "package manifest not found: $MANIFEST"
 if [[ -e "$APP_BUNDLE/Contents/Resources/bin/alan-tui" ||
     -e "$APP_BUNDLE/Contents/Resources/bin/alan-dev-tui" ]]; then
@@ -129,6 +160,14 @@ if [[ "$manifest_version" != "$repo_version" ]]; then
     fail "manifest version $manifest_version does not match Cargo.toml version $repo_version"
 fi
 require_manifest_checksum "$ALAN_CLI_NAME" "$ALAN_BIN"
+
+require_arm64_macho "$APP_EXECUTABLE"
+require_arm64_macho "$ALAN_BIN"
+require_arm64_macho "$SPARKLE_AUTOUPDATE"
+require_arm64_macho "$SPARKLE_FRAMEWORK_BIN"
+require_arm64_macho "$SPARKLE_UPDATER_BIN"
+require_arm64_macho "$SPARKLE_DOWNLOADER_BIN"
+require_arm64_macho "$SPARKLE_INSTALLER_BIN"
 
 require_developer_id_signature "$ALAN_BIN"
 require_developer_id_signature "$SPARKLE_AUTOUPDATE"

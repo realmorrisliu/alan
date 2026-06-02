@@ -15,6 +15,9 @@ alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
+CARGO_BUILD_TARGET="aarch64-apple-darwin"
+CARGO_RELEASE_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/alan"
+RELEASE_ARCH="arm64"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
@@ -90,6 +93,57 @@ sign_path() {
     codesign "${args[@]}" "$path"
 }
 
+thin_macho_to_arm64() {
+    local path="$1"
+    local archs
+    local mode
+    local output_path
+
+    [[ -f "$path" ]] || fail "Mach-O binary is missing: $path"
+    archs="$(lipo -archs "$path")" || fail "could not inspect architectures for $path"
+    if [[ " $archs " == *" arm64 "* && "$archs" != "arm64" ]]; then
+        mode="$(stat -f '%Lp' "$path")" || fail "could not inspect file mode for $path"
+        output_path="$(mktemp "${path}.arm64.XXXXXX")" ||
+            fail "could not create temporary arm64 output for $path"
+        if ! lipo -thin arm64 "$path" -output "$output_path"; then
+            rm -f "$output_path"
+            fail "could not thin $path to arm64"
+        fi
+        chmod "$mode" "$output_path" || {
+            rm -f "$output_path"
+            fail "could not preserve file mode for $path"
+        }
+        mv "$output_path" "$path" || {
+            rm -f "$output_path"
+            fail "could not replace $path with arm64 output"
+        }
+    elif [[ "$archs" != "arm64" ]]; then
+        fail "$path does not contain arm64 architecture; found: $archs"
+    fi
+}
+
+thin_sparkle_to_arm64() {
+    local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+    local version_dir
+    local binaries
+
+    [[ -d "$framework" ]] || fail "Sparkle.framework was not embedded in $ALAN_APP_BUNDLE_NAME"
+    version_dir="$(alan_sparkle_version_dir "$framework")" ||
+        fail "Sparkle.framework version directory was not found in $framework"
+
+    binaries=(
+        "$version_dir/Autoupdate"
+        "$version_dir/Updater.app/Contents/MacOS/Updater"
+        "$version_dir/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
+        "$version_dir/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+        "$version_dir/Sparkle"
+    )
+
+    for binary in "${binaries[@]}"; do
+        thin_macho_to_arm64 "$binary"
+    done
+}
+
 sign_sparkle_code() {
     local framework="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
     local version_dir
@@ -121,6 +175,7 @@ require_command cargo
 require_command xcodebuild
 require_command codesign
 require_command ditto
+require_command lipo
 require_command shasum
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then
     require_command security
@@ -129,8 +184,9 @@ require_signing_identity
 
 mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 
-printf 'Building release alan binary for %s channel...\n' "$ALAN_CHANNEL_ID"
-cargo build --release -p alan --target-dir "$CARGO_TARGET_DIR"
+printf 'Building release alan binary for %s channel (%s)...\n' \
+    "$ALAN_CHANNEL_ID" "$CARGO_BUILD_TARGET"
+cargo build --release -p alan --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
 
 if [[ -e "$APP_BUNDLE" ]]; then
     printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
@@ -144,6 +200,7 @@ xcodebuild \
     -configuration Release \
     -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
+    ARCHS="$RELEASE_ARCH" \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
     PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
@@ -156,12 +213,18 @@ fi
 
 printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
-cp "$CARGO_TARGET_DIR/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+cp "$CARGO_RELEASE_BIN" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+
+printf 'Verifying embedded alan binary architecture...\n'
+thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+
+printf 'Thinning Sparkle framework to arm64...\n'
+thin_sparkle_to_arm64
 
 printf 'Signing Sparkle framework and helper...\n'
 sign_sparkle_code

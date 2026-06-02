@@ -1104,6 +1104,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
     let title: String
     let attention: ShellAttentionState
     let tabs: [ShellTab]
+    let selectedTabID: String?
     let terminalProfileID: String?
 
     var id: String { spaceID }
@@ -1113,6 +1114,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         case title
         case attention
         case tabs
+        case selectedTabID = "selected_tab_id"
         case terminalProfileID = "terminal_profile_id"
     }
 
@@ -1121,12 +1123,14 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         title: String,
         attention: ShellAttentionState,
         tabs: [ShellTab],
+        selectedTabID: String? = nil,
         terminalProfileID: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
         self.attention = attention
         self.tabs = tabs
+        self.selectedTabID = selectedTabID
         self.terminalProfileID = terminalProfileID
     }
 
@@ -1137,6 +1141,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
             title: try container.decode(String.self, forKey: .title),
             attention: try container.decode(ShellAttentionState.self, forKey: .attention),
             tabs: try container.decode([ShellTab].self, forKey: .tabs),
+            selectedTabID: try container.decodeIfPresent(String.self, forKey: .selectedTabID),
             terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
         )
     }
@@ -1147,6 +1152,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
     let title: String
     let attention: ShellAttentionState
     let tabs: [ShellContentTab]
+    let selectedTabID: String?
     let terminalProfileID: String?
 
     var id: String { spaceID }
@@ -1156,6 +1162,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         case title
         case attention
         case tabs
+        case selectedTabID = "selected_tab_id"
         case terminalProfileID = "terminal_profile_id"
     }
 
@@ -1164,12 +1171,14 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         title: String,
         attention: ShellAttentionState,
         tabs: [ShellContentTab],
+        selectedTabID: String? = nil,
         terminalProfileID: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
         self.attention = attention
         self.tabs = tabs
+        self.selectedTabID = selectedTabID
         self.terminalProfileID = terminalProfileID
     }
 
@@ -1180,6 +1189,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
             title: try container.decode(String.self, forKey: .title),
             attention: try container.decode(ShellAttentionState.self, forKey: .attention),
             tabs: try container.decode([ShellContentTab].self, forKey: .tabs),
+            selectedTabID: try container.decodeIfPresent(String.self, forKey: .selectedTabID),
             terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
         )
     }
@@ -1272,6 +1282,32 @@ extension ShellTab {
 }
 
 extension ShellSpace {
+    var resolvedSelectedTabID: String? {
+        if let selectedTabID,
+           tabs.contains(where: { $0.tabID == selectedTabID })
+        {
+            return selectedTabID
+        }
+        return tabs.first?.tabID
+    }
+
+    func repairingSelectedTabID(preferredTabID: String? = nil) -> ShellSpace {
+        let resolvedPreferred = preferredTabID.flatMap { candidate in
+            tabs.contains(where: { $0.tabID == candidate }) ? candidate : nil
+        }
+        let resolvedExisting = selectedTabID.flatMap { candidate in
+            tabs.contains(where: { $0.tabID == candidate }) ? candidate : nil
+        }
+        return ShellSpace(
+            spaceID: spaceID,
+            title: title,
+            attention: attention,
+            tabs: tabs,
+            selectedTabID: resolvedPreferred ?? resolvedExisting ?? tabs.first?.tabID,
+            terminalProfileID: terminalProfileID
+        )
+    }
+
     var pinnedTabs: [ShellTab] {
         tabs.filter(\.isPinned)
     }
@@ -1287,6 +1323,34 @@ extension ShellSpace {
         case .unpinned:
             return unpinnedTabs
         }
+    }
+}
+
+extension ShellContentSpace {
+    var resolvedSelectedTabID: String? {
+        if let selectedTabID,
+           tabs.contains(where: { $0.tabID == selectedTabID })
+        {
+            return selectedTabID
+        }
+        return tabs.first?.tabID
+    }
+
+    func repairingSelectedTabID(preferredTabID: String? = nil) -> ShellContentSpace {
+        let resolvedPreferred = preferredTabID.flatMap { candidate in
+            tabs.contains(where: { $0.tabID == candidate }) ? candidate : nil
+        }
+        let resolvedExisting = selectedTabID.flatMap { candidate in
+            tabs.contains(where: { $0.tabID == candidate }) ? candidate : nil
+        }
+        return ShellContentSpace(
+            spaceID: spaceID,
+            title: title,
+            attention: attention,
+            tabs: tabs,
+            selectedTabID: resolvedPreferred ?? resolvedExisting ?? tabs.first?.tabID,
+            terminalProfileID: terminalProfileID
+        )
     }
 }
 
@@ -1438,6 +1502,7 @@ extension ShellContentStateSnapshot {
                         isPinned: tab.isPinned
                     )
                 },
+                selectedTabID: space.resolvedSelectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1549,6 +1614,7 @@ extension ShellContentStateSnapshot {
                     in: materializedPaneSlots.filter { $0.spaceID == space.spaceID }
                 ),
                 tabs: tabs,
+                selectedTabID: space.resolvedSelectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -1575,6 +1641,10 @@ extension ShellContentStateSnapshot {
         let resolvedFocusedPaneID = focusedPaneSlotID.flatMap {
             focusedTabPaneIDs.contains($0) ? $0 : nil
         } ?? focusedTab?.paneTree.paneIDs.first
+        let repairedSpaces = materializedSpaces.map { space in
+            let preferredTabID = space.spaceID == resolvedFocusedSpaceID ? resolvedFocusedTabID : nil
+            return space.repairingSelectedTabID(preferredTabID: preferredTabID)
+        }
 
         return ShellStateSnapshot(
             contractVersion: Self.currentContractVersion,
@@ -1582,7 +1652,7 @@ extension ShellContentStateSnapshot {
             focusedSpaceID: resolvedFocusedSpaceID,
             focusedTabID: resolvedFocusedTabID,
             focusedPaneID: resolvedFocusedPaneID,
-            spaces: materializedSpaces,
+            spaces: repairedSpaces,
             panes: materializedPanes,
             paneSlots: materializedPaneSlots,
             contents: materializedContents

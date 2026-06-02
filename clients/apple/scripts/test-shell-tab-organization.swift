@@ -13,6 +13,9 @@ private enum ShellTabOrganizationTests {
         try verifiesCrossSectionPinAndUnpinPreservePaneIdentity()
         try verifiesMoveCurrentTabToSpaceFollowsSelection()
         try verifiesMoveNonCurrentTabToSpaceDoesNotFollowSelection()
+        try verifiesMoveCurrentTabToSpaceRepairsSpaceLocalSelection()
+        try verifiesMoveNonCurrentTabToSpacePreservesDestinationSelection()
+        try verifiesClosingRememberedBackgroundTabRepairsSpaceSelection()
         try verifiesMissingMoveTargetIsRejectedWithoutStateChange()
         print("Shell tab organization tests passed.")
     }
@@ -102,6 +105,64 @@ private enum ShellTabOrganizationTests {
         expect(moved.focusedSpaceID == focusedBefore.spaceID, "moving a non-current tab must keep current space")
         expect(moved.focusedTabID == focusedBefore.tabID, "moving a non-current tab must keep current tab")
         expect(moved.focusedPaneID == focusedBefore.paneID, "moving a non-current tab must keep current pane")
+    }
+
+    private static func verifiesMoveCurrentTabToSpaceRepairsSpaceLocalSelection() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.openingTerminalTab(in: "space_main", title: "Two", workingDirectory: "/tmp").state
+        let movedTabID = try requireFocusedTabID(in: state)
+        let focusedPaneID = try requireFocusedPaneID(in: state)
+        state = state.creatingTerminalSpace(title: "Target", workingDirectory: "/tmp").state
+
+        let moved = try state
+            .focusingPane(focusedPaneID).state
+            .movingTabToSpace(tabID: movedTabID, targetSpaceID: "space_2").state
+
+        expect(
+            moved.space(spaceID: "space_main")?.selectedTabID == "tab_main",
+            "moving the remembered selected tab away must repair the source space selection"
+        )
+        expect(
+            moved.space(spaceID: "space_2")?.selectedTabID == movedTabID,
+            "moving the current tab must make the destination space remember it"
+        )
+    }
+
+    private static func verifiesMoveNonCurrentTabToSpacePreservesDestinationSelection() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.openingTerminalTab(in: "space_main", title: "Two", workingDirectory: "/tmp").state
+        let movedTabID = try requireFocusedTabID(in: state)
+        state = state.creatingTerminalSpace(title: "Target", workingDirectory: "/tmp").state
+        state = try state.focusingPane("pane_1").state
+
+        let moved = try state.movingTabToSpace(tabID: movedTabID, targetSpaceID: "space_2").state
+
+        expect(
+            moved.space(spaceID: "space_main")?.selectedTabID == "tab_main",
+            "source space selection must stay repaired to the focused tab after moving a background tab"
+        )
+        expect(
+            moved.space(spaceID: "space_2")?.selectedTabID == "tab_3",
+            "moving a non-current tab must preserve the destination space remembered tab"
+        )
+    }
+
+    private static func verifiesClosingRememberedBackgroundTabRepairsSpaceSelection() throws {
+        var state = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
+        state = try state.openingTerminalTab(in: "space_main", title: "Two", workingDirectory: "/tmp").state
+        let closedTabID = try requireFocusedTabID(in: state)
+        state = state.creatingTerminalSpace(title: "Target", workingDirectory: "/tmp").state
+
+        let closed = try state.closingTab(closedTabID).state
+
+        expect(
+            closed.space(spaceID: "space_main")?.selectedTabID == "tab_main",
+            "closing an inactive space's remembered tab must repair to the first retained tab"
+        )
+        expect(
+            closed.focusedSpaceID == "space_2" && closed.focusedTabID == "tab_3",
+            "closing a background remembered tab must preserve current focus"
+        )
     }
 
     private static func verifiesMissingMoveTargetIsRejectedWithoutStateChange() throws {

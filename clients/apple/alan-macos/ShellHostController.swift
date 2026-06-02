@@ -871,13 +871,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func select(spaceID: String) {
         guard let paneID = targetPaneID(forSpaceID: spaceID) else {
             guard shellState.space(spaceID: spaceID) != nil else { return }
+            let spaces = shellState.spaces.map { space in
+                guard space.spaceID == spaceID else { return space }
+                return ShellSpace(
+                    spaceID: space.spaceID,
+                    title: space.title,
+                    attention: space.attention,
+                    tabs: space.tabs,
+                    selectedTabID: nil,
+                    terminalProfileID: space.terminalProfileID
+                )
+            }
             shellState = ShellStateSnapshot(
                 contractVersion: shellState.contractVersion,
                 windowID: shellState.windowID,
                 focusedSpaceID: spaceID,
                 focusedTabID: nil,
                 focusedPaneID: nil,
-                spaces: shellState.spaces,
+                spaces: spaces,
                 panes: shellState.panes,
                 paneSlots: shellState.paneSlots,
                 contents: shellState.contents,
@@ -970,7 +981,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return nil
         }
         let targetTab =
-            space.tabs.first { tab in
+            space.selectedTabID.flatMap { selectedTabID in
+                space.tabs.first { $0.tabID == selectedTabID }
+            }
+            ?? space.tabs.first { tab in
                 guard let focusedPaneID = shellState.focusedPaneID else { return false }
                 return tab.contains(paneID: focusedPaneID)
             }
@@ -1093,6 +1107,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return false
         }
+    }
+
+    @discardableResult
+    func closeQuickTerminalAfterTerminalRuntimeExit() -> Bool {
+        applyCloseQuickTerminalMutation()
     }
 
     @discardableResult
@@ -2342,6 +2361,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 title: space.title,
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
                 tabs: tabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -2359,6 +2379,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let focusedPane = resolvedFocusedPaneID.flatMap { candidate in
             panes.first(where: { $0.paneID == candidate })
         }
+        let repairedSpaces = spaces.map { space in
+            space.repairingSelectedTabID(
+                preferredTabID: focusedPane?.spaceID == space.spaceID ? focusedPane?.tabID : nil
+            )
+        }
 
         shellState = ShellStateSnapshot(
             contractVersion: shellState.contractVersion,
@@ -2366,7 +2391,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             focusedSpaceID: focusedPane?.spaceID ?? spaces.first?.spaceID,
             focusedTabID: focusedPane?.tabID ?? spaces.first?.tabs.first?.tabID,
             focusedPaneID: resolvedFocusedPaneID,
-            spaces: spaces,
+            spaces: repairedSpaces,
             panes: panes,
             paneSlots: shellState.paneSlots,
             contents: shellState.contents,
@@ -2438,6 +2463,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 title: space.title,
                 attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
+                selectedTabID: space.selectedTabID,
                 terminalProfileID: space.terminalProfileID
             )
         }
@@ -2742,13 +2768,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return ShellContentWorkspaceSpaceRecord(
                 spaceID: space.spaceID,
                 title: space.title,
-                    order: existingSpace?.order ?? index,
-                    createdAt: existingSpace?.createdAt ?? now,
-                    updatedAt: now,
-                    tabs: tabRecords,
-                    terminalProfileID: space.terminalProfileID
-                )
-            }
+                order: existingSpace?.order ?? index,
+                createdAt: existingSpace?.createdAt ?? now,
+                updatedAt: now,
+                selectedTabID: space.resolvedSelectedTabID,
+                tabs: tabRecords,
+                terminalProfileID: space.terminalProfileID
+            )
+        }
 
         var manifest = ShellContentWorkspaceManifest(
             schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
@@ -3102,6 +3129,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    @discardableResult
+    func closePaneAfterTerminalRuntimeExit(paneID: String) -> Bool {
+        if shellState.quickTerminal?.paneID == paneID {
+            return closeQuickTerminalAfterTerminalRuntimeExit()
+        }
+        return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
     private func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {

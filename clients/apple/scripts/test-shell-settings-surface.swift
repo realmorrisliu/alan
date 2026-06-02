@@ -31,6 +31,9 @@ struct ShellSettingsSurfaceTestRunner {
             try testUnavailableRemoteSummariesStayCompact()
             try testTerminalProfilesAndAccountsStayLocalAndRedacted()
             try testPerformanceDiagnosticsRowsAreCompactAndLocal()
+            try testNavigationGroupsMapTaskOrientedRows()
+            try testNavigationGroupsKeepTerminalIdentityOutOfAgent()
+            try testNavigationGroupsPlaceAgentAndSystemRows()
             print("Shell settings surface tests passed.")
         } catch {
             fputs("Shell settings surface tests failed: \(error)\n", stderr)
@@ -59,6 +62,15 @@ private func testDefaultSectionOrderAndInterfaceMutability() throws {
     try expect(
         interface.rows.allSatisfy { $0.mutability == .editable },
         "interface preferences must remain directly editable"
+    )
+    try expect(
+        interface.rows.allSatisfy { row in
+            guard let detail = row.detail?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                return false
+            }
+            return !detail.isEmpty && detail.count <= 80
+        },
+        "interface preferences must include concise secondary copy for native settings rows"
     )
 }
 
@@ -387,6 +399,126 @@ private func testPerformanceDiagnosticsRowsAreCompactAndLocal() throws {
     )
 }
 
+private func testNavigationGroupsMapTaskOrientedRows() throws {
+    let snapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: .unavailable(reason: "Daemon unavailable"),
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles()
+    )
+    let groups = snapshot.navigationGroups
+
+    try expect(
+        groups.map(\.id) == [.general, .terminal, .agent, .system],
+        "settings navigation groups must use General, Terminal, Agent, and System"
+    )
+
+    let general = try requireNavigationGroup(.general, in: snapshot)
+    try expect(
+        general.sections.map(\.id) == [.interface],
+        "General must contain only Interface preferences"
+    )
+    try expect(
+        general.rows.map(\.id) == ["appearance", "sidebar", "inactiveSplitDimming"],
+        "General must expose the existing direct interface controls"
+    )
+
+    let terminal = try requireNavigationGroup(.terminal, in: snapshot)
+    try expect(
+        terminal.sections.map(\.id) == [.profiles, .localIdentity],
+        "Terminal must group terminal profiles and local terminal identity"
+    )
+}
+
+private func testNavigationGroupsKeepTerminalIdentityOutOfAgent() throws {
+    let accountPlan = ManagedTerminalAccountPlanner.plan(
+        request: ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris"),
+        state: ManagedTerminalAccountState(
+            account: .missing,
+            sudoers: .missing,
+            terminalProfile: .missing,
+            verification: .notRun
+        )
+    )
+    let snapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: .unavailable(reason: "Daemon unavailable"),
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles(),
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: [accountPlan])
+    )
+    let terminal = try requireNavigationGroup(.terminal, in: snapshot)
+    let agent = try requireNavigationGroup(.agent, in: snapshot)
+
+    try expect(
+        terminal.rows.map(\.id).contains("terminalProfilesDefault"),
+        "Terminal must contain the default Terminal Profile row"
+    )
+    try expect(
+        terminal.rows.contains { $0.id.hasPrefix("terminalAccount.") },
+        "Terminal must contain Managed Terminal Account rows"
+    )
+    try expect(
+        terminal.rows.map(\.id).contains("terminalProfilesSudoGuidance"),
+        "Terminal must contain sudo behavior guidance"
+    )
+    try expect(
+        !agent.rows.contains { $0.id.hasPrefix("terminalProfile") || $0.id.hasPrefix("terminalAccount") },
+        "Agent must not contain local terminal identity rows"
+    )
+}
+
+private func testNavigationGroupsPlaceAgentAndSystemRows() throws {
+    let snapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: .unavailable(reason: "Daemon unavailable"),
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles(),
+        diagnostics: ShellSettingsDiagnosticsSummary(
+            isEnabled: false,
+            retainedEventCount: 24,
+            stutterMarkerCount: 2,
+            lastExportURL: nil
+        )
+    )
+    let agent = try requireNavigationGroup(.agent, in: snapshot)
+    let system = try requireNavigationGroup(.system, in: snapshot)
+
+    try expect(
+        agent.rows.map(\.id).contains("agentSelector"),
+        "Agent must expose the currently configurable Alan agent"
+    )
+    try expect(
+        agent.rows.map(\.id).contains("accountsUnavailable"),
+        "Agent must contain compact provider connection unavailable state"
+    )
+    try expect(
+        ["governance", "reasoningEffort", "streamingMode", "recoveryMode"]
+            .allSatisfy(agent.rows.map(\.id).contains),
+        "Agent must contain runtime default rows"
+    )
+    try expect(
+        agent.rows.map(\.id).contains("capabilitiesUnavailable"),
+        "Agent must contain compact skill catalog unavailable state"
+    )
+    try expect(
+        agent.rows.contains { $0.id == "publicSkills" && $0.title == "Skill package path" },
+        "Agent must contain the renamed skill package path row"
+    )
+    try expect(
+        agent.rows.map(\.id).contains("cliTool"),
+        "Agent must contain the command line tool entry point"
+    )
+
+    try expect(
+        ["appIdentity", "installChannel", "updates", "daemonEndpoint", "dataRoot",
+         "applicationSupport", "shellControl"].allSatisfy(system.rows.map(\.id).contains),
+        "System must contain app, runtime, storage, and shell control rows"
+    )
+    try expect(
+        system.rows.filter { $0.id.hasPrefix("performanceDiagnostics") }.map(\.id)
+            == ["performanceDiagnostics", "performanceDiagnosticsExport"],
+        "System must preserve diagnostics toggle and export rows"
+    )
+}
+
 private func requireSection(
     _ id: ShellSettingsSectionID,
     in snapshot: ShellSettingsSurfaceSnapshot
@@ -395,6 +527,16 @@ private func requireSection(
         throw TestFailure.message("missing settings section \(id.rawValue)")
     }
     return section
+}
+
+private func requireNavigationGroup(
+    _ id: ShellSettingsNavigationGroup,
+    in snapshot: ShellSettingsSurfaceSnapshot
+) throws -> ShellSettingsNavigationGroupModel {
+    guard let group = snapshot.navigationGroups.first(where: { $0.id == id }) else {
+        throw TestFailure.message("missing settings navigation group \(id.rawValue)")
+    }
+    return group
 }
 
 private func stableLocalSummary() -> ShellSettingsLocalSummary {
