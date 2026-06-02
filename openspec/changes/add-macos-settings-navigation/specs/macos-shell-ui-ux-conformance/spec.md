@@ -28,10 +28,8 @@ The default Settings navigation order SHALL be:
 
 - General
 - Terminal
-- Accounts
-- Sessions
-- Capabilities
-- Advanced
+- Agent
+- System
 
 #### Scenario: Settings opens on General
 - **WHEN** the user opens the Settings content tab
@@ -47,17 +45,25 @@ The default Settings navigation order SHALL be:
 #### Scenario: Settings group mapping stays task oriented
 - **WHEN** Settings builds its navigation groups from the settings surface snapshot
 - **THEN** General contains Interface preferences
-- **AND** Terminal contains Terminal Profiles and Managed Terminal Account rows
-- **AND** Accounts contains provider connection rows
-- **AND** Sessions contains new-session runtime default rows
-- **AND** Capabilities contains skill catalog rows
-- **AND** Advanced contains local install, daemon, path, update, shell-control, and diagnostics rows
+- **AND** Terminal contains Terminal Profiles, Managed Terminal Account, Mac login session, and sudo behavior rows
+- **AND** Agent contains the Alan agent selector, provider connection, model, credential, account action, runtime default, skill status, skill package source, and command line tool rows
+- **AND** System contains app identity, install channel, daemon endpoint, updates, Alan home, shell state, shell control, and diagnostics rows
 
-#### Scenario: Terminal identity stays separate from provider accounts
-- **WHEN** Settings renders Terminal and Accounts groups
+#### Scenario: Terminal identity stays separate from Agent configuration
+- **WHEN** Settings renders Terminal and Agent groups
 - **THEN** Terminal Profiles and Managed Terminal Accounts appear in Terminal
-- **AND** provider connection profile, provider, model, credential, and account action rows appear in Accounts
-- **AND** alan does not label local terminal identity as a provider account
+- **AND** provider connection profile, provider, model, credential, account action, runtime default, and skill rows appear in Agent
+- **AND** alan does not label local terminal identity as an agent account or provider account
+
+#### Scenario: Agent selector is scoped to supported agents
+- **WHEN** the user opens the Agent Settings group
+- **THEN** alan shows Alan as the currently configurable agent
+- **AND** alan does not show Codex as a disabled option or coming-soon panel until Codex settings are supported
+
+#### Scenario: Skill package source copy is explicit
+- **WHEN** Settings renders the Agent skill source row
+- **THEN** alan labels the filesystem package source as Skill package path
+- **AND** alan does not label that path as Public skills
 
 #### Scenario: Navigation stays visually subordinate
 - **WHEN** Settings renders the internal navigation
