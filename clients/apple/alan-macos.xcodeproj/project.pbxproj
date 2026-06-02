@@ -67,6 +67,8 @@
 		000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000151 /* App/AlanMacUpdateController.swift */; };
 		000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */; };
 		000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */; };
+		00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */; };
+		00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -155,6 +157,8 @@
 		000000000000000000000151 /* App/AlanMacUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacUpdateController.swift; sourceTree = "<group>"; };
 		000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanMacUpdatePolicy.swift; sourceTree = "<group>"; };
 		000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSettingsSurfaceModel.swift; sourceTree = "<group>"; };
+		000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPerformanceDiagnostics.swift; sourceTree = "<group>"; };
+		000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -323,6 +327,8 @@
 				00000000000000000000012F /* Services/Shell/ShellDiagnostics.swift */,
 				00000000000000000000012E /* Services/Shell/ShellEventStore.swift */,
 				00000000000000000000012A /* Services/Shell/ShellLocalCommandExecutor.swift */,
+				000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */,
+				000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */,
 				00000000000000000000012C /* Services/Shell/ShellPublishedStateMerger.swift */,
 				00000000000000000000012B /* Services/Shell/ShellSocketServer.swift */,
 				000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */,
@@ -526,6 +532,8 @@
 				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
 				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
 				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
+				00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */,
+				00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);

@@ -8,6 +8,7 @@ enum ShellAutomationCommand: Equatable {
     case closePane(paneID: String)
     case closeTab(tabID: String)
     case sendText(ShellAutomationSendTextRequest)
+    case sendKey(ShellAutomationSendKeyRequest)
     case readPaneSummary(paneID: String)
     case activateAttentionItem(paneID: String)
 }
@@ -59,6 +60,22 @@ struct ShellAutomationSendTextRequest: Equatable {
         self.paneID = paneID
         self.terminalContentID = terminalContentID
         self.text = text
+    }
+}
+
+struct ShellAutomationSendKeyRequest: Equatable {
+    let paneID: String
+    let terminalContentID: String?
+    let key: TerminalRuntimeControlKey
+
+    init(
+        paneID: String,
+        terminalContentID: String? = nil,
+        key: TerminalRuntimeControlKey
+    ) {
+        self.paneID = paneID
+        self.terminalContentID = terminalContentID
+        self.key = key
     }
 }
 

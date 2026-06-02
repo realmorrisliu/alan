@@ -18,6 +18,9 @@ struct ShellRuntimeMetadataTestRunner {
 private enum ShellRuntimeMetadataTests {
     static func run() {
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
+        verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
+        verifiesShellSelectionAndFocusRecordPerformanceDiagnostics()
+        verifiesPerformanceDiagnosticsControlCommandsExportRecentBundle()
         verifiesTerminalContentProjectionAdapterOwnsMetadataProjection()
         verifiesSurfaceExitClosesFinalPaneWithoutRestarting()
         verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth()
@@ -240,6 +243,244 @@ private enum ShellRuntimeMetadataTests {
         expect(updated?.viewport?.summary == "Renderer failed", "pane viewport must expose renderer status")
         expect(updated?.attention == .notable, "pane attention must reflect terminal attention")
         expect(controller.shellState.spaces.first?.attention == .notable, "space attention must track pane attention")
+    }
+
+    private static func verifiesRuntimeProjectionRecordsPerformanceDiagnostics() {
+        let recorder = AlanPerformanceDiagnosticsRecorder(
+            configuration: AlanPerformanceDiagnosticsConfiguration(maxEvents: 16)
+        )
+        recorder.setEnabled(true)
+        let controller = makeController(performanceDiagnosticsRecorder: recorder)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: pane.terminalContentID,
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                renderPriority: .foregroundInteractive,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "build running",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 2)
+                ),
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: 3)
+            )
+        )
+
+        let diagnostics = recorder.eventsSnapshot()
+        expect(
+            diagnostics.contains { $0.kind == .runtimeSnapshotPublish },
+            "runtime update must record snapshot publication diagnostics"
+        )
+        expect(
+            diagnostics.contains { $0.kind == .shellRuntimeProjection },
+            "runtime update must record shell projection diagnostics"
+        )
+        expect(
+            diagnostics.contains { $0.kind == .shellPaneStatePublication },
+            "runtime projection must record pane-state publication diagnostics"
+        )
+        expect(
+            diagnostics.contains {
+                $0.paneID == pane.paneID
+                    && $0.contentID == pane.terminalContentID
+                    && $0.priority == "foregroundInteractive"
+                    && $0.visibility == "visible"
+            },
+            "shell diagnostics must include pane/content correlation, priority, and visibility"
+        )
+
+        controller.updateTerminalMetadata(
+            TerminalPaneMetadataSnapshot(
+                title: "cargo test --workspace",
+                workingDirectory: "/repo/app",
+                summary: "metadata update",
+                attention: .active,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 4)
+            ),
+            for: pane.paneID
+        )
+        expect(
+            recorder.eventsSnapshot().contains { $0.kind == .terminalMetadataCallback },
+            "terminal metadata updates must record metadata callback diagnostics"
+        )
+    }
+
+    private static func verifiesShellSelectionAndFocusRecordPerformanceDiagnostics() {
+        let recorder = AlanPerformanceDiagnosticsRecorder(
+            configuration: AlanPerformanceDiagnosticsConfiguration(maxEvents: 32)
+        )
+        recorder.setEnabled(true)
+        let controller = makeController(performanceDiagnosticsRecorder: recorder)
+        _ = controller.openTerminalTab()
+        recorder.setEnabled(false)
+        recorder.setEnabled(true)
+
+        controller.focus(paneID: "pane_1")
+        controller.select(tabID: "tab_2")
+
+        let events = recorder.eventsSnapshot()
+        expect(
+            events.contains { $0.kind == .shellFocusChange && $0.paneID == "pane_1" },
+            "explicit focus changes must record performance diagnostics"
+        )
+        expect(
+            events.contains { $0.kind == .shellSelectionChange && $0.paneID == "pane_2" },
+            "tab selection must record selection diagnostics for the selected pane"
+        )
+        expect(
+            events.contains { $0.kind == .shellPrioritySynchronization },
+            "selection changes must record terminal priority synchronization diagnostics"
+        )
+        expect(
+            events.contains {
+                $0.kind == .shellSelectionChange
+                    && $0.contentID == ShellContentInstance.terminalContentID(forPaneID: "pane_2")
+                    && $0.visibility == "visible"
+            },
+            "selection diagnostics must keep pane/content correlation without terminal text"
+        )
+    }
+
+    private static func verifiesPerformanceDiagnosticsControlCommandsExportRecentBundle() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alan-control-diagnostics-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        } catch {
+            fail("diagnostics control command test must create temp dir: \(error)")
+        }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            AlanPerformanceDiagnosticsController.shared.setEnabled(false)
+        }
+
+        AlanPerformanceDiagnosticsController.shared.setEnabled(false)
+        let controller = makeController()
+        let enableResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "diagnostics-enable",
+                  "command": "performance_diagnostics.set_enabled",
+                  "enabled": true
+                }
+                """
+            )
+        )
+        expect(enableResponse.applied == true, "diagnostics enable control command must apply")
+        expect(enableResponse.diagnosticsEnabled == true, "diagnostics enable response must report enabled")
+
+        let childPressureResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "diagnostics-child-pressure",
+                  "command": "performance_diagnostics.record_child_pressure",
+                  "child_process_role": "terminal_child",
+                  "child_cpu_percent": 181.5,
+                  "child_memory_bytes": 4096,
+                  "child_thread_count": 7
+                }
+                """
+            )
+        )
+        expect(childPressureResponse.applied == true,
+               "diagnostics child-pressure control command must apply")
+
+        guard let pane = controller.selectedPane else {
+            fail("diagnostics control command test must expose a selected pane")
+        }
+        controller.updateTerminalRuntime(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: pane.terminalContentID,
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                renderPriority: .foregroundInteractive,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: 5)
+            )
+        )
+
+        let exportResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "diagnostics-export",
+                  "command": "performance_diagnostics.export_recent",
+                  "export_directory": "\(jsonEscaped(root.path))"
+                }
+                """
+            )
+        )
+        expect(exportResponse.applied == true, "diagnostics export control command must apply")
+        guard let bundlePath = exportResponse.diagnosticsBundlePath else {
+            fail("diagnostics export response must include bundle path")
+        }
+        let bundle = URL(fileURLWithPath: bundlePath, isDirectory: true)
+        let events = try? String(
+            contentsOf: bundle.appendingPathComponent("events.jsonl"),
+            encoding: .utf8
+        )
+        let summary = try? String(
+            contentsOf: bundle.appendingPathComponent("summary.json"),
+            encoding: .utf8
+        )
+        expect(events?.contains("shellRuntimeProjection") == true,
+               "exported diagnostics must include shell projection events")
+        expect(summary?.contains("\"schemaVersion\"") == true,
+               "exported diagnostics summary must include schema metadata")
+        expect(summary?.contains("\"terminalChild\"") == true,
+               "exported diagnostics must include terminal child CPU pressure")
+        expect(events?.contains(pane.paneID) == false,
+               "exported diagnostics must not include raw pane ids")
+        expect(events?.contains("pane_id_hash") == true,
+               "exported diagnostics must keep hashed pane correlation")
+
+        let disableResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "diagnostics-disable",
+                  "command": "performance_diagnostics.set_enabled",
+                  "enabled": false
+                }
+                """
+            )
+        )
+        expect(disableResponse.applied == true, "diagnostics disable control command must apply")
+        expect(disableResponse.diagnosticsEnabled == false, "diagnostics disable response must report disabled")
+        expect(
+            AlanPerformanceDiagnosticsController.shared.eventsSnapshot().isEmpty,
+            "diagnostics disable control command must clear retained in-memory events"
+        )
     }
 
     private static func verifiesTerminalContentProjectionAdapterOwnsMetadataProjection() {
@@ -9309,6 +9550,7 @@ private enum ShellRuntimeMetadataTests {
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
+        performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -9328,6 +9570,7 @@ private enum ShellRuntimeMetadataTests {
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
             closeConfirmationPresenter: closeConfirmationPresenter,
+            performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
             appIsActiveProvider: { appIsActive }
         )
     }
@@ -9935,6 +10178,12 @@ private enum ShellRuntimeMetadataTests {
         } catch {
             fail("failed to decode control command fixture: \(error)")
         }
+    }
+
+    private static func jsonEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private static func controlEvents(_ controller: ShellHostController) -> [AlanShellEventEnvelope] {

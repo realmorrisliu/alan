@@ -388,6 +388,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
     private let closeConfirmationPresenter: ShellCloseConfirmationPresenting
+    private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
     lazy var controlPlane = AlanShellControlPlane(
         windowID: windowContext.windowID,
         channel: windowContext.installChannel
@@ -450,6 +451,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
+        performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
@@ -470,6 +472,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.clipboardWriter = ShellClipboardWriter()
         self.closeConfirmationPresenter =
             closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
+        self.performanceDiagnosticsRecorder = performanceDiagnosticsRecorder
         self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
         self.terminalRuntimeRegistry =
@@ -943,8 +946,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func focus(paneID: String, requestTerminalFocus: Bool) {
+        let focusStartedAt = performanceDiagnosticsStartTime()
         guard let result = try? shellState.focusingPane(paneID) else { return }
         applyMutationResult(result)
+        if let focusStartedAt {
+            let focusedPane = pane(paneID: paneID)
+            recordPerformanceDiagnostic(
+                .shellFocusChange,
+                durationMs: performanceDurationMs(since: focusStartedAt),
+                runtime: runtime(for: paneID),
+                fallbackPaneID: paneID,
+                fallbackContentID: focusedPane?.terminalContentID,
+                fallbackPriority: focusedPane.map { terminalRenderPriority(for: $0) }
+            )
+        }
         if requestTerminalFocus && canRequestTerminalFocus(for: paneID) {
             terminalRuntimeRegistry.requestFocus(for: paneID)
         }
@@ -1868,6 +1883,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func updateTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        let updateStartedAt = performanceDiagnosticsStartTime()
+        defer {
+            if let updateStartedAt {
+                recordPerformanceDiagnostic(
+                    .runtimeSnapshotPublish,
+                    durationMs: performanceDurationMs(since: updateStartedAt),
+                    runtime: runtime
+                )
+            }
+        }
         let previousRuntime = runtime.paneID.map { self.runtime(for: $0) }
         terminalRuntimeRegistry.updateSnapshot(runtime)
 
@@ -1901,6 +1926,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func projectTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        let projectionStartedAt = performanceDiagnosticsStartTime()
+        defer {
+            if let projectionStartedAt {
+                recordPerformanceDiagnostic(
+                    .shellRuntimeProjection,
+                    durationMs: performanceDurationMs(since: projectionStartedAt),
+                    runtime: runtime
+                )
+            }
+        }
         if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
             terminalRuntime = runtime
         }
@@ -1929,6 +1964,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 return
             }
 
+            let paneStateStartedAt = performanceDiagnosticsStartTime()
             let didPublishPaneUpdate = updatePaneState(paneID: paneID) { current in
                 let currentBootProfile = AlanShellBootProfile.forPane(
                     current,
@@ -1940,10 +1976,77 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     bootProfile: currentBootProfile
                 ).pane
             }
+            if let paneStateStartedAt {
+                recordPerformanceDiagnostic(
+                    .shellPaneStatePublication,
+                    durationMs: performanceDurationMs(since: paneStateStartedAt),
+                    runtime: runtime
+                )
+            }
             if activeTaskChanged && !didPublishPaneUpdate {
                 syncWorkspaceManifestFromShellState()
             }
         }
+    }
+
+    private func recordPerformanceDiagnostic(
+        _ kind: AlanPerformanceDiagnosticEventKind,
+        durationMs: Double,
+        runtime: TerminalHostRuntimeSnapshot,
+        fallbackPaneID: String? = nil,
+        fallbackContentID: String? = nil,
+        fallbackPriority: TerminalRuntimeRenderPriority? = nil,
+        counts: AlanPerformanceDiagnosticCounts? = nil
+    ) {
+        if let performanceDiagnosticsRecorder {
+            guard performanceDiagnosticsRecorder.isEnabled else { return }
+        } else {
+            guard AlanPerformanceDiagnosticsController.shared.isEnabled else { return }
+        }
+        let paneID = runtime.paneID ?? fallbackPaneID
+        let contentID = runtime.contentID
+            ?? fallbackContentID
+            ?? paneID.map { ShellContentInstance.terminalContentID(forPaneID: $0) }
+        let priority = fallbackPriority ?? runtime.renderPriority
+        let event = AlanPerformanceDiagnosticEvent(
+            kind: kind,
+            durationMs: durationMs,
+            paneID: paneID,
+            contentID: contentID,
+            priority: priority.diagnosticsValue,
+            visibility: priority.diagnosticsVisibility,
+            thread: Thread.isMainThread ? "main" : "background",
+            counts: counts
+        )
+        if let performanceDiagnosticsRecorder {
+            performanceDiagnosticsRecorder.record(event)
+        } else {
+            AlanPerformanceDiagnosticsController.shared.record(
+                kind,
+                durationMs: durationMs,
+                paneID: event.paneID,
+                contentID: event.contentID,
+                priority: event.priority,
+                visibility: event.visibility,
+                thread: event.thread,
+                counts: event.counts
+            )
+        }
+    }
+
+    private func performanceDurationMs(since start: DispatchTime) -> Double {
+        let end = DispatchTime.now()
+        let nanos = end.uptimeNanoseconds >= start.uptimeNanoseconds
+            ? end.uptimeNanoseconds - start.uptimeNanoseconds
+            : 0
+        return Double(nanos) / 1_000_000
+    }
+
+    private func performanceDiagnosticsStartTime() -> DispatchTime? {
+        if let performanceDiagnosticsRecorder {
+            return performanceDiagnosticsRecorder.isEnabled ? DispatchTime.now() : nil
+        }
+        return AlanPerformanceDiagnosticsController.shared.isEnabled ? DispatchTime.now() : nil
     }
 
     private func scheduleVisibleBackgroundRuntimeProjection(_ runtime: TerminalHostRuntimeSnapshot) {
@@ -1969,9 +2072,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
+        let metadataStartedAt = performanceDiagnosticsStartTime()
         guard let pane = pane(paneID: paneID) else { return }
         let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
+        defer {
+            if let metadataStartedAt {
+                recordPerformanceDiagnostic(
+                    .terminalMetadataCallback,
+                    durationMs: performanceDurationMs(since: metadataStartedAt),
+                    runtime: runtime
+                )
+            }
+        }
         let effectProjection = terminalContentProjection.projectMetadata(
             metadata,
             runtime: runtime,
@@ -2358,6 +2471,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func synchronizeSelection() {
+        let selectionStartedAt = performanceDiagnosticsStartTime()
+        defer {
+            if let selectionStartedAt {
+                let selectedPane = selectedPane
+                recordPerformanceDiagnostic(
+                    .shellSelectionChange,
+                    durationMs: performanceDurationMs(since: selectionStartedAt),
+                    runtime: terminalRuntime,
+                    fallbackPaneID: selectedPane?.paneID,
+                    fallbackContentID: selectedPane?.terminalContentID,
+                    fallbackPriority: selectedPane.map { terminalRenderPriority(for: $0) }
+                )
+            }
+        }
         if let focusedPane = focusedPane {
             selectedSpaceID = focusedPane.spaceID
             selectedTabID = focusedPane.tabID
@@ -2373,6 +2500,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func synchronizeTerminalRenderPriorities() {
+        let synchronizationStartedAt = performanceDiagnosticsStartTime()
         let contentState = shellState.contentStateProjection()
         let prioritiesByContentID = shellState.panes.reduce(
             into: [String: TerminalRuntimeRenderPriority]()
@@ -2383,6 +2511,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             priorities[contentID] = terminalRenderPriority(for: pane)
         }
         terminalRuntimeRegistry.updateRenderPriorities(prioritiesByContentID)
+        if let synchronizationStartedAt {
+            let selectedPane = selectedPane
+            recordPerformanceDiagnostic(
+                .shellPrioritySynchronization,
+                durationMs: performanceDurationMs(since: synchronizationStartedAt),
+                runtime: terminalRuntime,
+                fallbackPaneID: selectedPane?.paneID,
+                fallbackContentID: selectedPane?.terminalContentID,
+                fallbackPriority: selectedPane.map { terminalRenderPriority(for: $0) },
+                counts: AlanPerformanceDiagnosticCounts(events: prioritiesByContentID.count)
+            )
+        }
     }
 
     private func zoomedPaneID(in tab: ShellTab) -> String? {
@@ -3435,6 +3575,29 @@ extension ShellHostController: ShellAutomationCommandHandling {
                 delivery = terminalRuntimeRegistry.sendText(
                     to: request.paneID,
                     text: request.text
+                )
+            }
+            return shellAutomationResult(
+                code: shellAutomationResultCode(for: delivery),
+                paneID: request.paneID,
+                acceptedBytes: delivery.acceptedBytes,
+                deliveryCode: delivery.code.rawValue,
+                runtimePhase: delivery.runtimePhase,
+                errorCode: delivery.errorCode,
+                errorMessage: delivery.errorMessage
+            )
+
+        case .sendKey(let request):
+            let delivery: TerminalRuntimeDeliveryResult
+            if let terminalContentID = request.terminalContentID {
+                delivery = terminalRuntimeRegistry.sendKey(
+                    toTerminalContentID: terminalContentID,
+                    key: request.key
+                )
+            } else {
+                delivery = terminalRuntimeRegistry.sendKey(
+                    to: request.paneID,
+                    key: request.key
                 )
             }
             return shellAutomationResult(

@@ -30,6 +30,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot()
             try testUnavailableRemoteSummariesStayCompact()
             try testTerminalProfilesAndAccountsStayLocalAndRedacted()
+            try testPerformanceDiagnosticsRowsAreCompactAndLocal()
             print("Shell settings surface tests passed.")
         } catch {
             fputs("Shell settings surface tests failed: \(error)\n", stderr)
@@ -136,7 +137,7 @@ private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throw
         "capabilities must use enabled and implicit-invocation terminology instead of mount labels"
     )
 
-    for sectionID in [ShellSettingsSectionID.accounts, .capabilities, .local] {
+    for sectionID in [ShellSettingsSectionID.accounts, .capabilities] {
         let section = try requireSection(sectionID, in: snapshot)
         try expect(
             section.rows.allSatisfy { $0.mutability != .editable },
@@ -147,6 +148,16 @@ private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throw
             "\(sectionID.rawValue) rows must not expose freeform file or credential editing"
         )
     }
+
+    let localSection = try requireSection(.local, in: snapshot)
+    try expect(
+        localSection.rows.filter { $0.mutability == .editable }.map(\.id) == ["performanceDiagnostics"],
+        "local settings must keep only the performance diagnostics toggle editable"
+    )
+    try expect(
+        localSection.rows.allSatisfy { !$0.offersFreeformEditing },
+        "local rows must not expose freeform file or credential editing"
+    )
 }
 
 private func testDevChannelLocalRowsUseDevIdentity() throws {
@@ -330,6 +341,49 @@ private func testTerminalProfilesAndAccountsStayLocalAndRedacted() throws {
     try expect(
         accountSection.visibleText.joined(separator: " ").contains("terminal entry"),
         "Managed Terminal Account rows must describe terminal entry"
+    )
+}
+
+private func testPerformanceDiagnosticsRowsAreCompactAndLocal() throws {
+    let snapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: .unavailable(reason: "Daemon unavailable"),
+        local: stableLocalSummary(),
+        terminalProfiles: testTerminalProfiles(),
+        diagnostics: ShellSettingsDiagnosticsSummary(
+            isEnabled: false,
+            retainedEventCount: 24,
+            stutterMarkerCount: 2,
+            lastExportURL: nil
+        )
+    )
+    let local = try requireSection(.local, in: snapshot)
+    let diagnosticsRows = local.rows.filter { $0.id.hasPrefix("performanceDiagnostics") }
+    let visibleText = diagnosticsRows.flatMap(\.visibleText).joined(separator: "\n")
+
+    try expect(
+        diagnosticsRows.map(\.id) == ["performanceDiagnostics", "performanceDiagnosticsExport"],
+        "settings must expose only a diagnostics toggle and recent export action"
+    )
+    try expect(
+        diagnosticsRows.first?.mutability == .editable,
+        "performance diagnostics toggle must be directly editable"
+    )
+    try expect(
+        diagnosticsRows.last?.mutability == .actionOnly,
+        "performance diagnostics export must be an action row"
+    )
+    try expect(
+        visibleText.contains("Local performance trace"),
+        "diagnostics copy must explain that capture is local"
+    )
+    try expect(
+        visibleText.contains("Terminal content is not recorded"),
+        "diagnostics copy must state that terminal content is not recorded"
+    )
+    try expect(
+        !visibleText.localizedCaseInsensitiveContains("dashboard")
+            && !visibleText.localizedCaseInsensitiveContains("inspector"),
+        "diagnostics settings copy must not introduce dashboard or inspector framing"
     )
 }
 

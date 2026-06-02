@@ -1,5 +1,9 @@
 import Foundation
 
+enum TerminalRuntimeControlKey: String, Codable, Equatable {
+    case returnKey = "return"
+}
+
 enum ShellAttentionState: String, Codable, CaseIterable {
     case idle
     case active

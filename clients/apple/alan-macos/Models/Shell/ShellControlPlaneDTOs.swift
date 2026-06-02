@@ -27,12 +27,17 @@ enum AlanShellControlCommandKind: String, Codable {
     case paneZoom = "pane.zoom"
     case paneUnzoom = "pane.unzoom"
     case terminalSendText = "terminal.send_text"
+    case terminalSendKey = "terminal.send_key"
     case terminalRenderMetrics = "terminal.render_metrics"
     case agentActivity = "agent.activity"
     case attentionInbox = "attention.inbox"
     case attentionSet = "attention.set"
     case routingCandidates = "routing.candidates"
     case eventsRead = "events.read"
+    case performanceDiagnosticsSetEnabled = "performance_diagnostics.set_enabled"
+    case performanceDiagnosticsExportRecent = "performance_diagnostics.export_recent"
+    case performanceDiagnosticsRecordChildPressure =
+        "performance_diagnostics.record_child_pressure"
     case quickTerminalToggle = "quick_terminal.toggle"
     case quickTerminalShow = "quick_terminal.show"
     case quickTerminalHide = "quick_terminal.hide"
@@ -60,6 +65,7 @@ struct AlanShellControlCommand: Codable {
     let title: String?
     let cwd: String?
     let text: String?
+    let key: String?
     let attention: ShellAttentionState?
     let agentKind: String?
     let agentStatus: String?
@@ -71,6 +77,12 @@ struct AlanShellControlCommand: Codable {
     let updatedAt: String?
     let afterEventID: String?
     let limit: Int?
+    let enabled: Bool?
+    let exportDirectory: String?
+    let childProcessRole: String?
+    let childCPUPercent: Double?
+    let childMemoryBytes: UInt64?
+    let childThreadCount: Int?
 
     private enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
@@ -91,6 +103,7 @@ struct AlanShellControlCommand: Codable {
         case title
         case cwd
         case text
+        case key
         case attention
         case agentKind = "agent_kind"
         case agentStatus = "agent_status"
@@ -102,6 +115,12 @@ struct AlanShellControlCommand: Codable {
         case updatedAt = "updated_at"
         case afterEventID = "after_event_id"
         case limit
+        case enabled
+        case exportDirectory = "export_directory"
+        case childProcessRole = "child_process_role"
+        case childCPUPercent = "child_cpu_percent"
+        case childMemoryBytes = "child_memory_bytes"
+        case childThreadCount = "child_thread_count"
     }
 }
 
@@ -235,6 +254,10 @@ struct AlanShellControlResponse: Codable {
     let spatialDirection: ShellSpatialFocusDirection?
     let placement: ShellPaneSplitDirection?
     let mountedContentInstanceID: String?
+    let diagnosticsEnabled: Bool?
+    let diagnosticsRetainedEventCount: Int?
+    let diagnosticsStutterMarkerCount: Int?
+    let diagnosticsBundlePath: String?
     let errorCode: String?
     let errorMessage: String?
 
@@ -286,6 +309,10 @@ struct AlanShellControlResponse: Codable {
         spatialDirection: ShellSpatialFocusDirection? = nil,
         placement: ShellPaneSplitDirection? = nil,
         mountedContentInstanceID: String? = nil,
+        diagnosticsEnabled: Bool? = nil,
+        diagnosticsRetainedEventCount: Int? = nil,
+        diagnosticsStutterMarkerCount: Int? = nil,
+        diagnosticsBundlePath: String? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil
     ) {
@@ -336,6 +363,10 @@ struct AlanShellControlResponse: Codable {
         self.spatialDirection = spatialDirection
         self.placement = placement
         self.mountedContentInstanceID = mountedContentInstanceID
+        self.diagnosticsEnabled = diagnosticsEnabled
+        self.diagnosticsRetainedEventCount = diagnosticsRetainedEventCount
+        self.diagnosticsStutterMarkerCount = diagnosticsStutterMarkerCount
+        self.diagnosticsBundlePath = diagnosticsBundlePath
         self.errorCode = errorCode
         self.errorMessage = errorMessage
     }
@@ -388,6 +419,10 @@ struct AlanShellControlResponse: Codable {
         case spatialDirection = "spatial_direction"
         case placement
         case mountedContentInstanceID = "mounted_content_instance_id"
+        case diagnosticsEnabled = "diagnostics_enabled"
+        case diagnosticsRetainedEventCount = "diagnostics_retained_event_count"
+        case diagnosticsStutterMarkerCount = "diagnostics_stutter_marker_count"
+        case diagnosticsBundlePath = "diagnostics_bundle_path"
         case errorCode = "error_code"
         case errorMessage = "error_message"
     }

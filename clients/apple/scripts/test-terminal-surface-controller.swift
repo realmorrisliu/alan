@@ -37,6 +37,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesSemanticCommandFallbacksAndInvalidation()
         verifiesBindClearsStaleScrollbackState()
         verifiesSurfaceCloseRequestIsForwarded()
+        verifiesSurfaceControllerRecordsPerformanceDiagnostics()
         verifiesSurfaceSnapshotEqualityIgnoresTimestamp()
         verifiesClipboardDeliveryStates()
         verifiesSelectionCopyAndPasteUseController()
@@ -1470,6 +1471,7 @@ private enum TerminalSurfaceControllerTests {
             to: NSView(),
             bootProfile: nil,
             focused: true,
+            renderPriority: .foregroundInteractive,
             onDiagnosticsChange: { _ in },
             onMetadataChange: { _ in },
             onCloseRequest: { requiresConfirmation in
@@ -1480,6 +1482,124 @@ private enum TerminalSurfaceControllerTests {
         handle.requestClose(requiresConfirmation: false)
 
         expect(closeRequests == [false], "surface close requests must be forwarded to the shell owner")
+    }
+
+    private static func verifiesSurfaceControllerRecordsPerformanceDiagnostics() {
+        let disabledRecorder = AlanPerformanceDiagnosticsRecorder(
+            configuration: AlanPerformanceDiagnosticsConfiguration(maxEvents: 20)
+        )
+        let disabledController = AlanTerminalSurfaceController(
+            diagnosticsRecorder: disabledRecorder
+        )
+        let disabledHandle = FakeAlanTerminalSurfaceHandle(
+            contentID: "content_disabled",
+            paneID: "pane_disabled"
+        )
+        disabledController.bind(surfaceHandle: disabledHandle, paneID: "pane_disabled")
+        disabledController.attach(
+            to: NSView(),
+            bootProfile: nil,
+            focused: false,
+            renderPriority: .hiddenBackground,
+            onDiagnosticsChange: { _ in },
+            onMetadataChange: { _ in },
+            onCloseRequest: { _ in }
+        )
+        disabledController.updateRenderer(
+            TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .surfaceReady,
+                summary: "renderer ready",
+                detail: nil,
+                failureReason: nil,
+                recentEvents: []
+            )
+        )
+        expect(
+            disabledRecorder.eventsSnapshot().isEmpty,
+            "disabled surface diagnostics must avoid hot-path event recording"
+        )
+
+        let recorder = AlanPerformanceDiagnosticsRecorder(
+            configuration: AlanPerformanceDiagnosticsConfiguration(maxEvents: 20)
+        )
+        recorder.setEnabled(true)
+        let controller = AlanTerminalSurfaceController(diagnosticsRecorder: recorder)
+        let handle = FakeAlanTerminalSurfaceHandle(contentID: "content_1", paneID: "pane_1")
+        var rendererUpdates = 0
+
+        controller.bind(surfaceHandle: handle, paneID: "pane_1")
+        controller.attach(
+            to: NSView(),
+            bootProfile: nil,
+            focused: false,
+            renderPriority: .visibleBackground,
+            onDiagnosticsChange: { _ in
+                rendererUpdates += 1
+            },
+            onMetadataChange: { _ in },
+            onCloseRequest: { _ in }
+        )
+        handle.updateRenderPriority(.hiddenBackground, forceCatchUp: false)
+        handle.emitDiagnosticsSnapshot(
+            TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .surfaceReady,
+                summary: "renderer background update",
+                detail: nil,
+                failureReason: nil,
+                recentEvents: [
+                    "background-event-1",
+                    "background-event-2",
+                ]
+            )
+        )
+        controller.updateRenderer(
+            TerminalRendererSnapshot(
+                kind: .ghosttyLive,
+                phase: .surfaceReady,
+                summary: "renderer ready",
+                detail: nil,
+                failureReason: nil,
+                recentEvents: []
+            )
+        )
+        handle.emitScrollbackUpdate(
+            AlanTerminalScrollbackMetrics(
+                totalRows: 300,
+                visibleRows: 40,
+                firstVisibleRow: 200,
+                mode: .normalBuffer
+            )
+        )
+
+        let events = recorder.eventsSnapshot()
+        let kinds = events.map(\.kind)
+        expect(rendererUpdates == 2, "diagnostics recording must not duplicate renderer callbacks")
+        expect(kinds.contains(.terminalSurfaceAttach), "surface attach must record diagnostics")
+        expect(kinds.contains(.terminalRendererUpdate), "renderer updates must record diagnostics")
+        expect(kinds.contains(.terminalScrollbackUpdate), "scrollback updates must record diagnostics")
+        let attachEvent = events.first { $0.kind == .terminalSurfaceAttach }
+        expect(attachEvent?.paneID == "pane_1", "surface diagnostics must include pane correlation")
+        expect(attachEvent?.contentID == "content_1", "surface diagnostics must include content correlation")
+        expect(
+            attachEvent?.priority == TerminalRuntimeRenderPriority.visibleBackground.diagnosticsValue,
+            "surface diagnostics must include render priority"
+        )
+        expect(
+            attachEvent?.visibility == TerminalRuntimeRenderPriority.visibleBackground.diagnosticsVisibility,
+            "surface diagnostics must include visibility"
+        )
+        let rendererEvents = events.filter { $0.kind == .terminalRendererUpdate }
+        let latestRendererEvent = rendererEvents.last
+        expect(
+            latestRendererEvent?.priority == TerminalRuntimeRenderPriority.hiddenBackground.diagnosticsValue,
+            "renderer diagnostics must use the current surface priority"
+        )
+        expect(
+            latestRendererEvent?.visibility == TerminalRuntimeRenderPriority.hiddenBackground.diagnosticsVisibility,
+            "renderer diagnostics must use the current surface visibility"
+        )
     }
 
     private static func verifiesSurfaceSnapshotEqualityIgnoresTimestamp() {

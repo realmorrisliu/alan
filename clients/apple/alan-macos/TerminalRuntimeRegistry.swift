@@ -72,13 +72,16 @@ final class TerminalRuntimeRegistry: ObservableObject {
     private var pendingFocusPaneSlotIDs: Set<String> = []
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
+    private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
 
     init(
         runtimeService: AlanTerminalRuntimeService? = nil,
-        mockDeliveryHandler: MockDeliveryHandler? = nil
+        mockDeliveryHandler: MockDeliveryHandler? = nil,
+        performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil
     ) {
         self.runtimeService = runtimeService ?? AlanWindowTerminalRuntimeService()
         self.mockDeliveryHandler = mockDeliveryHandler
+        self.performanceDiagnosticsRecorder = performanceDiagnosticsRecorder
     }
 
     func hostView(
@@ -234,6 +237,53 @@ final class TerminalRuntimeRegistry: ObservableObject {
                 priority,
                 forceCatchUp: previousPriority == .hiddenBackground && priority.isVisible
             )
+            guard priority != previousPriority else { return }
+            recordPerformanceDiagnostic(
+                .runtimePriorityChange,
+                contentID: contentID,
+                priority: priority
+            )
+            if priority.isVisible != previousPriority.isVisible {
+                recordPerformanceDiagnostic(
+                    .runtimeVisibilityChange,
+                    contentID: contentID,
+                    priority: priority
+                )
+            }
+        }
+    }
+
+    private func recordPerformanceDiagnostic(
+        _ kind: AlanPerformanceDiagnosticEventKind,
+        contentID: String,
+        priority: TerminalRuntimeRenderPriority
+    ) {
+        if let performanceDiagnosticsRecorder {
+            guard performanceDiagnosticsRecorder.isEnabled else { return }
+        } else {
+            guard AlanPerformanceDiagnosticsController.shared.isEnabled else { return }
+        }
+        let paneID = paneSlotIDByContentID[contentID]
+        let event = AlanPerformanceDiagnosticEvent(
+            kind: kind,
+            durationMs: 0,
+            paneID: paneID,
+            contentID: contentID,
+            priority: priority.diagnosticsValue,
+            visibility: priority.diagnosticsVisibility,
+            thread: Thread.isMainThread ? "main" : "background"
+        )
+        if let performanceDiagnosticsRecorder {
+            performanceDiagnosticsRecorder.record(event)
+        } else {
+            AlanPerformanceDiagnosticsController.shared.record(
+                kind,
+                paneID: event.paneID,
+                contentID: event.contentID,
+                priority: event.priority,
+                visibility: event.visibility,
+                thread: event.thread
+            )
         }
     }
 
@@ -301,6 +351,17 @@ final class TerminalRuntimeRegistry: ObservableObject {
         }
 
         return runtimeService.sendText(toTerminalContentID: contentID, text: text)
+    }
+
+    func sendKey(to paneID: String, key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
+        sendKey(toTerminalContentID: terminalContentID(mountedAtPaneID: paneID), key: key)
+    }
+
+    func sendKey(
+        toTerminalContentID contentID: String,
+        key: TerminalRuntimeControlKey
+    ) -> TerminalRuntimeDeliveryResult {
+        runtimeService.sendKey(toTerminalContentID: contentID, key: key)
     }
 
     func terminalCommandRuntimeState(for paneID: String) -> ShellTerminalCommandRuntimeState {

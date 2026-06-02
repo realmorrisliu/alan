@@ -141,6 +141,31 @@ final class AlanGhosttyLiveHost: NSObject {
         return handled
     }
 
+    func sendControlKey(_ key: TerminalRuntimeControlKey) -> Bool {
+        guard surface != nil else { return false }
+        let keycode: UInt32
+        switch key {
+        case .returnKey:
+            keycode = KeyCode.returnKey
+        }
+
+        var keyDown = ghostty_input_key_s()
+        keyDown.action = GHOSTTY_ACTION_PRESS
+        keyDown.keycode = keycode
+        keyDown.mods = GHOSTTY_MODS_NONE
+        keyDown.consumed_mods = GHOSTTY_MODS_NONE
+        keyDown.text = nil
+        keyDown.composing = false
+        keyDown.unshifted_codepoint = 0
+
+        var keyUp = keyDown
+        keyUp.action = GHOSTTY_ACTION_RELEASE
+
+        let handled = sendKey(keyDown)
+        _ = sendKey(keyUp)
+        return handled
+    }
+
     func keyIsBinding(_ keyEvent: ghostty_input_key_s, flags: UnsafeMutablePointer<ghostty_binding_flags_e>?) -> Bool {
         guard let surface else { return false }
         return ghostty_surface_key_is_binding(surface, keyEvent, flags)
