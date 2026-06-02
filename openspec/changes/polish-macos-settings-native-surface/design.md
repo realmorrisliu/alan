@@ -99,6 +99,16 @@ preferences app. The visual reference for this pass is:
    sections. The UI should become more precise through spacing, not through more
    decoration.
 
+   Typography should use native macOS system text roles rather than page-like
+   web hierarchy. Source-list labels, section labels, row labels, descriptions,
+   and trailing values should each have distinct size, weight, and blue-gray ink
+   roles. Row values should read as metadata, not competing primary labels, and
+   descriptions should be clearly secondary without becoming low-contrast.
+   Row labels should favor medium weight over semibold so the form feels like a
+   settings surface rather than a table of headings. Long trailing values such
+   as paths should keep the row rhythm by truncating in the middle on one line
+   while preserving the full value through native help.
+
    Alternative considered: make rows larger and add more explanatory copy. That
    would make the surface feel heavier and less like a native developer tool.
 
@@ -106,13 +116,15 @@ preferences app. The visual reference for this pass is:
 
    The source list should use small edge insets and compact rows. The selected
    state may be visible, but the row should not look like a large floating
-   card. Tight left, right, and top spacing keeps the navigation visually
-   attached to the Settings pane title and page sheet. The first source-list
-   row should optically align with the page sheet's top edge instead of
-   floating lower in the rail; a small top compensation is acceptable when
-   rounded-corner antialiasing makes strict geometric alignment look off. Its
-   selected background should use compatible corner geometry with the page
-   sheet so the visible antialiased edges read as aligned.
+   card or app-level tab. It should use a quieter second-level source-list fill,
+   subtle stroke, and no button-like drop shadow. Tight left, right, and top
+   spacing keeps the navigation visually attached to the Settings pane title and
+   page sheet. The first source-list row should optically align with the page
+   sheet's top edge instead of floating lower in the rail; a small top
+   compensation is acceptable when rounded-corner antialiasing makes strict
+   geometric alignment look off. Its selected background should use compatible
+   corner geometry with the page sheet so the visible antialiased edges read as
+   aligned.
 
 6. **Use Notion-like secondary copy only where it clarifies scope.**
 

@@ -28,6 +28,7 @@ form inside the existing shell content area.
 - **AND** the navigation keeps compact leading, trailing, and top insets relative to the Settings pane
 - **AND** the first source-list row's visible top edge optically aligns with the white Settings page sheet's top edge
 - **AND** the selected source-list row uses compatible corner geometry so its visible top edge optically aligns with the sheet
+- **AND** the selected source-list row remains quieter than an app-level sidebar tab and avoids button-like drop shadow
 - **AND** alan does not present the internal Settings navigation as a second app-level sidebar, large tab bar, or stack of web buttons
 
 ### Requirement: Settings Rows Use Precise Native Form Rhythm
@@ -39,11 +40,19 @@ than a dashboard card.
 - **WHEN** a selected Settings group renders multiple rows
 - **THEN** icon, label, description, value, action, toggle, and segmented-control positions align consistently across rows in that group
 - **AND** trailing controls share a stable right edge
+- **AND** long trailing metadata values stay on one line with middle truncation and expose the full value through native help
 
 #### Scenario: Row descriptions clarify scope
 - **WHEN** a row label is ambiguous without context, such as Sidebar or Inactive split dimming
 - **THEN** alan provides concise secondary copy that explains the affected surface
 - **AND** the secondary copy stays visually subordinate to the row label
+
+#### Scenario: Typography roles remain native and scannable
+- **WHEN** Settings renders its source list and selected group's rows
+- **THEN** alan uses distinct typography roles for source-list labels, page titles, section labels, row labels, row descriptions, and trailing values
+- **AND** row descriptions and trailing values remain visually subordinate to row labels through size, weight, and muted blue-gray ink
+- **AND** row labels use restrained native weight rather than reading as page headings
+- **AND** the selected source-list item emphasizes the label and active icon without turning every navigation label blue
 
 #### Scenario: Dense row rhythm is preserved
 - **WHEN** a selected Settings group contains only a small number of rows

@@ -1479,6 +1479,9 @@ private struct ShellSettingsDetailBackground: View {
 }
 
 private struct ShellSettingsNavigationView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveredGroup: ShellSettingsNavigationGroup?
+
     let groups: [ShellSettingsNavigationGroupModel]
     @Binding var selectedGroup: ShellSettingsNavigationGroup
 
@@ -1490,12 +1493,12 @@ private struct ShellSettingsNavigationView: View {
                 } label: {
                     HStack(spacing: ShellSettingsMetrics.navigationRowContentSpacing) {
                         Image(systemName: group.systemName)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(ShellSettingsTypography.navigationIcon)
                             .foregroundStyle(iconStyle(for: group))
-                            .frame(width: 16, height: 16)
+                            .frame(width: ShellSettingsMetrics.navigationIconSlotWidth, height: 16)
 
                         Text(group.title)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(ShellSettingsTypography.navigationLabel(selected: group.id == selectedGroup))
                             .foregroundStyle(textStyle(for: group))
                             .lineLimit(1)
 
@@ -1506,38 +1509,116 @@ private struct ShellSettingsNavigationView: View {
                     .frame(height: ShellSettingsMetrics.navigationRowHeight)
                     .contentShape(Rectangle())
                     .background {
-                        if group.id == selectedGroup {
-                            RoundedRectangle(
-                                cornerRadius: ShellSettingsMetrics.navigationSelectionCornerRadius,
-                                style: .continuous
-                            )
-                                .fill(ShellPalette.settingsSheet.opacity(0.88))
-                                .shadow(
-                                    color: ShellPalette.line.opacity(0.10),
-                                    radius: 0.8,
-                                    x: 0,
-                                    y: 0.5
-                                )
-                        }
+                        ShellSettingsNavigationRowBackground(
+                            state: rowVisualState(for: group)
+                        )
                     }
                 }
                 .buttonStyle(.plain)
                 .help(group.title)
                 .accessibilityLabel(Text(group.title))
+                .onHover { isHovered in
+                    if isHovered {
+                        hoveredGroup = group.id
+                    } else if hoveredGroup == group.id {
+                        hoveredGroup = nil
+                    }
+                }
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hoveredGroup)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selectedGroup)
     }
 
     private func iconStyle(for group: ShellSettingsNavigationGroupModel) -> some ShapeStyle {
         group.id == selectedGroup
-            ? AnyShapeStyle(ShellPalette.accent)
-            : AnyShapeStyle(ShellPalette.mutedInk)
+            ? AnyShapeStyle(ShellPalette.accent.opacity(0.94))
+            : AnyShapeStyle(ShellPalette.settingsSecondaryInk.opacity(0.82))
     }
 
     private func textStyle(for group: ShellSettingsNavigationGroupModel) -> some ShapeStyle {
         group.id == selectedGroup
-            ? AnyShapeStyle(ShellPalette.ink)
-            : AnyShapeStyle(ShellPalette.mutedInk)
+            ? AnyShapeStyle(ShellPalette.settingsPrimaryInk)
+            : AnyShapeStyle(ShellPalette.settingsSecondaryInk)
+    }
+
+    private func rowVisualState(
+        for group: ShellSettingsNavigationGroupModel
+    ) -> ShellSettingsNavigationRowVisualState {
+        if group.id == selectedGroup {
+            return .selected
+        }
+
+        if group.id == hoveredGroup {
+            return .hover
+        }
+
+        return .normal
+    }
+}
+
+private enum ShellSettingsNavigationRowVisualState: Equatable {
+    case normal
+    case hover
+    case selected
+
+    var fill: Color? {
+        switch self {
+        case .normal:
+            return nil
+        case .hover:
+            return ShellPalette.settingsNavigationHover
+        case .selected:
+            return ShellPalette.settingsNavigationSelection
+        }
+    }
+
+    var stroke: Color {
+        switch self {
+        case .normal:
+            return .clear
+        case .hover:
+            return ShellPalette.line.opacity(0.07)
+        case .selected:
+            return ShellPalette.line.opacity(0.12)
+        }
+    }
+}
+
+private struct ShellSettingsNavigationRowBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let state: ShellSettingsNavigationRowVisualState
+
+    var body: some View {
+        if let fill = state.fill {
+            let shape = RoundedRectangle(
+                cornerRadius: ShellSettingsMetrics.navigationSelectionCornerRadius,
+                style: .continuous
+            )
+            shape
+                .fill(fill)
+                .overlay {
+                    shape.stroke(state.stroke, lineWidth: 0.5)
+                }
+                .overlay {
+                    if colorScheme == .light && state == .selected {
+                        shape
+                            .stroke(Color.white.opacity(0.30), lineWidth: 0.55)
+                            .mask {
+                                shape.fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white,
+                                            Color.white.opacity(0),
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                            }
+                    }
+                }
+        }
     }
 }
 
@@ -1552,10 +1633,10 @@ private struct ShellSettingsGroupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text(group.title)
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(ShellPalette.ink)
+                .font(ShellSettingsTypography.pageTitle)
+                .foregroundStyle(ShellPalette.settingsPrimaryInk)
 
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 22) {
                 ForEach(group.sections) { section in
                     ShellSettingsSectionView(
                         section: section,
@@ -1590,8 +1671,8 @@ private struct ShellSettingsSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(section.title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ShellPalette.mutedInk.opacity(0.92))
+                .font(ShellSettingsTypography.sectionLabel)
+                .foregroundStyle(ShellPalette.settingsTertiaryInk)
                 .textCase(.uppercase)
 
             VStack(spacing: 0) {
@@ -1699,16 +1780,17 @@ private struct ShellSettingsRow<Accessory: View>: View {
         HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(ShellPalette.ink)
+                    .font(ShellSettingsTypography.rowTitle)
+                    .foregroundStyle(ShellPalette.settingsPrimaryInk)
                     .lineLimit(1)
 
                 if let detail,
                    !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
                     Text(detail)
-                        .font(.system(size: 11.5, weight: .regular))
-                        .foregroundStyle(ShellPalette.mutedInk)
+                        .font(ShellSettingsTypography.rowDetail)
+                        .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                        .lineSpacing(1)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1718,10 +1800,10 @@ private struct ShellSettingsRow<Accessory: View>: View {
             Spacer(minLength: 16)
 
             accessory()
-                .font(.system(size: 12, weight: .semibold))
+                .font(ShellSettingsTypography.accessory)
                 .frame(width: ShellSettingsMetrics.accessoryColumnWidth, alignment: .trailing)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, ShellSettingsMetrics.rowVerticalPadding)
         .frame(minHeight: ShellSettingsMetrics.rowMinHeight)
     }
 }
@@ -1729,8 +1811,8 @@ private struct ShellSettingsRow<Accessory: View>: View {
 private struct ShellSettingsAgentSelector: View {
     var body: some View {
         Text("Alan")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(ShellPalette.ink)
+            .font(ShellSettingsTypography.value)
+            .foregroundStyle(ShellPalette.settingsValueInk)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(
@@ -1753,25 +1835,27 @@ private struct ShellSettingsValueLabel: View {
         HStack(spacing: 6) {
             if mutability == .actionOnly {
                 Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(ShellPalette.mutedInk)
+                    .font(ShellSettingsTypography.valueActionIcon)
+                    .foregroundStyle(ShellPalette.settingsTertiaryInk)
             }
 
             Text(value ?? "Unavailable")
-                .font(.system(size: 12, weight: .semibold))
+                .font(ShellSettingsTypography.value)
                 .foregroundStyle(valueStyle)
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: ShellSettingsMetrics.valueColumnWidth, alignment: .trailing)
+        .help(value ?? "Unavailable")
     }
 
     private var valueStyle: some ShapeStyle {
         if value == "Unavailable" {
-            return AnyShapeStyle(ShellPalette.mutedInk)
+            return AnyShapeStyle(ShellPalette.settingsDisabledInk)
         }
-        return AnyShapeStyle(ShellPalette.ink)
+        return AnyShapeStyle(ShellPalette.settingsValueInk)
     }
 }
 
@@ -1785,16 +1869,17 @@ private struct ShellSettingsDivider: View {
 }
 
 private enum ShellSettingsMetrics {
-    static let navigationWidth: CGFloat = 126
+    static let navigationWidth: CGFloat = 156
     static let navigationLeadingPadding: CGFloat = 8
-    static let navigationTrailingPadding: CGFloat = 4
+    static let navigationTrailingPadding: CGFloat = 8
     static let navigationTopPadding: CGFloat = 2
     static let navigationRowHeight: CGFloat = 28
     static let navigationRowSpacing: CGFloat = 2
-    static let navigationRowHorizontalPadding: CGFloat = 7
-    static let navigationRowContentSpacing: CGFloat = 7
+    static let navigationRowHorizontalPadding: CGFloat = 8
+    static let navigationRowContentSpacing: CGFloat = 12
+    static let navigationIconSlotWidth: CGFloat = 17
     static let navigationSelectionCornerRadius: CGFloat = 8
-    static let contentWidth: CGFloat = 720
+    static let contentWidth: CGFloat = 640
     static let pageSheetOuterLeadingInset: CGFloat = 4
     static let pageSheetOuterTopInset: CGFloat = 0
     static let pageSheetOuterTrailingInset: CGFloat = 8
@@ -1803,10 +1888,27 @@ private enum ShellSettingsMetrics {
     static let pageContentHorizontalPadding: CGFloat = 32
     static let pageContentTopPadding: CGFloat = 30
     static let pageContentBottomPadding: CGFloat = 30
-    static let rowMinHeight: CGFloat = 58
+    static let rowVerticalPadding: CGFloat = 10
+    static let rowMinHeight: CGFloat = 56
     static let rowDividerLeadingPadding: CGFloat = 0
-    static let accessoryColumnWidth: CGFloat = 214
-    static let valueColumnWidth: CGFloat = 196
+    static let accessoryColumnWidth: CGFloat = 224
+    static let valueColumnWidth: CGFloat = 216
+}
+
+private enum ShellSettingsTypography {
+    static let navigationIcon = Font.system(size: 12, weight: .medium)
+
+    static func navigationLabel(selected: Bool) -> Font {
+        .system(size: 12.75, weight: selected ? .medium : .regular)
+    }
+
+    static let pageTitle = Font.system(size: 21.5, weight: .semibold)
+    static let sectionLabel = Font.system(size: 11, weight: .semibold)
+    static let rowTitle = Font.system(size: 13, weight: .medium)
+    static let rowDetail = Font.system(size: 12.25, weight: .regular)
+    static let accessory = Font.system(size: 12.5, weight: .medium)
+    static let value = Font.system(size: 12.5, weight: .medium)
+    static let valueActionIcon = Font.system(size: 9.5, weight: .semibold)
 }
 
 private struct ShellSettingsPageSheet<Content: View>: View {

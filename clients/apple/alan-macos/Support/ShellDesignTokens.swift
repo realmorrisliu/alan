@@ -144,6 +144,18 @@ enum ShellPalette {
         light: (0.996, 0.997, 1.0),
         dark: (0.118, 0.132, 0.160)
     )
+    static let settingsNavigationHover = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.32,
+        dark: (0.150, 0.168, 0.205),
+        darkAlpha: 0.48
+    )
+    static let settingsNavigationSelection = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.68,
+        dark: (0.175, 0.192, 0.236),
+        darkAlpha: 0.68
+    )
     static let terminal = Color.shellAdaptive(
         light: (0.10, 0.12, 0.16),
         dark: (0.050, 0.061, 0.076)
@@ -167,6 +179,26 @@ enum ShellPalette {
     static let mutedInk = Color.shellAdaptive(
         light: (0.43, 0.45, 0.54),
         dark: (0.64, 0.68, 0.75)
+    )
+    static let settingsPrimaryInk = Color.shellAdaptive(
+        light: (0.145, 0.165, 0.225),
+        dark: (0.90, 0.92, 0.96)
+    )
+    static let settingsValueInk = Color.shellAdaptive(
+        light: (0.300, 0.318, 0.390),
+        dark: (0.74, 0.78, 0.85)
+    )
+    static let settingsSecondaryInk = Color.shellAdaptive(
+        light: (0.455, 0.475, 0.565),
+        dark: (0.60, 0.64, 0.72)
+    )
+    static let settingsTertiaryInk = Color.shellAdaptive(
+        light: (0.505, 0.530, 0.630),
+        dark: (0.52, 0.56, 0.64)
+    )
+    static let settingsDisabledInk = Color.shellAdaptive(
+        light: (0.620, 0.640, 0.710),
+        dark: (0.43, 0.47, 0.55)
     )
     static let line = Color.shellAdaptive(
         light: (0.82, 0.83, 0.89),
