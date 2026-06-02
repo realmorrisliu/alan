@@ -96,11 +96,27 @@ sign_path() {
 thin_macho_to_arm64() {
     local path="$1"
     local archs
+    local mode
+    local output_path
 
     [[ -f "$path" ]] || fail "Mach-O binary is missing: $path"
     archs="$(lipo -archs "$path")" || fail "could not inspect architectures for $path"
     if [[ " $archs " == *" arm64 "* && "$archs" != "arm64" ]]; then
-        lipo -thin arm64 "$path" -output "$path"
+        mode="$(stat -f '%Lp' "$path")" || fail "could not inspect file mode for $path"
+        output_path="$(mktemp "${path}.arm64.XXXXXX")" ||
+            fail "could not create temporary arm64 output for $path"
+        if ! lipo -thin arm64 "$path" -output "$output_path"; then
+            rm -f "$output_path"
+            fail "could not thin $path to arm64"
+        fi
+        chmod "$mode" "$output_path" || {
+            rm -f "$output_path"
+            fail "could not preserve file mode for $path"
+        }
+        mv "$output_path" "$path" || {
+            rm -f "$output_path"
+            fail "could not replace $path with arm64 output"
+        }
     elif [[ "$archs" != "arm64" ]]; then
         fail "$path does not contain arm64 architecture; found: $archs"
     fi

@@ -1936,6 +1936,21 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "mktemp \"\\\${path}\\.arm64\\.XXXXXX\"" \
+    "release assembly must thin universal inputs into a temporary sibling binary"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "mv \"\\\$output_path\" \"\\\$path\"" \
+    "release assembly must atomically replace binaries after lipo succeeds"
+
+reject_pattern \
+    "scripts/assemble-release-app.sh" \
+    "lipo .* -output \"\\\$path\"" \
+    "release assembly must not ask lipo to write over its input path"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "Signing Sparkle framework and helper" \
     "release assembly must sign Sparkle nested code before the final app bundle"
 
