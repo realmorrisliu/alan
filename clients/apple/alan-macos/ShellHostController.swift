@@ -1096,6 +1096,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
+    func closeQuickTerminalAfterTerminalRuntimeExit() -> Bool {
+        applyCloseQuickTerminalMutation()
+    }
+
+    @discardableResult
     func promoteQuickTerminal(to targetSpaceID: String) -> Bool {
         do {
             let result = try shellState.promotingQuickTerminal(to: targetSpaceID)
@@ -3102,6 +3107,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    @discardableResult
+    func closePaneAfterTerminalRuntimeExit(paneID: String) -> Bool {
+        if shellState.quickTerminal?.paneID == paneID {
+            return closeQuickTerminalAfterTerminalRuntimeExit()
+        }
+        return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
     private func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {

@@ -472,7 +472,7 @@ private struct QuickTerminalContentView: View {
                     },
                     onCloseRequest: { requiresConfirmation in
                         guard !requiresConfirmation else { return }
-                        _ = host.requestCloseQuickTerminal()
+                        _ = host.closeQuickTerminalAfterTerminalRuntimeExit()
                     },
                     onRuntimeUpdate: host.updateTerminalRuntime,
                     onMetadataUpdate: { metadata in
@@ -671,6 +671,9 @@ private struct ShellPaneTreeLayoutView: View {
                 } else {
                     host.closePaneByID(pane.paneID)
                 }
+            },
+            onTerminalRuntimeExit: {
+                _ = host.closePaneAfterTerminalRuntimeExit(paneID: pane.paneID)
             },
             onRuntimeUpdate: host.updateTerminalRuntime,
             onMetadataUpdate: { metadata in
@@ -913,6 +916,7 @@ private struct ShellTerminalLeafView: View {
     let onPasteIntoTerminal: () -> Void
     let onOpenTerminalSearch: () -> Void
     let onClosePane: () -> Void
+    let onTerminalRuntimeExit: () -> Void
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
 
@@ -951,7 +955,7 @@ private struct ShellTerminalLeafView: View {
                     onShellAction: onShellAction,
                     onCloseRequest: { requiresConfirmation in
                         guard !requiresConfirmation else { return }
-                        onClosePane()
+                        onTerminalRuntimeExit()
                     },
                     onRuntimeUpdate: onRuntimeUpdate,
                     onMetadataUpdate: onMetadataUpdate

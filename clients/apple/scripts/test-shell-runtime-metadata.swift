@@ -118,6 +118,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitIgnoresStaleForegroundContext()
+        verifiesRuntimeExitCloseBypassesStaleActiveGuard()
         verifiesTerminalChildExitClosesSplitPane()
         verifiesTerminalChildExitClosesSinglePaneTab()
         verifiesTerminalChildExitCanLeaveEmptyFocusedSpace()
@@ -5230,6 +5231,30 @@ private enum ShellRuntimeMetadataTests {
             "child exit cleanup must bypass stale foreground close guard state"
         )
         expect(controller.pane(paneID: "pane_1") != nil, "child exit must preserve sibling panes")
+    }
+
+    private static func verifiesRuntimeExitCloseBypassesStaleActiveGuard() {
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false])
+        let controller = makeController(closeConfirmationPresenter: presenter)
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+
+        controller.updateTerminalMetadata(
+            metadata(title: "make test", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+        expect(
+            controller.closeGuardImpact(for: .paneSlot("pane_1"))?.requiresConfirmation == true,
+            "test setup must project stale foreground close-guard state"
+        )
+
+        expect(
+            controller.closePaneAfterTerminalRuntimeExit(paneID: "pane_1"),
+            "runtime-exit close must bypass active-work confirmation"
+        )
+
+        expect(presenter.impacts.isEmpty, "runtime-exit close must not present active-work confirmation")
+        expect(controller.pane(paneID: "pane_1") == nil, "runtime-exit close must remove the pane")
+        expect(handle.teardownCount == 1, "runtime-exit close must finalize the terminal runtime")
     }
 
     private static func verifiesTerminalChildExitClosesSplitPane() {
