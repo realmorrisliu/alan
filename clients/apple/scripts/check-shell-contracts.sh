@@ -1916,6 +1916,26 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "CARGO_BUILD_TARGET=\"aarch64-apple-darwin\"" \
+    "release assembly must pin the embedded CLI to the Apple Silicon Rust target"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "cargo build .*--target \"\\\$CARGO_BUILD_TARGET\"" \
+    "release assembly must build the embedded CLI for the explicit Apple Silicon target"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "CARGO_RELEASE_BIN" \
+    "release assembly must copy the target-specific Cargo release binary"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$EMBEDDED_BIN_DIR/\\\$ALAN_CLI_NAME\"" \
+    "release assembly must verify the embedded CLI is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "Signing Sparkle framework and helper" \
     "release assembly must sign Sparkle nested code before the final app bundle"
 
@@ -1938,6 +1958,11 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "SPARKLE_AUTOUPDATE" \
     "release app validation must verify Sparkle Autoupdate helper signatures"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_arm64_macho \"\\\$ALAN_BIN\"" \
+    "release app validation must reject non-arm64 embedded CLI binaries"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \

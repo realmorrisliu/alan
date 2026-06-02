@@ -15,6 +15,9 @@ alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
 DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
+CARGO_BUILD_TARGET="aarch64-apple-darwin"
+CARGO_RELEASE_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/alan"
+RELEASE_ARCH="arm64"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
@@ -165,8 +168,9 @@ require_signing_identity
 
 mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 
-printf 'Building release alan binary for %s channel...\n' "$ALAN_CHANNEL_ID"
-cargo build --release -p alan --target-dir "$CARGO_TARGET_DIR"
+printf 'Building release alan binary for %s channel (%s)...\n' \
+    "$ALAN_CHANNEL_ID" "$CARGO_BUILD_TARGET"
+cargo build --release -p alan --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
 
 if [[ -e "$APP_BUNDLE" ]]; then
     printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
@@ -180,7 +184,7 @@ xcodebuild \
     -configuration Release \
     -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
-    ARCHS=arm64 \
+    ARCHS="$RELEASE_ARCH" \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
     PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
@@ -193,8 +197,11 @@ fi
 
 printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
-cp "$CARGO_TARGET_DIR/release/alan" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+cp "$CARGO_RELEASE_BIN" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+
+printf 'Verifying embedded alan binary architecture...\n'
+thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
