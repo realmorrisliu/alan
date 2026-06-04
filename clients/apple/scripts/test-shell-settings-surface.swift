@@ -180,7 +180,10 @@ private func testDevChannelLocalRowsUseDevIdentity() throws {
     )
     let localText = try requireSection(.local, in: snapshot).visibleText.joined(separator: "\n")
 
-    try expect(localText.contains("Alan Dev"), "dev settings must identify the Alan Dev app")
+    try expect(
+        localText.contains("app.alanworks.macos.dev"),
+        "dev settings must show the Alan Dev bundle identifier"
+    )
     try expect(localText.contains("alan-dev"), "dev settings must show the alan-dev CLI tool")
     try expect(localText.contains("~/.alan-dev"), "dev settings must show the dev alan home")
     try expect(
@@ -427,6 +430,22 @@ private func testNavigationGroupsMapTaskOrientedRows() throws {
         terminal.sections.map(\.id) == [.profiles, .localIdentity],
         "Terminal must group terminal profiles and local terminal identity"
     )
+    let terminalRowsByID = Dictionary(uniqueKeysWithValues: terminal.rows.map { ($0.id, $0) })
+    try expect(
+        terminalRowsByID["terminalProfilesDefault"]?.title == "Default profile"
+            && terminalRowsByID["terminalProfilesDefault"]?.detail == "Used for new terminals.",
+        "Terminal default profile row must use the shared setting label/detail/value template"
+    )
+    try expect(
+        terminalRowsByID["terminalProfilesCreate"]?.title == "New profile"
+            && terminalRowsByID["terminalProfilesCreate"]?.value == "Create…"
+            && terminalRowsByID["terminalProfilesCreate"]?.detail == "Create a local startup profile.",
+        "Terminal create row must use native ellipsis action copy with concise detail"
+    )
+    try expect(
+        terminalRowsByID["terminalProfile.login_shell"]?.detail == nil,
+        "Terminal login shell row must not repeat its title as secondary copy"
+    )
 }
 
 private func testNavigationGroupsKeepTerminalIdentityOutOfAgent() throws {
@@ -499,18 +518,100 @@ private func testNavigationGroupsPlaceAgentAndSystemRows() throws {
         "Agent must contain compact skill catalog unavailable state"
     )
     try expect(
-        agent.rows.contains { $0.id == "publicSkills" && $0.title == "Skill package path" },
+        agent.rows.contains { $0.id == "publicSkills" && $0.title == "Skill packages" },
         "Agent must contain the renamed skill package path row"
+    )
+    try expect(
+        agent.sections.map(\.id) == [.agent, .runtimeDefaults, .skills, .entryPoints],
+        "Agent must merge connection and skill source details into task-oriented sections"
     )
     try expect(
         agent.rows.map(\.id).contains("cliTool"),
         "Agent must contain the command line tool entry point"
     )
 
+    let connectedSnapshot = ShellSettingsSurfaceSnapshot.make(
+        remote: ShellSettingsRemoteSnapshot(
+            accounts: ShellSettingsAccountsSummary(
+                current: ShellSettingsConnectionSelection(
+                    defaultProfile: "chatgpt-main",
+                    effectiveProfile: "chatgpt-main",
+                    effectiveSource: "global"
+                ),
+                profiles: [
+                    ShellSettingsConnectionProfile(
+                        profileID: "chatgpt-main",
+                        label: "ChatGPT",
+                        provider: "chatgpt",
+                        credentialStatus: "available",
+                        settings: [:],
+                        isDefault: true
+                    )
+                ],
+                providers: [],
+                unavailableReason: nil
+            ),
+            capabilities: ShellSettingsCapabilitiesSummary(
+                skills: [
+                    ShellSettingsSkillSummary(
+                        id: "memory",
+                        name: "Memory",
+                        enabled: true,
+                        allowImplicitInvocation: false,
+                        available: true
+                    ),
+                    ShellSettingsSkillSummary(
+                        id: "plan",
+                        name: "Plan",
+                        enabled: false,
+                        allowImplicitInvocation: false,
+                        available: true
+                    ),
+                ],
+                unavailableReason: nil
+            )
+        ),
+        local: devLocalSummary()
+    )
+    let connectedAgent = try requireNavigationGroup(.agent, in: connectedSnapshot)
+    let connectedRowIDs = connectedAgent.rows.map { $0.id }
+    let connectionRow = connectedAgent.rows.first { $0.id == "selectedProfile" }
+    let skillCatalogRow = connectedAgent.rows.first { $0.id == "capabilitiesAvailable" }
+    try expect(
+        connectionRow?.title == "Connection profile" && connectionRow?.detail == nil,
+        "Agent connection row must stay compact when profile metadata is available"
+    )
+    try expect(
+        skillCatalogRow?.title == "Skill catalog" && skillCatalogRow?.detail == nil,
+        "Agent skill catalog row must stay compact when capability metadata is available"
+    )
+    try expect(
+        !connectedRowIDs.contains("enabledSkills")
+            && !connectedRowIDs.contains("implicitInvocation")
+            && !connectedRowIDs.contains("unavailableSkills"),
+        "Agent must not expand skill catalog into debug-count rows"
+    )
+
     try expect(
         ["appIdentity", "installChannel", "updates", "daemonEndpoint", "dataRoot",
          "applicationSupport", "shellControl"].allSatisfy(system.rows.map(\.id).contains),
         "System must contain app, runtime, storage, and shell control rows"
+    )
+    let rowsByID = Dictionary(uniqueKeysWithValues: system.rows.map { ($0.id, $0) })
+    try expect(
+        rowsByID["updates"]?.detail == nil,
+        "System Updates must not show dev/update explanation as always-visible copy"
+    )
+    try expect(
+        rowsByID["daemonEndpoint"]?.detail == nil,
+        "System Daemon Endpoint must render as a compact inspector value row"
+    )
+    try expect(
+        rowsByID["daemonEndpoint"]?.title == "Daemon endpoint"
+            && rowsByID["dataRoot"]?.title == "Alan home"
+            && rowsByID["applicationSupport"]?.title == "Shell state"
+            && rowsByID["shellControl"]?.title == "Control namespace",
+        "System path rows must use control-panel labels"
     )
     try expect(
         system.rows.filter { $0.id.hasPrefix("performanceDiagnostics") }.map(\.id)

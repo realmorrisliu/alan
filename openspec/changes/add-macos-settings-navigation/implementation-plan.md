@@ -15,7 +15,7 @@
 - Modify `clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift`
   - Replace six navigation groups with General, Terminal, Agent, System.
   - Add group-section models and row-ID based grouping.
-  - Rename `Public skills` row to `Skill package path`.
+  - Rename `Public skills` row to `Skill Packages`.
   - Add an Alan-only agent selector row or model affordance.
 - Modify `clients/apple/alan-macos/TerminalPaneView.swift`
   - Render group sections from the new model.
@@ -256,7 +256,7 @@ System:
 
 - [ ] **Step 5: Rename row title**
 
-Change the `publicSkills` row title from `Public skills` to `Skill package path`.
+Change the `publicSkills` row title from `Public skills` to `Skill Packages`.
 
 - [ ] **Step 6: Run model tests**
 

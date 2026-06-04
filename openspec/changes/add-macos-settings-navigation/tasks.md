@@ -5,7 +5,7 @@
 - [x] 1.3 Ensure Terminal contains Terminal Profiles, Managed Terminal Account, Mac login session, and sudo behavior rows.
 - [x] 1.4 Ensure Agent contains Alan selector, provider connection, model, credential, account action, runtime default, skill status, skill package source, and command line tool rows.
 - [x] 1.5 Ensure System contains app identity, install channel, daemon endpoint, updates, Alan home, shell state, shell control, and diagnostics rows.
-- [x] 1.6 Rename the old `Public skills` row to `Skill package path`.
+- [x] 1.6 Rename the old `Public skills` row to `Skill Packages`.
 
 ## 2. Settings Layout
 

@@ -71,6 +71,7 @@
 		00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */; };
 		00000000000000000000004C /* Support/ShellSidebarSpaceSliderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000156 /* Support/ShellSidebarSpaceSliderLayout.swift */; };
 		00000000000000000000004D /* Support/ShellSidebarSpaceSliderWheelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */; };
+		00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -163,6 +164,7 @@
 		000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000156 /* Support/ShellSidebarSpaceSliderLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceSliderLayout.swift; sourceTree = "<group>"; };
 		000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceSliderWheelMonitor.swift; sourceTree = "<group>"; };
+		000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellLocalFolderOpener.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -333,6 +335,7 @@
 				00000000000000000000012F /* Services/Shell/ShellDiagnostics.swift */,
 				00000000000000000000012E /* Services/Shell/ShellEventStore.swift */,
 				00000000000000000000012A /* Services/Shell/ShellLocalCommandExecutor.swift */,
+				000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */,
 				000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */,
 				000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */,
 				00000000000000000000012C /* Services/Shell/ShellPublishedStateMerger.swift */,
@@ -542,6 +545,7 @@
 				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
 				00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */,
 				00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */,
+				00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);

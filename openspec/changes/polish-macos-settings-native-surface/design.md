@@ -2,18 +2,18 @@
 
 `add-macos-settings-navigation` gives Settings a clearer information
 architecture with General, Terminal, Agent, and System groups. The latest visual
-review shows that the hierarchy is still not enough: the surface reads as a web
-admin page because it uses a pale inner sidebar, a large white detail canvas,
-and isolated card-like settings groups.
+review shows that the hierarchy is still not enough: the surface reads either
+as a web admin page or as an Apple System Settings clone because it relies on a
+large white sheet, low information density, and weak preference-list rhythm.
 
 Alan's design context calls for a calm, precise, native macOS shell inspired by
 Arc's material sidebar and terminal-first organization. Settings should support
 that shell rather than becoming a dashboard, website page, or separate
 preferences app. The visual reference for this pass is:
 
-- Apple Settings for the native source-list plus grouped-form pattern.
 - Linear for dense alignment, controlled row rhythm, and precise status columns.
-- Notion only for concise secondary copy where a row needs context.
+- Raycast and Warp for developer-tool settings that scan like a control panel.
+- Apple Pro Apps for native control-panel discipline without heavy cards.
 
 ## Goals / Non-Goals
 
@@ -21,23 +21,20 @@ preferences app. The visual reference for this pass is:
 
 - Make Settings feel native inside a macOS app rather than web-like.
 - Preserve the current Settings group IA and row semantics.
-- Turn the right detail area into a compact grouped settings form with clear
-  content width, row rhythm, control alignment, and descriptions.
+- Turn the right detail area into a compact preference list with clear content
+  width, row rhythm, control alignment, and descriptions.
 - Make the internal Settings navigation read as a subordinate macOS source list,
   not as a second application sidebar or button stack.
-- Make the selected Settings group live in a stable white page sheet whose
-  top border meets the pane title bar, and whose right and bottom edges stay
-  8px from the pane edge, without an outer shadow.
-- Keep the navigation-to-sheet seam tighter than the outer sheet margins so the
-  source list and selected page feel connected inside one Settings surface.
+- Remove the stable white page sheet as the main visual device; use the shared
+  pane plane plus direct section dividers so Settings reads as a control panel
+  rather than a document page.
+- Keep the navigation-to-detail seam tight so the source list and selected group
+  feel connected inside one Settings surface.
 - Keep the internal Settings source list close to the pane edges with compact
   leading, trailing, and top insets so the navigation reads as native chrome
   rather than a padded web sidebar.
-- Align the first source-list row's visible top edge optically with the white
-  page sheet's top edge, allowing a small compensation for rounded-corner
-  antialiasing.
-- Match the selected source-list row's visible corner treatment to the page
-  sheet so the aligned top edges do not appear offset by antialiasing.
+- Align the first source-list row's visible top edge optically with the detail
+  content start, allowing a small compensation for rounded-corner antialiasing.
 - Reduce excessive white space, heavy card affordances, and accent-color
   dominance.
 - Add verification tasks that require a fresh Alan Dev visual check.
@@ -54,49 +51,51 @@ preferences app. The visual reference for this pass is:
 
 ## Decisions
 
-1. **Use Apple Settings as the primary structural pattern.**
+1. **Use a developer control-panel pattern, not Apple System Settings.**
 
-   Settings should render as a source-list navigation plus an inset grouped
-   form. The source list owns selection, and the detail side owns grouped rows.
-   This is preferable to a web-dashboard layout because Settings is a
-   configuration surface, not a page with cards.
+   Settings should render as source-list navigation plus a dense preference
+   list. The source list owns selection, and the detail side owns sectioned
+   label/value rows. This is preferable to a web-dashboard layout or Apple
+   System Settings clone because Alan is a developer tool, and Settings should
+   behave like a control panel for fast scanning and modification.
 
    Alternative considered: keep the current two-column layout and only tune
    colors. That would leave the same web-like composition and would not fix the
    large white canvas or card-page reading.
 
-2. **Use a stable page sheet with compact left-anchored content.**
+2. **Use direct sections inside a stable 760pt content column.**
 
-   The selected group should render inside a white page sheet that is fixed to
-   the detail pane with its top border flush against the pane title bar and 8px
-   right and bottom insets. The sheet should avoid outer drop shadows and may
-   use only a thin border plus focused inner edge treatment to focus the surface.
-   The leading seam between the source list and sheet should be tighter than
-   the right and bottom sheet margins, avoiding a visible dead gutter.
-   Inside that sheet, rows keep a fixed maximum content width instead of
-   stretching across the window. The form content sits near the upper-left with
-   native preference spacing, so extra sheet space feels intentional rather than
-   like an empty web canvas.
+   The selected group should render directly on the detail pane with a stable
+   maximum content width of roughly 760pt, left-anchored placement within the
+   detail pane, and section dividers. Removing the white sheet avoids the document-page
+   feeling and lets hierarchy come from typography, separators, and row
+   alignment instead of container chrome. Rows should not stretch across the
+   full window, but the content width should be broad enough for paths,
+   endpoints, and metadata to scan quickly. The detail content should use a
+   predictable top offset and balanced horizontal padding so wide windows do
+   not make the content drift right.
 
    Alternative considered: center the form in the available content area. That
    makes Settings feel like a web page and weakens alignment with the shell and
    source list.
 
-3. **Replace card groups with inset grouped rows.**
+3. **Replace card groups with section dividers and compact rows.**
 
-   Section surfaces should use subtle grouped-list treatment: quiet fill,
-   restrained stroke, row dividers aligned from the text column, and stable
-   trailing controls. A settings group is not a dashboard card; it is a compact
-   form section.
+   Section surfaces should use a readable title, a quiet horizontal divider,
+   row dividers aligned from the text column, and stable trailing controls. A
+   settings group is not a dashboard card; it is a compact preference section.
 
    Alternative considered: keep card containers and add shadows or stronger
    borders. That increases web chrome and fights the native material direction.
 
-4. **Use Linear-like density and alignment, not Linear's product styling.**
+4. **Use one native setting-row template, not a database table.**
 
-   Rows should have fixed icon, text, value, and control columns. Labels,
-   descriptions, values, toggles, and segmented controls should align across
-   sections. The UI should become more precise through spacing, not through more
+   Rows should share one structure: setting title, optional secondary detail,
+   and an optional native trailing control. Read-only System metadata with no
+   control should render the value as secondary text below the label, not as a
+   far-right table cell. Rows with controls, such as toggles, segmented controls,
+   Copy, Show..., and Export, should align to a bounded trailing control column.
+   The UI should become more precise through spacing, not through more
    decoration.
 
    Typography should use native macOS system text roles rather than page-like
@@ -104,29 +103,52 @@ preferences app. The visual reference for this pass is:
    and trailing values should each have distinct size, weight, and blue-gray ink
    roles. Row values should read as metadata, not competing primary labels, and
    descriptions should be clearly secondary without becoming low-contrast.
-   Row labels should favor medium weight over semibold so the form feels like a
-   settings surface rather than a table of headings. Long trailing values such
-   as paths should keep the row rhythm by truncating in the middle on one line
-   while preserving the full value through native help.
+   Row labels should use restrained native weight so the form feels like a
+   settings surface rather than a table of headings. Long metadata values such
+   as paths should stay subordinate as secondary text while preserving the full
+   value through native help or a real action.
 
    Alternative considered: make rows larger and add more explanatory copy. That
    would make the surface feel heavier and less like a native developer tool.
 
-5. **Treat the source list as pane chrome, not a page section.**
+5. **Make System rows behave like a control panel.**
 
-   The source list should use small edge insets and compact rows. The selected
-   state may be visible, but the row should not look like a large floating
-   card or app-level tab. It should use a quieter second-level source-list fill,
-   subtle stroke, and no button-like drop shadow. Tight left, right, and top
-   spacing keeps the navigation visually attached to the Settings pane title and
-   page sheet. The first source-list row should optically align with the page
-   sheet's top edge instead of floating lower in the rail; a small top
-   compensation is acceptable when rounded-corner antialiasing makes strict
-   geometric alignment look off. Its selected background should use compatible
-   corner geometry with the page sheet so the visible antialiased edges read as
-   aligned.
+   System should not read like an About page or `select * from settings`.
+   Read-only install facts such as Bundle ID, Channel, and Updates remain direct
+   title/value rows, with the value below the label. Rows with obvious local
+   actions should expose compact native affordances: Daemon Endpoint can be
+   copied, Shell state and Alan home can be shown in Finder, and Diagnostics
+   remains a toggle plus export action. Update explanations and path
+   implementation details should move out of always-visible copy unless they
+   are needed for current user action.
 
-6. **Use Notion-like secondary copy only where it clarifies scope.**
+   Alternative considered: make Channel a disabled dropdown to add visual
+   activity. That would create a fake control and reduce trust.
+
+6. **Treat the source list as pane chrome, not a page section.**
+
+   The source list should contain only the four navigation rows, without an
+   internal `Settings` title. The pane titlebar and selected detail page already
+   name the surface, so another title in the navigation rail creates duplicate
+   hierarchy. The selected state should use a macOS-style rounded capsule fill
+   with darker active text and icon treatment, without a blue accent bar. The
+   navigation list should start 24pt below the Settings content top, with 12pt
+   leading inset and 8pt trailing inset so the rail has enough air without
+   becoming a second sidebar.
+
+   Source-list labels should stay lighter than the outer application sidebar:
+   icons around 13pt, labels around 13pt, and selected emphasis expressed
+   through primary text color rather than blue labels.
+
+7. **Use native action language.**
+
+   Action labels should read like a macOS app. Folder actions should use a
+   compact native button labeled `Show...`; deferred commands should use an
+   ellipsis, such as `Create...` or `Preview...`; external-link arrows should
+   not appear in native Settings rows. The daemon endpoint should use a real
+   `Copy` control rather than blue link styling.
+
+8. **Use secondary copy only where it clarifies scope.**
 
    Short descriptions should explain what a preference affects, for example
    Sidebar or Inactive split dimming. Descriptions must be one concise line when
@@ -136,7 +158,7 @@ preferences app. The visual reference for this pass is:
    screenshots show that this makes sparse groups feel empty and lowers
    confidence in what each setting controls.
 
-7. **Tone down accent color dominance.**
+9. **Tone down accent color dominance.**
 
    Accent blue should identify selected controls and active state, not define
    the whole page. Native controls should be preferred over custom bright pills
@@ -147,7 +169,7 @@ preferences app. The visual reference for this pass is:
    That solves the wrong problem; the current surface needs hierarchy and native
    rhythm, not stronger color.
 
-8. **Verify with a fresh Alan Dev launch and screenshot review.**
+10. **Verify with a fresh Alan Dev launch and screenshot review.**
 
    Unit tests can prove row membership and bindings, but they cannot prove that
    Settings no longer looks like a web app. This change requires a fresh Alan
@@ -159,14 +181,14 @@ preferences app. The visual reference for this pass is:
 
 ## Risks / Trade-offs
 
-- [Risk] Native grouped forms become too similar to Apple System Settings. ->
-  Keep Alan-specific shell context, compact row density, and Arc-like material
-  continuity with the outer sidebar.
+- [Risk] Preference lists become too plain. -> Keep Alan-specific shell context,
+  precise typography, compact row density, and subtle pane material continuity
+  instead of adding cards or large sheets.
 - [Risk] More row descriptions reduce density. -> Keep descriptions short and
   optional; use them where a setting name alone is ambiguous.
 - [Risk] Tightening width makes long Agent or System values truncate. -> Use
-  stable trailing value behavior, tooltips or reveal actions for paths, and
-  existing unavailable/detail rows instead of stretching the full page.
+  stable value behavior, native help, and explicit copy/open actions for
+  endpoints and paths instead of stretching the full page.
 - [Risk] Visual polish touches shared row components and regresses behavior. ->
   Preserve the settings surface model and keep focused tests for bindings,
   navigation, redaction, and unavailable states.
@@ -182,11 +204,16 @@ preferences app. The visual reference for this pass is:
 2. Refactor presentation tokens for Settings-specific surfaces, typography,
    row dimensions, and separators without changing row data semantics.
 3. Update the internal navigation to a native source-list treatment.
-4. Update the selected group detail pane to an inset grouped-form layout.
-5. Add or adjust concise row descriptions for ambiguous General rows first, then
+4. Update the selected group detail pane to a direct sectioned preference-list
+   layout.
+5. Collapse row presentation into one title/detail/control template, keeping
+   read-only values subordinate and controls bounded on the trailing edge.
+6. Add compact copy/open/export affordances for System rows that already have a
+   natural local action, without implying read-only install facts are editable.
+7. Add or adjust concise row descriptions for ambiguous General rows first, then
    extend only where Terminal, Agent, or System rows need scope clarity.
-6. Run focused Swift/script tests and a macOS build from repo-local DerivedData.
-7. Launch a fresh Alan Dev build and verify Settings visually in light mode.
+8. Run focused Swift/script tests and a macOS build from repo-local DerivedData.
+9. Launch a fresh Alan Dev build and verify Settings visually in light mode.
 
 Rollback: revert the visual component changes while keeping the existing
 Settings navigation model and row data intact. The IA change remains valid even
