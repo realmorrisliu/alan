@@ -7281,6 +7281,7 @@ private enum ShellRuntimeMetadataTests {
         )
 
         guard let pane = controller.pane(paneID: "pane_1"),
+              let visibleTranscript = controller.restoredTranscriptSnapshot(for: pane),
               let bootProfile = controller.bootProfile(for: pane),
               let handle = registry.surfaceHandle(
                 for: pane,
@@ -7290,6 +7291,10 @@ private enum ShellRuntimeMetadataTests {
             fail("workspace manifest restore must create a terminal runtime handle")
         }
 
+        expect(
+            visibleTranscript.transcriptLines == ["server ready", "listening on 3000"],
+            "restored terminal transcript must be available to the terminal leaf as visible history"
+        )
         expect(
             bootProfile.workingDirectory == "/repo/app",
             "restored terminal runtime must start a fresh shell in the restored cwd"

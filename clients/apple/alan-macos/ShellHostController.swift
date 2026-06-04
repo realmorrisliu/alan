@@ -736,6 +736,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return AlanShellBootProfile.forPane(pane, shellState: shellState)
     }
 
+    func restoredTranscriptSnapshot(for pane: ShellPane?) -> TerminalTranscriptSnapshot? {
+        guard let pane,
+              let content = terminalContentInstance(mountedIn: pane)
+        else {
+            return nil
+        }
+        return content.payload.terminal?.transcriptSnapshot?.boundedForManifest()
+    }
+
     private func seedRestoredTranscriptSnapshotIfNeeded(for pane: ShellPane) {
         guard let content = terminalContentInstance(mountedIn: pane),
               let transcriptSnapshot = content.payload.terminal?.transcriptSnapshot
