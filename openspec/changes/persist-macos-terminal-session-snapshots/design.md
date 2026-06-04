@@ -30,8 +30,10 @@ block model.
 - Prevent destructive pane, tab, window, app, and Quick Terminal close paths
   from silently killing active terminal work.
 - Keep the default idle-shell close path fast and confirmation-free.
-- Persist a bounded terminal transcript snapshot before confirmed close or app
-  teardown.
+- Give active terminal work a bounded graceful shutdown window after confirmed
+  close and before forced runtime finalization.
+- Persist a bounded terminal transcript snapshot after the graceful shutdown
+  window has drained, or at timeout, before confirmed close or app teardown.
 - Restore terminal panes after app restart with their prior visible transcript,
   scrollback tail, title, cwd, layout, and focus context.
 - Start a new shell in the restored cwd after restart so the pane remains usable.
@@ -72,13 +74,35 @@ keyboard, sidebar, pane title-bar, quick terminal, and automation paths.
 ### Interactive close confirms once per requested scope
 
 For interactive close, Alan presents one confirmation sheet for the requested
-scope. Cancelling the sheet leaves shell state, workspace manifest, and terminal
-runtimes unchanged. Confirming runs snapshot capture first, then applies the
-existing close mutation and runtime finalization.
+scope. Cancelling the sheet leaves shell state, workspace manifest, terminal
+runtimes, and terminal input untouched. Confirming asks affected active terminal
+runtimes to perform a bounded graceful shutdown, waits briefly for foreground
+work to exit or return to the prompt, captures transcript snapshots after that
+drain point, then applies the existing close mutation and runtime finalization.
 
 Alternative considered: confirm per terminal pane. That gives more detail but is
 annoying for split tabs and app quit, and it makes app termination harder to
 reason about.
+
+### Graceful shutdown is best-effort and bounded
+
+Alan will add a terminal-runtime-owned graceful shutdown seam before confirmed
+close finalization. In the current Ghostty-backed runtime, that seam can request
+terminal-level interruption/EOF-style graceful input and observe whether the
+surface returns to inactive foreground-work state. Alan then captures the latest
+transcript tail, including any resume/session hints printed during shutdown,
+before force-finalizing remaining runtimes.
+
+The first implementation intentionally does not claim process-group signal
+ownership. Sending `SIGTERM` or `SIGHUP` to the foreground process group requires
+GhosttyKit to expose a process-control seam or Alan to own the PTY/process tree.
+That remains future work; the current guarantee is a bounded best-effort
+graceful request, post-drain transcript capture, and forced finalization on
+timeout.
+
+Alternative considered: immediately free the Ghostty surface after confirmation.
+That matches typical terminal behavior but loses the final output from tools
+such as Codex that print resume/session information while exiting.
 
 ### Automation close is non-destructive by default
 
@@ -106,10 +130,12 @@ renderer-version incompatibility, and still cannot restore dead child processes.
 ### Runtime service owns capture and replay seams
 
 The terminal runtime service will expose a snapshot capture API for live
-ContentInstance handles and a restore API for startup. Capture first asks the
-live terminal surface for a text/scrollback range. If that is unavailable, Alan
-can use a lightweight transcript ring buffer maintained by the runtime handle.
-App/window teardown performs a best-effort flush before finalization.
+ContentInstance handles, a confirmed-close graceful shutdown request API, and a
+restore API for startup. Capture first asks the live terminal surface for a
+text/scrollback range. If that is unavailable, Alan can use a lightweight
+transcript ring buffer maintained by the runtime handle. App/window teardown
+requests graceful shutdown for active work, performs a best-effort flush, and
+captures after the drain window before finalization.
 
 On restart, materialization passes the saved snapshot to runtime creation. The
 new runtime presents the restored transcript as initial terminal history and
@@ -155,6 +181,9 @@ and conflicts with explicit user confirmation.
   restore instead of claiming live app recovery.
 - Snapshot capture during app quit can race late output -> flush runtime state
   before capture and accept best-effort tail fidelity.
+- Graceful shutdown may not stop arbitrary foreground programs without a real
+  process-group signal seam -> keep the close path bounded and force finalize on
+  timeout, while documenting true signal delivery as future work.
 - Large scrollback can make manifest writes slow or huge -> cap row count and
   encoded bytes, prefer tail content, and record truncation metadata.
 - Pinned live transcript overlay can be confusing if the pin template no longer

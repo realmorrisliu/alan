@@ -38,6 +38,8 @@ final class AlanGhosttyLiveHost: NSObject {
     private var queuedForegroundCommandSubmissions = 0
 
     private enum KeyCode {
+        static let d: UInt32 = 2
+        static let c: UInt32 = 8
         static let returnKey: UInt32 = 36
         static let keypadEnter: UInt32 = 76
     }
@@ -144,15 +146,23 @@ final class AlanGhosttyLiveHost: NSObject {
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> Bool {
         guard surface != nil else { return false }
         let keycode: UInt32
+        let mods: ghostty_input_mods_e
         switch key {
+        case .interrupt:
+            keycode = KeyCode.c
+            mods = GHOSTTY_MODS_CTRL
+        case .endOfTransmission:
+            keycode = KeyCode.d
+            mods = GHOSTTY_MODS_CTRL
         case .returnKey:
             keycode = KeyCode.returnKey
+            mods = GHOSTTY_MODS_NONE
         }
 
         var keyDown = ghostty_input_key_s()
         keyDown.action = GHOSTTY_ACTION_PRESS
         keyDown.keycode = keycode
-        keyDown.mods = GHOSTTY_MODS_NONE
+        keyDown.mods = mods
         keyDown.consumed_mods = GHOSTTY_MODS_NONE
         keyDown.text = nil
         keyDown.composing = false

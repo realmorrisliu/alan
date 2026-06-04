@@ -31,12 +31,24 @@ terminal ContentInstance runtimes.
 ### Requirement: Confirmed close captures terminal session snapshots
 The macOS shell host SHALL attempt to capture bounded terminal transcript
 snapshots for affected live terminal ContentInstances after a destructive
-terminal close request is confirmed and before finalizing their runtimes.
+terminal close request is confirmed, after a bounded graceful shutdown attempt
+for active terminal work, and before finalizing their runtimes.
 
 #### Scenario: Confirmed pane close captures a snapshot
 - **WHEN** the user confirms closing a terminal PaneSlot with restorable terminal history
-- **THEN** Alan captures a bounded transcript snapshot for the mounted terminal ContentInstance before invoking runtime finalization
+- **THEN** Alan first requests graceful shutdown for active foreground terminal work when applicable
+- **AND** Alan captures a bounded transcript snapshot for the mounted terminal ContentInstance before invoking runtime finalization
 - **AND** the snapshot is associated with the terminal ContentInstance identity and close reason
+
+#### Scenario: Graceful shutdown output is captured
+- **WHEN** a confirmed close affects terminal work that can print final session or resume metadata while shutting down
+- **THEN** Alan gives the runtime a bounded graceful shutdown window before forced finalization
+- **AND** Alan captures transcript history after the graceful window drains or times out so final output can be restored after restart
+
+#### Scenario: Graceful shutdown times out
+- **WHEN** the affected terminal work does not exit or return to an idle prompt within the bounded graceful shutdown window
+- **THEN** Alan captures the latest available transcript tail
+- **AND** Alan may force-finalize the runtime after the timeout instead of blocking app quit or close indefinitely
 
 #### Scenario: Snapshot capture fails after confirmation
 - **WHEN** the user has confirmed a destructive close and snapshot capture or persistence fails

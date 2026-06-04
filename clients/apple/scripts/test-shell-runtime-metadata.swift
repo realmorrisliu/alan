@@ -130,6 +130,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesActiveTabCloseRequiresOneConfirmationForMultiplePanes()
         verifiesInteractivePaneCloseCancelLeavesStateManifestAndRuntimeUnchanged()
         verifiesInteractiveConfirmedPaneCloseCapturesSnapshotBeforeFinalization()
+        verifiesConfirmedAppCloseRequestsGracefulShutdownBeforeTranscriptCapture()
+        verifiesConfirmedAppCloseCapturesLatestTranscriptAfterGracefulTimeout()
         verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation()
         verifiesWindowAndAppCloseIncludeActiveQuickTerminal()
         verifiesConfirmedAppClosePersistsAndRestoresQuickTerminalTranscript()
@@ -1497,7 +1499,8 @@ private enum ShellRuntimeMetadataTests {
         let registry = TerminalRuntimeRegistry(runtimeService: service)
         let controller = makeController(
             terminalRuntimeRegistry: registry,
-            closeConfirmationPresenter: presenter
+            closeConfirmationPresenter: presenter,
+            gracefulShutdownTimeout: 0
         )
         let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
         let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 1)
@@ -1557,6 +1560,120 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(handle.teardownCount == 1, "confirmed close must finalize the terminal runtime")
         expect(controller.pane(paneID: "pane_1") == nil, "confirmed close must remove the pane")
+    }
+
+    private static func verifiesConfirmedAppCloseRequestsGracefulShutdownBeforeTranscriptCapture() {
+        let windowID = "graceful_app_close_\(UUID().uuidString)"
+        let manifestURL = manifestURL("graceful_app_close")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [true])
+        let controller = makeController(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/repo/app",
+                now: Date(timeIntervalSince1970: 82)
+            ),
+            closeConfirmationPresenter: presenter,
+            gracefulShutdownTimeout: 0
+        )
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        handle.recordTranscriptOutput("codex running")
+        handle.markActiveTaskState(.foregroundCommand)
+        handle.onGracefulShutdownRequest = { reason in
+            expect(reason == .appQuit, "app quit must request app-quit graceful shutdown")
+            handle.recordTranscriptOutput("codex resume previous-session-id")
+            handle.markActiveTaskState(.inactive)
+        }
+        controller.updateTerminalMetadata(
+            metadata(title: "codex", cwd: "/repo/app", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+
+        expect(controller.requestTerminateApp(), "confirmed app quit must apply after graceful request")
+        expect(
+            handle.gracefulShutdownRequests == [.appQuit],
+            "confirmed app quit must request graceful shutdown for active terminal content"
+        )
+        expect(
+            handle.deliveredKeys == [.interrupt],
+            "graceful shutdown must send terminal interrupt before finalization"
+        )
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let liveSnapshot = savedManifest.spaces.first?.tabs.first?.liveSnapshot,
+              let payload = terminalPayload(in: liveSnapshot, paneSlotID: "pane_1"),
+              let transcript = payload.transcriptSnapshot
+        else {
+            fail("confirmed app quit must persist a transcript snapshot")
+        }
+        expect(
+            transcript.transcriptLines == [
+                "codex running",
+                "codex resume previous-session-id",
+            ],
+            "transcript capture must include output printed during graceful shutdown"
+        )
+        expect(handle.teardownCount == 1, "confirmed app quit must still finalize the runtime")
+    }
+
+    private static func verifiesConfirmedAppCloseCapturesLatestTranscriptAfterGracefulTimeout() {
+        let windowID = "graceful_timeout_\(UUID().uuidString)"
+        let manifestURL = manifestURL("graceful_timeout")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [true])
+        let controller = makeController(
+            windowID: windowID,
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: store,
+            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: "/repo/app",
+                now: Date(timeIntervalSince1970: 83)
+            ),
+            closeConfirmationPresenter: presenter,
+            gracefulShutdownTimeout: 0.001
+        )
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        handle.recordTranscriptOutput("long command still running")
+        handle.markActiveTaskState(.foregroundCommand)
+        controller.updateTerminalMetadata(
+            metadata(title: "cargo test", cwd: "/repo/app", activeTaskState: .foregroundCommand),
+            for: "pane_1"
+        )
+
+        expect(controller.requestTerminateApp(), "confirmed app quit must not block forever on graceful timeout")
+        expect(
+            handle.deliveredKeys == [.interrupt],
+            "timeout path must still request graceful shutdown once"
+        )
+        expect(handle.teardownCount == 1, "timeout path must force-finalize the runtime")
+        expect(
+            controller.controlPlaneDiagnostics.contains {
+                $0.contains("terminal graceful shutdown timed out")
+            },
+            "timeout path must record a graceful shutdown diagnostic"
+        )
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let liveSnapshot = savedManifest.spaces.first?.tabs.first?.liveSnapshot,
+              let transcript = terminalPayload(
+                in: liveSnapshot,
+                paneSlotID: "pane_1"
+              )?.transcriptSnapshot
+        else {
+            fail("timeout path must still persist latest transcript tail")
+        }
+        expect(
+            transcript.transcriptLines == ["long command still running"],
+            "timeout path must capture the latest available transcript tail"
+        )
     }
 
     private static func verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation() {
@@ -1652,7 +1769,8 @@ private enum ShellRuntimeMetadataTests {
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 94)
             ),
-            closeConfirmationPresenter: presenter
+            closeConfirmationPresenter: presenter,
+            gracefulShutdownTimeout: 0
         )
         _ = controller.showQuickTerminal()
         let quickHandle = fakeSurfaceHandle(
@@ -9776,6 +9894,7 @@ private enum ShellRuntimeMetadataTests {
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
+        gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
@@ -9796,6 +9915,7 @@ private enum ShellRuntimeMetadataTests {
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
             closeConfirmationPresenter: closeConfirmationPresenter,
+            gracefulShutdownTimeout: gracefulShutdownTimeout,
             performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
             appIsActiveProvider: { appIsActive }
         )

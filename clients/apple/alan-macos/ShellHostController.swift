@@ -375,6 +375,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private static let unpinnedTabRetentionTTL: TimeInterval = 12 * 60 * 60
+    private static let gracefulShutdownPollInterval: TimeInterval = 0.05
     private static let iso8601Formatter = ISO8601DateFormatter()
     private let fileManager: FileManager
     private let windowContext: ShellWindowContext
@@ -388,6 +389,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
     private let closeConfirmationPresenter: ShellCloseConfirmationPresenting
+    private let gracefulShutdownTimeout: TimeInterval
     private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
     lazy var controlPlane = AlanShellControlPlane(
         windowID: windowContext.windowID,
@@ -451,6 +453,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
+        gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
@@ -472,6 +475,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.clipboardWriter = ShellClipboardWriter()
         self.closeConfirmationPresenter =
             closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
+        self.gracefulShutdownTimeout = gracefulShutdownTimeout
         self.performanceDiagnosticsRecorder = performanceDiagnosticsRecorder
         self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
@@ -3155,8 +3159,89 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard closeConfirmationPresenter.confirmClose(impact: impact) else {
             return false
         }
+        let gracefullyRequestedContentIDs = requestGracefulShutdownForConfirmedClose(impact)
+        waitForGracefulShutdownDrain(contentIDs: gracefullyRequestedContentIDs)
         let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
         return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
+    }
+
+    @discardableResult
+    private func requestGracefulShutdownForConfirmedClose(
+        _ impact: ShellCloseGuardImpact
+    ) -> [String] {
+        let reason = gracefulShutdownReason(for: impact.scope)
+        var requestedContentIDs: [String] = []
+        var seenContentIDs: Set<String> = []
+        for contentID in impact.activeTerminalContentIDs
+            where seenContentIDs.insert(contentID).inserted
+        {
+            let result = terminalRuntimeRegistry.requestGracefulShutdown(
+                forTerminalContentID: contentID,
+                reason: reason
+            )
+            if result.wasRequested {
+                requestedContentIDs.append(contentID)
+            } else if result.code != .alreadyExited {
+                recordControlPlaneDiagnostic(
+                    "terminal graceful shutdown request \(result.code.rawValue) for \(contentID)"
+                )
+            }
+        }
+        return requestedContentIDs
+    }
+
+    private func waitForGracefulShutdownDrain(contentIDs: [String]) {
+        guard gracefulShutdownTimeout > 0, !contentIDs.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(gracefulShutdownTimeout)
+        while Date() < deadline {
+            if contentIDs.allSatisfy({ terminalGracefulShutdownSettled(contentID: $0) }) {
+                return
+            }
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            _ = RunLoop.current.run(
+                mode: .default,
+                before: Date().addingTimeInterval(
+                    min(Self.gracefulShutdownPollInterval, remaining)
+                )
+            )
+        }
+
+        let timedOutContentIDs = contentIDs.filter {
+            !terminalGracefulShutdownSettled(contentID: $0)
+        }
+        guard !timedOutContentIDs.isEmpty else { return }
+        recordControlPlaneDiagnostic(
+            "terminal graceful shutdown timed out for \(timedOutContentIDs.joined(separator: ","))"
+        )
+    }
+
+    private func terminalGracefulShutdownSettled(contentID: String) -> Bool {
+        let runtime = terminalRuntimeRegistry.snapshot(forTerminalContentID: contentID)
+        let metadata = runtime.paneMetadata
+        if metadata.processExited {
+            return true
+        }
+        if let activeTaskState = metadata.activeTaskState {
+            return !activeTaskState.protectsFromPruning
+        }
+        return !terminalRuntimeRegistry.registeredContentIDs.contains(contentID)
+    }
+
+    private func gracefulShutdownReason(
+        for scope: ShellCloseGuardScope
+    ) -> TerminalRuntimeGracefulShutdownReason {
+        switch scope {
+        case .paneSlot:
+            return .paneClose
+        case .tab:
+            return .tabClose
+        case .quickTerminal:
+            return .quickTerminalClose
+        case .window:
+            return .windowClose
+        case .app:
+            return .appQuit
+        }
     }
 
     @discardableResult
