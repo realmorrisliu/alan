@@ -35,8 +35,8 @@ theme panels, and ornamental controls.
 #### Scenario: Space slider replaces header and dock
 - **WHEN** the default sidebar displays Space navigation
 - **THEN** the selected Space is represented by its title in the top Space
-  slider, non-selected Spaces are represented by dots, and no Space icon is
-  shown in the slider
+  slider, non-selected Spaces use the representation required by the active
+  Space slider density tier, and no Space icon is shown in the slider
 - **AND** alan does not show a separate bottom Space dock in the default sidebar
 - **AND** the top Space slider remains a fixed sidebar-level control while
   Space tab content pages move beneath it during Space paging gestures
@@ -46,7 +46,7 @@ theme panels, and ornamental controls.
 - **THEN** alan does not show an always-visible terminal profile selector in the
   Space slider or default sidebar
 - **AND WHEN** the user opens a Space context menu from the selected Space title
-  or a non-selected Space dot
+  or a non-selected Space slider target
 - **THEN** terminal profile selection is available as a Space-level context menu
   action
 
@@ -655,7 +655,7 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Space slider is compact
 - **WHEN** the top Space slider is visible
-- **THEN** the selected Space title and non-selected dots use slim borderless styling with selection and hover conveyed without persistent framed cards, section chrome, or a bottom switcher
+- **THEN** Space slider titles, short-title controls, and compact indicators use slim borderless styling with selection and hover conveyed without persistent framed cards, section chrome, or a bottom switcher
 
 #### Scenario: Lightweight tab rows
 - **WHEN** the active-space tab list contains terminal and alan tabs
