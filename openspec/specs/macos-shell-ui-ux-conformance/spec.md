@@ -782,7 +782,8 @@ interaction state rather than decorate every translucent control.
 - **THEN** it may use a very light adaptive contact shadow that is smaller than floating overlay shadows and does not produce dirty dark halos in light mode
 
 #### Scenario: Floating surfaces carry stronger elevation
-- **WHEN** the command input, pane Find bar, or collapsed sidebar panel floats above the shell
+- **WHEN** the pane Find bar, collapsed sidebar panel, or another supported
+  shell overlay floats above the shell
 - **THEN** it uses semantic floating-surface shadows that are visible, focused, and adaptive while keeping the terminal content visually dominant
 
 #### Scenario: Radius scale remains role-based
@@ -1071,8 +1072,8 @@ chrome、dashboard 布局、营销式页面结构或独立于 shell content area
 - **THEN** 每个 pane title bar 显示对应用户可见标题和必要的 compact status
 - **AND** terminal-only 状态只出现在 terminal pane 上
 
-#### Scenario: Command results include non-terminal content
-- **WHEN** command input 列出 markdown 或 settings target
+#### Scenario: Supported content navigation includes non-terminal content
+- **WHEN** supported content navigation lists markdown or settings targets
 - **THEN** 结果使用用户可见 content title 和 type hint
 - **AND** 不以 raw pane ID、content ID 或 renderer class name 作为 primary label
 
@@ -1259,28 +1260,32 @@ first-party alan tab creation surfaces.
 
 ### Requirement: Settings Surface Uses Task-Oriented Sections
 Alan macOS Settings SHALL organize configuration and local status into
-task-oriented sections rather than exposing storage files, raw implementation
-IDs, or one-off controls as the primary information architecture.
+task-oriented groups rather than exposing storage files, raw implementation
+IDs, or one-off controls as the primary information architecture. The accepted
+Settings information architecture SHALL use the General, Terminal, Agent, and
+System groups; older Interface, Accounts, Sessions, Capabilities, and Local
+families are data families that map into those groups rather than top-level
+navigation sections.
 
-The default section order SHALL be:
+The default Settings group order SHALL be:
 
-- Interface
-- Accounts
-- Sessions
-- Capabilities
-- Local
+- General
+- Terminal
+- Agent
+- System
 
 #### Scenario: Settings tab renders grouped sections
 - **WHEN** the user opens the Settings content tab
-- **THEN** alan shows Interface, Accounts, Sessions, Capabilities, and Local as
-  distinct settings sections in the shell content area
-- **AND** Interface appears before advanced or diagnostic sections
+- **THEN** alan shows General, Terminal, Agent, and System as the internal
+  Settings navigation groups in the shell content area
+- **AND** General is selected by default and contains the everyday Interface
+  preference rows before advanced or diagnostic rows
 - **AND** the content remains inside the existing shell tab chrome
 
 #### Scenario: Existing interface preferences remain available
 - **WHEN** the Settings tab is active
 - **THEN** alan exposes appearance mode, sidebar visibility, and inactive split
-  pane dimming as editable Interface preferences
+  pane dimming as editable preferences in the General group
 - **AND** changing those preferences updates the same app-level preference state
   used by the main shell surface
 

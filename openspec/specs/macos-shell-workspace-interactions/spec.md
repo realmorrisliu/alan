@@ -441,13 +441,13 @@ changing selected Space, selected Tab, or focused pane.
 ### Requirement: Quick Terminal Summon And Dismiss Are Shell Commands
 Quick terminal summon, dismiss, focus, and close operations SHALL route through
 Alan's shared shell command/controller paths so keyboard shortcuts, menu
-commands, command input, and control surfaces converge on the same behavior.
+commands, and supported control surfaces converge on the same behavior.
 Alan SHALL expose a configurable global toggle shortcut for quick terminal; the
 draft default shortcut is `Option+Space`.
 
 #### Scenario: Quick terminal command opens
 - **WHEN** the user invokes quick terminal from a keyboard shortcut, menu,
-  command input, or supported control command
+  or supported control command
 - **THEN** Alan summons the same quick terminal target through the shared shell
   controller path and focuses terminal input
 
@@ -510,8 +510,8 @@ terminal tab 行为。
 - **THEN** alan 聚焦已存在的 settings ContentInstance 所在 PaneSlot
 - **AND** alan MUST NOT 创建重复 settings tabs，除非未来 capability 明确引入多实例 settings
 
-### Requirement: Sidebar and command routing understand content kind
-Sidebar、toolbar、command input 和 menu routing SHALL 使用 content kind、title 和 capabilities
+### Requirement: Sidebar and supported command routing understand content kind
+Sidebar、toolbar、menu routing 和 supported control surfaces SHALL 使用 content kind、title 和 capabilities
 来展示和执行 tab/pane 操作，而不是把所有 PaneSlots 视为 terminal target。
 
 #### Scenario: Sidebar lists mixed content tabs
@@ -519,8 +519,8 @@ Sidebar、toolbar、command input 和 menu routing SHALL 使用 content kind、t
 - **THEN** sidebar 使用各自用户可见标题和 restrained content affordance
 - **AND** 默认 UI 不暴露 raw pane IDs、content IDs 或 renderer implementation names
 
-#### Scenario: Command input resolves content-aware target
-- **WHEN** 用户通过 command input 跳转到 markdown 或 settings pane
+#### Scenario: Supported navigation resolves content-aware target
+- **WHEN** 用户通过 supported content navigation 跳转到 markdown 或 settings pane
 - **THEN** alan 聚焦对应 PaneSlot
 - **AND** 不执行 terminal-specific focus side effect，例如请求 terminal host first responder
 
