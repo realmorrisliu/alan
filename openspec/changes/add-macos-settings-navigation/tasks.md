@@ -5,7 +5,7 @@
 - [x] 1.3 Ensure Terminal contains Terminal Profiles, Managed Terminal Account, Mac login session, and sudo behavior rows.
 - [x] 1.4 Ensure Agent contains Alan selector, provider connection, model, credential, account action, runtime default, skill status, skill package source, and command line tool rows.
 - [x] 1.5 Ensure System contains app identity, install channel, daemon endpoint, updates, Alan home, shell state, shell control, and diagnostics rows.
-- [x] 1.6 Rename the old `Public skills` row to `Skill package path`.
+- [x] 1.6 Rename the old `Public skills` row to `Skill Packages`.
 
 ## 2. Settings Layout
 
@@ -32,10 +32,10 @@
 - [x] 4.2 Run `bash clients/apple/scripts/test-shell-runtime-metadata.sh`.
 - [x] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 4.4 Run `openspec validate add-macos-settings-navigation --strict`.
-- [ ] 4.5 Build and relaunch Alan Dev fresh, then verify Settings in light mode for default General selection, Agent/System group switching, long Agent/System content, and row control layout.
+- [x] 4.5 Build and relaunch Alan Dev fresh, then verify Settings in light mode for default General selection, Agent/System group switching, long Agent/System content, and row control layout.
 
 ## 5. Review And Archive Readiness
 
-- [ ] 5.1 Review the implementation against `openspec/specs/macos-shell-ui-ux-conformance/spec.md` and this change's delta spec for duplicate or conflicting Settings requirements.
+- [x] 5.1 Review the implementation against `openspec/specs/macos-shell-ui-ux-conformance/spec.md` and this change's delta spec for duplicate or conflicting Settings requirements.
 - [ ] 5.2 Before archiving after merge, sync the accepted delta requirements into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
 - [ ] 5.3 Archive the completed change only after implementation, verification, PR review, and merge are complete.

@@ -62,7 +62,7 @@ The default Settings navigation order SHALL be:
 
 #### Scenario: Skill package source copy is explicit
 - **WHEN** Settings renders the Agent skill source row
-- **THEN** alan labels the filesystem package source as Skill package path
+- **THEN** alan labels the filesystem package source as Skill Packages
 - **AND** alan does not label that path as Public skills
 
 #### Scenario: Navigation stays visually subordinate

@@ -90,7 +90,7 @@ window.
 5. **Rename ambiguous skill path copy.**
 
    The old Local row title `Public skills` is unclear. In the revised Agent
-   group it should be named `Skill package path` and placed under a Skill
+   group it should be named `Skill Packages` and placed under a Skill
    Sources section. This distinguishes current agent skill availability from
    the filesystem package source that feeds the skill catalog.
 

@@ -106,23 +106,23 @@ enum ShellSettingsGroupSectionID: String, Equatable, Identifiable {
         case .profiles:
             return "Profiles"
         case .localIdentity:
-            return "Local Identity"
+            return "Identity"
         case .agent:
             return "Agent"
         case .connection:
             return "Connection"
         case .runtimeDefaults:
-            return "Runtime Defaults"
+            return "Runtime"
         case .skills:
             return "Skills"
         case .skillSources:
-            return "Skill Sources"
+            return "Sources"
         case .entryPoints:
-            return "Entry Points"
+            return "Entry points"
         case .app:
-            return "App"
+            return "Application"
         case .localRuntime:
-            return "Local Runtime"
+            return "Runtime"
         case .storage:
             return "Storage"
         case .diagnostics:
@@ -302,36 +302,27 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 ),
             ].compactMap { $0 }
         case .agent:
-            return [
-                ShellSettingsGroupSectionModel(id: .agent, rows: [Self.agentSelectorRow()]),
-                section(
-                    .connection,
-                    rowIDs: [
-                        "accountsUnavailable",
-                        "selectedProfile",
-                        "provider",
-                        "model",
-                        "credential",
-                        "accountActions",
-                    ],
+            let agentRows = [Self.agentSelectorRow()]
+                + rows(
+                    rowIDs: ["accountsUnavailable", "selectedProfile"],
                     rowsByID: rowLookup
-                ),
+                )
+            let skillRows = rows(
+                rowIDs: [
+                    "capabilitiesUnavailable",
+                    "capabilitiesAvailable",
+                    "publicSkills",
+                ],
+                rowsByID: rowLookup
+            )
+            return [
+                section(.agent, rows: agentRows),
                 section(
                     .runtimeDefaults,
                     rowIDs: ["governance", "reasoningEffort", "streamingMode", "recoveryMode"],
                     rowsByID: rowLookup
                 ),
-                section(
-                    .skills,
-                    rowIDs: [
-                        "capabilitiesUnavailable",
-                        "enabledSkills",
-                        "implicitInvocation",
-                        "unavailableSkills",
-                    ],
-                    rowsByID: rowLookup
-                ),
-                section(.skillSources, rowIDs: ["publicSkills"], rowsByID: rowLookup),
+                section(.skills, rows: skillRows),
                 section(.entryPoints, rowIDs: ["cliTool"], rowsByID: rowLookup),
             ].compactMap { $0 }
         case .system:
@@ -370,6 +361,13 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
 
     private func rows(
         rowIDs: [String],
+        rowsByID: [String: ShellSettingsRowModel]
+    ) -> [ShellSettingsRowModel] {
+        rowIDs.compactMap { rowsByID[$0] }
+    }
+
+    private func rows(
+        rowIDs: [String],
         matchingPrefix prefix: String,
         rowsByID: [String: ShellSettingsRowModel]
     ) -> [ShellSettingsRowModel] {
@@ -383,7 +381,6 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             id: "agentSelector",
             systemName: "sparkles",
             title: "Agent",
-            detail: "Alan is the currently configurable agent.",
             value: "Alan"
         )
     }
@@ -394,21 +391,21 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 id: "appearance",
                 systemName: "circle.lefthalf.filled",
                 title: "Appearance",
-                detail: "Follow the system appearance or pin Alan to light or dark.",
+                detail: "Use system appearance or choose a fixed theme.",
                 mutability: .editable
             ),
             ShellSettingsRowModel(
                 id: "sidebar",
                 systemName: "sidebar.left",
                 title: "Sidebar",
-                detail: "Show the workspace sidebar in shell windows.",
+                detail: "Show workspace sidebar in terminal windows.",
                 mutability: .editable
             ),
             ShellSettingsRowModel(
                 id: "inactiveSplitDimming",
                 systemName: "rectangle.split.2x1",
                 title: "Inactive split dimming",
-                detail: "Dim inactive terminal splits so the focused pane stays prominent.",
+                detail: "Dim inactive terminal panes.",
                 mutability: .editable
             ),
         ]
@@ -421,17 +418,17 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             ShellSettingsRowModel(
                 id: "terminalProfilesDefault",
                 systemName: "terminal",
-                title: "Default Terminal Profile",
-                detail: "Local startup identity for new terminal content.",
+                title: "Default profile",
+                detail: "Used for new terminals.",
                 value: summary.defaultProfileTitle ?? "Login shell",
                 mutability: .editable
             ),
             ShellSettingsRowModel(
                 id: "terminalProfilesCreate",
                 systemName: "plus.circle",
-                title: "New Terminal Profile",
-                detail: "Structured launch mode with local validation.",
-                value: "Create",
+                title: "New profile",
+                detail: "Create a local startup profile.",
+                value: "Create…",
                 mutability: .actionOnly
             )
         ]
@@ -454,7 +451,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                     id: "terminalProfile.\(profile.id)",
                     systemName: terminalProfileSystemName(profile),
                     title: profile.title,
-                    detail: profile.redactedDisplayDetail,
+                    detail: Self.nonRepeatingDetail(
+                        profile.redactedDisplayDetail,
+                        title: profile.title
+                    ),
                     value: profile.id == summary.defaultProfileID ? "Default" : profile.launch.kind.rawValue,
                     mutability: .editable
                 )
@@ -482,7 +482,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                     systemName: "person.crop.circle.badge.plus",
                     title: "Managed terminal account",
                     detail: "Create a terminal-only local user for passwordless terminal entry.",
-                    value: "Preview plan",
+                    value: "Preview…",
                     mutability: .actionOnly
                 ),
                 ShellSettingsRowModel(
@@ -505,6 +505,20 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 mutability: .actionOnly
             )
         }
+    }
+
+    private static func nonRepeatingDetail(_ detail: String?, title: String) -> String? {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let normalizedDetail,
+              !normalizedDetail.isEmpty,
+              normalizedDetail.localizedCaseInsensitiveCompare(normalizedTitle) != .orderedSame
+        else {
+            return nil
+        }
+
+        return normalizedDetail
     }
 
     private static func terminalProfileSystemName(_ profile: TerminalProfileDefinition) -> String {
@@ -573,13 +587,12 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func accountRows(
         _ summary: ShellSettingsAccountsSummary
     ) -> [ShellSettingsRowModel] {
-        if let reason = summary.compactUnavailableReason {
+        if summary.compactUnavailableReason != nil {
             return [
                 unavailableRow(
                     id: "accountsUnavailable",
                     systemName: "person.crop.circle.badge.exclamationmark",
-                    title: "Connection profile",
-                    reason: reason
+                    title: "Connection profile"
                 ),
             ]
         }
@@ -589,58 +602,19 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 ShellSettingsRowModel(
                     id: "selectedProfile",
                     systemName: "person.crop.circle",
-                    title: "Selected profile",
-                    detail: "Add one with alan connection add.",
+                    title: "Connection profile",
                     value: "Not configured"
-                ),
-                ShellSettingsRowModel(
-                    id: "accountActions",
-                    systemName: "arrowshape.turn.up.right",
-                    title: "Account actions",
-                    detail: "Login, key entry, and connection tests run through alan connection.",
-                    value: "Command line"
-                ),
+                )
             ]
         }
 
-        let provider = summary.provider(for: profile.provider)
         return [
             ShellSettingsRowModel(
                 id: "selectedProfile",
                 systemName: "person.crop.circle",
-                title: "Selected profile",
-                detail: "Profile ID: \(profile.profileID)",
+                title: "Connection profile",
                 value: profile.displayName
-            ),
-            ShellSettingsRowModel(
-                id: "provider",
-                systemName: "network",
-                title: "Provider",
-                detail: profile.provider,
-                value: provider?.displayName ?? displayProviderName(profile.provider)
-            ),
-            ShellSettingsRowModel(
-                id: "model",
-                systemName: "cpu",
-                title: "Model",
-                detail: "Resolved by the connection profile.",
-                value: profile.modelDisplayValue
-            ),
-            ShellSettingsRowModel(
-                id: "credential",
-                systemName: "key",
-                title: "Credential",
-                detail: "Secret values stay in the host credential store.",
-                value: displayCredentialStatus(profile.credentialStatus)
-            ),
-            ShellSettingsRowModel(
-                id: "accountActions",
-                systemName: "arrowshape.turn.up.right",
-                title: "Account actions",
-                detail: "Login, key entry, and connection tests run through alan connection.",
-                value: provider?.supportedActionLabel ?? "Command line",
-                mutability: .actionOnly
-            ),
+            )
         ]
     }
 
@@ -650,14 +624,14 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 id: "governance",
                 systemName: "checkmark.shield",
                 title: "Governance",
-                detail: "Default new-session policy.",
+                detail: "Default policy for new sessions.",
                 value: "Conservative"
             ),
             ShellSettingsRowModel(
                 id: "reasoningEffort",
                 systemName: "brain.head.profile",
                 title: "Reasoning effort",
-                detail: "Uses model defaults when no session override is selected.",
+                detail: "Uses the model default unless a session overrides it.",
                 value: "Model default"
             ),
             ShellSettingsRowModel(
@@ -671,7 +645,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 id: "recoveryMode",
                 systemName: "arrow.clockwise",
                 title: "Stream recovery",
-                detail: "Partial stream recovery continues once by default.",
+                detail: "Retry a partial stream once by default.",
                 value: "Continue once"
             ),
         ]
@@ -680,43 +654,25 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func capabilityRows(
         _ summary: ShellSettingsCapabilitiesSummary
     ) -> [ShellSettingsRowModel] {
-        if let reason = summary.compactUnavailableReason {
+        if summary.compactUnavailableReason != nil {
             return [
                 unavailableRow(
                     id: "capabilitiesUnavailable",
                     systemName: "puzzlepiece.extension",
-                    title: "Skill catalog",
-                    reason: reason
+                    title: "Skill catalog"
                 ),
             ]
         }
 
         let total = summary.skills.count
         let enabled = summary.skills.filter(\.enabled).count
-        let implicit = summary.skills.filter(\.allowImplicitInvocation).count
-        let unavailable = summary.skills.filter { !$0.available }.count
 
         return [
             ShellSettingsRowModel(
-                id: "enabledSkills",
+                id: "capabilitiesAvailable",
                 systemName: "puzzlepiece.extension",
-                title: "Enabled skills",
-                detail: "Resolved from the skill catalog.",
+                title: "Skill catalog",
                 value: total == 0 ? "No skills" : "\(enabled) of \(total)"
-            ),
-            ShellSettingsRowModel(
-                id: "implicitInvocation",
-                systemName: "sparkle.magnifyingglass",
-                title: "Implicit invocation",
-                detail: "Shows how many skills may be invoked without an explicit mention.",
-                value: "\(implicit) allowed"
-            ),
-            ShellSettingsRowModel(
-                id: "unavailableSkills",
-                systemName: "exclamationmark.triangle",
-                title: "Unavailable skills",
-                detail: "Unavailable packages stay visible without blocking Settings.",
-                value: unavailable == 0 ? "None" : "\(unavailable)"
             ),
         ]
     }
@@ -729,70 +685,61 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             ShellSettingsRowModel(
                 id: "appIdentity",
                 systemName: "app",
-                title: "App",
-                detail: local.bundleIdentifier,
-                value: local.appDisplayName
+                title: "Bundle ID",
+                value: local.bundleIdentifier
             ),
             ShellSettingsRowModel(
                 id: "installChannel",
                 systemName: "shippingbox",
-                title: "Install channel",
-                detail: local.appBundleName,
+                title: "Channel",
                 value: local.channelLabel
             ),
             ShellSettingsRowModel(
                 id: "cliTool",
                 systemName: "terminal",
                 title: "Command line tool",
-                detail: "Installed into /usr/local/bin when requested.",
                 value: local.cliToolName
             ),
             ShellSettingsRowModel(
                 id: "daemonEndpoint",
                 systemName: "server.rack",
                 title: "Daemon endpoint",
-                detail: "Bind \(local.daemonBindAddress)",
                 value: local.daemonURL
             ),
             ShellSettingsRowModel(
                 id: "updates",
                 systemName: "arrow.down.circle",
                 title: "Updates",
-                detail: local.updateDetail,
                 value: local.updateSummary
             ),
             ShellSettingsRowModel(
                 id: "dataRoot",
                 systemName: "folder",
                 title: "Alan home",
-                detail: "Credentials and auth are stored separately; values are not shown.",
                 value: local.alanHomeDisplayPath
             ),
             ShellSettingsRowModel(
                 id: "publicSkills",
                 systemName: "folder.badge.gearshape",
-                title: "Skill package path",
-                detail: "Package install root for this channel.",
+                title: "Skill packages",
                 value: local.globalSkillsDisplayPath
             ),
             ShellSettingsRowModel(
                 id: "applicationSupport",
                 systemName: "externaldrive",
                 title: "Shell state",
-                detail: "Workspace manifests and local shell state.",
                 value: local.applicationSupportDisplayPath
             ),
             ShellSettingsRowModel(
                 id: "shellControl",
                 systemName: "point.3.connected.trianglepath.dotted",
-                title: "Shell control",
-                detail: "Local control namespace.",
+                title: "Control namespace",
                 value: local.shellControlNamespace
             ),
             ShellSettingsRowModel(
                 id: "performanceDiagnostics",
                 systemName: "speedometer",
-                title: "Performance Diagnostics",
+                title: "Performance Trace",
                 detail: "Local performance trace. Terminal content is not recorded.",
                 value: diagnostics.isEnabled ? "Enabled" : "Disabled",
                 mutability: .editable
@@ -800,7 +747,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             ShellSettingsRowModel(
                 id: "performanceDiagnosticsExport",
                 systemName: "square.and.arrow.up",
-                title: "Export Recent Diagnostics",
+                title: "Export Diagnostics",
                 detail: diagnostics.exportDetail,
                 value: "Export",
                 mutability: .actionOnly
@@ -811,27 +758,14 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func unavailableRow(
         id: String,
         systemName: String,
-        title: String,
-        reason: String
+        title: String
     ) -> ShellSettingsRowModel {
         ShellSettingsRowModel(
             id: id,
             systemName: systemName,
             title: title,
-            detail: sanitizedUnavailableReason(reason),
             value: "Unavailable"
         )
-    }
-
-    private static func sanitizedUnavailableReason(_ reason: String) -> String {
-        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return "The daemon did not return this summary."
-        }
-        if trimmed.contains("\n") || trimmed.contains("{") || trimmed.contains("}") {
-            return "The daemon did not return this summary."
-        }
-        return trimmed
     }
 
     private static func displayCredentialStatus(_ status: String) -> String {
