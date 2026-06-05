@@ -11,6 +11,7 @@ mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/ShellSidebarSpaceSliderWheelMonitor.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
     -o "$TEST_BINARY"
 

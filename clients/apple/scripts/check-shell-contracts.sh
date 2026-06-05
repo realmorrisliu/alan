@@ -515,6 +515,16 @@ require_pattern \
     "Space slider context-menu intent must detect right-click and Control-click without stealing the event"
 
 require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderWheelMonitor.swift" \
+    "ShellSidebarSpaceSliderWheelPhaseLessResetScheduler" \
+    "Space slider wheel monitor must reset phase-less wheel intent after idle"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesPhaseLessWheelResetSchedulerResetsAfterIdle" \
+    "Space slider layout tests must cover phase-less wheel intent reset"
+
+require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "onMoveCommand|onKeyPress\\(\\.return\\)|onExitCommand" \
     "Space slider must preserve keyboard preview, commit, and Escape cancel entry points"

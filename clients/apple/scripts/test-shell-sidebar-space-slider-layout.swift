@@ -24,6 +24,7 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         try verifiesWheelScrubPreviewAndCommitTarget()
         try verifiesScrubCancelRestoresTheSelectedSource()
         try verifiesWheelIntentRoutingProtectsVerticalScroll()
+        try verifiesPhaseLessWheelResetSchedulerResetsAfterIdle()
         print("Shell sidebar Space slider layout tests passed.")
     }
 
@@ -233,6 +234,42 @@ private enum ShellSidebarSpaceSliderLayoutTests {
             horizontalRoute == .scrub(deltaX: 8),
             "clear horizontal wheel input over the slider must enter Space scrub"
         )
+    }
+
+    private static func verifiesPhaseLessWheelResetSchedulerResetsAfterIdle() throws {
+        var resetCount = 0
+        var scheduledWorkItems: [DispatchWorkItem] = []
+        var scheduledDelays: [TimeInterval] = []
+        let scheduler = ShellSidebarSpaceSliderWheelPhaseLessResetScheduler(
+            onReset: {
+                resetCount += 1
+            },
+            scheduleWorkItem: { workItem, delay in
+                scheduledWorkItems.append(workItem)
+                scheduledDelays.append(delay)
+            }
+        )
+
+        scheduler.scheduleResetAfterIdle()
+        expect(scheduledWorkItems.count == 1, "phase-less wheel input must schedule an idle reset")
+        expect(
+            scheduledDelays == [ShellSidebarSpaceSliderWheelPhaseLessResetScheduler.resetDelay],
+            "phase-less wheel reset must use the shared idle delay"
+        )
+
+        let firstWorkItem = scheduledWorkItems[0]
+        scheduler.scheduleResetAfterIdle()
+        firstWorkItem.perform()
+        expect(resetCount == 0, "a later phase-less event must cancel the prior idle reset")
+
+        scheduledWorkItems[1].perform()
+        expect(resetCount == 1, "phase-less idle reset must fire after the final scheduled event")
+
+        scheduler.scheduleResetAfterIdle()
+        let pendingWorkItem = scheduledWorkItems[2]
+        scheduler.resetNow()
+        pendingWorkItem.perform()
+        expect(resetCount == 2, "explicit wheel boundaries must cancel pending phase-less reset")
     }
 
     private static func make(

@@ -3,6 +3,46 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
+final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
+    static let resetDelay: TimeInterval = 0.14
+
+    private let onReset: () -> Void
+    private let scheduleWorkItem: (DispatchWorkItem, TimeInterval) -> Void
+    private var workItem: DispatchWorkItem?
+
+    init(
+        onReset: @escaping () -> Void,
+        scheduleWorkItem: @escaping (DispatchWorkItem, TimeInterval) -> Void = { workItem, delay in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    ) {
+        self.onReset = onReset
+        self.scheduleWorkItem = scheduleWorkItem
+    }
+
+    func scheduleResetAfterIdle() {
+        cancel()
+        var nextWorkItem: DispatchWorkItem!
+        nextWorkItem = DispatchWorkItem { [weak self] in
+            guard let self, !nextWorkItem.isCancelled else { return }
+            self.workItem = nil
+            self.onReset()
+        }
+        workItem = nextWorkItem
+        scheduleWorkItem(nextWorkItem, Self.resetDelay)
+    }
+
+    func resetNow() {
+        cancel()
+        onReset()
+    }
+
+    func cancel() {
+        workItem?.cancel()
+        workItem = nil
+    }
+}
+
 struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
     let onScroll: (CGFloat, CGFloat) -> Bool
     let onReset: () -> Void
@@ -54,6 +94,10 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
         var onContextMenuIntent: () -> Void
         private weak var view: NSView?
         private var monitor: Any?
+        private lazy var phaseLessResetScheduler =
+            ShellSidebarSpaceSliderWheelPhaseLessResetScheduler { [weak self] in
+                self?.onReset()
+            }
 
         init(
             onScroll: @escaping (CGFloat, CGFloat) -> Bool,
@@ -77,6 +121,7 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
         }
 
         func uninstall() {
+            phaseLessResetScheduler.cancel()
             if let monitor {
                 NSEvent.removeMonitor(monitor)
             }
@@ -107,7 +152,7 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
             }
 
             if event.phase.contains(.began) || event.momentumPhase.contains(.began) {
-                onReset()
+                phaseLessResetScheduler.resetNow()
             }
 
             let consumed = onScroll(scrollDeltaX(from: event), scrollDeltaY(from: event))
@@ -117,7 +162,9 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
                 || event.momentumPhase.contains(.ended)
                 || event.momentumPhase.contains(.cancelled)
             {
-                onReset()
+                phaseLessResetScheduler.resetNow()
+            } else if event.phase.isEmpty, event.momentumPhase.isEmpty {
+                phaseLessResetScheduler.scheduleResetAfterIdle()
             }
 
             return consumed ? nil : event
