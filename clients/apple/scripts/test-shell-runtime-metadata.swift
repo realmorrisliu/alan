@@ -1588,6 +1588,23 @@ private enum ShellRuntimeMetadataTests {
             expect(reason == .appQuit, "app quit must request app-quit graceful shutdown")
             handle.recordTranscriptOutput("codex resume previous-session-id")
             handle.markActiveTaskState(.inactive)
+            expect(
+                !controller.closePaneAfterTerminalRuntimeExit(paneID: "pane_1"),
+                "confirmed graceful close must suppress runtime-exit auto-close before transcript capture"
+            )
+            controller.updateTerminalMetadata(
+                metadata(
+                    title: "codex",
+                    cwd: "/repo/app",
+                    processExited: true,
+                    activeTaskState: .inactive
+                ),
+                for: "pane_1"
+            )
+            expect(
+                controller.pane(paneID: "pane_1") != nil,
+                "confirmed graceful close must keep the pane available until transcript capture"
+            )
         }
         controller.updateTerminalMetadata(
             metadata(title: "codex", cwd: "/repo/app", activeTaskState: .foregroundCommand),

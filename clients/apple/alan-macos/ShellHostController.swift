@@ -384,6 +384,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let workspaceManifestStore: ShellWorkspaceManifestStore?
     private var workspaceManifest: ShellContentWorkspaceManifest?
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
+    private var terminalContentIDsSuppressingAutoClose: Set<String> = []
     private let paneProjection: ShellPaneProjectionService
     private let terminalContentProjection: TerminalContentProjectionAdapter
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
@@ -3149,6 +3150,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func closePaneAfterTerminalRuntimeExit(paneID: String) -> Bool {
+        guard !terminalAutoCloseIsSuppressed(paneID: paneID) else { return false }
         if shellState.quickTerminal?.paneID == paneID {
             return closeQuickTerminalAfterTerminalRuntimeExit()
         }
@@ -3159,10 +3161,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard closeConfirmationPresenter.confirmClose(impact: impact) else {
             return false
         }
-        let gracefullyRequestedContentIDs = requestGracefulShutdownForConfirmedClose(impact)
-        waitForGracefulShutdownDrain(contentIDs: gracefullyRequestedContentIDs)
-        let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
-        return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
+        return withTerminalAutoCloseSuppressed(for: impact.affectedTerminalContentIDs) {
+            let gracefullyRequestedContentIDs = requestGracefulShutdownForConfirmedClose(impact)
+            waitForGracefulShutdownDrain(contentIDs: gracefullyRequestedContentIDs)
+            let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
+            return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
+        }
+    }
+
+    private func withTerminalAutoCloseSuppressed<T>(
+        for contentIDs: [String],
+        operation: () -> T
+    ) -> T {
+        guard !contentIDs.isEmpty else { return operation() }
+        let previous = terminalContentIDsSuppressingAutoClose
+        terminalContentIDsSuppressingAutoClose.formUnion(contentIDs)
+        defer {
+            terminalContentIDsSuppressingAutoClose = previous
+        }
+        return operation()
     }
 
     @discardableResult
@@ -3466,7 +3483,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> Bool {
         guard processExited else { return false }
         guard pane(paneID: paneID) != nil else { return false }
+        guard !terminalAutoCloseIsSuppressed(paneID: paneID) else { return false }
         return applyClosePaneMutation(paneID: paneID) == .closed
+    }
+
+    private func terminalAutoCloseIsSuppressed(paneID: String) -> Bool {
+        let contentState = shellState.contentStateProjection()
+        let contentID = terminalContentIDForCloseGuard(
+            paneID: paneID,
+            contentState: contentState
+        ) ?? pane(paneID: paneID)?.terminalContentID
+        guard let contentID else { return false }
+        return terminalContentIDsSuppressingAutoClose.contains(contentID)
     }
 
     func movePane(
