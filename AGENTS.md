@@ -399,6 +399,13 @@ placement contract at
 choose inline unit tests, extracted white-box tests, or crate-level integration
 tests deliberately.
 
+### Specification Workflow
+
+Use OpenSpec for all Alan change proposals, design docs, task lists, and spec
+deltas. Do not create Superpowers spec files under `docs/superpowers/specs/`
+for this repository. When a change needs a written design or implementation
+plan, create or update an `openspec/changes/<change-id>/` change instead.
+
 ---
 
 ## Configuration

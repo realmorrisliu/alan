@@ -455,29 +455,44 @@ reject_pattern \
     "Find UI must render through ShellFindBarView instead of the passive terminal overlay card"
 
 require_pattern \
-    "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-    "spaceDockOuterBottomInset" \
-    "bottom space dock must use a tokenized outer inset to align with the sidebar edge"
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "ShellSidebarSpaceSlider" \
+    "sidebar Space navigation must render through the top Space slider"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "padding\\(\\.bottom, ShellSidebarMetrics\\.spaceDockOuterBottomInset\\)" \
-    "bottom space dock must align its visible controls to the sidebar bottom edge inset"
+    "spaceContextMenu\\(" \
+    "Space profile selection must be exposed through the Space context menu"
+
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "spaceDock|createSpaceFromDock|ShellSidebarSpaceHeader" \
+    "default sidebar must not keep the old bottom Space dock or header profile surface"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "padding\\(\\.vertical, ShellSidebarMetrics\\.spaceDockInternalVerticalPadding\\)" \
-    "space dock internal vertical padding must stay paired with its bottom alignment token"
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "ShellSidebarNewSpaceControl" \
+    "New Space must live in the sidebar titlebar tool group"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "Button\\(action: createSpaceFromDock\\)" \
-    "bottom space dock add control must be a direct button, not a variant menu"
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "Spacer\\(minLength: ShellSidebarMetrics\\.titlebarToolSpacing\\)" \
+    "New Space must be separated from leading titlebar tools and right-aligned"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "\\.padding\\(\\.trailing, ShellSidebarMetrics\\.edgeInset\\)" \
+    "right-aligned titlebar New Space must keep the sidebar trailing inset"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "\\.frame\\(width: sidebarPresentation\\.surfaceWidth, alignment: \\.topLeading\\)" \
+    "sidebar titlebar controls must align within the sidebar surface width"
 
 reject_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "New Space with alan|createAlanSpace|menuIndicator\\(\\.hidden\\)" \
-    "bottom space dock add control must not expose the removed New Space with alan menu path"
+    "Space creation must not expose the removed New Space with alan menu path"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.swift" \
@@ -1086,8 +1101,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "spaceDock" \
-    "sidebar-local pager motion must keep the bottom space dock owned by the sidebar"
+    "fixedSpaceSlider" \
+    "sidebar-local pager motion must keep Space identity and switching as a fixed sidebar control"
+
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "spaceSlider\\(for: spaceID\\(forSpaceAt:|ShellSidebarSpaceSlider\\([^)]*spaceID\\(forSpaceAt:" \
+    "Space slider must not be rendered inside per-Space pager pages"
 
 reject_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
@@ -1558,6 +1578,16 @@ require_pattern \
     "clients/apple/scripts/test-shell-window-placement.swift" \
     "verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit" \
     "shell window placement tests must prove blank sidebar chrome remains a double-click zoom target"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-window-placement.swift" \
+    "verifiesSidebarSpaceSliderDoesNotTriggerWindowDrag" \
+    "shell window placement tests must prove Space slider controls are not intercepted by zoom overlay"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+    "sidebarTrailingTitlebarToolControlFrame" \
+    "hidden-titlebar hit testing must model the right-aligned New Space button separately"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \

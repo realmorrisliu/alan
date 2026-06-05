@@ -263,10 +263,6 @@ enum ShellSidebarMetrics {
     static let rowInset: CGFloat = 10
     static let iconColumnWidth: CGFloat = 16
     static let iconPointSize: CGFloat = 12
-    static let spaceDockInternalVerticalPadding: CGFloat = 2
-    static var spaceDockOuterBottomInset: CGFloat {
-        max(edgeInset - spaceDockInternalVerticalPadding, 0)
-    }
     static let trafficLightLeadingInset: CGFloat = 14
     static let trafficLightTopInset: CGFloat = 16
     static let trafficLightFallbackGroupWidth: CGFloat = 58
