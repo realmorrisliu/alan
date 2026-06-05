@@ -582,9 +582,9 @@ accessibility labels rather than persistent instructional copy.
 - **AND** trailing close affordances appear for selected, hover, or focus states without resizing the row or shifting neighboring rows
 - **AND** compact creation rows remain muted by default and gain a subtle backing only on hover or focus
 
-#### Scenario: Space title scroll boundary
+#### Scenario: Space slider scroll boundary
 - **WHEN** the active-space tab list is at its resting top position
-- **THEN** the active-space title appears as a quiet grayscale label without a persistent pill or control background
+- **THEN** the selected Space title appears inside the top Space slider as a quiet label without a persistent pill or control background
 - **AND** the area between the top Space slider and the first tab row keeps a compact quiet material gap without a persistent divider
 - **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed top Space slider region
 - **THEN** alan gradually reveals a subtle divider and downward shadow at the slider/list boundary
@@ -592,7 +592,7 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Visible copy is minimized
 - **WHEN** the default sidebar has at least one space and one tab
-- **THEN** the sidebar does not rely on persistent explanatory paragraphs, product slogans, keyboard-shortcut labels, redundant `Tabs` and `Spaces` headings, or always-visible creation icons in the space-title row to explain normal operation
+- **THEN** the sidebar does not rely on persistent explanatory paragraphs, product slogans, keyboard-shortcut labels, redundant `Tabs` and `Spaces` headings, or always-visible creation icons in the Space slider to explain normal operation
 
 #### Scenario: Accessibility remains explicit
 - **WHEN** visible explanatory copy is removed from the sidebar
