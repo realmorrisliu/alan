@@ -271,11 +271,11 @@ navigation.
 - **WHEN** tab or space row secondary actions are progressively disclosed
 - **THEN** verification covers default, hover, selected, no-notification-dot, and empty states without row resizing or layout shifts
 - **AND** verification covers the tab row hierarchy where normal rows are containerless, hover/focus rows are subtle, selected rows are strongest, and creation rows stay muted until interaction
-- **AND** verification covers the space-title/tab-list scroll boundary where the divider and shadow appear only as tab rows scroll underneath the fixed space title region
+- **AND** verification covers the Space slider/tab-list scroll boundary where the divider and shadow appear only as tab rows scroll underneath the fixed top Space slider region
 
 #### Scenario: Sidebar space swipe is reviewed
 - **WHEN** horizontal space switching is implemented in the sidebar
-- **THEN** verification covers gesture-tracked left and right sidebar previews, translation-first drag mapping, fast horizontal flick commit, full-width space-title and tab-list motion, stationary hold, zero-delta release, horizontal/vertical axis lock, later vertical movement during a horizontal swipe, no static side padding gaps during page motion, a stable workspace during drag, commit, cancel, edge resistance, and confirms vertical tab-list scrolling still works
+- **THEN** verification covers gesture-tracked left and right sidebar previews, translation-first drag mapping, fast horizontal flick commit, full-width per-Space tab content motion beneath the fixed top Space slider, stationary hold, zero-delta release, horizontal/vertical axis lock, later vertical movement during a horizontal swipe, no static side padding gaps during page motion, a stable workspace during drag, commit, cancel, edge resistance, and confirms vertical tab-list scrolling still works
 
 #### Scenario: Split tab indicator is reviewed
 - **WHEN** split-aware tab row implementation is marked complete
