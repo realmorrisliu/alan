@@ -2,12 +2,12 @@
 import AppKit
 import Foundation
 
-@MainActor
 enum ShellLocalFolderOpener {
     static func canOpenFolder(displayPath: String?) -> Bool {
         folderURL(displayPath: displayPath) != nil
     }
 
+    @MainActor
     static func openFolder(displayPath: String?) {
         guard let url = folderURL(displayPath: displayPath) else {
             return
@@ -24,6 +24,13 @@ enum ShellLocalFolderOpener {
 
         let expandedPath = NSString(string: displayPath).expandingTildeInPath
         guard expandedPath.hasPrefix("/") else {
+            return nil
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
             return nil
         }
         return URL(fileURLWithPath: expandedPath, isDirectory: true)

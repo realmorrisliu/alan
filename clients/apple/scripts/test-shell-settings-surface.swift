@@ -26,6 +26,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted()
             try testDevChannelLocalRowsUseDevIdentity()
             try testLocalSummaryReadsHostConfigForDaemonEndpoint()
+            try testLocalFolderOpenerRequiresExistingDirectory()
             try testWorkspaceContextUsesRegistryForWorkspaceScopedRequests()
             try testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot()
             try testUnavailableRemoteSummariesStayCompact()
@@ -225,6 +226,38 @@ private func testLocalSummaryReadsHostConfigForDaemonEndpoint() throws {
     try expect(
         summary.daemonURL == "http://127.0.0.1:9123",
         "settings must query the daemon URL derived from host.toml"
+    )
+}
+
+private func testLocalFolderOpenerRequiresExistingDirectory() throws {
+    let homeDirectory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+    let existingDirectory = homeDirectory.appendingPathComponent("skills", isDirectory: true)
+    try FileManager.default.createDirectory(at: existingDirectory, withIntermediateDirectories: true)
+    let existingFile = homeDirectory.appendingPathComponent("not-a-folder")
+    try Data("not a directory".utf8).write(to: existingFile)
+    let missingDirectory = homeDirectory.appendingPathComponent("missing", isDirectory: true)
+
+    try expect(
+        ShellLocalFolderOpener.canOpenFolder(displayPath: existingDirectory.path),
+        "folder opener must enable existing absolute directories"
+    )
+    try expect(
+        !ShellLocalFolderOpener.canOpenFolder(displayPath: missingDirectory.path),
+        "folder opener must disable missing absolute directories"
+    )
+    try expect(
+        !ShellLocalFolderOpener.canOpenFolder(displayPath: existingFile.path),
+        "folder opener must disable regular files"
+    )
+    try expect(
+        !ShellLocalFolderOpener.canOpenFolder(displayPath: "relative/folder"),
+        "folder opener must disable relative paths"
+    )
+    try expect(
+        !ShellLocalFolderOpener.canOpenFolder(displayPath: "  "),
+        "folder opener must disable blank paths"
     )
 }
 
