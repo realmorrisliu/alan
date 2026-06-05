@@ -11,6 +11,7 @@ final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
     private let onReset: () -> Void
     private let scheduleWorkItem: (DispatchWorkItem, TimeInterval) -> Void
     private var workItem: DispatchWorkItem?
+    private var resetGeneration = 0
 
     init(
         onReset: @escaping () -> Void,
@@ -24,9 +25,14 @@ final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
 
     func scheduleResetAfterIdle() {
         cancel()
-        var nextWorkItem: DispatchWorkItem!
-        nextWorkItem = DispatchWorkItem { [weak self] in
-            guard let self, !nextWorkItem.isCancelled else { return }
+        resetGeneration += 1
+        let generation = resetGeneration
+        let nextWorkItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.resetGeneration == generation
+            else {
+                return
+            }
             self.workItem = nil
             self.onReset()
         }
@@ -40,6 +46,7 @@ final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
     }
 
     func cancel() {
+        resetGeneration += 1
         workItem?.cancel()
         workItem = nil
     }
