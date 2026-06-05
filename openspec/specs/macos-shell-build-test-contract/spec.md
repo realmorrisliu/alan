@@ -265,7 +265,7 @@ navigation.
 
 #### Scenario: Sidebar reading order is reviewed
 - **WHEN** sidebar IA implementation is marked complete
-- **THEN** maintainers can inspect screenshots or manual notes showing the vertical sidebar, active-space tab list, bottom borderless space switcher, separate creation affordances, and no persistent explanatory sidebar blocks
+- **THEN** maintainers can inspect screenshots or manual notes showing the vertical sidebar, top Space slider, active-space tab list, separate creation affordances, and no persistent explanatory sidebar blocks
 
 #### Scenario: Sidebar interaction states are reviewed
 - **WHEN** tab or space row secondary actions are progressively disclosed
@@ -390,8 +390,8 @@ are changed.
 #### Scenario: Sidebar-local space pager gesture tested
 - **WHEN** horizontal space swipe behavior changes
 - **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, stable five-page rendering around the source space, one-page-plus-overdrag drag clamping, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
-- **AND** verification confirms only the sidebar active-space header and tab list move during the gesture
-- **AND** verification confirms the command input, bottom space switcher, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
+- **AND** verification confirms only the per-Space tab content moves during the gesture
+- **AND** verification confirms the top Space slider, titlebar controls, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
 
 #### Scenario: Pinned sidebar motion reviewed
 - **WHEN** pinned sidebar collapse or expansion behavior changes
@@ -694,7 +694,7 @@ behavior, and basic terminal input when terminal runtime is available.
 
 #### Scenario: Launch smoke
 - **WHEN** the UI smoke flow starts the macOS app
-- **THEN** it verifies that the default light-mode window shows the unified sidebar column, active-space tab list, bottom space switcher, terminal content area, and no persistent inspector pane or toggle
+- **THEN** it verifies that the default light-mode window shows the unified sidebar column, top Space slider, active-space tab list, terminal content area, and no persistent inspector pane or toggle
 
 #### Scenario: Split smoke
 - **WHEN** the UI smoke flow creates a split
@@ -933,3 +933,37 @@ rollback, and UI safety wording.
 - **THEN** focused UI or model tests cover no GUI-autologin wording, privileged
   plan preview, explicit confirmation, password redaction, ready state, and
   repairable state
+
+### Requirement: Sidebar Space slider layout has focused verification
+The Apple client SHALL include focused automated or documented verification for
+the top Space slider layout, titlebar New Space control, Space context menu
+profile disclosure, and New Tab placement when the sidebar layout changes.
+
+#### Scenario: Sidebar layout ordering is verified
+- **WHEN** the sidebar Space slider layout is implemented
+- **THEN** focused checks verify that the default sidebar orders controls as
+  titlebar controls, top Space slider, pinned tabs, pinned-tab divider when
+  pinned tabs exist, New Tab row, and unpinned tabs
+- **AND** focused checks verify that titlebar New Space is right-aligned within
+  the sidebar titlebar while pin/unpin and appearance controls remain leading
+- **AND** focused checks verify that the bottom Space dock and always-visible
+  Space profile selector are absent from the default sidebar
+- **AND** focused checks verify that the Space slider is fixed outside the
+  per-Space content pager instead of being rendered inside each Space page
+
+#### Scenario: Sidebar interaction surfaces are verified
+- **WHEN** Space slider title or dot controls, the titlebar New Space button,
+  the New Tab row, or tab rows are changed
+- **THEN** focused window-placement checks verify those controls remain
+  interaction surfaces rather than hidden-titlebar window-drag surfaces
+- **AND** existing empty chrome double-click zoom behavior remains covered for
+  non-control titlebar/sidebar chrome
+
+#### Scenario: Visual evidence captures the new sidebar hierarchy
+- **WHEN** sidebar Space slider polish is marked complete
+- **THEN** maintainers can inspect running-app screenshots or manual notes from
+  a fresh Alan Dev launch showing the light-mode pinned sidebar with the top
+  Space slider, titlebar New Space control, pinned-tab divider behavior, New Tab
+  row, unpinned tabs, and no bottom Space dock
+- **AND** if collapsed-sidebar rendering is affected, visual evidence also
+  covers the collapsed floating sidebar reveal

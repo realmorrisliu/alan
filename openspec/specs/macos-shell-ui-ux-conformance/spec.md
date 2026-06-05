@@ -14,13 +14,51 @@ theme panels, and ornamental controls.
 
 #### Scenario: Material sidebar
 - **WHEN** the app window is visible in the default light appearance
-- **THEN** the unified sidebar column, active-space tab list, bottom space switcher, and compact sidebar controls use material-backed surfaces, subtle separators where useful, and restrained selection states rather than an opaque themed sidebar panel or separate space rail
+- **THEN** the unified sidebar column, top Space slider, active-Space tab list,
+  and compact sidebar controls use material-backed surfaces, subtle separators
+  where useful, and restrained selection states rather than an opaque themed
+  sidebar panel, separate Space rail, or bottom Space switcher
 
 #### Scenario: Stable compact controls
-- **WHEN** the user hovers, selects, inserts, closes, or switches tabs and spaces
-- **THEN** rows, icon controls, counters, and status marks keep stable dimensions and do not resize the sidebar or terminal content
-- **AND** the bottom space switcher aligns its visible controls to the sidebar edge inset so the leading and bottom margins match optically
-- **AND** the bottom space switcher add button directly creates a standard new space instead of opening a menu of space variants
+- **WHEN** the user hovers, selects, inserts, closes, creates, or switches tabs
+  and Spaces
+- **THEN** rows, icon controls, dots, counters, and status marks keep stable
+  dimensions and do not resize the sidebar or terminal content
+- **AND** the top Space slider aligns its visible controls to the sidebar edge
+  inset so the title, dots, and tab rows share one optical column
+- **AND** the titlebar New Space button directly creates a standard new Space
+  instead of opening a menu of Space variants
+- **AND** the titlebar New Space button is right-aligned within the sidebar
+  titlebar instead of sitting immediately after the pin/unpin and appearance
+  controls
+
+#### Scenario: Space slider replaces header and dock
+- **WHEN** the default sidebar displays Space navigation
+- **THEN** the selected Space is represented by its title in the top Space
+  slider, non-selected Spaces are represented by dots, and no Space icon is
+  shown in the slider
+- **AND** alan does not show a separate bottom Space dock in the default sidebar
+- **AND** the top Space slider remains a fixed sidebar-level control while
+  Space tab content pages move beneath it during Space paging gestures
+
+#### Scenario: Space profile uses context menu disclosure
+- **WHEN** the default sidebar displays the selected Space
+- **THEN** alan does not show an always-visible terminal profile selector in the
+  Space slider or default sidebar
+- **AND WHEN** the user opens a Space context menu from the selected Space title
+  or a non-selected Space dot
+- **THEN** terminal profile selection is available as a Space-level context menu
+  action
+
+#### Scenario: New Tab belongs to ordinary tab flow
+- **WHEN** the active Space contains pinned tabs
+- **THEN** alan shows pinned tabs first, then a subtle divider, then the New Tab
+  row, then unpinned tabs
+- **AND WHEN** the active Space contains no pinned tabs
+- **THEN** alan shows the New Tab row before unpinned tabs without a pinned-tab
+  divider
+- **AND** the New Tab row creates a normal unpinned terminal tab in the current
+  Space
 
 ### Requirement: Collapsed sidebar uses a lightweight floating panel
 When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
@@ -166,7 +204,7 @@ the UI conformance tasks are marked complete.
 
 #### Scenario: Default screenshot review
 - **WHEN** a UI conformance implementation pass is ready for review
-- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the narrow command entry, active-space tab list, bottom space switcher, terminal-first content area, and no inspector surface
+- **THEN** maintainers can inspect a running-app screenshot of the default light-mode window showing the top Space slider, active-space tab list, terminal-first content area, and no inspector surface
 
 #### Scenario: Removed-inspector review
 - **WHEN** inspector-removal UI tasks are marked complete
@@ -478,9 +516,9 @@ not turn the toolbar into a dense control strip.
 ### Requirement: Sidebar matches single-column space/tab navigation
 The default macOS sidebar SHALL remain a single vertical navigation column that
 aligns cleanly around the macOS traffic-light area, with a restrained initial
-width around 264 pt. Spaces SHALL be switched through a compact bottom
-borderless icon switcher and horizontal sidebar swipe gestures, while tabs for
-the active space remain the primary sidebar list.
+width around 264 pt. Spaces SHALL be switched through compact top Space slider
+targets and horizontal sidebar swipe gestures, while tabs for the active space
+remain the primary sidebar list.
 The sidebar surface SHALL read as a unified tinted macOS material stack, with
 visual effect material, cool translucent wash, control alpha, and row shadows
 working together rather than as an opaque white panel with independent cards.
@@ -494,18 +532,17 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Default sidebar reading order
 - **WHEN** a user opens the macOS app
-- **THEN** the sidebar reads as a narrow command entry, active-space tab list, and bottom space switcher in one vertical column rather than as unrelated dashboard sections or a two-column sidebar
-- **AND** the sidebar surface has a cool material tint that remains coherent across empty space, controls, rows, and the bottom switcher
+- **THEN** the sidebar reads as a top Space slider and active-space tab list in one vertical column rather than as unrelated dashboard sections or a two-column sidebar
+- **AND** the sidebar surface has a cool material tint that remains coherent across empty space, controls, rows, and the top Space slider
 
 #### Scenario: Space selection
-- **WHEN** a user selects a space in the bottom switcher
+- **WHEN** a user selects a Space in the top Space slider
 - **THEN** the tab list updates to show only tabs belonging to that active space
 
 #### Scenario: Sidebar swipe switches spaces
 - **WHEN** a user performs a clear horizontal swipe gesture inside the sidebar
-- **THEN** alan previews the previous or next space with gesture-tracked motion across the sidebar header and tab list
+- **THEN** alan previews the previous or next space with gesture-tracked motion across the active-space tab list while the top Space slider remains fixed
 - **AND** the preview is rendered from horizontal finger translation across the full sidebar page width rather than from threshold-derived progress
-- **AND** the active-space title pager uses the same full-width movement as the tab list rather than a narrowed header row
 - **AND** the moving pages do not expose static left or right padding gaps
 - **AND** the workspace terminal surface remains on the current space during the drag
 - **AND** alan commits to the previewed space only after the user releases past a distance or velocity threshold
@@ -525,11 +562,11 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Separate creation affordances
 - **WHEN** a user creates a new space or a new tab
-- **THEN** space creation is presented as a compact bottom-switcher affordance and tab creation is presented in the active-space tab list or toolbar context
+- **THEN** space creation is presented as a compact titlebar affordance and tab creation is presented in the active-space tab list
 
-#### Scenario: Space switcher is borderless
-- **WHEN** the bottom space switcher is visible
-- **THEN** space buttons use slim borderless icon styling with selection and hover conveyed without persistent framed cards, section chrome, or notification dots
+#### Scenario: Space slider is compact
+- **WHEN** the top Space slider is visible
+- **THEN** the selected Space title and non-selected dots use slim borderless styling with selection and hover conveyed without persistent framed cards, section chrome, or a bottom switcher
 
 #### Scenario: Lightweight tab rows
 - **WHEN** the active-space tab list contains terminal and alan tabs
@@ -548,10 +585,10 @@ accessibility labels rather than persistent instructional copy.
 #### Scenario: Space title scroll boundary
 - **WHEN** the active-space tab list is at its resting top position
 - **THEN** the active-space title appears as a quiet grayscale label without a persistent pill or control background
-- **AND** the area between the space title label and the first tab row keeps a compact quiet material gap without a persistent divider
-- **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed space title region
-- **THEN** alan gradually reveals a subtle divider and downward shadow at the title/list boundary
-- **AND** tab rows clip underneath that boundary instead of drawing over the space title
+- **AND** the area between the top Space slider and the first tab row keeps a compact quiet material gap without a persistent divider
+- **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed top Space slider region
+- **THEN** alan gradually reveals a subtle divider and downward shadow at the slider/list boundary
+- **AND** tab rows clip underneath that boundary instead of drawing over the Space slider
 
 #### Scenario: Visible copy is minimized
 - **WHEN** the default sidebar has at least one space and one tab
@@ -559,7 +596,7 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Accessibility remains explicit
 - **WHEN** visible explanatory copy is removed from the sidebar
-- **THEN** controls, space switcher items, tab rows, creation buttons, and reduced state cues retain accessibility labels, help text, or menu labels that expose their purpose to assistive technologies
+- **THEN** controls, Space slider targets, tab rows, creation buttons, and reduced state cues retain accessibility labels, help text, or menu labels that expose their purpose to assistive technologies
 
 ### Requirement: Sidebar actions are progressively disclosed
 The default macOS sidebar SHALL keep repeated tab and space rows visually quiet
@@ -661,7 +698,7 @@ standard materials, tonal surfaces, or stable opaque fills that preserve
 readability.
 
 #### Scenario: Sidebar uses functional material
-- **WHEN** the default shell renders the sidebar command entry, active-space tab list, bottom space switcher, and compact sidebar controls
+- **WHEN** the default shell renders the top Space slider, active-space tab list, and compact sidebar controls
 - **THEN** those navigation surfaces use a consistent functional material treatment with legible foreground content and restrained selection states
 
 #### Scenario: Terminal content avoids decorative glass
@@ -703,7 +740,7 @@ interaction state rather than decorate every translucent control.
 - **THEN** they avoid default shadows and use material tint, stroke, hover, or highlight to show affordance
 
 #### Scenario: Selected navigation uses light elevation
-- **WHEN** a sidebar row or space switcher item is selected or previewed
+- **WHEN** a sidebar row or Space slider target is selected or previewed
 - **THEN** it may use a very light adaptive contact shadow that is smaller than floating overlay shadows and does not produce dirty dark halos in light mode
 
 #### Scenario: Floating surfaces carry stronger elevation
@@ -1012,7 +1049,7 @@ interactions and MUST NOT move the window when the user drags them.
 - **AND** the primary shell window does not move as part of that drag
 
 #### Scenario: Space controls are interaction surfaces
-- **WHEN** the user drags or clicks within the sidebar space switcher, command
+- **WHEN** the user drags or clicks within the top Space slider, command
   launcher, or sidebar titlebar controls
 - **THEN** alan routes the event to the relevant sidebar control
 - **AND** the primary shell window does not move because of window-background
