@@ -448,6 +448,8 @@ struct MacShellRootView: View {
                 ShellSidebarNewSpaceControl {
                     _ = host.createTerminalSpace()
                 }
+                .disabled(!canCreateTerminalSpace)
+                .opacity(canCreateTerminalSpace ? 1 : 0.38)
                 .contentShape(Rectangle())
                 .onHover(perform: handleCollapsedSidebarToolbarHover)
             }
@@ -460,6 +462,10 @@ struct MacShellRootView: View {
         }
         .ignoresSafeArea(edges: .top)
         .zIndex(30)
+    }
+
+    private var canCreateTerminalSpace: Bool {
+        host.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces
     }
 }
 

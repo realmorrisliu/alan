@@ -1156,7 +1156,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        createSpace(
+        guard shellState.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces else {
+            return nil
+        }
+        return createSpace(
             launchTarget: .shell,
             title: title,
             workingDirectory: workingDirectory,

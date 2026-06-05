@@ -2,6 +2,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 #if os(macOS)
+enum ShellSidebarSpaceSliderPolicy {
+    static let maximumVisibleSpaces = 8
+}
+
 struct ShellSidebarView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
@@ -66,7 +70,8 @@ struct ShellSidebarView: View {
         ShellSidebarSpaceSlider(
             host: host,
             displaySpaceID: sourceSpaceID,
-            previewedSpaceID: previewedSpaceID
+            previewedSpaceID: previewedSpaceID,
+            activityFreshnessNow: activityFreshnessNow
         )
         .frame(maxWidth: .infinity)
         .frame(height: 30)
@@ -915,16 +920,16 @@ private struct ShellSidebarScrollBoundary: View {
 }
 
 private struct ShellSidebarSpaceSlider: View {
-    private static let maximumVisibleSpaces = 8
     @ObservedObject var host: ShellHostController
     let displaySpaceID: String?
     let previewedSpaceID: String?
+    let activityFreshnessNow: Date
     @State private var hoveredSpaceID: String?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
-                ForEach(Array(host.spaces.prefix(Self.maximumVisibleSpaces))) { space in
+                ForEach(Array(host.spaces.prefix(ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces))) { space in
                     if isDisplaySpace(space) {
                         selectedTitle(for: space)
                     } else {
@@ -1029,7 +1034,7 @@ private struct ShellSidebarSpaceSlider: View {
     private func strongestAttention(for space: ShellSpace) -> ShellAttentionState {
         host.shellState.panes
             .filter { $0.spaceID == space.spaceID }
-            .map { shellEffectiveAttention(for: $0) }
+            .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
             .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
             ?? .idle
     }

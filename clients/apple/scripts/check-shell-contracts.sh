@@ -461,6 +461,21 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "maximumVisibleSpaces = 8" \
+    "first-pass Space slider must keep its eight-Space visible cap explicit"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "shellState\\.spaces\\.count < ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces" \
+    "Space creation must share the first-pass slider visible cap"
+
+require_pattern \
+    "clients/apple/alan-macos/MacShellRootView.swift" \
+    "\\.disabled\\(!canCreateTerminalSpace\\)" \
+    "titlebar New Space must disable when the first-pass slider cap is reached"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "spaceContextMenu\\(" \
     "Space profile selection must be exposed through the Space context menu"
 
@@ -1308,6 +1323,11 @@ require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "task\\(id: activityFreshnessRefreshID\\)" \
     "sidebar activity freshness must schedule refreshes for stale/expires deadlines"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "shellEffectiveAttention\\(for: .*now: activityFreshnessNow\\)" \
+    "Space slider attention must use the state-driven freshness clock"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
