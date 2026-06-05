@@ -50,6 +50,19 @@ enum AlanShellLocalCommandExecutor {
             )
 
         case .spaceCreate:
+            guard state.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces else {
+                return AlanShellLocalCommandResult(
+                    response: response(
+                        for: command,
+                        state: state,
+                        applied: false,
+                        errorCode: "space_create_failed",
+                        errorMessage: "Failed to create a new shell space."
+                    ),
+                    updatedState: nil,
+                    sideEffect: nil
+                )
+            }
             let resolvedTerminalProfileID = command.terminalProfileID
                 ?? terminalProfileIDForGlobalDefaultPaneCapture()
             let result = state.creatingSpace(

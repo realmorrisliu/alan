@@ -12,7 +12,6 @@ struct ShellSidebarView: View {
     @State private var spacePagerToken = 0
     @State private var spacePagerPageWidth: CGFloat = 1
     @State private var hoveredTabID: String?
-    @State private var hoveredSpaceID: String?
     @State private var tabListScrollOffsetY: CGFloat = 0
     @State private var activityFreshnessNow = Date()
     @State private var activeTabDrag: ShellSidebarTabDragState?
@@ -54,14 +53,24 @@ struct ShellSidebarView: View {
 
     private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
+            fixedSpaceSlider
+                .padding(.bottom, 2)
             spaceContentPager
-            spaceDock
-                .padding(.horizontal, ShellSidebarMetrics.edgeInset)
-                .padding(.top, 10)
         }
         .padding(.top, chromeMetrics.commandLauncherTopInset)
-        .padding(.bottom, ShellSidebarMetrics.spaceDockOuterBottomInset)
+        .padding(.bottom, ShellSidebarMetrics.edgeInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var fixedSpaceSlider: some View {
+        ShellSidebarSpaceSlider(
+            host: host,
+            displaySpaceID: sourceSpaceID,
+            previewedSpaceID: previewedSpaceID,
+            activityFreshnessNow: activityFreshnessNow
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
     }
 
     private var spaceContentPager: some View {
@@ -69,11 +78,7 @@ struct ShellSidebarView: View {
             let pageWidth = max(proxy.size.width, 1)
             ZStack(alignment: .leading) {
                 ForEach(spacePageIndices, id: \.self) { index in
-                    VStack(alignment: .leading, spacing: 0) {
-                        spaceLabelRow(for: spaceID(forSpaceAt: index))
-                            .padding(.bottom, 2)
-                        tabSection(for: spaceID(forSpaceAt: index))
-                    }
+                    tabSection(for: spaceID(forSpaceAt: index))
                     .frame(width: pageWidth, height: proxy.size.height, alignment: .topLeading)
                     .offset(x: spacePageOffset(for: index, pageWidth: pageWidth))
                     .allowsHitTesting(spacePager == nil && index == selectedSpaceIndex)
@@ -88,15 +93,6 @@ struct ShellSidebarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func spaceLabelRow(for spaceID: String?) -> some View {
-        ShellSidebarSpaceHeader(
-            host: host,
-            spaceID: spaceID
-        )
-        .frame(maxWidth: .infinity)
-        .frame(height: 28)
     }
 
     private func tabSection(for spaceID: String?) -> some View {
@@ -125,17 +121,6 @@ struct ShellSidebarView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let space = space(for: spaceID) {
                     tabOrganizationSections(for: space)
-                    ShellCompactEmptyAction(
-                        title: "New Tab",
-                        systemImage: "plus",
-                        action: {
-                            host.performShellAction(
-                                .newTerminalTab,
-                                target: .contextSpace(space.spaceID)
-                            )
-                        }
-                    )
-                    .help("Create a tab in this space")
                 } else {
                     ShellCompactEmptyAction(
                         title: "New Space",
@@ -169,18 +154,31 @@ struct ShellSidebarView: View {
                 in: space,
                 section: .pinned
             )
-        }
-
-        if !pinnedTabs.isEmpty && !unpinnedTabs.isEmpty {
             ShellSidebarTabSectionDivider()
                 .padding(.vertical, 4)
         }
+
+        newTabRow(for: space)
 
         tabRows(
             unpinnedTabs,
             in: space,
             section: .unpinned
         )
+    }
+
+    private func newTabRow(for space: ShellSpace) -> some View {
+        ShellCompactEmptyAction(
+            title: "New Tab",
+            systemImage: "plus",
+            action: {
+                host.performShellAction(
+                    .newTerminalTab,
+                    target: .contextSpace(space.spaceID)
+                )
+            }
+        )
+        .help("Create a tab in this space")
     }
 
     @ViewBuilder
@@ -233,60 +231,6 @@ struct ShellSidebarView: View {
         ShellSidebarTabInsertionLine(
             isVisible: tabInsertionPreview == target
         )
-    }
-
-    private var spaceDock: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(host.spaces) { space in
-                        Button {
-                            host.select(spaceID: space.spaceID)
-                        } label: {
-                            ShellSpaceSwitcherItem(
-                                title: space.title,
-                                symbolName: spaceSymbol(for: space),
-                                attention: strongestAttention(for: space),
-                                tabCount: space.tabs.count,
-                                isSelected: host.selectedSpace?.spaceID == space.spaceID,
-                                isPreviewed: previewedSpaceID == space.spaceID,
-                                isHovered: hoveredSpaceID == space.spaceID
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { isHovering in
-                            hoveredSpaceID = isHovering ? space.spaceID : nil
-                        }
-                    }
-                }
-                .padding(.vertical, ShellSidebarMetrics.spaceDockInternalVerticalPadding)
-            }
-
-            Button(action: createSpaceFromDock) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(ShellPalette.sidebarInk.opacity(0.76))
-                    .frame(width: 30, height: 30)
-                    .background {
-                        if hoveredSpaceID == "__new_space__" {
-                            ShellMaterialShape(
-                                role: .controlGlassHover,
-                                shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                            )
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            .help("Create a new space")
-            .accessibilityLabel("Create space")
-            .onHover { isHovering in
-                hoveredSpaceID = isHovering ? "__new_space__" : nil
-            }
-        }
-    }
-
-    private func createSpaceFromDock() {
-        _ = host.createTerminalSpace()
     }
 
     private func handleSpaceSwipe(_ update: ShellSidebarSwipeUpdate) {
@@ -784,27 +728,6 @@ struct ShellSidebarView: View {
             .first(where: { $0 != .idle })
     }
 
-    private func strongestAttention(for space: ShellSpace) -> ShellAttentionState {
-        host.shellState.panes
-            .filter { $0.spaceID == space.spaceID }
-            .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
-            .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
-            ?? .idle
-    }
-
-    private func spaceSymbol(for space: ShellSpace) -> String {
-        if space.tabs.count > 1 {
-            return "square.stack.3d.up"
-        }
-
-        let contentState = host.shellState.contentStateProjection()
-        if let content = space.tabs.lazy.compactMap({ contentState.primaryContent(in: $0.tabID) }).first {
-            return contentIconName(for: content)
-        }
-
-        return "terminal"
-    }
-
     private func showsAlanMarker(for tab: ShellTab, activity: TerminalActivitySnapshot?) -> Bool {
         false
     }
@@ -945,7 +868,7 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
 private struct ShellSidebarTabSectionDivider: View {
     var body: some View {
         Rectangle()
-            .fill(ShellPalette.line.opacity(0.18))
+            .fill(ShellPalette.line.opacity(0.30))
             .frame(height: 0.5)
             .padding(.horizontal, ShellSidebarMetrics.rowInset + 4)
             .allowsHitTesting(false)
@@ -992,103 +915,106 @@ private struct ShellSidebarScrollBoundary: View {
     }
 }
 
-private struct ShellSidebarSpaceHeader: View {
+private struct ShellSidebarSpaceSlider: View {
     @ObservedObject var host: ShellHostController
-    let spaceID: String?
+    let displaySpaceID: String?
+    let previewedSpaceID: String?
+    let activityFreshnessNow: Date
+    @State private var hoveredSpaceID: String?
 
     var body: some View {
-        headerPage(for: spaceID)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 26)
-    }
-
-    private func headerPage(for spaceID: String?) -> some View {
-        let space = space(for: spaceID)
-        return HStack(spacing: 10) {
-            Image(systemName: symbolName(for: space))
-                .font(.system(size: ShellSidebarMetrics.iconPointSize, weight: .semibold))
-                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.78))
-                .frame(width: ShellSidebarMetrics.iconColumnWidth)
-
-            Text(space?.title ?? "Space")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.82))
-                .lineLimit(1)
-
-            Spacer(minLength: 4)
-
-            if let space {
-                terminalProfileMenu(for: space)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(Array(host.spaces.prefix(ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces))) { space in
+                    if isDisplaySpace(space) {
+                        selectedTitle(for: space)
+                    } else {
+                        spaceDotButton(for: space)
+                    }
+                }
             }
+            .padding(.horizontal, ShellSidebarMetrics.edgeInset)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, ShellSidebarMetrics.rowInset)
-        .padding(.vertical, 5)
-        .padding(.leading, ShellSidebarMetrics.edgeInset)
-        .padding(.trailing, ShellSidebarMetrics.edgeInset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func space(for spaceID: String?) -> ShellSpace? {
-        guard let spaceID else { return host.selectedSpace }
-        return host.spaces.first { $0.spaceID == spaceID }
-    }
-
-    private func symbolName(for space: ShellSpace?) -> String {
-        guard let space else { return "terminal" }
-        if space.tabs.count > 1 {
-            return "square.stack.3d.up"
-        }
-
-        let contentState = host.shellState.contentStateProjection()
-        if let content = space.tabs.lazy.compactMap({ contentState.primaryContent(in: $0.tabID) }).first {
-            return contentIconName(for: content)
-        }
-
-        return "terminal"
-    }
-
-    private func terminalProfileMenu(for space: ShellSpace) -> some View {
-        let profiles = TerminalProfileStore.defaultStore().load().profiles
-        let current = profiles.first { $0.id == space.terminalProfileID }
-        return Menu {
-            Button("Default") {
-                _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
-            }
-
-            ForEach(profiles, id: \.id) { profile in
-                Button(profileMenuTitle(profile)) {
-                    _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: currentProfileSymbol(space: space, profile: current))
-                    .font(.system(size: 10, weight: .semibold))
-                if let current {
-                    Text(current.title)
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(profileForegroundStyle(space: space, profile: current))
-            .frame(maxWidth: 96, alignment: .trailing)
+    private func selectedTitle(for space: ShellSpace) -> some View {
+        Text(space.title)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.86))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 2)
+            .frame(minHeight: 22, alignment: .center)
             .contentShape(Rectangle())
+            .contextMenu {
+                spaceContextMenu(for: space)
+            }
+            .help(space.title)
+            .accessibilityLabel(spaceAccessibilityLabel(for: space, isSelected: true))
+    }
+
+    private func spaceDotButton(for space: ShellSpace) -> some View {
+        Button {
+            host.select(spaceID: space.spaceID)
+        } label: {
+            ShellSidebarSpaceDot(
+                attention: strongestAttention(for: space),
+                isHovered: hoveredSpaceID == space.spaceID,
+                isPreviewed: previewedSpaceID == space.spaceID
+            )
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .contextMenu {
+            spaceContextMenu(for: space)
+        }
+        .help(space.title)
+        .accessibilityLabel(spaceAccessibilityLabel(for: space, isSelected: false))
+        .onHover { isHovering in
+            hoveredSpaceID = isHovering ? space.spaceID : nil
+        }
+    }
+
+    @ViewBuilder
+    private func spaceContextMenu(for space: ShellSpace) -> some View {
+        Menu("Terminal Profile") {
+            Button {
+                _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
+            } label: {
+                Label("Default", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
+            }
+
+            ForEach(TerminalProfileStore.defaultStore().load().profiles, id: \.id) { profile in
+                Button {
+                    _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
+                } label: {
+                    Label(
+                        profileMenuTitle(profile),
+                        systemImage: profile.id == space.terminalProfileID
+                            ? "checkmark"
+                            : profileSymbol(for: profile)
+                    )
+                }
+            }
+        }
+    }
+
+    private func isDisplaySpace(_ space: ShellSpace) -> Bool {
+        space.spaceID == resolvedDisplaySpaceID
+    }
+
+    private var resolvedDisplaySpaceID: String? {
+        displaySpaceID ?? host.selectedSpace?.spaceID
     }
 
     private func profileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
         "\(profile.title) · \(profile.launch.kind.rawValue)"
     }
 
-    private func currentProfileSymbol(
-        space: ShellSpace,
-        profile: TerminalProfileDefinition?
-    ) -> String {
-        guard let profile else {
-            return space.terminalProfileID == nil ? "terminal" : "questionmark.circle"
-        }
+    private func profileSymbol(for profile: TerminalProfileDefinition) -> String {
         switch profile.launch {
         case .loginShell:
             return "terminal"
@@ -1101,81 +1027,88 @@ private struct ShellSidebarSpaceHeader: View {
         }
     }
 
-    private func profileForegroundStyle(
-        space: ShellSpace,
-        profile: TerminalProfileDefinition?
-    ) -> Color {
-        if space.terminalProfileID != nil, profile == nil {
-            return .orange
-        }
-        if profile?.launch == .sudoRoot {
-            return .red
-        }
-        return ShellPalette.sidebarMutedInk.opacity(0.72)
+    private func strongestAttention(for space: ShellSpace) -> ShellAttentionState {
+        host.shellState.panes
+            .filter { $0.spaceID == space.spaceID }
+            .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
+            .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
+            ?? .idle
     }
 
-    private func contentIconName(for content: ShellContentInstance) -> String {
-        if let iconName = content.iconName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !iconName.isEmpty
-        {
-            return iconName
-        }
-
-        switch content.kind {
-        case .terminal:
-            return "terminal"
-        case .markdown:
-            return "doc.text"
-        case .settings:
-            return "gearshape"
+    private func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .awaitingUser:
+            return 3
+        case .notable:
+            return 2
+        case .active:
+            return 1
+        case .idle:
+            return 0
         }
     }
-}
 
-private struct ShellSpaceSwitcherItem: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let title: String
-    let symbolName: String
-    let attention: ShellAttentionState
-    let tabCount: Int
-    let isSelected: Bool
-    let isPreviewed: Bool
-    let isHovered: Bool
-
-    var body: some View {
-        ZStack {
-            if isSelected || isHovered || isPreviewed {
-                ShellMaterialShape(
-                    role: isSelected ? .controlGlassSelected : .controlGlassHover,
-                    shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                )
-            }
-            Image(systemName: symbolName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isSelected || isPreviewed ? ShellPalette.accent : ShellPalette.sidebarInk.opacity(0.74))
-        }
-        .frame(width: 30, height: 30)
-        .scaleEffect(isSelected ? 1 : (isHovered || isPreviewed ? 1.015 : 1))
-        .shellShadow(isSelected || isPreviewed ? ShellShadows.navigationSelection : ShellShadows.none)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isHovered)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isPreviewed)
-        .help(title)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var accessibilityLabel: String {
-        var parts = [title, tabCount == 1 ? "1 tab" : "\(tabCount) tabs"]
+    private func spaceAccessibilityLabel(for space: ShellSpace, isSelected: Bool) -> String {
+        var parts = [space.title, space.tabs.count == 1 ? "1 tab" : "\(space.tabs.count) tabs"]
         if isSelected {
             parts.append("selected")
         }
-        if isPreviewed {
+        if previewedSpaceID == space.spaceID {
             parts.append("preview")
         }
-        if attention != .idle {
+        if strongestAttention(for: space) != .idle {
             parts.append("needs attention")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+private struct ShellSidebarSpaceDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let attention: ShellAttentionState
+    let isHovered: Bool
+    let isPreviewed: Bool
+
+    var body: some View {
+        ZStack {
+            if isHovered || isPreviewed {
+                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                    .fill(ShellPalette.sidebarHover)
+            }
+
+            Circle()
+                .fill(dotFill)
+                .frame(width: dotSize, height: dotSize)
+                .overlay {
+                    Circle()
+                        .stroke(dotStroke, lineWidth: 0.6)
+                }
+        }
+        .frame(width: 18, height: 22)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isPreviewed)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: attention)
+    }
+
+    private var dotSize: CGFloat {
+        isHovered || isPreviewed || attention != .idle ? 6.5 : 5.2
+    }
+
+    private var dotFill: Color {
+        if isPreviewed {
+            return ShellPalette.accent.opacity(0.82)
+        }
+        if attention != .idle {
+            return ShellPalette.attention.opacity(0.82)
+        }
+        return ShellPalette.sidebarMutedInk.opacity(isHovered ? 0.72 : 0.46)
+    }
+
+    private var dotStroke: Color {
+        if isPreviewed {
+            return ShellPalette.accent.opacity(0.34)
+        }
+        return ShellPalette.line.opacity(isHovered ? 0.24 : 0.12)
     }
 }
 

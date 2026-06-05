@@ -323,8 +323,14 @@ enum ShellWindowDoubleClickZoomHitTesting {
             windowSize: windowSize,
             chromeSurface: chromeSurface
         )
+        let hitsTrailingTitlebarControl =
+            chromeSurface.width.map {
+                sidebarTrailingTitlebarToolControlFrame(surfaceWidth: $0).contains(localPoint)
+            } ?? false
+
         return standardTrafficLightControlFrames.contains { $0.contains(localPoint) }
-            || sidebarTitlebarToolControlFrame.contains(localPoint)
+            || sidebarLeadingTitlebarToolControlFrame.contains(localPoint)
+            || hitsTrailingTitlebarControl
     }
 
     private static var standardTrafficLightGroupFrame: CGRect {
@@ -351,7 +357,7 @@ enum ShellWindowDoubleClickZoomHitTesting {
         }
     }
 
-    private static var sidebarTitlebarToolControlFrame: CGRect {
+    private static var sidebarLeadingTitlebarToolControlFrame: CGRect {
         let trafficLights = standardTrafficLightGroupFrame
         let firstButtonX = trafficLights.maxX + ShellSidebarMetrics.titlebarToolGapAfterTrafficLights
         let buttonCount: CGFloat = 2
@@ -365,6 +371,22 @@ enum ShellWindowDoubleClickZoomHitTesting {
             width: totalButtonWidth,
             height: ShellSidebarMetrics.titlebarToolHeight
         )
+    }
+
+    private static func sidebarTrailingTitlebarToolControlFrame(surfaceWidth: CGFloat) -> CGRect {
+        CGRect(
+            x: surfaceWidth
+                - ShellSidebarMetrics.edgeInset
+                - ShellSidebarMetrics.titlebarToolWidth,
+            y: titlebarToolY,
+            width: ShellSidebarMetrics.titlebarToolWidth,
+            height: ShellSidebarMetrics.titlebarToolHeight
+        )
+    }
+
+    private static var titlebarToolY: CGFloat {
+        let trafficLights = standardTrafficLightGroupFrame
+        return max(0, trafficLights.midY - (ShellSidebarMetrics.titlebarToolHeight / 2))
     }
 
     private static func localTopLeadingPoint(

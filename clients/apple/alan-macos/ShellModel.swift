@@ -1,5 +1,9 @@
 import Foundation
 
+enum ShellSidebarSpaceSliderPolicy {
+    static let maximumVisibleSpaces = 8
+}
+
 struct ShellSidebarTabProjection: Equatable {
     let title: String
     let secondaryLine: String

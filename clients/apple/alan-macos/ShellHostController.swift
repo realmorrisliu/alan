@@ -1137,6 +1137,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
+        guard shellState.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces else {
+            return nil
+        }
         let resolvedTerminalProfileID = terminalProfileID
             ?? globalDefaultTerminalProfileIDForPaneCapture()
         let result = shellState.creatingSpace(
@@ -1156,7 +1159,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        createSpace(
+        return createSpace(
             launchTarget: .shell,
             title: title,
             workingDirectory: workingDirectory,

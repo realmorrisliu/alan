@@ -41,6 +41,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesShellHostControllerRoutesSharedAutomationCommands()
         verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
+        verifiesSpaceCreateCapAppliesToControlCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -2111,6 +2112,67 @@ private enum ShellRuntimeMetadataTests {
             handle.deliveredText == ["pwd\n"],
             "control-plane send_text must route through the shared runtime command path"
         )
+    }
+
+    private static func verifiesSpaceCreateCapAppliesToControlCommandPaths() {
+        var cappedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_cap_control")
+        while cappedState.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces {
+            cappedState = cappedState.creatingTerminalSpace(
+                title: nil,
+                workingDirectory: nil
+            ).state
+        }
+
+        let controller = makeController(
+            windowID: "space_cap_control",
+            shellState: cappedState
+        )
+        let directSpaceID = controller.createSpace()
+        expect(directSpaceID == nil, "direct createSpace must reject the capped Space count")
+        expect(
+            controller.shellState.spaces.count
+                == ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces,
+            "direct createSpace must leave the capped Space count unchanged"
+        )
+
+        let controlPlaneCreate = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "space-cap-control-plane",
+                  "command": "space.create"
+                }
+                """
+            )
+        )
+        expect(
+            controlPlaneCreate.applied == false
+                && controlPlaneCreate.errorCode == "space_create_failed",
+            "control-plane space.create must reject the capped Space count"
+        )
+        expect(
+            controller.shellState.spaces.count
+                == ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces,
+            "control-plane space.create must leave the capped Space count unchanged"
+        )
+
+        let localCreate = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "space-cap-local",
+                  "command": "space.create"
+                }
+                """
+            ),
+            state: cappedState
+        )
+        expect(
+            localCreate?.response.applied == false
+                && localCreate?.response.errorCode == "space_create_failed",
+            "local space.create must reject the capped Space count"
+        )
+        expect(localCreate?.updatedState == nil, "local space.create must not mutate capped state")
     }
 
     private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {

@@ -432,31 +432,40 @@ struct MacShellRootView: View {
 
     private var sidebarChromeControls: some View {
         GeometryReader { _ in
-            HStack(spacing: ShellSidebarMetrics.titlebarToolSpacing) {
-                ShellSidebarCollapseControl(isCollapsed: isSidebarCollapsed) {
-                    updateSidebarCollapsed(!isSidebarCollapsed)
-                }
+            HStack(spacing: 0) {
+                HStack(spacing: ShellSidebarMetrics.titlebarToolSpacing) {
+                    ShellSidebarCollapseControl(isCollapsed: isSidebarCollapsed) {
+                        updateSidebarCollapsed(!isSidebarCollapsed)
+                    }
 
-                ShellAppearanceModeControl(mode: $appearanceMode)
+                    ShellAppearanceModeControl(mode: $appearanceMode)
+                }
+                .contentShape(Rectangle())
+                .onHover(perform: handleCollapsedSidebarToolbarHover)
+
+                Spacer(minLength: ShellSidebarMetrics.titlebarToolSpacing)
+
+                ShellSidebarNewSpaceControl {
+                    _ = host.createTerminalSpace()
+                }
+                .disabled(!canCreateTerminalSpace)
+                .opacity(canCreateTerminalSpace ? 1 : 0.38)
+                .contentShape(Rectangle())
+                .onHover(perform: handleCollapsedSidebarToolbarHover)
             }
-            .padding(
-                .leading,
-                windowChromeMetrics.titlebarToolLeadingInset
-            )
-            .padding(
-                .top,
-                windowChromeMetrics.titlebarToolTopInset
-            )
-            .offset(
-                x: sidebarChromeSurfaceOrigin.x,
-                y: sidebarChromeSurfaceOrigin.y
-            )
-            .contentShape(Rectangle())
-            .onHover(perform: handleCollapsedSidebarToolbarHover)
+            .padding(.leading, windowChromeMetrics.titlebarToolLeadingInset)
+            .padding(.trailing, ShellSidebarMetrics.edgeInset)
+            .padding(.top, windowChromeMetrics.titlebarToolTopInset)
+            .frame(width: sidebarPresentation.surfaceWidth, alignment: .topLeading)
+            .offset(x: sidebarChromeSurfaceOrigin.x, y: sidebarChromeSurfaceOrigin.y)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)
         .zIndex(30)
+    }
+
+    private var canCreateTerminalSpace: Bool {
+        host.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces
     }
 }
 
@@ -552,6 +561,19 @@ private struct ShellAppearanceModeControl: View {
         ) {
             mode = mode.next
         }
+    }
+}
+
+private struct ShellSidebarNewSpaceControl: View {
+    let action: () -> Void
+
+    var body: some View {
+        ShellGhostChromeButton(
+            systemName: "plus",
+            help: "Create Space",
+            accessibilityLabel: "Create Space",
+            action: action
+        )
     }
 }
 

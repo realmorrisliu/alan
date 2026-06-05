@@ -33,7 +33,7 @@ private enum ShellWindowPlacementTests {
         try verifiesTrafficLightGapsCanTriggerDoubleClickZoom()
         try verifiesSidebarChromeBlankAreaCanTriggerDoubleClickZoom()
         try verifiesSidebarTabListDoesNotTriggerWindowDrag()
-        try verifiesSidebarSpaceDockDoesNotTriggerWindowDrag()
+        try verifiesSidebarSpaceSliderDoesNotTriggerWindowDrag()
         try verifiesSidebarToolbarButtonsDoNotTriggerDoubleClickZoom()
         try verifiesTitlebarOverlayAcceptsTopBlankHit()
         try verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit()
@@ -470,7 +470,7 @@ private enum ShellWindowPlacementTests {
         )
     }
 
-    private static func verifiesSidebarSpaceDockDoesNotTriggerWindowDrag() throws {
+    private static func verifiesSidebarSpaceSliderDoesNotTriggerWindowDrag() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -487,7 +487,7 @@ private enum ShellWindowPlacementTests {
                 in: window,
                 chromeSurface: chromeSurface
             ),
-            "sidebar space switcher rows must not be treated as window drag or zoom candidates"
+            "sidebar Space slider controls must not be treated as window drag or zoom candidates"
         )
     }
 
@@ -499,17 +499,26 @@ private enum ShellWindowPlacementTests {
             defer: false
         )
         let chromeSurface = ShellWindowChromeSurface(width: 264)
+        let controlY = window.frame.height - 20
 
-        let location = CGPoint(x: 98, y: window.frame.height - 20)
-
-        expect(
-            !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
-                locationInWindow: location,
-                in: window,
-                chromeSurface: chromeSurface
-            ),
-            "sidebar titlebar toolbar buttons must receive clicks instead of the window zoom overlay"
+        let leadingControlLocation = CGPoint(x: 98, y: controlY)
+        let newSpaceControlLocation = CGPoint(
+            x: 264
+                - ShellSidebarMetrics.edgeInset
+                - (ShellSidebarMetrics.titlebarToolWidth / 2),
+            y: controlY
         )
+
+        for location in [leadingControlLocation, newSpaceControlLocation] {
+            expect(
+                !ShellWindowDoubleClickZoomHitTesting.isWindowTopChromeZoomCandidate(
+                    locationInWindow: location,
+                    in: window,
+                    chromeSurface: chromeSurface
+                ),
+                "sidebar titlebar toolbar buttons must receive clicks instead of the window zoom overlay"
+            )
+        }
     }
 
     private static func verifiesTitlebarOverlayAcceptsTopBlankHit() throws {
