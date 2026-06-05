@@ -44,5 +44,5 @@
 - [x] 6.2 Capture or document light-mode sidebar evidence for representative `1-3`, `4-6`, and `7-9` Space counts.
 - [x] 6.3 Capture or document hover expansion, scrub preview focus, and post-commit selected state.
 - [x] 6.4 Confirm the implementation diff is limited to sidebar Space slider polish, focused tests, and this OpenSpec change.
-- [ ] 6.5 Sync accepted delta specs into `openspec/specs/` after implementation is merged.
-- [ ] 6.6 Archive the completed OpenSpec change after synced specs validate.
+- [x] 6.5 Sync accepted delta specs into `openspec/specs/` after implementation is merged.
+- [x] 6.6 Archive the completed OpenSpec change after synced specs validate.
