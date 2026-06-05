@@ -223,8 +223,8 @@ terminal pane when those signals are available.
 
 ### Requirement: Semantic Terminal Actions Are Focused And Reversible
 Alan SHALL expose prompt navigation, copy-last-command-output, and
-command-output search actions through pane-scoped command paths that do not
-mutate terminal process state.
+command-output search actions through pane-scoped native action routes that do
+not mutate terminal process state.
 
 #### Scenario: User jumps between prompts
 - **WHEN** semantic prompt marks exist for the focused pane and the user invokes
@@ -244,11 +244,13 @@ mutate terminal process state.
 - **THEN** Alan scopes the interaction to that pane and returns focus to the
   terminal after dismissal
 
-#### Scenario: Command-aware actions are command-menu actions
+#### Scenario: Command-aware actions use native pane routes
 - **WHEN** a focused pane has reliable command boundary metadata
 - **THEN** Alan exposes command-aware prompt navigation, copy-last-output, and
-  search-last-output actions through `Go to or Command...` without adding
-  persistent terminal chrome
+  search-last-output actions through the shell action registry using
+  pane-scoped menu, context menu, keyboard shortcut, or compact terminal tool
+  routes without adding persistent terminal chrome or relying on the removed
+  `Go to or Command...` command input
 
 #### Scenario: Command boundaries are unavailable
 - **WHEN** a focused pane has no reliable command boundary metadata

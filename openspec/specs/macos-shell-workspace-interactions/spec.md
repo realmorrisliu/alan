@@ -127,52 +127,40 @@ across native menus, keyboard shortcuts, command UI, and terminal host surfaces.
 
 ### Requirement: Commands use native Mac surfaces
 Workspace actions SHALL be available through native menu/command routing,
-keyboard shortcuts, command input, and any restrained toolbar affordances that
-call the same shell controller mutations where the action is shared. Menu bar,
-context menu, and keyboard shortcut paths SHALL resolve shared shell actions
-through the macOS shell action registry. The default `Command-P` command input
-SHALL accept typed commands without showing persistent candidate action lists;
-this registry change SHALL NOT add new Command UI behaviors.
+keyboard shortcuts, context menus, and restrained toolbar or sidebar
+affordances that call the same shell controller mutations where the action is
+shared. Menu bar, context menu, and keyboard shortcut paths SHALL resolve shared
+shell actions through the macOS shell action registry. The default macOS shell
+SHALL NOT include the removed Ask alan typed command input.
 
 #### Scenario: Menu command
-- **WHEN** the user selects New Terminal Tab, New alan Tab, Split, Focus Pane,
-  Equalize Splits, Close Pane, or Close Tab from the menu bar
+- **WHEN** the user selects New Terminal Tab, Split, Focus Pane, Equalize
+  Splits, Close Pane, or Close Tab from the menu bar
 - **THEN** alan executes the registered shell action used by matching keyboard
   and context paths where that behavior is shared
+- **AND** the menu bar does not expose New alan Tab or Ask alan commands
 
 #### Scenario: Keyboard command
 - **WHEN** the user invokes a supported command-key shortcut
 - **THEN** the responder chain routes it to alan's shell action registry or
   terminal surface command handler as appropriate
+- **AND** `Command-P` is not registered as an Alan-owned Ask alan command input
+  shortcut
 
 #### Scenario: Context command
 - **WHEN** the user invokes a supported Tab or Space context menu command
 - **THEN** alan resolves the registry action with the context Tab or Space
   target rather than first changing shell selection
 
-#### Scenario: Command input opens
-- **WHEN** the user opens `Go to or Command...`
-- **THEN** alan focuses a single command input field instead of presenting
-  default action, routing, or attention candidate lists
-- **AND** this registry change does not add new Tab or Space organization
-  commands to the Command UI
+#### Scenario: Removed command input stays absent
+- **WHEN** workspace command surfaces are visible
+- **THEN** alan does not present `Go to or Command...`, a floating typed command
+  input, default action candidate lists, or unresolved typed-command status
 
-#### Scenario: Command input shortcut toggles
-- **WHEN** the user presses `Command-P` while the command input is focused or
-  visible
-- **THEN** alan dismisses the command input instead of opening a duplicate
-  surface
-
-#### Scenario: Typed command resolves
-- **WHEN** the user submits a typed command that alan can resolve to an existing
-  workspace action or routing target
-- **THEN** alan executes the existing command input behavior and dismisses the
-  command input
-
-#### Scenario: Typed command is unresolved
-- **WHEN** the user submits a typed command that alan cannot resolve
-- **THEN** alan leaves the command input open and communicates the unresolved
-  state without exposing raw pane IDs or debug routing details
+#### Scenario: Removed alan tab action stays absent
+- **WHEN** a user creates new workspace content through default shell surfaces
+- **THEN** alan offers normal terminal tab creation and supported non-terminal
+  content creation without offering first-party alan tab creation
 
 ### Requirement: Sidebar swipe previews spaces without moving the workspace
 Horizontal swipe gestures that originate inside the macOS sidebar SHALL drive
@@ -419,7 +407,7 @@ section boundary.
 ### Requirement: Move Tab To Space Is Explicit In The First Version
 The macOS shell SHALL support Move Tab to Space through menu and Tab context
 actions. The first version SHALL NOT require dragging a Tab to the Space
-switcher to move it across Spaces.
+slider to move it across Spaces.
 
 #### Scenario: Move selected Tab follows target
 - **WHEN** the user moves the current selected Tab to another Space
@@ -453,13 +441,13 @@ changing selected Space, selected Tab, or focused pane.
 ### Requirement: Quick Terminal Summon And Dismiss Are Shell Commands
 Quick terminal summon, dismiss, focus, and close operations SHALL route through
 Alan's shared shell command/controller paths so keyboard shortcuts, menu
-commands, command input, and control surfaces converge on the same behavior.
+commands, and supported control surfaces converge on the same behavior.
 Alan SHALL expose a configurable global toggle shortcut for quick terminal; the
 draft default shortcut is `Option+Space`.
 
 #### Scenario: Quick terminal command opens
 - **WHEN** the user invokes quick terminal from a keyboard shortcut, menu,
-  command input, or supported control command
+  or supported control command
 - **THEN** Alan summons the same quick terminal target through the shared shell
   controller path and focuses terminal input
 
@@ -522,8 +510,8 @@ terminal tab 行为。
 - **THEN** alan 聚焦已存在的 settings ContentInstance 所在 PaneSlot
 - **AND** alan MUST NOT 创建重复 settings tabs，除非未来 capability 明确引入多实例 settings
 
-### Requirement: Sidebar and command routing understand content kind
-Sidebar、toolbar、command input 和 menu routing SHALL 使用 content kind、title 和 capabilities
+### Requirement: Sidebar and supported command routing understand content kind
+Sidebar、toolbar、menu routing 和 supported control surfaces SHALL 使用 content kind、title 和 capabilities
 来展示和执行 tab/pane 操作，而不是把所有 PaneSlots 视为 terminal target。
 
 #### Scenario: Sidebar lists mixed content tabs
@@ -531,8 +519,8 @@ Sidebar、toolbar、command input 和 menu routing SHALL 使用 content kind、t
 - **THEN** sidebar 使用各自用户可见标题和 restrained content affordance
 - **AND** 默认 UI 不暴露 raw pane IDs、content IDs 或 renderer implementation names
 
-#### Scenario: Command input resolves content-aware target
-- **WHEN** 用户通过 command input 跳转到 markdown 或 settings pane
+#### Scenario: Supported navigation resolves content-aware target
+- **WHEN** 用户通过 supported content navigation 跳转到 markdown 或 settings pane
 - **THEN** alan 聚焦对应 PaneSlot
 - **AND** 不执行 terminal-specific focus side effect，例如请求 terminal host first responder
 
@@ -592,3 +580,43 @@ future terminal creation, not as a command to migrate existing terminal content.
 - **THEN** existing terminal content in that Space keeps its stored
   `terminal_profile_id`
 - **AND** new terminal content created after the change uses `univer` by default
+
+### Requirement: Space Selection Restores Space-Local Tab Focus
+The macOS shell SHALL remember the last selected Tab for each Space and SHALL
+restore that Space-local Tab selection when the Space becomes selected again.
+This behavior SHALL apply to top Space slider actions, committed sidebar swipe
+gestures, keyboard shortcuts, menu commands, command routing, and control-plane
+Space selection. When the remembered Tab
+contains multiple PaneSlots, alan SHALL prefer the last focused PaneSlot in that
+Tab when it is still valid and SHALL otherwise focus the first valid PaneSlot in
+the remembered Tab.
+
+#### Scenario: Returning to a Space restores its selected Tab
+- **WHEN** the user selects the second Tab in Space A
+- **AND** the user switches to Space B
+- **AND** the user switches back to Space A
+- **THEN** alan selects the second Tab in Space A
+- **AND** alan does not fall back to the first Tab in Space A
+- **AND** terminal focus and render priority follow the restored Tab's focused PaneSlot when that PaneSlot mounts terminal content
+
+#### Scenario: Keyboard Space switch uses remembered Tab
+- **WHEN** Space A remembers a non-first selected Tab
+- **AND** the user switches away from Space A with a keyboard Space command
+- **AND** the user returns to Space A with a keyboard Space command
+- **THEN** alan selects the remembered Tab in Space A through the same shell controller focus path used by sidebar selection
+
+#### Scenario: Empty Space stays tabless
+- **WHEN** the user selects a Space whose Tabs have all been closed or retired
+- **THEN** alan selects that Space with no selected Tab
+- **AND** alan does not fabricate a Tab, PaneSlot, or terminal runtime for that empty Space
+
+#### Scenario: Invalid remembered Tab repairs on selection
+- **WHEN** a Space remembers a Tab that no longer exists in that Space
+- **AND** the Space still has at least one remaining Tab
+- **THEN** selecting the Space focuses the first remaining Tab in that Space
+- **AND** alan updates the Space-local remembered Tab to that remaining Tab
+
+#### Scenario: Context target resolution does not mutate remembered selection
+- **WHEN** the user opens a context menu for a background Tab
+- **THEN** alan resolves the context action against that Tab without first making it the remembered selected Tab for its Space
+- **AND** alan updates remembered selection only if the executed action has focus-changing semantics

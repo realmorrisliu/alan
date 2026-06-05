@@ -184,12 +184,14 @@ snapshots instead of terminal-only pane snapshots.
 - **WHEN** 用户 pin 或 update-pin 一个包含 terminal、markdown 或 settings content 的 split tab
 - **THEN** workspace manifest 保存 split tree、PaneSlot restore identity、ContentInstance kind 和每个 content 的 restorable payload
 - **AND** terminal payload 保存 cwd、launch target 和用户可见 title
+- **AND** terminal payload MAY save a bounded terminal transcript snapshot as session-continuity metadata when one is available
 - **AND** markdown/settings payload 保存对应文件引用或 settings surface identity
-- **AND** manifest 不保存 terminal process、renderer object、scrollback 或 delivery queue
+- **AND** manifest 不保存 terminal process、PTY、renderer object、Ghostty surface object、unbounded scrollback 或 delivery queue
 
 #### Scenario: Unpinned mixed tab live snapshot is saved
 - **WHEN** 未 pin tab 包含 terminal、markdown 或 settings content 且仍在 TTL 内
 - **THEN** workspace manifest 的 live snapshot 保存 content-aware restore state
+- **AND** terminal content MAY include a bounded transcript snapshot with visible history, viewport, cwd, title, dimensions, process summary, and capture metadata
 - **AND** lifecycle pruning 继续使用原有 `max(lastActivatedAt, lastActivityAt)`、pin 状态和 active-task metadata
 - **AND** 非 terminal content 不会被误判为 terminal active task
 
@@ -243,3 +245,96 @@ workspace state.
 - **AND** alan shows missing-profile fallback for unmatched ids
 - **AND** alan does not attempt to synthesize profile definitions from the
   workspace manifest
+
+### Requirement: Quick Terminal launch restore is presentation-hidden
+The macOS shell workspace manifest materializer SHALL restore quick-terminal
+content and last working directory without automatically presenting the detached
+Peak during app launch.
+
+#### Scenario: Manifest records visible quick terminal
+- **WHEN** Alan materializes shell state from a workspace manifest whose
+  quick-terminal record has visible presentation
+- **THEN** Alan restores the quick-terminal slot as hidden
+- **AND** Alan preserves the quick-terminal content identity and last working
+  directory when they are restorable
+- **AND** Alan waits for an explicit user show or toggle command before
+  presenting the Peak
+
+#### Scenario: Manifest records hidden quick terminal
+- **WHEN** Alan materializes shell state from a workspace manifest whose
+  quick-terminal record has hidden presentation
+- **THEN** Alan restores the quick-terminal slot as hidden
+- **AND** Alan does not create or show the Peak panel during launch solely
+  because a quick-terminal restore record exists
+
+### Requirement: Workspace Manifest Stores Space-Local Tab Selection
+The macOS shell workspace manifest SHALL persist each Space's remembered
+selected Tab in addition to the globally selected Space and active Tab. Manifest
+load, pruning, materialization, and writeback SHALL repair invalid Space-local
+selected Tab references without deleting durable Spaces or fabricating Tabs for
+empty Spaces.
+
+#### Scenario: Manifest write stores each Space selection
+- **WHEN** the user selects a non-first Tab in Space A
+- **AND** the user selects a different Tab in Space B
+- **THEN** the workspace manifest stores Space A's remembered selected Tab on the Space A record
+- **AND** the workspace manifest stores Space B's remembered selected Tab on the Space B record
+- **AND** the manifest still records the globally selected Space and active Tab for restart focus
+
+#### Scenario: Restart restores inactive Space selections
+- **WHEN** alan restarts from a workspace manifest with per-Space selected Tab records
+- **THEN** the globally selected Space and active Tab are restored as the current shell focus
+- **AND** every inactive Space keeps its remembered selected Tab for later Space switching
+- **AND** switching to an inactive Space after restart selects that Space's remembered Tab instead of its first Tab
+
+#### Scenario: Old manifest without Space-local selection decodes
+- **WHEN** alan loads a valid workspace manifest that has global `selected_space_id` and `selected_tab_id` but no per-Space selected Tab fields
+- **THEN** alan decodes the manifest successfully
+- **AND** alan seeds the globally selected Space's remembered selected Tab from the global selected Tab when valid
+- **AND** alan falls back to the first Tab for other Spaces until the user selects a Tab in those Spaces
+
+#### Scenario: Selected Tab is pruned
+- **WHEN** lifecycle pruning removes a Tab that a Space remembered as selected
+- **THEN** alan repairs that Space's remembered selected Tab to the first retained Tab in the same Space
+- **AND** if no Tabs remain in that Space, alan clears that Space's remembered selected Tab while keeping the Space record
+
+#### Scenario: Tab moves between Spaces
+- **WHEN** a Tab moves from one Space to another
+- **THEN** alan repairs the source Space's remembered selected Tab if the moved Tab was remembered there
+- **AND** alan preserves the destination Space's remembered selected Tab unless the move follows current selection or explicitly focuses the moved Tab
+- **AND** the persisted manifest records the repaired source and destination Space selection outcomes
+
+### Requirement: Terminal transcript snapshots restore the prior visible session context
+The macOS shell workspace manifest SHALL persist terminal transcript snapshots
+as bounded session-continuity state that can seed newly created terminal
+runtimes after app restart.
+
+#### Scenario: App closes with visible terminal output
+- **WHEN** Alan closes or quits while a retained terminal ContentInstance has visible output and restorable transcript history
+- **THEN** the workspace manifest stores a bounded transcript snapshot for that terminal content
+- **AND** the snapshot preserves enough text, dimensions, title, cwd, focus, and viewport context to show the prior terminal state after restart
+
+#### Scenario: App restarts after transcript snapshot
+- **WHEN** Alan restores a terminal ContentInstance from a workspace manifest that contains a terminal transcript snapshot
+- **THEN** Alan materializes the terminal with the saved transcript history before or during new runtime startup
+- **AND** the restored terminal remains usable by starting a new shell in the restored cwd
+- **AND** the normal terminal UI does not show an additional restored-session banner or warning surface solely because the transcript was restored
+
+#### Scenario: Transcript snapshot is too large
+- **WHEN** terminal history exceeds the configured row or encoded-byte snapshot limit
+- **THEN** Alan stores a bounded tail snapshot and records truncation metadata
+- **AND** manifest persistence remains bounded in size and time
+
+### Requirement: Pinned tab templates are not silently rewritten by session snapshots
+Pinned Tab structural restore SHALL remain governed by explicit pin snapshots,
+while close-time terminal transcript snapshots MAY provide last-session history
+without silently changing the pinned template.
+
+#### Scenario: Pinned tab has matching live transcript
+- **WHEN** a pinned Tab restores from its pin snapshot and a close-time transcript snapshot exists for matching terminal ContentInstance identity
+- **THEN** Alan may seed the restored terminal runtime with that transcript history
+- **AND** the pin snapshot's split layout, launch target, and explicit cwd template are not replaced by transient live-session state
+
+#### Scenario: Pinned tab live structure no longer matches the pin snapshot
+- **WHEN** a close-time transcript snapshot refers to terminal content that is not present in the pinned restore snapshot
+- **THEN** Alan preserves the pinned restore snapshot behavior and ignores the unmatched transcript for that restored tab

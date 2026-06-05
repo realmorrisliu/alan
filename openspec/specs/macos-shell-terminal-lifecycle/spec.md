@@ -258,13 +258,15 @@ operations that empty containers.
 
 ### Requirement: Terminal keyboard input is terminal-host owned
 The macOS shell host SHALL route keyboard events for the focused terminal pane
-through the terminal host unless a visible alan command surface or an explicit
-app-reserved `Command` shortcut owns that key.
+through the terminal host unless a visible supported shell control or an
+explicit app-reserved `Command` shortcut owns that key.
 
 #### Scenario: Vim control key reaches terminal
-- **WHEN** a focused terminal pane is running a TUI such as Vim and no alan command surface is visible
+- **WHEN** a focused terminal pane is running a TUI such as Vim and no supported
+  shell control is active
 - **THEN** non-`Command` terminal keys such as Escape, Tab, Backspace, `Control-[`, `Control-W`, `Control-F`, and `Control-B` are delivered to the terminal runtime
-- **AND** the shell workspace command router does not consume those keys as pane, tab, or command-input actions
+- **AND** the shell workspace command router does not consume those keys as
+  pane, tab, or removed command-input actions
 
 #### Scenario: Printable physical keyboard input uses Ghostty key events
 - **WHEN** a focused terminal pane receives printable physical keyboard input such as `a` or `:`
@@ -293,13 +295,17 @@ app-reserved `Command` shortcut owns that key.
 - **WHEN** a focused terminal pane receives an explicit app or workspace `Command` shortcut such as New Terminal Tab or Close Tab
 - **THEN** alan executes the native workspace command and does not send that shortcut as terminal text
 
-#### Scenario: Visible command surface owns its own keys
-- **WHEN** alan's command input is visible while a terminal pane is focused
-- **THEN** command-input keys such as submit, dismiss, and command-input toggle are handled by that surface before terminal delivery
+#### Scenario: Supported shell control owns its own keys
+- **WHEN** a supported transient shell control such as the Find bar, a titlebar
+  control, or a menu-owned interaction is active while a terminal pane is
+  focused
+- **THEN** keys owned by that control, such as submit, dismiss, navigation, or
+  toggle keys, are handled by that control before terminal delivery
 
 #### Scenario: AppKit key equivalent is re-dispatched to terminal
 - **WHEN** AppKit routes a focused terminal Control or Command key through `performKeyEquivalent`
-- **AND** the key is not a visible command-surface key or explicit app/workspace shortcut
+- **AND** the key is not a supported shell-control key or explicit
+  app/workspace shortcut
 - **THEN** alan preserves Ghostty's key-equivalent state machine and allows AppKit to continue to `doCommand`
 - **AND** `doCommand` re-dispatches the same event back through the terminal host
 - **AND** the re-dispatched event is delivered to the terminal runtime exactly once
@@ -457,3 +463,63 @@ Terminal Profile reference when one exists.
 - **AND** local Terminal Profile `lab` is missing
 - **THEN** alan launches the restored terminal with the login-shell fallback
 - **AND** alan reports the missing profile state in shell metadata
+
+### Requirement: Destructive terminal close requests are guarded
+The macOS shell host SHALL guard destructive pane, tab, window, app, and Quick
+Terminal close requests before mutating authoritative shell state or releasing
+terminal ContentInstance runtimes.
+
+#### Scenario: Closing a pane with active work
+- **WHEN** the user requests close for a PaneSlot that mounts terminal content with a foreground command, running alan session, pending yield, or unknown live active-task state
+- **THEN** Alan asks for confirmation before removing the PaneSlot or finalizing the terminal ContentInstance runtime
+- **AND** cancelling the confirmation leaves shell state, workspace manifest state, and terminal runtime state unchanged
+
+#### Scenario: Closing an idle terminal pane
+- **WHEN** the user requests close for a PaneSlot whose terminal content is an idle shell prompt or an exited process
+- **THEN** Alan may close the PaneSlot without an active-work confirmation
+
+#### Scenario: Closing a tab with multiple terminal panes
+- **WHEN** the user requests close for a tab containing multiple terminal ContentInstances and at least one has active work
+- **THEN** Alan presents at most one confirmation for the tab close request
+- **AND** the tab is removed only after the user confirms
+
+#### Scenario: Closing a window or quitting the app
+- **WHEN** the user requests window close or app quit while any affected terminal ContentInstance has active work
+- **THEN** Alan presents at most one confirmation for that requested close scope
+- **AND** no affected terminal runtime is finalized until the user confirms
+
+#### Scenario: Quick Terminal close has active work
+- **WHEN** the user requests Quick Terminal close while its terminal content has active work
+- **THEN** Alan applies the same close guard semantics used for regular shell terminal panes
+
+### Requirement: Confirmed close captures terminal session snapshots
+The macOS shell host SHALL attempt to capture bounded terminal transcript
+snapshots for affected live terminal ContentInstances after a destructive
+terminal close request is confirmed, after a bounded graceful shutdown attempt
+for active terminal work, and before finalizing their runtimes.
+
+#### Scenario: Confirmed pane close captures a snapshot
+- **WHEN** the user confirms closing a terminal PaneSlot with restorable terminal history
+- **THEN** Alan first requests graceful shutdown for active foreground terminal work when applicable
+- **AND** Alan captures a bounded transcript snapshot for the mounted terminal ContentInstance before invoking runtime finalization
+- **AND** the snapshot is associated with the terminal ContentInstance identity and close reason
+
+#### Scenario: Graceful shutdown output is captured
+- **WHEN** a confirmed close affects terminal work that can print final session or resume metadata while shutting down
+- **THEN** Alan gives the runtime a bounded graceful shutdown window before forced finalization
+- **AND** Alan captures transcript history after the graceful window drains or times out so final output can be restored after restart
+
+#### Scenario: Graceful shutdown times out
+- **WHEN** the affected terminal work does not exit or return to an idle prompt within the bounded graceful shutdown window
+- **THEN** Alan captures the latest available transcript tail
+- **AND** Alan may force-finalize the runtime after the timeout instead of blocking app quit or close indefinitely
+
+#### Scenario: Snapshot capture fails after confirmation
+- **WHEN** the user has confirmed a destructive close and snapshot capture or persistence fails
+- **THEN** Alan records a diagnostic for debugging
+- **AND** Alan may continue the confirmed close instead of trapping the user in the closing surface
+
+#### Scenario: App restart restores history but not process continuity
+- **WHEN** Alan restarts after terminal ContentInstances were closed or interrupted in the prior app instance
+- **THEN** restored terminal panes may present saved transcript history from the prior session
+- **AND** Alan creates new terminal runtimes and child processes instead of claiming continuity with the prior app instance's PTYs, child processes, or Ghostty surfaces
