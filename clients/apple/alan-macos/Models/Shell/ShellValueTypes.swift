@@ -1,6 +1,8 @@
 import Foundation
 
 enum TerminalRuntimeControlKey: String, Codable, Equatable {
+    case interrupt
+    case endOfTransmission = "end_of_transmission"
     case returnKey = "return"
 }
 

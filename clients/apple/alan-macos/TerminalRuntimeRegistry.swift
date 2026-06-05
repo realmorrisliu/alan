@@ -304,6 +304,16 @@ final class TerminalRuntimeRegistry: ObservableObject {
         runtimeService.captureTranscriptSnapshot(forTerminalContentID: contentID)
     }
 
+    func requestGracefulShutdown(
+        forTerminalContentID contentID: String,
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        runtimeService.requestGracefulShutdown(
+            forTerminalContentID: contentID,
+            reason: reason
+        )
+    }
+
     func seedRestoredTranscriptSnapshot(
         _ snapshot: TerminalTranscriptSnapshot,
         forTerminalContentID contentID: String

@@ -19,6 +19,27 @@ state without exposing durable manifests to Ghostty renderer internals.
 - **WHEN** a terminal transcript snapshot is produced
 - **THEN** it does not include PTY file descriptors, child process handles, Ghostty surface pointers, renderer objects, delivery queues, or unbounded scrollback
 
+### Requirement: Terminal runtime service supports bounded graceful shutdown requests
+The terminal runtime service SHALL expose a service-owned graceful shutdown
+request path for live terminal ContentInstances so confirmed close can give
+foreground work a chance to exit and print final transcript output before forced
+runtime finalization.
+
+#### Scenario: Graceful shutdown is requested for active terminal work
+- **WHEN** the shell host has received user confirmation for closing active terminal work
+- **THEN** the runtime service requests a graceful shutdown for the corresponding terminal ContentInstance without exposing PTY handles or Ghostty surface pointers to the shell host
+- **AND** the shell host can observe whether the terminal returned to inactive foreground-work state or exited before the bounded wait expires
+
+#### Scenario: Graceful shutdown cannot be requested
+- **WHEN** the runtime surface is missing, failed, exited, or unable to receive the graceful shutdown request
+- **THEN** the runtime service returns an explicit request result
+- **AND** confirmed close may continue to capture the latest available transcript and force-finalize the runtime
+
+#### Scenario: Process-group signal delivery is unavailable
+- **WHEN** the current Ghostty-backed runtime does not expose a foreground process-group signal seam
+- **THEN** Alan treats graceful shutdown as best-effort terminal-level shutdown input and bounded observation
+- **AND** Alan does not claim true PTY/process survival or guaranteed `SIGTERM` delivery
+
 ### Requirement: Restored transcript history seeds newly created terminal runtimes
 The terminal runtime service SHALL seed newly created terminal runtimes with
 restored transcript history when a terminal ContentInstance is materialized from

@@ -444,9 +444,10 @@ private enum TerminalRuntimeServiceTests {
     }
 
     private static func verifiesDevChannelPropagatesInstallChannelEnvironment() {
+        let previousInstallChannel = ProcessInfo.processInfo.environment["ALAN_INSTALL_CHANNEL"]
         setenv("ALAN_INSTALL_CHANNEL", "dev", 1)
         defer {
-            unsetenv("ALAN_INSTALL_CHANNEL")
+            restoreEnvironmentValue(previousInstallChannel, forKey: "ALAN_INSTALL_CHANNEL")
         }
 
         let state = ShellStateSnapshot.bootstrapDefault()
@@ -460,6 +461,12 @@ private enum TerminalRuntimeServiceTests {
     }
 
     private static func verifiesChannelScopedShellControlPaths() {
+        let previousNamespace = ProcessInfo.processInfo.environment["ALAN_SHELL_CONTROL_NAMESPACE"]
+        unsetenv("ALAN_SHELL_CONTROL_NAMESPACE")
+        defer {
+            restoreEnvironmentValue(previousNamespace, forKey: "ALAN_SHELL_CONTROL_NAMESPACE")
+        }
+
         let stableRoot = alanShellControlPlaneRootURL(
             windowID: "window_main",
             channel: .stable
@@ -501,9 +508,13 @@ private enum TerminalRuntimeServiceTests {
     }
 
     private static func verifiesDevBootProfileUsesDevShellControlNamespace() {
+        let previousInstallChannel = ProcessInfo.processInfo.environment["ALAN_INSTALL_CHANNEL"]
+        let previousNamespace = ProcessInfo.processInfo.environment["ALAN_SHELL_CONTROL_NAMESPACE"]
         setenv("ALAN_INSTALL_CHANNEL", "dev", 1)
+        unsetenv("ALAN_SHELL_CONTROL_NAMESPACE")
         defer {
-            unsetenv("ALAN_INSTALL_CHANNEL")
+            restoreEnvironmentValue(previousInstallChannel, forKey: "ALAN_INSTALL_CHANNEL")
+            restoreEnvironmentValue(previousNamespace, forKey: "ALAN_SHELL_CONTROL_NAMESPACE")
         }
 
         let state = ShellStateSnapshot.bootstrapDefault()
@@ -1112,6 +1123,14 @@ private enum TerminalRuntimeServiceTests {
     private static func fail(_ message: String) -> Never {
         fputs("error: \(message)\n", stderr)
         exit(1)
+    }
+
+    private static func restoreEnvironmentValue(_ value: String?, forKey key: String) {
+        if let value {
+            setenv(key, value, 1)
+        } else {
+            unsetenv(key)
+        }
     }
 }
 

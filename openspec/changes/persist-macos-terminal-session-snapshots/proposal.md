@@ -17,8 +17,9 @@ a fresh shell with no visible session history.
 - Require automation/control-plane close paths to report `requires_confirmation`
   instead of silently killing active terminal work unless a future explicit force
   mechanism is added.
-- Persist bounded terminal transcript snapshots in the workspace manifest before
-  confirmed close, app quit, or lifecycle teardown.
+- After interactive confirmation, request a bounded graceful shutdown window for
+  active terminal runtimes, then persist bounded terminal transcript snapshots
+  before forced finalization, app quit, or lifecycle teardown.
 - Restore terminal panes after app restart with the saved transcript, cwd, title,
   layout, focus, and shell metadata, then start a new shell in the restored cwd
   without presenting extra user-facing "restored session" chrome.
@@ -58,11 +59,12 @@ a fresh shell with no visible session history.
   payload with bounded size and old-manifest compatibility.
 - `clients/apple/alan-macos/TerminalRuntimeService.swift`,
   `TerminalRuntimeRegistry.swift`, `GhosttyLiveHost.swift`, and terminal surface
-  adapters need a snapshot extraction seam and a restored-transcript startup
-  path.
+  adapters need a snapshot extraction seam, a confirmed-close graceful shutdown
+  request seam, and a restored-transcript startup path.
 - `clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift`
   and shell control DTOs need a stable confirmation-required response for
   guarded close commands.
 - Focused Apple scripts and UI smoke coverage need scenarios for active close
-  confirmation, idle close bypass, manifest snapshot round trip, restart with
-  restored terminal output, and continued input in the new shell.
+  confirmation, graceful shutdown before capture, idle close bypass, manifest
+  snapshot round trip, restart with restored terminal output, and continued
+  input in the new shell.

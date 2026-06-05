@@ -122,6 +122,34 @@ enum TerminalTranscriptCaptureResult: Equatable {
     case failed(TerminalTranscriptCaptureFailure)
 }
 
+enum TerminalRuntimeGracefulShutdownReason: String, Codable, Equatable {
+    case paneClose = "pane_close"
+    case tabClose = "tab_close"
+    case quickTerminalClose = "quick_terminal_close"
+    case windowClose = "window_close"
+    case appQuit = "app_quit"
+}
+
+enum TerminalRuntimeGracefulShutdownRequestCode: String, Codable, Equatable {
+    case requested
+    case alreadyExited = "already_exited"
+    case missingRuntime = "missing_runtime"
+    case unavailable
+    case rejected
+}
+
+struct TerminalRuntimeGracefulShutdownRequestResult: Codable, Equatable {
+    let contentID: String
+    let reason: TerminalRuntimeGracefulShutdownReason
+    let code: TerminalRuntimeGracefulShutdownRequestCode
+    let delivery: TerminalRuntimeDeliveryResult?
+    let message: String?
+
+    var wasRequested: Bool {
+        code == .requested
+    }
+}
+
 enum AlanGhosttyBootstrapPhase: String, Equatable {
     case pending
     case ready
@@ -334,6 +362,9 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot)
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult
+    func requestGracefulShutdown(
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult
     @discardableResult
     func teardown() -> AlanTerminalSurfaceTeardownStatus
 }
@@ -688,6 +719,49 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #endif
     }
 
+    func requestGracefulShutdown(
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        if currentSnapshot.metadata.processExited {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .alreadyExited,
+                delivery: nil,
+                message: "The terminal process has already exited."
+            )
+        }
+        if currentSnapshot.teardownStatus == .completed {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .unavailable,
+                delivery: nil,
+                message: "The terminal runtime has already closed."
+            )
+        }
+
+        let delivery = sendControlKey(.interrupt)
+        let code: TerminalRuntimeGracefulShutdownRequestCode
+        switch delivery.code {
+        case .accepted, .queued:
+            code = .requested
+        case .missingTarget:
+            code = .missingRuntime
+        case .unavailableRuntime, .timeout:
+            code = .unavailable
+        case .rejected:
+            code = .rejected
+        }
+        return TerminalRuntimeGracefulShutdownRequestResult(
+            contentID: contentID,
+            reason: reason,
+            code: code,
+            delivery: delivery,
+            message: delivery.errorMessage
+        )
+    }
+
     @discardableResult
     func teardown() -> AlanTerminalSurfaceTeardownStatus {
         guard currentSnapshot.teardownStatus != .completed else { return .completed }
@@ -862,6 +936,10 @@ protocol AlanTerminalRuntimeService: AnyObject {
     func existingSurfaceHandle(forTerminalContentID contentID: String) -> AlanTerminalSurfaceHandle?
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalSurfaceSnapshot?
     func captureTranscriptSnapshot(forTerminalContentID contentID: String) -> TerminalTranscriptCaptureResult
+    func requestGracefulShutdown(
+        forTerminalContentID contentID: String,
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult
     func seedRestoredTranscriptSnapshot(
         _ snapshot: TerminalTranscriptSnapshot,
         forTerminalContentID contentID: String
@@ -909,6 +987,16 @@ extension AlanTerminalRuntimeService {
         sendKey(
             toTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
             key: key
+        )
+    }
+
+    func requestGracefulShutdown(
+        for paneID: String,
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        requestGracefulShutdown(
+            forTerminalContentID: ShellContentInstance.terminalContentID(forPaneID: paneID),
+            reason: reason
         )
     }
 
@@ -1110,6 +1198,22 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         return buildTerminalTranscriptCapture(for: handle)
     }
 
+    func requestGracefulShutdown(
+        forTerminalContentID contentID: String,
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .missingRuntime,
+                delivery: nil,
+                message: "No service-owned terminal runtime is registered for this content."
+            )
+        }
+        return handle.requestGracefulShutdown(reason: reason)
+    }
+
     func seedRestoredTranscriptSnapshot(
         _ snapshot: TerminalTranscriptSnapshot,
         forTerminalContentID contentID: String
@@ -1202,9 +1306,11 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var renderCatchUpRequestCount = 0
     private(set) var deliveredText: [String] = []
     private(set) var deliveredKeys: [TerminalRuntimeControlKey] = []
+    private(set) var gracefulShutdownRequests: [TerminalRuntimeGracefulShutdownReason] = []
     private(set) var searchActions: [String] = []
     private(set) var scrollActions: [String] = []
     var deliveryResult: TerminalRuntimeDeliveryResult?
+    var onGracefulShutdownRequest: ((TerminalRuntimeGracefulShutdownReason) -> Void)?
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
     var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
@@ -1366,6 +1472,56 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
             ?? .accepted(byteCount: 0, runtimePhase: currentSnapshot.runtimePhase)
         updateSnapshot(lastDelivery: result)
         return result
+    }
+
+    func requestGracefulShutdown(
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        if currentSnapshot.metadata.processExited {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .alreadyExited,
+                delivery: nil,
+                message: "The terminal process has already exited."
+            )
+        }
+
+        gracefulShutdownRequests.append(reason)
+        let delivery = sendControlKey(.interrupt)
+        let code: TerminalRuntimeGracefulShutdownRequestCode
+        switch delivery.code {
+        case .accepted, .queued:
+            code = .requested
+            onGracefulShutdownRequest?(reason)
+        case .missingTarget:
+            code = .missingRuntime
+        case .unavailableRuntime, .timeout:
+            code = .unavailable
+        case .rejected:
+            code = .rejected
+        }
+        return TerminalRuntimeGracefulShutdownRequestResult(
+            contentID: contentID,
+            reason: reason,
+            code: code,
+            delivery: delivery,
+            message: delivery.errorMessage
+        )
+    }
+
+    func markActiveTaskState(_ activeTaskState: ShellTabActiveTaskState?) {
+        let metadata = TerminalPaneMetadataSnapshot(
+            title: currentSnapshot.metadata.title,
+            workingDirectory: currentSnapshot.metadata.workingDirectory,
+            summary: currentSnapshot.metadata.summary,
+            attention: activeTaskState?.protectsFromPruning == true ? .active : .idle,
+            processExited: currentSnapshot.metadata.processExited,
+            lastCommandExitCode: currentSnapshot.metadata.lastCommandExitCode,
+            lastUpdatedAt: .now,
+            activeTaskState: activeTaskState
+        )
+        updateSnapshot(metadata: metadata)
     }
 
     func markProcessExited(exitCode: Int) {
@@ -1572,6 +1728,22 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
             )
         }
         return buildTerminalTranscriptCapture(for: handle)
+    }
+
+    func requestGracefulShutdown(
+        forTerminalContentID contentID: String,
+        reason: TerminalRuntimeGracefulShutdownReason
+    ) -> TerminalRuntimeGracefulShutdownRequestResult {
+        guard let handle = handlesByContentID[contentID] else {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .missingRuntime,
+                delivery: nil,
+                message: "No fake terminal runtime is registered for this content."
+            )
+        }
+        return handle.requestGracefulShutdown(reason: reason)
     }
 
     func seedRestoredTranscriptSnapshot(

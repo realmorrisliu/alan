@@ -458,29 +458,35 @@ private struct QuickTerminalContentView: View {
             ShellPalette.terminal
 
             if terminalContentEnabled {
-                TerminalHostView(
-                    pane: pane,
-                    terminalContentMount: TerminalContentMount(pane: pane),
-                    bootProfile: host.bootProfile(for: pane),
-                    isSelected: true,
-                    renderPriority: host.terminalRenderPriority(for: pane),
-                    runtimeRegistry: host.terminalRuntimeRegistry,
-                    activationDelegate: host,
-                    attachmentPolicy: .deferUntilWindowAttached,
-                    onShellAction: { actionID, target in
-                        host.performShellAction(actionID, target: target, source: .terminalHost)
-                    },
-                    onCloseRequest: { requiresConfirmation in
-                        guard !requiresConfirmation else { return }
-                        _ = host.closeQuickTerminalAfterTerminalRuntimeExit()
-                    },
-                    onRuntimeUpdate: host.updateTerminalRuntime,
-                    onMetadataUpdate: { metadata in
-                        host.updateTerminalMetadata(metadata, for: pane.paneID)
+                VStack(spacing: 0) {
+                    if let snapshot = host.restoredTranscriptSnapshot(for: pane) {
+                        RestoredTerminalTranscriptView(snapshot: snapshot)
                     }
-                )
-                .id(pane.paneID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                    TerminalHostView(
+                        pane: pane,
+                        terminalContentMount: TerminalContentMount(pane: pane),
+                        bootProfile: host.bootProfile(for: pane),
+                        isSelected: true,
+                        renderPriority: host.terminalRenderPriority(for: pane),
+                        runtimeRegistry: host.terminalRuntimeRegistry,
+                        activationDelegate: host,
+                        attachmentPolicy: .deferUntilWindowAttached,
+                        onShellAction: { actionID, target in
+                            host.performShellAction(actionID, target: target, source: .terminalHost)
+                        },
+                        onCloseRequest: { requiresConfirmation in
+                            guard !requiresConfirmation else { return }
+                            _ = host.closeQuickTerminalAfterTerminalRuntimeExit()
+                        },
+                        onRuntimeUpdate: host.updateTerminalRuntime,
+                        onMetadataUpdate: { metadata in
+                            host.updateTerminalMetadata(metadata, for: pane.paneID)
+                        }
+                    )
+                    .id(pane.paneID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous))
@@ -607,6 +613,7 @@ private struct ShellPaneTreeLayoutView: View {
         ShellTerminalLeafView(
             pane: pane,
             bootProfile: host.bootProfile(for: pane),
+            restoredTranscriptSnapshot: host.restoredTranscriptSnapshot(for: pane),
             isSelected: selectedPaneID == pane.paneID,
             renderPriority: host.terminalRenderPriority(for: pane),
             isZoomed: host.isPaneZoomed(pane.paneID),
@@ -899,6 +906,7 @@ private struct ShellTerminalLeafView: View {
 
     let pane: ShellPane
     let bootProfile: AlanShellBootProfile?
+    let restoredTranscriptSnapshot: TerminalTranscriptSnapshot?
     let isSelected: Bool
     let renderPriority: TerminalRuntimeRenderPriority
     let isZoomed: Bool
@@ -944,24 +952,30 @@ private struct ShellTerminalLeafView: View {
             )
 
             ZStack(alignment: .topTrailing) {
-                TerminalHostView(
-                    pane: pane,
-                    terminalContentMount: TerminalContentMount(pane: pane),
-                    bootProfile: bootProfile,
-                    isSelected: isSelected,
-                    renderPriority: renderPriority,
-                    runtimeRegistry: runtimeRegistry,
-                    activationDelegate: activationDelegate,
-                    onShellAction: onShellAction,
-                    onCloseRequest: { requiresConfirmation in
-                        guard !requiresConfirmation else { return }
-                        onTerminalRuntimeExit()
-                    },
-                    onRuntimeUpdate: onRuntimeUpdate,
-                    onMetadataUpdate: onMetadataUpdate
-                )
-                .id(pane.paneID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                VStack(spacing: 0) {
+                    if let restoredTranscriptSnapshot {
+                        RestoredTerminalTranscriptView(snapshot: restoredTranscriptSnapshot)
+                    }
+
+                    TerminalHostView(
+                        pane: pane,
+                        terminalContentMount: TerminalContentMount(pane: pane),
+                        bootProfile: bootProfile,
+                        isSelected: isSelected,
+                        renderPriority: renderPriority,
+                        runtimeRegistry: runtimeRegistry,
+                        activationDelegate: activationDelegate,
+                        onShellAction: onShellAction,
+                        onCloseRequest: { requiresConfirmation in
+                            guard !requiresConfirmation else { return }
+                            onTerminalRuntimeExit()
+                        },
+                        onRuntimeUpdate: onRuntimeUpdate,
+                        onMetadataUpdate: onMetadataUpdate
+                    )
+                    .id(pane.paneID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
                 .background(ShellPalette.terminal)
                 .overlay {
                     ShellInactivePaneDim(
@@ -992,6 +1006,52 @@ private struct ShellTerminalLeafView: View {
                     .padding(10)
                 }
             }
+        }
+    }
+}
+
+private struct RestoredTerminalTranscriptView: View {
+    let snapshot: TerminalTranscriptSnapshot
+
+    private var lines: [String] {
+        let boundedLines = snapshot.boundedForManifest().transcriptLines
+        guard boundedLines.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+        else {
+            return []
+        }
+        return boundedLines
+    }
+
+    private var transcriptText: String {
+        lines.joined(separator: "\n")
+    }
+
+    private var height: CGFloat {
+        let visibleRows = max(1, min(lines.count, 12))
+        return CGFloat(visibleRows) * 17 + 20
+    }
+
+    var body: some View {
+        if !lines.isEmpty {
+            ScrollView([.vertical, .horizontal]) {
+                Text(transcriptText)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .lineSpacing(2)
+                    .foregroundStyle(Color.white.opacity(0.68))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
+            .background(ShellPalette.terminal)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(ShellPalette.line.opacity(0.20))
+                    .frame(height: 0.6)
+            }
+            .accessibilityIdentifier("restored-terminal-transcript")
         }
     }
 }

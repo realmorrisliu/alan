@@ -51,3 +51,10 @@
 - [x] 7.1 Document that true PTY/process survival and daemon-backed terminal attach remain future work.
 - [x] 7.2 Prepare PR review notes covering close guard scope, transcript bounds, old-manifest compatibility, and restart smoke evidence.
 - [ ] 7.3 After implementation is merged, sync accepted spec deltas into `openspec/specs/` before archiving the change.
+
+## 8. Graceful Confirmed Close
+
+- [x] 8.1 Add a terminal runtime graceful shutdown request API and control-key support.
+- [x] 8.2 Request graceful shutdown after interactive close confirmation and wait a bounded window before transcript capture.
+- [x] 8.3 Capture post-shutdown transcript output before forced runtime finalization.
+- [x] 8.4 Add focused tests for graceful shutdown request, timeout, and post-shutdown transcript capture.
