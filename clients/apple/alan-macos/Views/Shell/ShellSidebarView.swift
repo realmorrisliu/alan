@@ -37,11 +37,6 @@ struct ShellSidebarView: View {
 
     var body: some View {
         sidebarContent
-        .background {
-            if isSwipeEnabled {
-                ShellSidebarSwipeMonitor(onUpdate: handleSpaceSwipe)
-            }
-        }
         .scrollDisabled(isTabListScrollDisabled)
         .onChange(of: sourceSpaceID) { _, _ in
             tabListScrollOffsetY = 0
@@ -93,6 +88,11 @@ struct ShellSidebarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            if isSwipeEnabled {
+                ShellSidebarSwipeMonitor(onUpdate: handleSpaceSwipe)
+            }
+        }
     }
 
     private func tabSection(for spaceID: String?) -> some View {
@@ -916,72 +916,140 @@ private struct ShellSidebarScrollBoundary: View {
 }
 
 private struct ShellSidebarSpaceSlider: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
     let displaySpaceID: String?
     let previewedSpaceID: String?
     let activityFreshnessNow: Date
+    @FocusState private var isKeyboardFocused: Bool
     @State private var hoveredSpaceID: String?
+    @State private var scrubState: ShellSidebarSpaceSliderScrubState?
+    @State private var wheelIntentState = ShellSidebarSpaceSliderWheelIntentState()
+    @State private var wheelCommitToken = 0
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                ForEach(Array(host.spaces.prefix(ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces))) { space in
-                    if isDisplaySpace(space) {
-                        selectedTitle(for: space)
-                    } else {
-                        spaceDotButton(for: space)
+        GeometryReader { proxy in
+            let spaces = visibleSpaces
+            let layout = sliderLayout(availableWidth: proxy.size.width)
+
+            HStack(spacing: ShellSidebarSpaceSliderLayout.spacing) {
+                ForEach(Array(spaces.enumerated()), id: \.element.spaceID) { index, space in
+                    if let item = layout.items.first(where: { $0.index == index }) {
+                        spaceControl(for: space, item: item)
                     }
                 }
             }
             .padding(.horizontal, ShellSidebarMetrics.edgeInset)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .offset(x: reduceMotion ? 0 : scrubState?.edgeResistanceOffset ?? 0)
+            .contentShape(Rectangle())
+            .simultaneousGesture(dragScrubGesture(layout: layout))
+            .background {
+                ShellSidebarSpaceSliderWheelMonitor(
+                    onScroll: { deltaX, deltaY in
+                        handleWheel(deltaX: deltaX, deltaY: deltaY, availableWidth: proxy.size.width)
+                    },
+                    onReset: resetWheelIntent,
+                    onContextMenuIntent: cancelScrubPreview
+                )
+            }
+            .focusable()
+            .focused($isKeyboardFocused)
+            .focusEffectDisabled()
+            .onMoveCommand(perform: handleMoveCommand)
+            .onExitCommand {
+                cancelScrubPreview()
+            }
+            .onKeyPress(.return) {
+                commitKeyboardScrub()
+                return .handled
+            }
+            .onKeyPress(.space) {
+                commitKeyboardScrub()
+                return .handled
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: visibleSpaceIDs) { _, _ in
+            cancelInvalidScrubIfNeeded()
+        }
+        .onChange(of: resolvedDisplaySpaceID) { _, _ in
+            cancelScrubPreview()
+        }
     }
 
-    private func selectedTitle(for space: ShellSpace) -> some View {
-        Text(space.title)
-            .font(.system(size: 12.5, weight: .semibold))
-            .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.86))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 2)
-            .frame(minHeight: 22, alignment: .center)
-            .contentShape(Rectangle())
-            .contextMenu {
-                spaceContextMenu(for: space)
-            }
-            .help(space.title)
-            .accessibilityLabel(spaceAccessibilityLabel(for: space, isSelected: true))
+    private var visibleSpaces: [ShellSpace] {
+        Array(host.spaces.prefix(ShellSidebarSpaceSliderLayout.maximumVisibleSpaces))
     }
 
-    private func spaceDotButton(for space: ShellSpace) -> some View {
+    private func sliderLayout(availableWidth: CGFloat) -> ShellSidebarSpaceSliderLayout {
+        let selectedIndex = visibleSpaces.firstIndex { $0.spaceID == resolvedDisplaySpaceID }
+        let hoveredIndex = scrubState == nil
+            ? visibleSpaces.firstIndex { $0.spaceID == hoveredSpaceID }
+            : nil
+        let previewedIndex = visibleSpaces.firstIndex { $0.spaceID == scrubFocusSpaceID }
+        return ShellSidebarSpaceSliderLayout.make(
+            spaceCount: visibleSpaces.count,
+            selectedIndex: selectedIndex,
+            hoveredIndex: hoveredIndex,
+            scrubFocusIndex: previewedIndex,
+            availableWidth: availableWidth - (ShellSidebarMetrics.edgeInset * 2),
+            reduceMotion: reduceMotion
+        )
+    }
+
+    private func spaceControl(for space: ShellSpace, item: ShellSidebarSpaceSliderLayout.Item) -> some View {
         Button {
-            host.select(spaceID: space.spaceID)
+            guard let targetIndex = ShellSidebarSpaceSliderClickSelection.targetIndex(
+                selectedIndex: selectedSpaceIndex,
+                clickedIndex: item.index,
+                spaceCount: visibleSpaces.count
+            ) else {
+                return
+            }
+            cancelScrubPreview()
+            host.select(spaceID: visibleSpaces[targetIndex].spaceID)
         } label: {
-            ShellSidebarSpaceDot(
-                attention: strongestAttention(for: space),
-                isHovered: hoveredSpaceID == space.spaceID,
-                isPreviewed: previewedSpaceID == space.spaceID
-            )
+            switch item.mode {
+            case .fullTitle, .shortTitle:
+                ShellSidebarSpaceTitlePill(
+                    title: space.title,
+                    mode: item.mode,
+                    attention: strongestAttention(for: space),
+                    isSelected: item.isSelected,
+                    isFocused: item.isFocused
+                )
+            case .indicator:
+                ShellSidebarSpaceDot(
+                    attention: strongestAttention(for: space),
+                    isHovered: hoveredSpaceID == space.spaceID,
+                    isPreviewed: item.isFocused
+                )
+            }
         }
         .buttonStyle(.plain)
+        .frame(width: item.width, height: 22)
+        .scaleEffect(item.visualScale)
+        .opacity(Double(item.opacity))
         .contentShape(Rectangle())
         .contextMenu {
             spaceContextMenu(for: space)
         }
         .help(space.title)
-        .accessibilityLabel(spaceAccessibilityLabel(for: space, isSelected: false))
+        .accessibilityLabel(spaceAccessibilityLabel(for: space, isSelected: item.isSelected))
+        .accessibilityAddTraits(item.isSelected ? .isSelected : [])
         .onHover { isHovering in
             hoveredSpaceID = isHovering ? space.spaceID : nil
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: item)
     }
 
     @ViewBuilder
     private func spaceContextMenu(for space: ShellSpace) -> some View {
         Menu("Terminal Profile") {
             Button {
+                cancelScrubPreview()
                 _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
             } label: {
                 Label("Default", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
@@ -989,6 +1057,7 @@ private struct ShellSidebarSpaceSlider: View {
 
             ForEach(TerminalProfileStore.defaultStore().load().profiles, id: \.id) { profile in
                 Button {
+                    cancelScrubPreview()
                     _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
                 } label: {
                     Label(
@@ -1002,12 +1071,167 @@ private struct ShellSidebarSpaceSlider: View {
         }
     }
 
-    private func isDisplaySpace(_ space: ShellSpace) -> Bool {
-        space.spaceID == resolvedDisplaySpaceID
-    }
-
     private var resolvedDisplaySpaceID: String? {
         displaySpaceID ?? host.selectedSpace?.spaceID
+    }
+
+    private var selectedSpaceIndex: Int? {
+        visibleSpaces.firstIndex { $0.spaceID == resolvedDisplaySpaceID }
+    }
+
+    private var scrubFocusSpaceID: String? {
+        if let scrubState,
+           visibleSpaces.indices.contains(scrubState.focusIndex)
+        {
+            return visibleSpaces[scrubState.focusIndex].spaceID
+        }
+        return previewedSpaceID
+    }
+
+    private var visibleSpaceIDs: [String] {
+        visibleSpaces.map(\.spaceID)
+    }
+
+    private func dragScrubGesture(layout: ShellSidebarSpaceSliderLayout) -> some Gesture {
+        DragGesture(
+            minimumDistance: ShellSidebarSpaceSliderScrubState.dragThreshold,
+            coordinateSpace: .local
+        )
+        .onChanged { value in
+            updateDragScrub(value, layout: layout)
+        }
+        .onEnded { value in
+            updateDragScrub(value, layout: layout)
+            commitScrubSelection()
+        }
+    }
+
+    private func updateDragScrub(
+        _ value: DragGesture.Value,
+        layout: ShellSidebarSpaceSliderLayout
+    ) {
+        guard var nextState = scrubStateForUpdating(source: .drag) else { return }
+        nextState.updateDrag(
+            locationX: value.location.x - ShellSidebarMetrics.edgeInset,
+            translationX: value.translation.width,
+            layout: layout
+        )
+        scrubState = nextState
+    }
+
+    private func handleWheel(deltaX: CGFloat, deltaY: CGFloat, availableWidth: CGFloat) -> Bool {
+        var nextIntent = wheelIntentState
+        let route = nextIntent.route(deltaX: deltaX, deltaY: deltaY)
+        wheelIntentState = nextIntent
+
+        switch route {
+        case .passThrough:
+            return false
+        case .scrub(let routedDeltaX):
+            updateWheelScrub(deltaX: routedDeltaX, availableWidth: availableWidth)
+            scheduleWheelCommit()
+            return true
+        }
+    }
+
+    private func updateWheelScrub(deltaX: CGFloat, availableWidth: CGFloat) {
+        guard var nextState = scrubStateForUpdating(source: .wheel) else { return }
+        let itemSpan = max(
+            (availableWidth - ShellSidebarMetrics.edgeInset * 2)
+                / CGFloat(max(visibleSpaces.count, 1)),
+            ShellSidebarSpaceSliderScrubState.wheelStepWidth
+        )
+        nextState.updateWheel(
+            deltaX: deltaX,
+            itemSpan: itemSpan,
+            spaceCount: visibleSpaces.count
+        )
+        scrubState = nextState
+    }
+
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        let delta: Int
+        switch direction {
+        case .left:
+            delta = -1
+        case .right:
+            delta = 1
+        default:
+            return
+        }
+
+        guard var nextState = scrubStateForUpdating(source: .keyboard) else { return }
+        nextState.moveFocus(by: delta, spaceCount: visibleSpaces.count)
+        scrubState = nextState
+    }
+
+    private func scrubStateForUpdating(
+        source: ShellSidebarSpaceSliderScrubSource
+    ) -> ShellSidebarSpaceSliderScrubState? {
+        if let scrubState, scrubState.source == source {
+            return scrubState
+        }
+        return ShellSidebarSpaceSliderScrubState(
+            source: source,
+            selectedIndex: selectedSpaceIndex,
+            spaceCount: visibleSpaces.count
+        )
+    }
+
+    private func scheduleWheelCommit() {
+        wheelCommitToken += 1
+        let token = wheelCommitToken
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + ShellSidebarSpaceSliderScrubState.wheelCommitDelay
+        ) {
+            guard wheelCommitToken == token,
+                  scrubState?.source == .wheel
+            else {
+                return
+            }
+            commitScrubSelection()
+            resetWheelIntent()
+        }
+    }
+
+    private func commitKeyboardScrub() {
+        guard scrubState?.source == .keyboard else { return }
+        commitScrubSelection()
+    }
+
+    private func commitScrubSelection() {
+        guard let scrubState,
+              visibleSpaces.indices.contains(scrubState.commitIndex)
+        else {
+            cancelScrubPreview()
+            return
+        }
+
+        let targetSpace = visibleSpaces[scrubState.commitIndex]
+        cancelScrubPreview()
+        if targetSpace.spaceID != resolvedDisplaySpaceID {
+            host.select(spaceID: targetSpace.spaceID)
+        }
+    }
+
+    private func cancelScrubPreview() {
+        scrubState = nil
+        wheelCommitToken += 1
+        resetWheelIntent()
+    }
+
+    private func resetWheelIntent() {
+        wheelIntentState.reset()
+    }
+
+    private func cancelInvalidScrubIfNeeded() {
+        guard let scrubState else { return }
+        guard visibleSpaces.indices.contains(scrubState.focusIndex),
+              visibleSpaces.indices.contains(scrubState.sourceIndex)
+        else {
+            cancelScrubPreview()
+            return
+        }
     }
 
     private func profileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
@@ -1060,6 +1284,80 @@ private struct ShellSidebarSpaceSlider: View {
             parts.append("needs attention")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+private struct ShellSidebarSpaceTitlePill: View {
+    let title: String
+    let mode: ShellSidebarSpaceSliderLayout.DisplayMode
+    let attention: ShellAttentionState
+    let isSelected: Bool
+    let isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if attention != .idle {
+                Circle()
+                    .fill(ShellPalette.attention.opacity(0.82))
+                    .frame(width: 4.5, height: 4.5)
+            }
+
+            Text(title)
+                .font(font)
+                .foregroundStyle(foreground)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(maxWidth: .infinity, minHeight: 22, alignment: .center)
+        .background {
+            if showsBackground {
+                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                    .fill(background)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                            .stroke(ShellPalette.line.opacity(isSelected ? 0.18 : 0.12), lineWidth: 0.6)
+                    }
+            }
+        }
+        .shellShadow(isSelected ? ShellShadows.navigationSelection : ShellShadows.none)
+    }
+
+    private var font: Font {
+        switch mode {
+        case .fullTitle:
+            return .system(size: 12.2, weight: isSelected ? .semibold : .medium)
+        case .shortTitle:
+            return .system(size: 11.4, weight: isFocused ? .semibold : .medium)
+        case .indicator:
+            return .system(size: 11.4, weight: .medium)
+        }
+    }
+
+    private var horizontalPadding: CGFloat {
+        mode == .fullTitle ? 8 : 6
+    }
+
+    private var showsBackground: Bool {
+        isSelected || isFocused || mode == .fullTitle
+    }
+
+    private var background: Color {
+        if isSelected {
+            return ShellPalette.sidebarSelection
+        }
+        if isFocused {
+            return ShellPalette.sidebarHover
+        }
+        return ShellPalette.materialTopWash.opacity(0.7)
+    }
+
+    private var foreground: Color {
+        if isSelected || isFocused {
+            return ShellPalette.sidebarInk.opacity(0.88)
+        }
+        return ShellPalette.sidebarMutedInk.opacity(0.72)
     }
 }
 
