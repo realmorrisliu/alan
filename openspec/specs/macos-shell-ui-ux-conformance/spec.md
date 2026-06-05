@@ -25,7 +25,7 @@ theme panels, and ornamental controls.
 - **THEN** rows, icon controls, dots, counters, and status marks keep stable
   dimensions and do not resize the sidebar or terminal content
 - **AND** the top Space slider aligns its visible controls to the sidebar edge
-  inset so the title, dots, and tab rows share one optical column
+  inset so Space slider targets and tab rows share one optical column
 - **AND** the titlebar New Space button directly creates a standard new Space
   instead of opening a menu of Space variants
 - **AND** the titlebar New Space button is right-aligned within the sidebar
@@ -673,7 +673,8 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Space slider scroll boundary
 - **WHEN** the active-space tab list is at its resting top position
-- **THEN** the selected Space title appears inside the top Space slider as a quiet label without a persistent pill or control background
+- **THEN** the top Space slider uses the visual treatment required by the active
+  density tier without adding a persistent divider at the slider/list boundary
 - **AND** the area between the top Space slider and the first tab row keeps a compact quiet material gap without a persistent divider
 - **WHEN** the user scrolls the active-space tab list upward so tab rows move underneath the fixed top Space slider region
 - **THEN** alan gradually reveals a subtle divider and downward shadow at the slider/list boundary
