@@ -39,7 +39,7 @@ struct ShellSpaceKeyboardShortcuts: View {
             ForEach(
                 Array(
                     host.spaces
-                        .prefix(ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces)
+                        .prefix(ShellSidebarSpaceSliderLayout.maximumVisibleSpaces)
                         .enumerated()
                 ),
                 id: \.element.spaceID
