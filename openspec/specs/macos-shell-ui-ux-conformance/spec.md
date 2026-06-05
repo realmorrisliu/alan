@@ -516,9 +516,9 @@ not turn the toolbar into a dense control strip.
 ### Requirement: Sidebar matches single-column space/tab navigation
 The default macOS sidebar SHALL remain a single vertical navigation column that
 aligns cleanly around the macOS traffic-light area, with a restrained initial
-width around 264 pt. Spaces SHALL be switched through a compact bottom
-borderless icon switcher and horizontal sidebar swipe gestures, while tabs for
-the active space remain the primary sidebar list.
+width around 264 pt. Spaces SHALL be switched through compact top Space slider
+targets and horizontal sidebar swipe gestures, while tabs for the active space
+remain the primary sidebar list.
 The sidebar surface SHALL read as a unified tinted macOS material stack, with
 visual effect material, cool translucent wash, control alpha, and row shadows
 working together rather than as an opaque white panel with independent cards.
