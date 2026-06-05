@@ -258,13 +258,15 @@ operations that empty containers.
 
 ### Requirement: Terminal keyboard input is terminal-host owned
 The macOS shell host SHALL route keyboard events for the focused terminal pane
-through the terminal host unless a visible alan command surface or an explicit
-app-reserved `Command` shortcut owns that key.
+through the terminal host unless a visible supported shell control or an
+explicit app-reserved `Command` shortcut owns that key.
 
 #### Scenario: Vim control key reaches terminal
-- **WHEN** a focused terminal pane is running a TUI such as Vim and no alan command surface is visible
+- **WHEN** a focused terminal pane is running a TUI such as Vim and no supported
+  shell control is active
 - **THEN** non-`Command` terminal keys such as Escape, Tab, Backspace, `Control-[`, `Control-W`, `Control-F`, and `Control-B` are delivered to the terminal runtime
-- **AND** the shell workspace command router does not consume those keys as pane, tab, or command-input actions
+- **AND** the shell workspace command router does not consume those keys as
+  pane, tab, or removed command-input actions
 
 #### Scenario: Printable physical keyboard input uses Ghostty key events
 - **WHEN** a focused terminal pane receives printable physical keyboard input such as `a` or `:`
@@ -293,13 +295,17 @@ app-reserved `Command` shortcut owns that key.
 - **WHEN** a focused terminal pane receives an explicit app or workspace `Command` shortcut such as New Terminal Tab or Close Tab
 - **THEN** alan executes the native workspace command and does not send that shortcut as terminal text
 
-#### Scenario: Visible command surface owns its own keys
-- **WHEN** alan's command input is visible while a terminal pane is focused
-- **THEN** command-input keys such as submit, dismiss, and command-input toggle are handled by that surface before terminal delivery
+#### Scenario: Supported shell control owns its own keys
+- **WHEN** a supported transient shell control such as the Find bar, a titlebar
+  control, or a menu-owned interaction is active while a terminal pane is
+  focused
+- **THEN** keys owned by that control, such as submit, dismiss, navigation, or
+  toggle keys, are handled by that control before terminal delivery
 
 #### Scenario: AppKit key equivalent is re-dispatched to terminal
 - **WHEN** AppKit routes a focused terminal Control or Command key through `performKeyEquivalent`
-- **AND** the key is not a visible command-surface key or explicit app/workspace shortcut
+- **AND** the key is not a supported shell-control key or explicit
+  app/workspace shortcut
 - **THEN** alan preserves Ghostty's key-equivalent state machine and allows AppKit to continue to `doCommand`
 - **AND** `doCommand` re-dispatches the same event back through the terminal host
 - **AND** the re-dispatched event is delivered to the terminal runtime exactly once
