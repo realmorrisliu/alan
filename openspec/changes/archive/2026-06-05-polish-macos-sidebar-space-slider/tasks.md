@@ -40,8 +40,8 @@ separate collapsed reveal capture was required.
 ## 5. Review And Archive Readiness
 
 - [x] 5.1 Confirm the implementation diff is limited to the sidebar layout, focused tests, and this OpenSpec change.
-- [ ] 5.2 Sync accepted delta specs into `openspec/specs/` after implementation is merged.
-- [ ] 5.3 Archive the completed OpenSpec change after synced specs validate.
+- [x] 5.2 Sync accepted delta specs into `openspec/specs/` after implementation is merged.
+- [x] 5.3 Archive the completed OpenSpec change after synced specs validate.
 
 Note: `git diff --name-only` is limited to the sidebar/root view, shell design
 tokens, focused shell scripts, and the user-requested `AGENTS.md` OpenSpec
