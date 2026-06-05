@@ -731,10 +731,10 @@ attempting to render exact split ratios or arbitrary tree nesting in the tab row
 ### Requirement: Material hierarchy separates navigation from content
 The default macOS shell SHALL use material roles that distinguish the functional
 navigation/control layer from the content layer. Liquid Glass-style treatment
-SHALL be reserved for navigation, command entry, compact controls, and transient
-interactive affordances, while workspace and terminal content surfaces SHALL use
-standard materials, tonal surfaces, or stable opaque fills that preserve
-readability.
+SHALL be reserved for navigation, compact controls, supported overlays, and
+transient interactive affordances, while workspace and terminal content
+surfaces SHALL use standard materials, tonal surfaces, or stable opaque fills
+that preserve readability.
 
 #### Scenario: Sidebar uses functional material
 - **WHEN** the default shell renders the top Space slider, active-space tab list, and compact sidebar controls
@@ -749,12 +749,14 @@ readability.
 - **THEN** the background uses a semantic material or tonal role chosen for hierarchy rather than hard-coded theme color dominance
 
 ### Requirement: Active shell controls use semantic material roles
-Buttons, key hints, close controls, hover affordances, and command-entry controls SHALL use
-shared semantic material/control roles in the active macOS shell and MUST avoid one-off white,
-opaque, or ad hoc translucent fills in default shell chrome.
+Active shell controls SHALL use shared semantic material/control roles in the
+active macOS shell and MUST avoid one-off white, opaque, or ad hoc translucent
+fills in default shell chrome. These controls include buttons, key hints, close
+controls, hover affordances, and supported overlay controls.
 
 #### Scenario: Compact icon button
-- **WHEN** a compact icon button appears in the sidebar, title bar, terminal chrome, or command entry
+- **WHEN** a compact icon button appears in the sidebar, title bar, terminal
+  chrome, or supported overlay
 - **THEN** its background, hover, pressed, disabled, and selected appearances come from shared shell control roles and keep stable dimensions
 
 #### Scenario: Foreground on material
@@ -775,7 +777,7 @@ interaction state rather than decorate every translucent control.
 - **THEN** it uses the primary content-surface treatment with continuous 12pt corners, a focused adaptive contact shadow, and restrained rim/highlight treatment
 
 #### Scenario: Static controls stay quiet
-- **WHEN** sidebar command launchers, titlebar ghost buttons, or compact static controls are idle
+- **WHEN** sidebar titlebar controls, titlebar ghost buttons, or compact static controls are idle
 - **THEN** they avoid default shadows and use material tint, stroke, hover, or highlight to show affordance
 
 #### Scenario: Selected navigation uses light elevation
@@ -1090,8 +1092,8 @@ interactions and MUST NOT move the window when the user drags them.
 - **AND** the primary shell window does not move as part of that drag
 
 #### Scenario: Space controls are interaction surfaces
-- **WHEN** the user drags or clicks within the top Space slider, command
-  launcher, or sidebar titlebar controls
+- **WHEN** the user drags or clicks within the top Space slider, supported
+  compact sidebar controls, or sidebar titlebar controls
 - **THEN** alan routes the event to the relevant sidebar control
 - **AND** the primary shell window does not move because of window-background
   dragging
