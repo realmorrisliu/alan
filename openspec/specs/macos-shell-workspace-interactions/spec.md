@@ -407,7 +407,7 @@ section boundary.
 ### Requirement: Move Tab To Space Is Explicit In The First Version
 The macOS shell SHALL support Move Tab to Space through menu and Tab context
 actions. The first version SHALL NOT require dragging a Tab to the Space
-switcher to move it across Spaces.
+slider to move it across Spaces.
 
 #### Scenario: Move selected Tab follows target
 - **WHEN** the user moves the current selected Tab to another Space

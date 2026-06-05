@@ -207,7 +207,10 @@ corner-radius normalization when default macOS shell chrome is changed.
 
 #### Scenario: Visual comparison captured
 - **WHEN** radius normalization implementation is marked complete
-- **THEN** maintainers can inspect running-app screenshots or notes for sidebar, terminal, command input, and remaining default-shell overlay states confirming that the UI is smaller-radius, still native, and not visually flat
+- **THEN** maintainers can inspect running-app screenshots or notes for sidebar,
+  terminal, supported default-shell overlays, and explicit absence of removed
+  command-input surfaces confirming that the UI is smaller-radius, still
+  native, and not visually flat
 
 #### Scenario: Legacy surfaces scoped
 - **WHEN** radius inventory finds older or non-primary Apple client surfaces
@@ -352,7 +355,10 @@ reintroduce hard-coded visual effects.
 
 #### Scenario: Material review is captured
 - **WHEN** active macOS shell material roles, background surfaces, or compact control treatments change
-- **THEN** maintainers can inspect screenshots or manual notes covering the default light-mode sidebar, terminal content area, command entry, compact controls, and floating overlays
+- **THEN** maintainers can inspect screenshots or manual notes covering the
+  default light-mode sidebar, terminal content area, compact controls,
+  supported floating overlays, and explicit absence of removed command-input
+  surfaces
 
 #### Scenario: Accessibility material settings are reviewed
 - **WHEN** material hierarchy implementation is marked complete
@@ -364,7 +370,9 @@ reintroduce hard-coded visual effects.
 
 #### Scenario: Elevation hierarchy is reviewed
 - **WHEN** active macOS shell radius, shadow, rim, or floating-surface treatment changes
-- **THEN** focused review confirms terminal surface, sidebar selection, titlebar controls, command launcher, Find bar, command input, and collapsed sidebar panel use the shared semantic radius/elevation scale
+- **THEN** focused review confirms terminal surface, sidebar selection,
+  titlebar controls, Find bar, supported overlays, and collapsed sidebar panel
+  use the shared semantic radius/elevation scale
 
 #### Scenario: Light-mode shadow cleanliness is reviewed
 - **WHEN** active shell elevation changes are marked complete
@@ -542,7 +550,9 @@ inheritance, and shell child-exit lifecycle changes.
 
 #### Scenario: Native command routing verification
 - **WHEN** terminal keyboard routing is changed
-- **THEN** verification covers app-reserved `Command` shortcuts and visible command-input keys so terminal input ownership does not break native macOS commands
+- **THEN** verification covers app-reserved `Command` shortcuts and visible
+  shell-control shortcuts so terminal input ownership does not break native
+  macOS commands
 
 #### Scenario: AppKit responder-chain verification
 - **WHEN** terminal keyboard routing is changed

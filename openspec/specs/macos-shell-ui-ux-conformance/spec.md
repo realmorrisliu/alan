@@ -579,9 +579,9 @@ not turn the toolbar into a dense control strip.
 ### Requirement: Sidebar matches single-column space/tab navigation
 The default macOS sidebar SHALL remain a single vertical navigation column that
 aligns cleanly around the macOS traffic-light area, with a restrained initial
-width around 264 pt. Spaces SHALL be switched through a compact bottom
-borderless icon switcher and horizontal sidebar swipe gestures, while tabs for
-the active space remain the primary sidebar list.
+width around 264 pt. Spaces SHALL be switched through the compact top Space
+slider and horizontal sidebar swipe gestures, while tabs for the active space
+remain the primary sidebar list.
 The sidebar surface SHALL read as a unified tinted macOS material stack, with
 visual effect material, cool translucent wash, control alpha, and row shadows
 working together rather than as an opaque white panel with independent cards.
@@ -595,13 +595,14 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Default sidebar reading order
 - **WHEN** a user opens the macOS app
-- **THEN** the sidebar reads as an active-space tab list and bottom space
-  switcher in one vertical column rather than as unrelated dashboard sections,
-  a two-column sidebar, or an Ask alan launcher above the tab list
-- **AND** the sidebar surface has a cool material tint that remains coherent across empty space, controls, rows, and the bottom switcher
+- **THEN** the sidebar reads as a top Space slider and active-space tab list in
+  one vertical column rather than as unrelated dashboard sections, a two-column
+  sidebar, or an Ask alan launcher above the tab list
+- **AND** the sidebar surface has a cool material tint that remains coherent
+  across empty space, controls, Space slider targets, and tab rows
 
 #### Scenario: Space selection
-- **WHEN** a user selects a space in the bottom switcher
+- **WHEN** a user selects a Space target in the top Space slider
 - **THEN** the tab list updates to show only tabs belonging to that active space
 
 #### Scenario: Sidebar swipe switches spaces
@@ -665,7 +666,9 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Accessibility remains explicit
 - **WHEN** visible explanatory copy is removed from the sidebar
-- **THEN** controls, space switcher items, tab rows, creation buttons, and reduced state cues retain accessibility labels, help text, or menu labels that expose their purpose to assistive technologies
+- **THEN** controls, Space slider targets, tab rows, creation buttons, and
+  reduced state cues retain accessibility labels, help text, or menu labels
+  that expose their purpose to assistive technologies
 
 ### Requirement: Sidebar actions are progressively disclosed
 The default macOS sidebar SHALL keep repeated tab and space rows visually quiet
