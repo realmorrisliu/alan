@@ -584,9 +584,9 @@ future terminal creation, not as a command to migrate existing terminal content.
 ### Requirement: Space Selection Restores Space-Local Tab Focus
 The macOS shell SHALL remember the last selected Tab for each Space and SHALL
 restore that Space-local Tab selection when the Space becomes selected again.
-This behavior SHALL apply to sidebar Space clicks, bottom Space switcher
-actions, committed sidebar swipe gestures, keyboard shortcuts, menu commands,
-command routing, and control-plane Space selection. When the remembered Tab
+This behavior SHALL apply to top Space slider actions, committed sidebar swipe
+gestures, keyboard shortcuts, menu commands, command routing, and control-plane
+Space selection. When the remembered Tab
 contains multiple PaneSlots, alan SHALL prefer the last focused PaneSlot in that
 Tab when it is still valid and SHALL otherwise focus the first valid PaneSlot in
 the remembered Tab.

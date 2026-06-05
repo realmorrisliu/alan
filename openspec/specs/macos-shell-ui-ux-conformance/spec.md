@@ -628,13 +628,14 @@ accessibility labels rather than persistent instructional copy.
 
 #### Scenario: Separate creation affordances
 - **WHEN** a user creates a new space or a new tab
-- **THEN** space creation is presented as a compact bottom-switcher affordance and
-  terminal tab creation is presented in the active-space tab list or toolbar context
+- **THEN** space creation is presented as the compact right-aligned sidebar
+  titlebar affordance and terminal tab creation is presented in the
+  active-space tab list or toolbar context
 - **AND** alan tab creation is not presented as a sidebar action
 
-#### Scenario: Space switcher is borderless
-- **WHEN** the bottom space switcher is visible
-- **THEN** space buttons use slim borderless icon styling with selection and hover conveyed without persistent framed cards, section chrome, or notification dots
+#### Scenario: Space slider is borderless
+- **WHEN** the top Space slider is visible
+- **THEN** Space slider targets use slim borderless styling with selection and hover conveyed without persistent framed cards, section chrome, or notification dots
 
 #### Scenario: Lightweight tab rows
 - **WHEN** the active-space tab list contains terminal or non-terminal content tabs
