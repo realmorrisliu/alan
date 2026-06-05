@@ -22,9 +22,9 @@ user-facing display names.
 - **THEN** alan returns an empty or needs-app state instead of crashing or fabricating entities
 
 ### Requirement: Core shell actions have App Intents
-alan's macOS app SHALL provide App Intents for creating terminal tabs, creating
-alan tabs, splitting panes, focusing panes, closing panes or tabs, sending text,
-reading pane summaries, and opening attention items.
+alan's macOS app SHALL provide App Intents for creating terminal tabs, splitting
+panes, focusing panes, closing panes or tabs, sending text, reading pane
+summaries, and opening attention items.
 
 #### Scenario: Create terminal tab intent
 - **WHEN** the user runs the create terminal tab intent
@@ -71,3 +71,18 @@ opens a debug context outside App Intents.
 #### Scenario: Secure input active
 - **WHEN** a pane is in secure-input state
 - **THEN** automation summaries redact sensitive fields and command results do not echo submitted secret text
+
+### Requirement: Create Alan Tab automation is absent
+The macOS shell automation surface SHALL NOT expose first-party alan tab
+creation through App Intents, automation helpers, or default automation
+metadata.
+
+#### Scenario: App Intents are inspected
+- **WHEN** App Intent metadata is generated or inspected
+- **THEN** it does not include Create Alan Tab or a first-party alan tab launch
+  target
+
+#### Scenario: Automation helpers are enumerated
+- **WHEN** automation helper APIs and intent routers are inspected
+- **THEN** they do not provide `createAlanTab` or equivalent first-party alan
+  tab creation helpers

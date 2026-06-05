@@ -345,22 +345,6 @@ preservation.
 - **AND** visual evidence covers hover expansion, scrub preview focus,
   post-commit selected state, and the absence of the removed bottom Space dock
 
-### Requirement: Command input polish has focused verification
-The Apple client SHALL include focused verification for the `Command-P` input
-surface when command UI behavior or material treatment changes.
-
-#### Scenario: Command input keyboard flow is verified
-- **WHEN** command input implementation is marked complete
-- **THEN** focused tests or manual notes cover open/focus, typing, successful Return submission, unresolved Return behavior, Escape dismissal, click-away dismissal, and terminal focus restoration
-
-#### Scenario: Candidate sections stay removed
-- **WHEN** default command input UI changes
-- **THEN** shell contract checks or review notes confirm action, routing, attention, best-match, command-row, and microphone affordances are not visible in the default command input surface
-
-#### Scenario: Liquid input visual review is captured
-- **WHEN** command input material polish is marked complete
-- **THEN** maintainers can inspect screenshots or manual notes showing the input over the active light-mode shell with legible text, restrained depth, and no large panel below the field
-
 ### Requirement: Material hierarchy has focused verification
 The Apple client SHALL include focused verification for active-shell material
 changes so native material polish does not reduce terminal readability or
@@ -586,7 +570,8 @@ inheritance, and shell child-exit lifecycle changes.
 
 ### Requirement: Shell Action Registry Is Verified
 The Apple client SHALL include focused verification for macOS shell action
-registry coverage, target resolution, availability, and shortcut conflicts.
+registry coverage, target resolution, availability, shortcut conflicts, and the
+absence of removed Ask alan and alan-tab actions.
 
 #### Scenario: Action IDs are unique
 - **WHEN** shell action registry tests run
@@ -603,10 +588,10 @@ registry coverage, target resolution, availability, and shortcut conflicts.
 - **THEN** focused verification proves the action resolves the context target
   and does not first select the Tab
 
-#### Scenario: Command UI remains unchanged
-- **WHEN** the shell action registry is introduced
-- **THEN** focused checks confirm new Tab and Space organization actions are not
-  added to `Go to or Command...` by this change
+#### Scenario: Removed actions are absent
+- **WHEN** shell action registry tests run
+- **THEN** focused checks confirm `newAlanTab`, `commandInputOpen`, Ask alan,
+  New alan Tab, and Command-P command input actions are not registered
 
 ### Requirement: Keybinding System Is Verified
 The Apple client SHALL include focused verification for default shortcut
@@ -876,22 +861,6 @@ the deleted TypeScript/Bun/Ink TUI.
 - **THEN** no required production build or install step depends on the deleted
   TypeScript TUI package
 
-### Requirement: Apple shell launches bare alan
-The Apple shell SHALL launch the command-line terminal experience through bare
-`alan` and SHALL NOT launch `alan chat`, `alan ask`, or `alan-tui` for the
-default alan terminal tab.
-
-#### Scenario: Default alan tab command is inspected
-- **WHEN** shell contract checks inspect the default alan terminal launch command
-- **THEN** the command resolves to bare `alan`
-- **AND** it does not include `chat`, `ask`, or `alan-tui`
-
-#### Scenario: Legacy commands are reintroduced
-- **WHEN** Apple shell scripts, control paths, or documentation reintroduce
-  `alan chat`, `alan ask`, or `alan-tui` as the default terminal launch path
-- **THEN** focused shell contract checks fail with a message pointing to the
-  single-binary Rust TUI contract
-
 ### Requirement: Auto-update packaging has focused validation
 The Apple client build/test contract SHALL provide focused validation for
 Sparkle integration, appcast generation, release archive trust metadata, and
@@ -1027,3 +996,74 @@ profile disclosure, and New Tab placement when the sidebar layout changes.
   row, unpinned tabs, and no bottom Space dock
 - **AND** if collapsed-sidebar rendering is affected, visual evidence also
   covers the collapsed floating sidebar reveal
+
+### Requirement: Quick Terminal boundary refactor has staged verification
+The Apple client SHALL verify the Quick Terminal boundary refactor in stages so
+the implementation can first prove stable launch safety and compilation, then
+add focused behavior coverage.
+
+#### Scenario: First implementation slice is verified
+- **WHEN** the dedicated Quick Terminal presentation boundary is implemented
+- **THEN** verification includes the focused Apple build needed to prove the
+  refactor compiles
+- **AND** verification proves stable-channel launch does not trap on Quick
+  Terminal Peak setup
+- **AND** verification does not operate the Alan Dev app
+
+#### Scenario: Full behavior verification follows
+- **WHEN** the follow-up verification slice is performed
+- **THEN** tests cover Quick Terminal presentation state transitions for show,
+  hide, close, attach, focus, and promotion
+- **AND** an AppKit harness or equivalent focused test verifies panel collection
+  behavior, visibility, and focus ordering
+- **AND** runtime attach/focus sequencing tests prove early focus requests do
+  not race host view registration
+- **AND** stable-channel Quick Terminal behavior verification still avoids
+  touching Alan Dev
+
+### Requirement: Removed Ask alan and alan tab surfaces are verified
+The Apple client SHALL include focused contract checks proving Ask alan,
+floating command input, Command-P command input, first-party alan tab creation,
+and automatic alan-tab runtime launch paths stay removed from active macOS app
+surfaces.
+
+#### Scenario: Active source is scanned
+- **WHEN** shell contract checks inspect active macOS app source, menus,
+  sidebars, command models, App Intents, and automation helpers
+- **THEN** the checks fail if they find `Ask alan...`, Command-P command input
+  toggles, New alan Tab, `newAlanTab`, Create Alan Tab, or `.alan` tab creation
+  paths
+
+#### Scenario: CLI references are preserved
+- **WHEN** removal checks inspect CLI documentation or runtime docs
+- **THEN** they do not fail solely because `alan ask` or `alan chat` remains
+  documented as a CLI command outside the macOS shell tab product surface
+
+#### Scenario: Terminal-launched agent metadata remains testable
+- **WHEN** terminal activity tests model a user-launched Alan or coding agent
+  process inside a normal terminal tab
+- **THEN** tests may verify agent metadata without requiring a first-party
+  `.alan` launch target
+
+### Requirement: Safe terminal close and transcript restore are verified
+The Apple client SHALL include focused automated tests and running-app smoke
+evidence for terminal close guarding, bounded transcript snapshot persistence,
+and app-restart transcript restore.
+
+#### Scenario: Active close guard tested
+- **WHEN** tests request pane, tab, window, app, or Quick Terminal close for terminal content with active work
+- **THEN** tests verify that close requires confirmation and does not mutate shell state or finalize runtimes before confirmation
+
+#### Scenario: Idle close bypass tested
+- **WHEN** tests request close for idle shell, exited terminal, or non-terminal content
+- **THEN** tests verify that Alan does not require active-work confirmation solely because a shell process exists
+
+#### Scenario: Manifest transcript round trip tested
+- **WHEN** tests persist a workspace manifest containing terminal transcript snapshots
+- **THEN** tests verify old manifests without snapshots still decode
+- **AND** new manifests preserve bounded transcript lines, dimensions, cwd, title, focus, truncation metadata, and content identity through a round trip
+
+#### Scenario: Restart transcript restore smoke tested
+- **WHEN** a running-app smoke produces visible terminal output, closes or quits Alan through a confirmed path, and relaunches the freshly installed app
+- **THEN** verification confirms the restored terminal shows the prior output without an extra restored-session banner
+- **AND** the restored terminal accepts new input in a newly started shell at the restored cwd
