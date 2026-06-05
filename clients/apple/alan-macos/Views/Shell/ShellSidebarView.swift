@@ -2,10 +2,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 #if os(macOS)
-enum ShellSidebarSpaceSliderPolicy {
-    static let maximumVisibleSpaces = 8
-}
-
 struct ShellSidebarView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController

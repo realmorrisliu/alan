@@ -460,14 +460,24 @@ require_pattern \
     "sidebar Space navigation must render through the top Space slider"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/ShellModel.swift" \
     "maximumVisibleSpaces = 8" \
     "first-pass Space slider must keep its eight-Space visible cap explicit"
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "shellState\\.spaces\\.count < ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces" \
-    "Space creation must share the first-pass slider visible cap"
+    "host Space creation must share the first-pass slider visible cap"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "state\\.spaces\\.count < ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces" \
+    "local space.create must share the first-pass slider visible cap"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
+    "prefix\\(ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces\\)" \
+    "hidden Space index shortcuts must share the first-pass slider visible cap"
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
@@ -538,6 +548,11 @@ require_pattern \
     "clients/apple/scripts/test-shell-runtime-metadata.swift" \
     "verifiesTerminalStatusSummaryPrioritizesExitAndRendererHealth" \
     "shell runtime tests must prove sidebar status prioritizes exit and renderer health"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesSpaceCreateCapAppliesToControlCommandPaths" \
+    "shell runtime tests must prove space.create shares the sidebar Space cap"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
