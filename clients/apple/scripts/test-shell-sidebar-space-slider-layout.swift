@@ -207,6 +207,18 @@ private enum ShellSidebarSpaceSliderLayoutTests {
             verticalRoute == .passThrough,
             "vertical wheel input over the slider must pass through to tab-list scrolling"
         )
+        let verticalJitterRoute = verticalState.route(deltaX: 12, deltaY: 1)
+        expect(
+            verticalJitterRoute == .passThrough,
+            "vertical wheel intent must stay pass-through for the rest of the gesture"
+        )
+
+        verticalState.reset()
+        let postResetHorizontalRoute = verticalState.route(deltaX: 8, deltaY: 1)
+        expect(
+            postResetHorizontalRoute == .scrub(deltaX: 8),
+            "wheel intent reset must allow a later horizontal gesture to scrub Spaces"
+        )
 
         var ambiguousState = ShellSidebarSpaceSliderWheelIntentState()
         let ambiguousRoute = ambiguousState.route(deltaX: 4, deltaY: 4)

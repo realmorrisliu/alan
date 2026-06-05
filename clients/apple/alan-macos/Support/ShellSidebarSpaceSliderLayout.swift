@@ -363,7 +363,7 @@ struct ShellSidebarSpaceSliderWheelIntentState: Equatable {
             if abs(accumulatedY) >= Self.intentLockDistance,
                abs(accumulatedY) >= abs(accumulatedX) * Self.verticalIntentBias
             {
-                reset()
+                intent = .vertical
                 return .passThrough
             }
 
