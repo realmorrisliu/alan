@@ -32,10 +32,10 @@
 - [x] 4.2 Run `bash clients/apple/scripts/test-shell-runtime-metadata.sh`.
 - [x] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 4.4 Run `openspec validate add-macos-settings-navigation --strict`.
-- [ ] 4.5 Build and relaunch Alan Dev fresh, then verify Settings in light mode for default General selection, Agent/System group switching, long Agent/System content, and row control layout.
+- [x] 4.5 Build and relaunch Alan Dev fresh, then verify Settings in light mode for default General selection, Agent/System group switching, long Agent/System content, and row control layout.
 
 ## 5. Review And Archive Readiness
 
-- [ ] 5.1 Review the implementation against `openspec/specs/macos-shell-ui-ux-conformance/spec.md` and this change's delta spec for duplicate or conflicting Settings requirements.
+- [x] 5.1 Review the implementation against `openspec/specs/macos-shell-ui-ux-conformance/spec.md` and this change's delta spec for duplicate or conflicting Settings requirements.
 - [ ] 5.2 Before archiving after merge, sync the accepted delta requirements into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
 - [ ] 5.3 Archive the completed change only after implementation, verification, PR review, and merge are complete.

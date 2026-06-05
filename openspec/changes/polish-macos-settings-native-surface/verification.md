@@ -44,14 +44,26 @@ contract, OpenSpec, and build levels:
 
 ## Visual Verification Status
 
-The current sandbox prevented completing a fresh capturable Alan Dev launch for
-visual review. Release Alan Dev assembly was blocked when Xcode package
-resolution attempted to write user cache files under `~/Library/Caches` and
-`~/.cache`, and the network proxy could not re-clone Sparkle into a new
-DerivedData directory. A direct arm64 Debug Alan Dev bundle did build under
-`/tmp/alan-xcode-derived-settings-polish`, but LaunchServices returned
-`kLSNoExecutableErr` for `open`, direct executable launch did not produce an
-observable Alan Dev process/window, and process inspection is unavailable in
-this sandbox. Stable Alan was not quit. Because there was no fresh, capturable
-Alan Dev Settings window, the final light-mode screenshot review remains
-pending rather than marked complete.
+Fresh Alan Dev visual verification now passes.
+
+- Built `/tmp/alan-xcode-derived-settings-polish/Build/Products/Debug/Alan Dev.app`
+  with `PRODUCT_BUNDLE_IDENTIFIER=app.alanworks.macos.dev`.
+- Launched that fresh Alan Dev bundle without quitting the stable Alan app.
+- Opened Settings through `Cmd+,` in light mode.
+- Captured and reviewed the General, Agent, and System Settings states with
+  `screencapture -l` after the repository capture helper stalled in
+  ScreenCapture handoff.
+
+Observed results:
+
+- General opens by default and shows compact capsule source-list navigation,
+  direct section dividers, unified title/detail/control rows, aligned toggles,
+  and no dashboard cards.
+- Agent switching works and shows the long Agent, Runtime, Skills, and Entry
+  Points content with compact row rhythm, bounded trailing controls, and
+  subordinate values.
+- System switching works and shows Bundle ID, Channel, Updates, daemon endpoint
+  Copy, Shell state Show..., Alan home Show..., and diagnostics toggle rows with
+  native action copy and controlled accent use.
+- The Settings surface remains inside the shell content area and avoids
+  web-style cards, marketing panels, and oversized page spacing.

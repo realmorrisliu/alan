@@ -58,7 +58,7 @@
 - [x] 5.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 5.4 Run `git diff --check`.
 - [x] 5.5 Run a macOS app build from a writable DerivedData path.
-- [ ] 5.6 Assemble or launch a fresh Alan Dev build, open Settings in light
+- [x] 5.6 Assemble or launch a fresh Alan Dev build, open Settings in light
   mode, and capture/review a screenshot against the native-surface checklist.
 - [x] 5.7 Run `openspec validate polish-macos-settings-native-surface --strict`.
 
@@ -95,7 +95,7 @@
   so wide windows do not create a sparse full-width reading path.
 - [x] 7.8 Re-run focused Settings tests, shell contract checks, diff checks, and
   OpenSpec validation after the direction pivot.
-- [ ] 7.9 Relaunch Alan Dev fresh and review a light-mode screenshot against the
+- [x] 7.9 Relaunch Alan Dev fresh and review a light-mode screenshot against the
   Linear/Raycast-style control-panel criteria.
 
 ## 8. Native Capsule And Typography Pass
@@ -111,5 +111,5 @@
   Skill packages inside Skills and without a separate Sources section.
 - [x] 8.4 Re-run focused Settings tests, shell contract checks, diff checks, and
   OpenSpec validation after the native capsule pass.
-- [ ] 8.5 Relaunch Alan Dev fresh and review a light-mode screenshot against the
+- [x] 8.5 Relaunch Alan Dev fresh and review a light-mode screenshot against the
   "navigation Apple, content Linear, controls native" target.
