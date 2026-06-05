@@ -177,25 +177,23 @@ this registry change SHALL NOT add new Command UI behaviors.
 ### Requirement: Sidebar swipe previews spaces without moving the workspace
 Horizontal swipe gestures that originate inside the macOS sidebar SHALL drive
 a sidebar-local, finger-tracked space content pager. The moving page SHALL
-include only the sidebar's active-space header and active-space tab list. The
-command input, bottom space switcher, sidebar material surface, sidebar chrome,
-macOS traffic-light placement, and workspace terminal surface SHALL remain
-visually fixed while the gesture is active. alan SHALL avoid mutating durable
-shell selection until the gesture commits. The pager SHALL keep the current
-space centered in a bounded five-page rendering window: up to two previous
-spaces, the current space, and up to two next spaces.
+include only the active-space tab content; the top Space slider, titlebar
+controls, sidebar material surface, sidebar chrome, macOS traffic-light
+placement, and workspace terminal surface SHALL remain visually fixed while the
+gesture is active. alan SHALL avoid mutating durable shell selection until the
+gesture commits. The pager SHALL keep the current space centered in a bounded
+five-page rendering window: up to two previous spaces, the current space, and
+up to two next spaces.
 
 #### Scenario: Gesture-tracked sidebar content pager
 - **WHEN** a user horizontally swipes inside the sidebar and an adjacent space exists
-- **THEN** the current sidebar space header and tab list move with the gesture while the adjacent space content previews from the side
-- **AND** the space header and tab list use the same full sidebar content page width for horizontal offsets
+- **THEN** the current sidebar tab content moves with the gesture while the adjacent space content previews from the side
+- **AND** the tab content uses the full sidebar content page width for horizontal offsets
 - **AND** movement is rendered directly from horizontal finger translation instead of being amplified, quantized, or shaped by the commit threshold
 - **AND** the pager keeps previous, current, and next page slots stable while direction changes instead of replacing the rendered target page based only on current drag sign
 - **AND** visual drag is clamped to one page plus a small overdrag gap that can reveal part of the second adjacent page for physical feedback
-- **AND** the space header pager is not narrowed by row padding or trailing creation controls
 - **AND** the sidebar pager avoids static left or right padding gaps while pages move
-- **AND** the command input remains fixed
-- **AND** the bottom space switcher remains fixed as the stable space navigation control
+- **AND** the top Space slider remains fixed as the stable space navigation control
 - **AND** the workspace terminal surface remains visually stable on the original selected space
 - **AND** visible terminal panes keep their runtime identities instead of being restarted, duplicated, or horizontally offset as a side effect of the drag
 - **AND** vertical tab-list scrolling does not move while horizontal intent is locked
@@ -279,8 +277,8 @@ runtime focus converge.
 - **THEN** alan resolves the target tab's preferred pane and updates shell focus to that pane through the shell controller focus path
 - **AND** later terminal runtime metadata, state publication, or selection synchronization does not restore the previously focused tab
 
-#### Scenario: Space switcher clicked
-- **WHEN** a user clicks a space in the bottom sidebar space switcher
+#### Scenario: Space slider target clicked
+- **WHEN** a user clicks a Space target in the top sidebar Space slider
 - **THEN** alan selects that space, resolves the target tab and pane for that space, and updates shell focus through the shell controller focus path
 - **AND** terminal focus follows the selected pane when the pane runtime is available
 

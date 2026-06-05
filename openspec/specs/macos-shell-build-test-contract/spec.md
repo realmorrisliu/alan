@@ -265,7 +265,7 @@ navigation.
 
 #### Scenario: Sidebar reading order is reviewed
 - **WHEN** sidebar IA implementation is marked complete
-- **THEN** maintainers can inspect screenshots or manual notes showing the vertical sidebar, active-space tab list, bottom borderless space switcher, separate creation affordances, and no persistent explanatory sidebar blocks
+- **THEN** maintainers can inspect screenshots or manual notes showing the vertical sidebar, top Space slider, active-space tab list, separate creation affordances, and no persistent explanatory sidebar blocks
 
 #### Scenario: Sidebar interaction states are reviewed
 - **WHEN** tab or space row secondary actions are progressively disclosed
@@ -390,8 +390,8 @@ are changed.
 #### Scenario: Sidebar-local space pager gesture tested
 - **WHEN** horizontal space swipe behavior changes
 - **THEN** focused tests cover undecided-axis buffering, horizontal intent lock, vertical scroll pass-through, stable five-page rendering around the source space, one-page-plus-overdrag drag clamping, edge resistance, commit threshold, cancel threshold, phaseful release, phase-less idle release, and fast flick velocity commit
-- **AND** verification confirms only the sidebar active-space header and tab list move during the gesture
-- **AND** verification confirms the command input, bottom space switcher, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
+- **AND** verification confirms only the per-Space tab content moves during the gesture
+- **AND** verification confirms the top Space slider, titlebar controls, sidebar chrome, traffic lights, and workspace terminal surface remain fixed during the gesture
 
 #### Scenario: Pinned sidebar motion reviewed
 - **WHEN** pinned sidebar collapse or expansion behavior changes
@@ -694,7 +694,7 @@ behavior, and basic terminal input when terminal runtime is available.
 
 #### Scenario: Launch smoke
 - **WHEN** the UI smoke flow starts the macOS app
-- **THEN** it verifies that the default light-mode window shows the unified sidebar column, active-space tab list, bottom space switcher, terminal content area, and no persistent inspector pane or toggle
+- **THEN** it verifies that the default light-mode window shows the unified sidebar column, top Space slider, active-space tab list, terminal content area, and no persistent inspector pane or toggle
 
 #### Scenario: Split smoke
 - **WHEN** the UI smoke flow creates a split
