@@ -24,6 +24,7 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         try verifiesWheelScrubPreviewAndCommitTarget()
         try verifiesScrubCancelRestoresTheSelectedSource()
         try verifiesWheelIntentRoutingProtectsVerticalScroll()
+        try verifiesPassThroughWheelForwardingDecision()
         try verifiesPhaseLessWheelResetSchedulerResetsAfterIdle()
         print("Shell sidebar Space slider layout tests passed.")
     }
@@ -233,6 +234,24 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         expect(
             horizontalRoute == .scrub(deltaX: 8),
             "clear horizontal wheel input over the slider must enter Space scrub"
+        )
+    }
+
+    private static func verifiesPassThroughWheelForwardingDecision() throws {
+        expect(
+            ShellSidebarSpaceSliderWheelForwarding
+                .shouldForwardPassThroughToTabList(deltaX: 1, deltaY: 8),
+            "vertical pass-through wheel input over the fixed slider must be forwarded to the tab list"
+        )
+        expect(
+            ShellSidebarSpaceSliderWheelForwarding
+                .shouldForwardPassThroughToTabList(deltaX: 4, deltaY: 4),
+            "ambiguous pass-through wheel input with vertical delta must still reach tab-list scrolling"
+        )
+        expect(
+            !ShellSidebarSpaceSliderWheelForwarding
+                .shouldForwardPassThroughToTabList(deltaX: 8, deltaY: 0),
+            "horizontal-only pass-through wheel input must not be forwarded as vertical tab-list scrolling"
         )
     }
 

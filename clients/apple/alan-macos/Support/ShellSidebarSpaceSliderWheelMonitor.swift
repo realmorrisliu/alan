@@ -3,6 +3,8 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
+typealias ShellSidebarSpaceSliderWheelEvent = NSEvent
+
 final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
     static let resetDelay: TimeInterval = 0.14
 
@@ -44,7 +46,7 @@ final class ShellSidebarSpaceSliderWheelPhaseLessResetScheduler {
 }
 
 struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
-    let onScroll: (CGFloat, CGFloat) -> Bool
+    let onScroll: (NSEvent, CGFloat, CGFloat) -> Bool
     let onReset: () -> Void
     let onContextMenuIntent: () -> Void
 
@@ -89,7 +91,7 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var onScroll: (CGFloat, CGFloat) -> Bool
+        var onScroll: (NSEvent, CGFloat, CGFloat) -> Bool
         var onReset: () -> Void
         var onContextMenuIntent: () -> Void
         private weak var view: NSView?
@@ -100,7 +102,7 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
             }
 
         init(
-            onScroll: @escaping (CGFloat, CGFloat) -> Bool,
+            onScroll: @escaping (NSEvent, CGFloat, CGFloat) -> Bool,
             onReset: @escaping () -> Void,
             onContextMenuIntent: @escaping () -> Void
         ) {
@@ -155,7 +157,11 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
                 phaseLessResetScheduler.resetNow()
             }
 
-            let consumed = onScroll(scrollDeltaX(from: event), scrollDeltaY(from: event))
+            let consumed = onScroll(
+                event,
+                scrollDeltaX(from: event),
+                scrollDeltaY(from: event)
+            )
 
             if event.phase.contains(.ended)
                 || event.phase.contains(.cancelled)
@@ -182,6 +188,106 @@ struct ShellSidebarSpaceSliderWheelMonitor: NSViewRepresentable {
                 return event.scrollingDeltaY
             }
             return event.deltaY * 10
+        }
+    }
+}
+
+enum ShellSidebarSpaceSliderWheelForwarding {
+    static func shouldForwardPassThroughToTabList(deltaX _: CGFloat, deltaY: CGFloat) -> Bool {
+        abs(deltaY) > 0
+    }
+}
+
+final class ShellSidebarTabListWheelRouter: ObservableObject {
+    private weak var scrollView: NSScrollView?
+
+    func setActiveScrollView(_ scrollView: NSScrollView?) {
+        self.scrollView = scrollView
+    }
+
+    func clearActiveScrollView(_ scrollView: NSScrollView?) {
+        guard scrollView == nil || self.scrollView === scrollView else { return }
+        self.scrollView = nil
+    }
+
+    func forward(_ event: NSEvent) -> Bool {
+        guard let scrollView,
+              scrollView.window === event.window
+        else {
+            return false
+        }
+
+        scrollView.scrollWheel(with: event)
+        return true
+    }
+}
+
+struct ShellSidebarTabListWheelForwardingAnchor: NSViewRepresentable {
+    let router: ShellSidebarTabListWheelRouter
+
+    func makeNSView(context _: Context) -> AnchorView {
+        let view = AnchorView()
+        view.router = router
+        return view
+    }
+
+    func updateNSView(_ nsView: AnchorView, context _: Context) {
+        nsView.router = router
+        nsView.registerWhenReady()
+    }
+
+    static func dismantleNSView(_ nsView: AnchorView, coordinator _: ()) {
+        nsView.unregister()
+    }
+
+    final class AnchorView: NSView {
+        weak var router: ShellSidebarTabListWheelRouter?
+        private weak var registeredScrollView: NSScrollView?
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            registerWhenReady()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            registerWhenReady()
+        }
+
+        func registerWhenReady() {
+            guard window != nil else { return }
+
+            if let scrollView = enclosingScrollView() {
+                registeredScrollView = scrollView
+                router?.setActiveScrollView(scrollView)
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                self?.registerIfPossible()
+            }
+        }
+
+        func unregister() {
+            router?.clearActiveScrollView(registeredScrollView)
+            registeredScrollView = nil
+        }
+
+        private func registerIfPossible() {
+            guard let scrollView = enclosingScrollView() else { return }
+            registeredScrollView = scrollView
+            router?.setActiveScrollView(scrollView)
+        }
+
+        private func enclosingScrollView() -> NSScrollView? {
+            var view = superview
+            while let current = view {
+                if let scrollView = current as? NSScrollView {
+                    return scrollView
+                }
+                view = current.superview
+            }
+            return nil
         }
     }
 }

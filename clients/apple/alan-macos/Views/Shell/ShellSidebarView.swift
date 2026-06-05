@@ -16,6 +16,7 @@ struct ShellSidebarView: View {
     @State private var activityFreshnessNow = Date()
     @State private var activeTabDrag: ShellSidebarTabDragState?
     @State private var tabInsertionPreview: ShellSidebarTabInsertionTarget?
+    @StateObject private var tabListWheelRouter = ShellSidebarTabListWheelRouter()
 
     init(
         host: ShellHostController,
@@ -62,7 +63,8 @@ struct ShellSidebarView: View {
             host: host,
             displaySpaceID: sourceSpaceID,
             previewedSpaceID: previewedSpaceID,
-            activityFreshnessNow: activityFreshnessNow
+            activityFreshnessNow: activityFreshnessNow,
+            onForwardVerticalWheel: tabListWheelRouter.forward
         )
         .frame(maxWidth: .infinity)
         .frame(height: 30)
@@ -110,6 +112,12 @@ struct ShellSidebarView: View {
 
     private func tabListPage(for spaceID: String?) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
+            if spaceID == sourceSpaceID {
+                ShellSidebarTabListWheelForwardingAnchor(router: tabListWheelRouter)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
+
             GeometryReader { proxy in
                 Color.clear.preference(
                     key: ShellSidebarTabListOffsetPreferenceKey.self,
@@ -921,6 +929,7 @@ private struct ShellSidebarSpaceSlider: View {
     let displaySpaceID: String?
     let previewedSpaceID: String?
     let activityFreshnessNow: Date
+    let onForwardVerticalWheel: (ShellSidebarSpaceSliderWheelEvent) -> Bool
     @FocusState private var isKeyboardFocused: Bool
     @State private var hoveredSpaceID: String?
     @State private var scrubState: ShellSidebarSpaceSliderScrubState?
@@ -947,8 +956,13 @@ private struct ShellSidebarSpaceSlider: View {
             .simultaneousGesture(dragScrubGesture(layout: layout))
             .background {
                 ShellSidebarSpaceSliderWheelMonitor(
-                    onScroll: { deltaX, deltaY in
-                        handleWheel(deltaX: deltaX, deltaY: deltaY, availableWidth: proxy.size.width)
+                    onScroll: { event, deltaX, deltaY in
+                        handleWheel(
+                            event: event,
+                            deltaX: deltaX,
+                            deltaY: deltaY,
+                            availableWidth: proxy.size.width
+                        )
                     },
                     onReset: resetWheelIntent,
                     onContextMenuIntent: cancelScrubPreview
@@ -1119,14 +1133,25 @@ private struct ShellSidebarSpaceSlider: View {
         scrubState = nextState
     }
 
-    private func handleWheel(deltaX: CGFloat, deltaY: CGFloat, availableWidth: CGFloat) -> Bool {
+    private func handleWheel(
+        event: ShellSidebarSpaceSliderWheelEvent,
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        availableWidth: CGFloat
+    ) -> Bool {
         var nextIntent = wheelIntentState
         let route = nextIntent.route(deltaX: deltaX, deltaY: deltaY)
         wheelIntentState = nextIntent
 
         switch route {
         case .passThrough:
-            return false
+            guard ShellSidebarSpaceSliderWheelForwarding.shouldForwardPassThroughToTabList(
+                deltaX: deltaX,
+                deltaY: deltaY
+            ) else {
+                return false
+            }
+            return onForwardVerticalWheel(event)
         case .scrub(let routedDeltaX):
             updateWheelScrub(deltaX: routedDeltaX, availableWidth: availableWidth)
             scheduleWheelCommit()
