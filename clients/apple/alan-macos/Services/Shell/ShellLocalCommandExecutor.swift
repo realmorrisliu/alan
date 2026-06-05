@@ -50,7 +50,7 @@ enum AlanShellLocalCommandExecutor {
             )
 
         case .spaceCreate:
-            guard state.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces else {
+            guard state.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces else {
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,

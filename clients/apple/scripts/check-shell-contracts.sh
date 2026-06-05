@@ -460,34 +460,84 @@ require_pattern \
     "sidebar Space navigation must render through the top Space slider"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellModel.swift" \
-    "maximumVisibleSpaces = 8" \
-    "first-pass Space slider must keep its eight-Space visible cap explicit"
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "maximumVisibleSpaces = 9" \
+    "adaptive Space slider must cap the default sidebar at 9 visible Spaces"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "case low|case medium|case high" \
+    "adaptive Space slider must define low, medium, and high density tiers"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "ShellSidebarSpaceSliderWheelIntentState" \
+    "adaptive Space slider must route wheel input through a focused horizontal-intent model"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "dragThreshold" \
+    "adaptive Space slider must keep press-drag scrub behind an explicit horizontal threshold"
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
-    "shellState\\.spaces\\.count < ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces" \
-    "host Space creation must share the first-pass slider visible cap"
+    "ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces" \
+    "host Space creation must share the 9-Space slider cap"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
-    "state\\.spaces\\.count < ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces" \
-    "local space.create must share the first-pass slider visible cap"
+    "ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces" \
+    "local space.create must share the 9-Space slider cap"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "prefix\\(ShellSidebarSpaceSliderPolicy\\.maximumVisibleSpaces\\)" \
-    "hidden Space index shortcuts must share the first-pass slider visible cap"
+    "prefix\\(ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces\\)" \
+    "hidden Space index shortcuts must share the 9-Space slider cap"
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
     "\\.disabled\\(!canCreateTerminalSpace\\)" \
-    "titlebar New Space must disable when the first-pass slider cap is reached"
+    "titlebar New Space must disable when the adaptive slider cap is reached"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "spaceContextMenu\\(" \
     "Space profile selection must be exposed through the Space context menu"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "onContextMenuIntent: cancelScrubPreview" \
+    "Space context-menu opening must cancel active scrub preview before settings actions"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderWheelMonitor.swift" \
+    "rightMouseDown|modifierFlags\\.contains\\(\\.control\\)" \
+    "Space slider context-menu intent must detect right-click and Control-click without stealing the event"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderWheelMonitor.swift" \
+    "ShellSidebarSpaceSliderWheelPhaseLessResetScheduler" \
+    "Space slider wheel monitor must reset phase-less wheel intent after idle"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesPhaseLessWheelResetSchedulerResetsAfterIdle" \
+    "Space slider layout tests must cover phase-less wheel intent reset"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderWheelMonitor.swift" \
+    "ShellSidebarTabListWheelForwardingAnchor" \
+    "Space slider vertical pass-through wheel input must be forwarded to the active tab list"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesPassThroughWheelForwardingDecision" \
+    "Space slider layout tests must cover pass-through wheel forwarding to the tab list"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "onMoveCommand|onKeyPress\\(\\.return\\)|onExitCommand" \
+    "Space slider must preserve keyboard preview, commit, and Escape cancel entry points"
 
 reject_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -1618,6 +1668,21 @@ require_pattern \
     "clients/apple/scripts/test-shell-window-placement.swift" \
     "verifiesSidebarSpaceSliderDoesNotTriggerWindowDrag" \
     "shell window placement tests must prove Space slider controls are not intercepted by zoom overlay"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesDensityTiers" \
+    "shell sidebar Space slider tests must verify adaptive density tiers"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesWheelIntentRoutingProtectsVerticalScroll" \
+    "shell sidebar Space slider tests must verify horizontal wheel scrub and vertical scroll protection"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesScrubCancelRestoresTheSelectedSource" \
+    "shell sidebar Space slider tests must verify scrub cancel restores the selected Space"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \

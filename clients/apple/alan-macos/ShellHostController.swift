@@ -1137,7 +1137,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        guard shellState.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces else {
+        guard shellState.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces else {
             return nil
         }
         let resolvedTerminalProfileID = terminalProfileID

@@ -2116,7 +2116,7 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesSpaceCreateCapAppliesToControlCommandPaths() {
         var cappedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_cap_control")
-        while cappedState.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces {
+        while cappedState.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces {
             cappedState = cappedState.creatingTerminalSpace(
                 title: nil,
                 workingDirectory: nil
@@ -2131,7 +2131,7 @@ private enum ShellRuntimeMetadataTests {
         expect(directSpaceID == nil, "direct createSpace must reject the capped Space count")
         expect(
             controller.shellState.spaces.count
-                == ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces,
+                == ShellSidebarSpaceSliderLayout.maximumVisibleSpaces,
             "direct createSpace must leave the capped Space count unchanged"
         )
 
@@ -2152,7 +2152,7 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(
             controller.shellState.spaces.count
-                == ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces,
+                == ShellSidebarSpaceSliderLayout.maximumVisibleSpaces,
             "control-plane space.create must leave the capped Space count unchanged"
         )
 

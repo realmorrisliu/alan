@@ -64,6 +64,10 @@ struct MacShellRootView: View {
         sidebarPresentation.surfaceOrigin
     }
 
+    private var canCreateTerminalSpace: Bool {
+        host.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces
+    }
+
     private var sidebarPresentationConfiguration: ShellSidebarPresentationConfiguration {
         ShellSidebarPresentationConfiguration(
             sidebarWidth: sidebarWidth,
@@ -449,7 +453,7 @@ struct MacShellRootView: View {
                     _ = host.createTerminalSpace()
                 }
                 .disabled(!canCreateTerminalSpace)
-                .opacity(canCreateTerminalSpace ? 1 : 0.38)
+                .opacity(canCreateTerminalSpace ? 1 : 0.45)
                 .contentShape(Rectangle())
                 .onHover(perform: handleCollapsedSidebarToolbarHover)
             }
@@ -464,9 +468,6 @@ struct MacShellRootView: View {
         .zIndex(30)
     }
 
-    private var canCreateTerminalSpace: Bool {
-        host.spaces.count < ShellSidebarSpaceSliderPolicy.maximumVisibleSpaces
-    }
 }
 
 private struct ShellWindowPlacementAnimationSyncView: View, Animatable {
