@@ -268,7 +268,7 @@ struct MacShellRootView: View {
         ZStack {
             ShellSpaceKeyboardShortcuts(host: host)
 
-            ShellMaterialBackgroundView(.windowBackdrop)
+            ShellPalette.rootBacking
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {

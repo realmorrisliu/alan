@@ -38,52 +38,57 @@ struct TerminalPaneView: View {
     private var paneCanvas: some View {
         Group {
             if let paneTree = displayPaneTree {
-                ShellPaneTreeLayoutView(
-                    node: paneTree,
-                    host: host,
-                    selectedPaneID: displaySelectedPaneID,
-                    onClosePane: onClosePane
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                workspaceContentTree(for: paneTree)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Empty Space")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                    Text("Start a terminal in this space.")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                    Button {
-                        _ = host.performShellAutomationCommand(
-                            .createTab(
-                                ShellAutomationCreateTabRequest(
-                                    launchTarget: .shell,
-                                    spaceID: displaySpaceID,
-                                    title: nil,
-                                    workingDirectory: nil
-                                )
+                ShellEmptyWorkspacePlaceholder {
+                    _ = host.performShellAutomationCommand(
+                        .createTab(
+                            ShellAutomationCreateTabRequest(
+                                launchTarget: .shell,
+                                spaceID: displaySpaceID,
+                                title: nil,
+                                workingDirectory: nil
                             )
                         )
-                    } label: {
-                        Label("New Tab", systemImage: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 11)
-                            .frame(height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .background {
-                        ShellMaterialShape(
-                            role: .controlGlassHover,
-                            shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                        )
-                    }
-                    .help("Create a tab in this space")
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .padding(28)
             }
         }
-        .modifier(ShellTerminalSurfaceFrame())
+    }
+
+    @ViewBuilder
+    private func workspaceContentTree(for tree: ShellPaneTreeNode) -> some View {
+        let ownsOuterTerminalSurface = terminalTreeOwnsOuterSurface(tree)
+
+        ShellPaneTreeLayoutView(
+            node: tree,
+            host: host,
+            selectedPaneID: displaySelectedPaneID,
+            terminalLeafOwnsSurfaceFrame: !ownsOuterTerminalSurface,
+            onClosePane: onClosePane
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .shellTerminalSurfaceFrame(enabled: ownsOuterTerminalSurface)
+    }
+
+    private func terminalTreeOwnsOuterSurface(_ node: ShellPaneTreeNode) -> Bool {
+        switch node.kind {
+        case .pane:
+            guard let paneID = node.paneID,
+                  let pane = host.shellState.pane(paneID: paneID)
+            else {
+                return false
+            }
+            let descriptor = ShellContentRenderingRegistry.descriptor(
+                forPaneSlotID: paneID,
+                in: host.shellState.contentStateProjection(),
+                fallbackPane: pane
+            )
+            return descriptor.renderKind == .terminal
+        case .split:
+            let children = node.children ?? []
+            return !children.isEmpty && children.allSatisfy(terminalTreeOwnsOuterSurface)
+        }
     }
 
     private var displayTab: ShellTab? {
@@ -512,6 +517,37 @@ private struct QuickTerminalContentView: View {
     }
 }
 
+private struct ShellEmptyWorkspacePlaceholder: View {
+    let onCreateTerminalTab: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Empty Space")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+            Text("Start a terminal in this space.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ShellPalette.mutedInk)
+            Button(action: onCreateTerminalTab) {
+                Label("New Tab", systemImage: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+            }
+            .buttonStyle(.plain)
+            .background {
+                ShellMaterialShape(
+                    role: .controlGlassHover,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                )
+            }
+            .help("Create a tab in this space")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(28)
+    }
+}
+
 private struct ShellTerminalSurfaceFrame: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
@@ -565,10 +601,22 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func shellTerminalSurfaceFrame(enabled: Bool) -> some View {
+        if enabled {
+            modifier(ShellTerminalSurfaceFrame())
+        } else {
+            self
+        }
+    }
+}
+
 private struct ShellPaneTreeLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
+    let terminalLeafOwnsSurfaceFrame: Bool
     let onClosePane: ((ShellPane) -> Void)?
 
     var body: some View {
@@ -582,6 +630,7 @@ private struct ShellPaneTreeLayoutView: View {
                 node: node,
                 host: host,
                 selectedPaneID: selectedPaneID,
+                terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                 onClosePane: onClosePane
             )
         }
@@ -615,6 +664,7 @@ private struct ShellPaneTreeLayoutView: View {
             bootProfile: host.bootProfile(for: pane),
             restoredTranscriptSnapshot: host.restoredTranscriptSnapshot(for: pane),
             isSelected: selectedPaneID == pane.paneID,
+            ownsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
             renderPriority: host.terminalRenderPriority(for: pane),
             isZoomed: host.isPaneZoomed(pane.paneID),
             canZoom: host.canZoomPane(pane.paneID),
@@ -744,6 +794,7 @@ private struct ShellSplitLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
+    let terminalLeafOwnsSurfaceFrame: Bool
     let onClosePane: ((ShellPane) -> Void)?
     @State private var dragStartRatio: Double?
     @State private var dragPreviewRatio: Double?
@@ -761,6 +812,7 @@ private struct ShellSplitLayoutView: View {
                             node: children[0],
                             host: host,
                             selectedPaneID: selectedPaneID,
+                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(width: primaryLength(total: proxy.size.width))
@@ -770,6 +822,7 @@ private struct ShellSplitLayoutView: View {
                             node: children[1],
                             host: host,
                             selectedPaneID: selectedPaneID,
+                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(width: secondaryLength(total: proxy.size.width))
@@ -780,6 +833,7 @@ private struct ShellSplitLayoutView: View {
                             node: children[0],
                             host: host,
                             selectedPaneID: selectedPaneID,
+                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(height: primaryLength(total: proxy.size.height))
@@ -789,6 +843,7 @@ private struct ShellSplitLayoutView: View {
                             node: children[1],
                             host: host,
                             selectedPaneID: selectedPaneID,
+                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(height: secondaryLength(total: proxy.size.height))
@@ -816,6 +871,7 @@ private struct ShellSplitLayoutView: View {
                 node: child,
                 host: host,
                 selectedPaneID: selectedPaneID,
+                terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                 onClosePane: onClosePane
             )
         }
@@ -908,6 +964,7 @@ private struct ShellTerminalLeafView: View {
     let bootProfile: AlanShellBootProfile?
     let restoredTranscriptSnapshot: TerminalTranscriptSnapshot?
     let isSelected: Bool
+    let ownsSurfaceFrame: Bool
     let renderPriority: TerminalRuntimeRenderPriority
     let isZoomed: Bool
     let canZoom: Bool
@@ -1007,6 +1064,7 @@ private struct ShellTerminalLeafView: View {
                 }
             }
         }
+        .shellTerminalSurfaceFrame(enabled: ownsSurfaceFrame)
     }
 }
 

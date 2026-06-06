@@ -187,6 +187,61 @@ require_pane_title_bar_trailing_close() {
     fi
 }
 
+require_workspace_color_ownership_contract() {
+    local pane_file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "static let rootBacking = Color\\.shellAdaptive\\(" \
+        "shell root backing must have a dedicated adaptive opaque token"
+
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "light: \\(1\\.0, 1\\.0, 1\\.0\\)" \
+        "shell root backing light color must resolve to rgb(1,1,1)"
+
+    reject_pattern \
+        "clients/apple/alan-macos/MacShellRootView.swift" \
+        "ShellMaterialBackgroundView\\(\\.windowBackdrop\\)" \
+        "mac shell root must use the opaque root backing instead of root-window material"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellEmptyWorkspacePlaceholder" \
+        "empty Space must render through a workspace placeholder instead of inline terminal chrome"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "terminalTreeOwnsOuterSurface" \
+        "terminal-only pane trees must preserve one outer terminal surface frame"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "terminalLeafOwnsSurfaceFrame" \
+        "mixed content trees must let terminal leaves own their own terminal surface frame"
+
+    if awk '
+        /private var paneCanvas: some View/ {
+            in_canvas = 1
+        }
+
+        in_canvas && /ShellTerminalSurfaceFrame/ {
+            found = 1
+        }
+
+        in_canvas && /private var displayTab/ {
+            in_canvas = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$pane_file"; then
+        printf 'error: workspace paneCanvas must not own ShellTerminalSurfaceFrame\n' >&2
+        exit 1
+    fi
+}
+
 require_active_complex_split_count_contrast() {
     local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
 
@@ -315,6 +370,7 @@ reject_keydown_programmatic_text_delivery
 require_quick_terminal_peak_nonactivating_panel
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
+require_workspace_color_ownership_contract
 require_active_complex_split_count_contrast
 require_tab_organization_sidebar_contract
 require_semantic_terminal_actions_contract

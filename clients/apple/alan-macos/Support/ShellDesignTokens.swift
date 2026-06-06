@@ -30,6 +30,10 @@ private extension Color {
 }
 
 enum ShellPalette {
+    static let rootBacking = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        dark: (0.055, 0.061, 0.074)
+    )
     static let canvas = Color.shellAdaptive(
         light: (0.94, 0.94, 0.965),
         dark: (0.045, 0.050, 0.062)
