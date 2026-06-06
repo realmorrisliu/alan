@@ -24,6 +24,7 @@ final class AlanTerminalHostNSView: NSView {
         activationDelegate: TerminalHostActivationDelegate?,
         attachmentPolicy: TerminalHostAttachmentPolicy,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onClearRestoredTranscript: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void

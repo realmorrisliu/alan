@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 struct ShellViewportSnapshot: Codable, Equatable {
@@ -410,6 +411,36 @@ struct TerminalTranscriptSnapshot: Codable, Equatable {
     }
 }
 
+struct RestoredTerminalTranscriptPanelPresentation: Equatable {
+    static let maxVisibleRows = 12
+    static let fontSize: CGFloat = 13
+    static let rowHeight: CGFloat = 18
+    static let verticalInset: CGFloat = 8
+    static let leadingInset: CGFloat = 0
+    static let trailingInset: CGFloat = 10
+
+    let transcriptText: String
+    let visibleRows: Int
+    let height: CGFloat
+    let fontSize: CGFloat
+    let rowHeight: CGFloat
+    let verticalInset: CGFloat
+    let leadingInset: CGFloat
+    let trailingInset: CGFloat
+
+    init(snapshot: TerminalTranscriptSnapshot) {
+        let lines = snapshot.boundedForManifest().transcriptLines
+        transcriptText = lines.joined(separator: "\n")
+        visibleRows = min(max(lines.count, 1), Self.maxVisibleRows)
+        fontSize = Self.fontSize
+        rowHeight = Self.rowHeight
+        verticalInset = Self.verticalInset
+        leadingInset = Self.leadingInset
+        trailingInset = Self.trailingInset
+        height = CGFloat(visibleRows) * Self.rowHeight + Self.verticalInset * 2
+    }
+}
+
 struct ShellTerminalContentPayload: Codable, Equatable {
     let launchTarget: ShellLaunchTarget
     let cwd: String?
@@ -450,6 +481,18 @@ struct ShellTerminalContentPayload: Codable, Equatable {
                 forKey: .transcriptSnapshot
             ),
             terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+        )
+    }
+}
+
+extension ShellTerminalContentPayload {
+    func clearingRestoredTranscriptSnapshot() -> ShellTerminalContentPayload {
+        ShellTerminalContentPayload(
+            launchTarget: launchTarget,
+            cwd: cwd,
+            title: title,
+            transcriptSnapshot: nil,
+            terminalProfileID: terminalProfileID
         )
     }
 }
@@ -555,6 +598,30 @@ struct ShellContentInstance: Identifiable, Codable, Equatable {
         case .settings:
             return [.settingsSurface]
         }
+    }
+}
+
+extension ShellContentInstance {
+    func clearingRestoredTranscriptSnapshot() -> (content: ShellContentInstance, removed: Bool) {
+        guard let terminalPayload = payload.terminal,
+              terminalPayload.transcriptSnapshot != nil
+        else {
+            return (self, false)
+        }
+
+        return (
+            ShellContentInstance(
+                contentID: contentID,
+                kind: kind,
+                title: title,
+                iconName: iconName,
+                capabilities: capabilities,
+                payload: .terminal(terminalPayload.clearingRestoredTranscriptSnapshot()),
+                lifecycle: lifecycle,
+                rendererState: rendererState
+            ),
+            true
+        )
     }
 }
 
@@ -1409,6 +1476,37 @@ extension ShellStateSnapshot {
 
     func contentStateProjection() -> ShellContentStateSnapshot {
         ShellContentStateSnapshot.projecting(self)
+    }
+
+    func clearingRestoredTranscriptSnapshot(
+        forTerminalContentID contentID: String
+    ) -> (state: ShellStateSnapshot, removed: Bool) {
+        guard let contents else { return (self, false) }
+
+        var removed = false
+        let nextContents = contents.map { content -> ShellContentInstance in
+            guard content.contentID == contentID else { return content }
+            let result = content.clearingRestoredTranscriptSnapshot()
+            removed = removed || result.removed
+            return result.content
+        }
+
+        guard removed else { return (self, false) }
+        return (
+            ShellStateSnapshot(
+                contractVersion: contractVersion,
+                windowID: windowID,
+                focusedSpaceID: focusedSpaceID,
+                focusedTabID: focusedTabID,
+                focusedPaneID: focusedPaneID,
+                spaces: spaces,
+                panes: panes,
+                paneSlots: paneSlots,
+                contents: nextContents,
+                quickTerminal: quickTerminal
+            ),
+            true
+        )
     }
 }
 

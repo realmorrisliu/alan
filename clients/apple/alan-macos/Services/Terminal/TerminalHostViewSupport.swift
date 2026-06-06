@@ -13,6 +13,7 @@ struct TerminalHostView: NSViewRepresentable {
     let activationDelegate: TerminalHostActivationDelegate?
     var attachmentPolicy: TerminalHostAttachmentPolicy = .immediate
     let onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?
+    var onClearRestoredTranscript: (() -> Void)? = nil
     let onCloseRequest: ((Bool) -> Void)?
     let onRuntimeUpdate: (TerminalHostRuntimeSnapshot) -> Void
     let onMetadataUpdate: (TerminalPaneMetadataSnapshot) -> Void
@@ -27,6 +28,7 @@ struct TerminalHostView: NSViewRepresentable {
             activationDelegate: activationDelegate,
             attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
+            onClearRestoredTranscript: onClearRestoredTranscript,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -44,6 +46,7 @@ struct TerminalHostView: NSViewRepresentable {
             activationDelegate: activationDelegate,
             attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
+            onClearRestoredTranscript: onClearRestoredTranscript,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate

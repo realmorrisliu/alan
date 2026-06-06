@@ -750,6 +750,32 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return content.payload.terminal?.transcriptSnapshot?.boundedForManifest()
     }
 
+    @discardableResult
+    func clearRestoredTranscriptSnapshot(for pane: ShellPane?) -> Bool {
+        guard let pane,
+              let contentID = terminalContentID(mountedIn: pane)
+        else {
+            return false
+        }
+        return clearRestoredTranscriptSnapshot(forTerminalContentID: contentID)
+    }
+
+    @discardableResult
+    func clearRestoredTranscriptSnapshot(forTerminalContentID contentID: String) -> Bool {
+        terminalRuntimeRegistry.clearRestoredTranscriptSnapshot(forTerminalContentID: contentID)
+        let stateResult = shellState.clearingRestoredTranscriptSnapshot(
+            forTerminalContentID: contentID
+        )
+        if stateResult.removed {
+            adoptStateFromControlPlane(stateResult.state, publish: false)
+            publishControlPlaneState()
+        }
+        let manifestRemoved = clearRestoredTranscriptSnapshotFromWorkspaceManifest(
+            forTerminalContentID: contentID
+        )
+        return stateResult.removed || manifestRemoved
+    }
+
     private func seedRestoredTranscriptSnapshotIfNeeded(for pane: ShellPane) {
         guard let content = terminalContentInstance(mountedIn: pane),
               let transcriptSnapshot = content.payload.terminal?.transcriptSnapshot
@@ -770,6 +796,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 .contentID
             ?? pane.terminalContentID
         return shellState.contents?.first { $0.contentID == contentID }
+    }
+
+    private func terminalContentID(mountedIn pane: ShellPane) -> String? {
+        if let mountedContent = shellState.contentStateProjection().contentMounted(in: pane.paneID) {
+            return mountedContent.kind == .terminal ? mountedContent.contentID : nil
+        }
+        if pane.isQuickTerminalPane,
+           shellState.quickTerminal?.paneID == pane.paneID
+        {
+            return pane.terminalContentID
+        }
+        return pane.terminalContentID
     }
 
     func runtime(for paneID: String?) -> TerminalHostRuntimeSnapshot {
@@ -1649,9 +1687,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .promoteQuickTerminal(let spaceID):
             guard let spaceID else { return false }
             return promoteQuickTerminal(to: spaceID)
+        case .terminalClear(let paneID):
+            return clearTerminal(paneID: paneID)
         case .disabledPlaceholder:
             return false
         }
+    }
+
+    @discardableResult
+    private func clearTerminal(paneID: String?) -> Bool {
+        guard let pane = paneID.flatMap({ shellState.pane(paneID: $0) }) ?? selectedPane,
+              let contentID = terminalContentID(mountedIn: pane)
+        else {
+            return false
+        }
+
+        clearRestoredTranscriptSnapshot(forTerminalContentID: contentID)
+        let delivery = terminalRuntimeRegistry.sendText(toTerminalContentID: contentID, text: "\u{0c}")
+        return delivery.applied
     }
 
     @discardableResult
@@ -2671,6 +2724,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             workspaceManifest = manifestToSave
         } catch {
             recordControlPlaneDiagnostic("workspace manifest save failed: \(error)")
+        }
+    }
+
+    private func clearRestoredTranscriptSnapshotFromWorkspaceManifest(
+        forTerminalContentID contentID: String
+    ) -> Bool {
+        guard let workspaceManifestStore, let workspaceManifest else { return false }
+
+        let result = workspaceManifest.clearingRestoredTranscriptSnapshot(
+            forTerminalContentID: contentID
+        )
+        guard result.removed else { return false }
+        do {
+            try workspaceManifestStore.save(result.manifest)
+            self.workspaceManifest = result.manifest
+            return true
+        } catch {
+            recordControlPlaneDiagnostic("workspace manifest clear transcript save failed: \(error)")
+            return false
         }
     }
 

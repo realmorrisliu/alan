@@ -26,6 +26,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private weak var activationDelegate: TerminalHostActivationDelegate?
     private var shellActionHandler: ((ShellActionID, ShellActionTarget) -> Void)?
+    private var clearRestoredTranscriptHandler: (() -> Void)?
     private var closeRequestHandler: ((Bool) -> Void)?
     private var runtimeObserver: ((TerminalHostRuntimeSnapshot) -> Void)?
     private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
@@ -36,6 +37,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     private var eventMonitor: Any?
     private var markedText = NSMutableAttributedString()
     private var keyTextAccumulator: [String]?
+    private var clearCommandTracker = AlanTerminalClearCommandTracker()
     private var previousPressureStage = 0
     private var hasTornDownRuntime = false
     private var pendingFocusRequest = false
@@ -152,6 +154,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         activationDelegate: TerminalHostActivationDelegate?,
         attachmentPolicy: TerminalHostAttachmentPolicy,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onClearRestoredTranscript: (() -> Void)?,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -169,9 +172,13 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         surfaceController.bind(surfaceHandle: surfaceHandle, paneID: pane?.paneID)
         self.activationDelegate = activationDelegate
         shellActionHandler = onShellAction
+        clearRestoredTranscriptHandler = onClearRestoredTranscript
         closeRequestHandler = onCloseRequest
         runtimeObserver = onRuntimeUpdate
         metadataObserver = onMetadataUpdate
+        if previousContentID != terminalContentID {
+            clearCommandTracker.reset()
+        }
 
         overlayPresenter.configure(pane: pane, bootProfile: bootProfile)
 
@@ -1064,10 +1071,14 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         requestTerminalFocus()
         keyEquivalentAdapter.clearPendingRedispatch()
+        let keyInput = terminalKeyInput(for: event)
         let keyboardDecision = surfaceController.routeKeyboard(
-            terminalKeyInput(for: event),
+            keyInput,
             hasMarkedText: markedText.length > 0
         )
+        if AlanTerminalClearIntent.isControlL(keyInput) {
+            observeTerminalClearIntent()
+        }
 
         switch keyboardDecision {
         case .shellAction(let actionID, let target):
@@ -1162,6 +1173,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
                     continue
                 }
 
+                observeCommittedTerminalText(text)
                 if markedTextBefore {
                     sendCommittedPreeditText(text, action: action)
                 } else {
@@ -1193,6 +1205,9 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return
         }
 
+        if !composing {
+            observeCommittedTerminalText(translationEvent.characters ?? event.characters)
+        }
         sendGhosttyKeyEvent(
             for: event,
             action: action,
@@ -1203,6 +1218,17 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 #else
         super.keyDown(with: event)
 #endif
+    }
+
+    private func observeTerminalClearIntent() {
+        clearCommandTracker.reset()
+        clearRestoredTranscriptHandler?()
+    }
+
+    private func observeCommittedTerminalText(_ text: String?) {
+        if clearCommandTracker.observeCommittedText(text) {
+            clearRestoredTranscriptHandler?()
+        }
     }
 
     override func keyUp(with event: NSEvent) {

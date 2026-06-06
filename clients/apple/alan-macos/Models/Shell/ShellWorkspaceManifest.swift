@@ -309,6 +309,39 @@ extension ShellContentWorkspaceManifest {
         }
         return tabs.first
     }
+
+    func clearingRestoredTranscriptSnapshot(
+        forTerminalContentID contentID: String
+    ) -> (manifest: ShellContentWorkspaceManifest, removed: Bool) {
+        var manifest = self
+        var removed = false
+        for spaceIndex in manifest.spaces.indices {
+            for tabIndex in manifest.spaces[spaceIndex].tabs.indices {
+                if let pinSnapshot = manifest.spaces[spaceIndex].tabs[tabIndex].pinSnapshot {
+                    let result = pinSnapshot.clearingRestoredTranscriptSnapshot(
+                        forTerminalContentID: contentID
+                    )
+                    manifest.spaces[spaceIndex].tabs[tabIndex].pinSnapshot = result.snapshot
+                    removed = removed || result.removed
+                }
+                if let liveSnapshot = manifest.spaces[spaceIndex].tabs[tabIndex].liveSnapshot {
+                    let result = liveSnapshot.clearingRestoredTranscriptSnapshot(
+                        forTerminalContentID: contentID
+                    )
+                    manifest.spaces[spaceIndex].tabs[tabIndex].liveSnapshot = result.snapshot
+                    removed = removed || result.removed
+                }
+            }
+        }
+        if let quickSnapshot = manifest.quickTerminal?.liveSnapshot {
+            let result = quickSnapshot.clearingRestoredTranscriptSnapshot(
+                forTerminalContentID: contentID
+            )
+            manifest.quickTerminal?.liveSnapshot = result.snapshot
+            removed = removed || result.removed
+        }
+        return (manifest, removed)
+    }
 }
 
 struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
@@ -511,6 +544,30 @@ extension ShellContentTabRestoreSnapshot {
             )
         }
         return restored
+    }
+
+    func clearingRestoredTranscriptSnapshot(
+        forTerminalContentID contentID: String
+    ) -> (snapshot: ShellContentTabRestoreSnapshot, removed: Bool) {
+        var removed = false
+        var snapshot = self
+        snapshot.contents = contents.map { content in
+            guard content.contentID == contentID,
+                  let terminalPayload = content.payload.terminal,
+                  terminalPayload.transcriptSnapshot != nil
+            else {
+                return content
+            }
+
+            removed = true
+            return ShellContentRestoreRecord(
+                contentID: content.contentID,
+                kind: content.kind,
+                title: content.title,
+                payload: .terminal(terminalPayload.clearingRestoredTranscriptSnapshot())
+            )
+        }
+        return (snapshot, removed)
     }
 }
 

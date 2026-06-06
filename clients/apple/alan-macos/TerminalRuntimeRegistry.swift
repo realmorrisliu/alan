@@ -92,6 +92,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         activationDelegate: TerminalHostActivationDelegate?,
         attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onClearRestoredTranscript: (() -> Void)? = nil,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -105,6 +106,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             activationDelegate: activationDelegate,
             attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
+            onClearRestoredTranscript: onClearRestoredTranscript,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -120,6 +122,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         activationDelegate: TerminalHostActivationDelegate?,
         attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onClearRestoredTranscript: (() -> Void)? = nil,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -137,6 +140,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             activationDelegate: activationDelegate,
             attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
+            onClearRestoredTranscript: onClearRestoredTranscript,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -154,6 +158,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
         activationDelegate: TerminalHostActivationDelegate?,
         attachmentPolicy: TerminalHostAttachmentPolicy = .immediate,
         onShellAction: ((ShellActionID, ShellActionTarget) -> Void)?,
+        onClearRestoredTranscript: (() -> Void)? = nil,
         onCloseRequest: ((Bool) -> Void)?,
         onRuntimeUpdate: @escaping (TerminalHostRuntimeSnapshot) -> Void,
         onMetadataUpdate: @escaping (TerminalPaneMetadataSnapshot) -> Void
@@ -181,6 +186,7 @@ final class TerminalRuntimeRegistry: ObservableObject {
             activationDelegate: activationDelegate,
             attachmentPolicy: attachmentPolicy,
             onShellAction: onShellAction,
+            onClearRestoredTranscript: onClearRestoredTranscript,
             onCloseRequest: onCloseRequest,
             onRuntimeUpdate: onRuntimeUpdate,
             onMetadataUpdate: onMetadataUpdate
@@ -319,6 +325,10 @@ final class TerminalRuntimeRegistry: ObservableObject {
         forTerminalContentID contentID: String
     ) {
         runtimeService.seedRestoredTranscriptSnapshot(snapshot, forTerminalContentID: contentID)
+    }
+
+    func clearRestoredTranscriptSnapshot(forTerminalContentID contentID: String) {
+        runtimeService.clearRestoredTranscriptSnapshot(forTerminalContentID: contentID)
     }
 
     func releaseRuntimes(excluding activePaneIDs: Set<String>) {
