@@ -34,12 +34,68 @@ the terminal sidebar feel like a dashboard or debug surface.
   duplicate metadata
 
 #### Scenario: Ordinary tab row uses two-line layout
-- **WHEN** an ordinary sidebar tab has meaningful secondary metadata such as
-  task status, activity, branch, folder, process, or content kind
+- **WHEN** an ordinary sidebar tab has required or useful secondary metadata
+  such as actionable status, activity, branch, folder, process, or content kind
 - **THEN** the row displays the title and secondary metadata as two lines within
   the compact tab row system
 - **AND** the row does not resize the sidebar or shift adjacent rows during
   hover, selection, close-affordance display, or activity progress updates
+
+#### Scenario: Task title identifies agent work
+- **WHEN** an unlocked sidebar tab has an automatic agent or activity task title
+  that describes the work being done
+- **THEN** alan uses that task title as the primary row title instead of falling
+  back to the repository, directory, process, or agent name
+- **AND** state labels such as running, thinking, failed, or input needed do not
+  replace the task title
+
+#### Scenario: User-edited title is locked
+- **WHEN** the user manually edits a sidebar tab title
+- **THEN** alan treats the title as locked
+- **AND** automatic agent, activity, repository, process, or status changes do
+  not overwrite that locked title
+
+#### Scenario: Subtitle is required for actionable state
+- **WHEN** a tab has an actionable or exceptional state such as input needed,
+  failed, paused, exited, renderer failed, read-only, starting, or high-priority
+  activity in another pane
+- **THEN** alan shows a subtitle with the actionable state as the first token
+- **AND** the subtitle may include context tokens after the state when space
+  allows
+
+#### Scenario: Subtitle disambiguates task titles
+- **WHEN** a tab title is a generated or activity-derived task title and context
+  is available
+- **THEN** alan shows a subtitle that starts with stable project, repository,
+  worktree, directory, or branch context
+- **AND** the subtitle may include agent, process, command, progress, or split
+  context after the stable location token
+
+#### Scenario: Subtitle is hidden for fallback metadata
+- **WHEN** a tab has no actionable state and its secondary metadata is only a
+  fallback type, default shell process, duplicate directory, or otherwise
+  non-disambiguating label
+- **THEN** alan renders the row in single-line mode without a visible subtitle
+
+#### Scenario: Leading split indicator remains structural
+- **WHEN** a tab has one or more panes
+- **THEN** the leading sidebar indicator continues to represent pane topology
+  and focused-pane interaction
+- **AND** alan does not replace the leading split indicator with agent, process,
+  status, or content-type glyphs
+
+#### Scenario: Trailing accessory shows state until close is needed
+- **WHEN** a tab has a non-idle state that is useful for scanning
+- **THEN** alan shows a compact state glyph or progress affordance in the
+  trailing accessory slot while the row is not hovered
+- **AND WHEN** the pointer hovers the row or keyboard focus reaches it
+- **THEN** the trailing accessory can become the close button without removing
+  required state text from the subtitle or accessibility label
+
+#### Scenario: Idle trailing accessory is quiet
+- **WHEN** a tab has no useful scanning state
+- **THEN** alan keeps the trailing accessory slot visually quiet until hover or
+  keyboard focus reveals the close button
 
 #### Scenario: Clear appears only for eligible temporary tabs
 - **WHEN** the active Space has at least one unpinned tab that is not selected
