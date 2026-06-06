@@ -1,4 +1,6 @@
 import AppKit
+import CoreGraphics
+import Darwin
 import Foundation
 import ScreenCaptureKit
 
@@ -90,10 +92,26 @@ enum CaptureAlanWindow {
         config.height = max(size_t(window.frame.height * scale), 1)
         config.showsCursor = false
 
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: config
-        )
+        let image: CGImage
+        do {
+            image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+        } catch {
+            image = try captureImageWithCoreGraphics(windowID: window.windowID)
+        }
+
+        guard !imageIsNearBlack(image) else {
+            throw NSError(
+                domain: "AlanCapture",
+                code: 10,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Captured alan window was blank or near-black, so it cannot be used as visual evidence."
+                ]
+            )
+        }
 
         let outputURL = URL(fileURLWithPath: outputPath)
         try FileManager.default.createDirectory(
@@ -148,6 +166,97 @@ enum CaptureAlanWindow {
                 return true
             }
             .sorted(by: compareWindows)
+    }
+
+    static func captureImageWithCoreGraphics(windowID: UInt32) throws -> CGImage {
+        let options = CGWindowImageOption(arrayLiteral: .boundsIgnoreFraming)
+        typealias CreateImageFunction = @convention(c) (
+            CGRect,
+            UInt32,
+            UInt32,
+            UInt32
+        ) -> Unmanaged<CGImage>?
+
+        let frameworkPath = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+        guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+            throw NSError(
+                domain: "AlanCapture",
+                code: 9,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Failed to capture matching alan window with ScreenCaptureKit or CoreGraphics."
+                ]
+            )
+        }
+        defer { dlclose(handle) }
+
+        guard let symbol = dlsym(handle, "CGWindowListCreateImage") else {
+            throw NSError(
+                domain: "AlanCapture",
+                code: 9,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Failed to capture matching alan window with ScreenCaptureKit or CoreGraphics."
+                ]
+            )
+        }
+
+        let createImage = unsafeBitCast(symbol, to: CreateImageFunction.self)
+        guard let image = createImage(
+            .null,
+            CGWindowListOption.optionIncludingWindow.rawValue,
+            windowID,
+            options.rawValue
+        )?.takeRetainedValue() else {
+            throw NSError(
+                domain: "AlanCapture",
+                code: 9,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Failed to capture matching alan window with ScreenCaptureKit or CoreGraphics."
+                ]
+            )
+        }
+
+        return image
+    }
+
+    static func imageIsNearBlack(_ image: CGImage) -> Bool {
+        let sampleWidth = 16
+        let sampleHeight = 16
+        let bytesPerPixel = 4
+        let bytesPerRow = sampleWidth * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * sampleHeight)
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+            | CGBitmapInfo.byteOrder32Big.rawValue
+
+        guard let context = CGContext(
+            data: &pixels,
+            width: sampleWidth,
+            height: sampleHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmapInfo
+        ) else {
+            return false
+        }
+
+        context.interpolationQuality = .low
+        context.draw(image, in: CGRect(x: 0, y: 0, width: sampleWidth, height: sampleHeight))
+
+        var visibleSamples = 0
+        for offset in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
+            let brightness = Int(pixels[offset]) + Int(pixels[offset + 1]) + Int(pixels[offset + 2])
+            if brightness > 24 {
+                visibleSamples += 1
+                if visibleSamples >= 3 {
+                    return false
+                }
+            }
+        }
+
+        return true
     }
 
     static func compareWindows(_ lhs: SCWindow, _ rhs: SCWindow) -> Bool {
