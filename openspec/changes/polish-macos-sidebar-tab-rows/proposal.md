@@ -24,6 +24,10 @@ or active work.
   accessory slot for state glyphs at rest and the close button on hover.
 - Remove the inline pin glyph from tab rows because pinned position and section
   grouping already convey pinned state visually.
+- Replace the tab row context menu with a tab-scoped Arc-like menu: `Rename...`,
+  `Duplicate Tab`, `Open in Split View`, pin or unpin, `Move to`, and `Close Tab`.
+- Remove non-tab-scoped actions such as `New Terminal Tab` from the tab row
+  context menu.
 - Add a Clear affordance in the active Space tab list that closes eligible
   temporary tabs in one action.
 - Define eligible temporary tabs as current-Space unpinned tabs that are not the
@@ -51,6 +55,7 @@ or active work.
   - `clients/apple/alan-macos/Support/ShellDesignTokens.swift`, if shared row
     metrics belong in tokens instead of the view file
   - `clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift`
+  - `clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift`
   - `clients/apple/alan-macos/ShellHostController.swift`
   - Relevant shell action or sidebar tests under `clients/apple/scripts/`
 - No network protocol, daemon API, provider, runtime, or dependency changes.

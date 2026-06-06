@@ -29,6 +29,8 @@ reuse that safety model instead of inventing a separate temporary-tab concept.
   trailing accessory slot and state text in the subtitle when needed.
 - Remove the inline pin glyph because pinned state is already conveyed by a
   tab's position in the pinned section.
+- Make the tab row context menu act only on the clicked tab, with a compact
+  Arc-like action set tailored to Alan's terminal model.
 - Add a Clear action that closes inactive temporary tabs in the current Space.
 - Keep Clear conservative: unpinned tabs only, never the selected tab, and never
   tabs protected by active task state.
@@ -160,6 +162,65 @@ Alternatives considered:
   overloads an existing interactive control.
 - Put state only in the subtitle. This is compact but not fast enough for
   high-priority scanning.
+
+### Make tab context menus tab-scoped
+
+The sidebar tab row context menu should contain only actions that operate on the
+clicked tab. The current `New Terminal Tab` entry does not satisfy that rule
+because it creates a sibling tab in the Space rather than acting on the clicked
+tab; it should remain available from the New Tab row, app commands, and any
+Space-level menu, but not from a tab row context menu.
+
+The target menu should be:
+
+1. `Rename...`
+2. `Duplicate Tab`
+3. `Open in Split View`
+4. divider
+5. `Pin Tab` or `Unpin Tab`
+6. `Move to` submenu, shown only when another Space exists
+7. divider
+8. `Close Tab`
+
+`Rename...` should enter the same user-title-lock path described above: once
+the user renames the tab, terminal, agent, activity, repository, process, and
+status updates must not overwrite that title. The menu item acts on the clicked
+tab even if that tab is not currently selected.
+
+`Duplicate Tab` should create a fresh tab in the same Space near the clicked
+tab, using the clicked tab's launch context where Alan can represent it: terminal
+profile, working directory, shell command or restartable command subject, and
+safe pane layout metadata. It must not pretend to clone live process state,
+scrollback, pending approvals, runtime sessions, or title locks. If a tab cannot
+be duplicated safely, the item should be disabled with an availability reason
+rather than producing a partial clone.
+
+`Open in Split View` should map to Alan's existing terminal split model rather
+than introduce a separate browser-style split-tab group. It should operate on the
+clicked tab, select that tab if necessary, and create a right-side split from the
+clicked tab's focused pane or primary pane using the existing split creation
+path. It should be disabled for tabs whose content cannot be split through the
+terminal pane model.
+
+Pin and unpin remain organization actions, but they should be menu commands only
+rather than row badges. `Move to` remains a destination submenu for other Spaces.
+`Close Tab` stays the destructive final action and keeps Alan's existing close
+semantics; this change does not introduce Arc-style `Archive Tab` behavior.
+
+Browser-specific entries such as `Copy Link`, `Share`, `Change Icon...`, `Mute`,
+and `Customize Page...` should stay out of the initial Alan menu until Alan has a
+real tab URL, sharing, icon, audio, or page-customization contract. Clear is also
+excluded because it is a batch operation over multiple inactive tabs, not an
+operation on the clicked tab.
+
+Alternatives considered:
+
+- Mirror Arc's full menu. This would add familiar labels but several entries do
+  not have Alan product semantics yet and would make the menu feel speculative.
+- Keep only currently implemented commands. This is easy but misses the intended
+  tab identity and duplication workflow that the menu should grow into.
+- Add `Archive Tab`. The chosen removal semantic is `Close Tab`; recovery or
+  history can be designed separately if Alan later needs it.
 
 ### Add Clear as a batch state mutation
 

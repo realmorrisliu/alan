@@ -106,6 +106,46 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **AND** pin and unpin actions remain available through existing command and
   context-menu surfaces
 
+#### Scenario: Tab context menu is scoped to the clicked tab
+- **WHEN** the user opens the context menu for a sidebar tab row
+- **THEN** every visible tab-row context menu action targets the clicked tab
+  rather than the selected tab, the Space, or the whole sidebar
+- **AND** alan does not show `New Terminal Tab`, Clear, or other non-tab-scoped
+  actions in the tab-row context menu
+
+#### Scenario: Tab context menu uses the compact tab action set
+- **WHEN** the user opens the context menu for a sidebar tab row
+- **THEN** alan offers `Rename...`, `Duplicate Tab`, and `Open in Split View`
+  before organization actions
+- **AND** alan offers either `Pin Tab` or `Unpin Tab`, plus a `Move to` submenu
+  only when another Space exists
+- **AND** alan presents `Close Tab` as the final destructive action
+
+#### Scenario: Rename from context menu locks title
+- **WHEN** the user chooses `Rename...` from a sidebar tab row context menu and
+  commits a title
+- **THEN** alan applies that title to the clicked tab
+- **AND** alan treats the title as user locked so automatic terminal, agent,
+  activity, repository, process, or status updates do not overwrite it
+
+#### Scenario: Duplicate tab creates a fresh launch-context copy
+- **WHEN** the user chooses `Duplicate Tab` from a sidebar tab row context menu
+- **THEN** alan creates a new tab in the same Space near the clicked tab using
+  the clicked tab's safe launch context
+- **AND** alan does not clone live process state, scrollback, pending approvals,
+  runtime sessions, or user title locks
+- **AND** alan disables the item when the clicked tab cannot be duplicated
+  safely
+
+#### Scenario: Open in Split View uses the clicked tab split model
+- **WHEN** the user chooses `Open in Split View` from a sidebar tab row context
+  menu
+- **THEN** alan operates on the clicked tab, selecting it if necessary
+- **AND** alan creates a right-side split from the clicked tab's focused pane or
+  primary pane through the existing terminal split path
+- **AND** alan disables the item when the clicked tab content cannot be split
+  through the terminal pane model
+
 #### Scenario: Clear appears only for eligible temporary tabs
 - **WHEN** the active Space has at least one unpinned tab that is not selected
   and whose active task state does not protect it from pruning

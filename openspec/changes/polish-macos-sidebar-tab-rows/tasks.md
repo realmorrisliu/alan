@@ -20,18 +20,23 @@
 - [ ] 3.3 Keep the existing leading split indicator dedicated to pane topology and focused-pane interaction.
 - [ ] 3.4 Add the trailing state accessory behavior without changing row width or replacing required subtitle/accessibility state.
 - [ ] 3.5 Remove the inline pin glyph from tab rows while preserving pinned-section placement, pin/unpin commands, context-menu actions, and accessibility semantics.
-- [ ] 3.6 Add the Clear affordance above New Tab only when the active Space has eligible inactive unpinned tabs.
-- [ ] 3.7 Repair sidebar tab drag so the drag/drop session carries dragged tab identity and source location reliably instead of depending only on transient row gesture state.
-- [ ] 3.8 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
-- [ ] 3.9 Preserve existing context menu, close button, pin/unpin, reorder, and tab creation behavior.
+- [ ] 3.6 Replace the tab row context menu with the tab-scoped menu order: `Rename...`, `Duplicate Tab`, `Open in Split View`, pin/unpin, `Move to`, and `Close Tab`.
+- [ ] 3.7 Remove `New Terminal Tab` and other non-tab-scoped actions from the tab row context menu.
+- [ ] 3.8 Add or extend shell actions for context-menu rename, duplicate tab, and open-in-split-view with clicked-tab targeting and availability reasons.
+- [ ] 3.9 Implement duplicate-tab behavior as a fresh launch-context copy without cloning live process state, scrollback, runtime sessions, pending approvals, or title locks.
+- [ ] 3.10 Implement Open in Split View through the clicked tab's existing terminal split path, disabled for unsupported content.
+- [ ] 3.11 Add the Clear affordance above New Tab only when the active Space has eligible inactive unpinned tabs.
+- [ ] 3.12 Repair sidebar tab drag so the drag/drop session carries dragged tab identity and source location reliably instead of depending only on transient row gesture state.
+- [ ] 3.13 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
+- [ ] 3.14 Preserve existing close button, pin/unpin, move-to-space, reorder, and tab creation behavior outside the tab row context menu.
 
 ## 4. Verification
 
-- [ ] 4.1 Run the focused Swift script tests covering row semantics, task-title priority, title lock, subtitle tiers, trailing state accessory, Clear behavior, drag/drop payload validation, and tab organization.
+- [ ] 4.1 Run the focused Swift script tests covering row semantics, task-title priority, title lock, subtitle tiers, trailing state accessory, tab context menu action order and targeting, duplicate-tab behavior, open-in-split-view behavior, Clear behavior, drag/drop payload validation, and tab organization.
 - [ ] 4.2 Run `bash clients/apple/scripts/test-shell-tab-organization.sh`.
 - [ ] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 4.4 Run the relevant macOS build or test lane for the Alan app.
-- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, pinned-section tabs without inline pin glyphs, Clear visible, single-line tab, two-line task-title tab, actionable-state tab, idle trailing accessory, and hover close-button replacement states.
+- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, pinned-section tabs without inline pin glyphs, tab context menu, Clear visible, single-line tab, two-line task-title tab, actionable-state tab, idle trailing accessory, and hover close-button replacement states.
 - [ ] 4.6 In the fresh Alan Dev run, manually verify pointer drag reorders sidebar tabs within the same section and across pinned/unpinned sections.
 - [ ] 4.7 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
 
