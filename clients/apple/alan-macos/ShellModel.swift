@@ -18,6 +18,7 @@ struct ShellSidebarTemporaryTabSectionPresentation: Equatable {
     let showsControlRow: Bool
     let showsDivider: Bool
     let showsClear: Bool
+    let isClearEnabled: Bool
 
     static func model(
         pinnedTabCount: Int,
@@ -28,7 +29,8 @@ struct ShellSidebarTemporaryTabSectionPresentation: Equatable {
         return ShellSidebarTemporaryTabSectionPresentation(
             showsControlRow: hasUnpinnedTabs,
             showsDivider: hasUnpinnedTabs,
-            showsClear: hasUnpinnedTabs && clearableTabCount > 0
+            showsClear: hasUnpinnedTabs,
+            isClearEnabled: hasUnpinnedTabs && clearableTabCount > 0
         )
     }
 }

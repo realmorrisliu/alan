@@ -72,8 +72,9 @@ struct ShellSidebarView: View {
     private var sidebarContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             fixedSpaceSlider
-                .padding(.bottom, 2)
+                .padding(.bottom, ShellSidebarTabListMetrics.itemSpacing)
             spaceContentPager
+                .padding(.top, -ShellSidebarTabListMetrics.sliderToListLift)
         }
         .padding(.top, chromeMetrics.commandLauncherTopInset)
         .padding(.bottom, ShellSidebarMetrics.edgeInset)
@@ -163,7 +164,6 @@ struct ShellSidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(.top, 2)
             .padding(.horizontal, ShellSidebarMetrics.edgeInset)
         }
         .coordinateSpace(name: tabListCoordinateSpaceName(for: spaceID))
@@ -183,24 +183,26 @@ struct ShellSidebarView: View {
             clearableTabCount: host.clearableInactiveTabCount(in: space.spaceID)
         )
 
-        if !pinnedTabs.isEmpty {
+        VStack(alignment: .leading, spacing: ShellSidebarTabListMetrics.itemSpacing) {
+            if !pinnedTabs.isEmpty {
+                tabRows(
+                    pinnedTabs,
+                    in: space,
+                    section: .pinned
+                )
+            }
+
+            if temporarySectionPresentation.showsControlRow {
+                tabControlRow(for: space, presentation: temporarySectionPresentation)
+            }
+            newTabRow(for: space)
+
             tabRows(
-                pinnedTabs,
+                unpinnedTabs,
                 in: space,
-                section: .pinned
+                section: .unpinned
             )
         }
-
-        if temporarySectionPresentation.showsControlRow {
-            tabControlRow(for: space, presentation: temporarySectionPresentation)
-        }
-        newTabRow(for: space)
-
-        tabRows(
-            unpinnedTabs,
-            in: space,
-            section: .unpinned
-        )
     }
 
     private func newTabRow(for space: ShellSpace) -> some View {
@@ -224,11 +226,11 @@ struct ShellSidebarView: View {
         ShellSidebarTabControlRow(
             showsDivider: presentation.showsDivider,
             showsClear: presentation.showsClear,
+            isClearEnabled: presentation.isClearEnabled,
             clearAction: {
                 host.clearInactiveTemporaryTabs(in: space.spaceID)
             }
         )
-        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -237,34 +239,39 @@ struct ShellSidebarView: View {
         in space: ShellSpace,
         section: ShellTabOrganizationSection
     ) -> some View {
-        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                VStack(alignment: .leading, spacing: 0) {
+                    insertionPreviewLine(
+                        spaceID: space.spaceID,
+                        section: section,
+                        index: index
+                    )
+                    tabListRow(for: tab, in: space, section: section, index: index)
+                }
+                .padding(.bottom, index == tabs.count - 1 ? 0 : ShellSidebarTabListMetrics.itemSpacing)
+            }
+
             insertionPreviewLine(
                 spaceID: space.spaceID,
                 section: section,
-                index: index
+                index: tabs.count
             )
-            tabListRow(for: tab, in: space, section: section, index: index)
+            .frame(height: tabs.isEmpty ? ShellSidebarTabListMetrics.itemSpacing : 0)
+            .onDrop(
+                of: [.plainText],
+                delegate: ShellSidebarTabDropDelegate(
+                    target: ShellSidebarTabDropTarget(
+                        spaceID: space.spaceID,
+                        section: section,
+                        index: tabs.count
+                    ),
+                    activeDrag: $activeTabDrag,
+                    preview: $tabInsertionPreview,
+                    host: host
+                )
+            )
         }
-
-        insertionPreviewLine(
-            spaceID: space.spaceID,
-            section: section,
-            index: tabs.count
-        )
-        .frame(height: tabs.isEmpty ? 8 : 4)
-        .onDrop(
-            of: [.plainText],
-            delegate: ShellSidebarTabDropDelegate(
-                target: ShellSidebarTabDropTarget(
-                    spaceID: space.spaceID,
-                    section: section,
-                    index: tabs.count
-                ),
-                activeDrag: $activeTabDrag,
-                preview: $tabInsertionPreview,
-                host: host
-            )
-        )
     }
 
     @ViewBuilder
@@ -970,7 +977,7 @@ private struct ShellSidebarTabInsertionLine: View {
     var body: some View {
         RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
             .fill(ShellPalette.accent.opacity(isVisible ? 0.72 : 0))
-            .frame(height: 2)
+            .frame(height: isVisible ? 2 : 0)
             .padding(.horizontal, ShellSidebarMetrics.rowInset + 2)
             .padding(.vertical, isVisible ? 3 : 0)
             .animation(.easeOut(duration: 0.10), value: isVisible)
@@ -1616,42 +1623,65 @@ private enum ShellSidebarTypography {
 }
 
 private enum ShellSidebarRowMetrics {
-    static let height: CGFloat = 44
+    static let height: CGFloat = 40
     static let horizontalInset: CGFloat = 10
     static let leadingSlot: CGFloat = 24
     static let trailingSlot: CGFloat = 20
     static let dragMidpoint: CGFloat = height / 2
 }
 
+private enum ShellSidebarTabListMetrics {
+    static let itemSpacing: CGFloat = 6
+    static let sliderToListLift: CGFloat = 12
+}
+
 private enum ShellSidebarTabDragState {
     static let dragThreshold: CGFloat = 7
 }
 
+private enum ShellSidebarTabControlMetrics {
+    static let hitHeight: CGFloat = 16
+    static let horizontalInset: CGFloat = ShellSidebarRowMetrics.horizontalInset
+}
+
 private struct ShellSidebarTabControlRow: View {
+    @State private var isControlHovered = false
     let showsDivider: Bool
     let showsClear: Bool
+    let isClearEnabled: Bool
     let clearAction: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             if showsDivider {
                 Rectangle()
-                    .fill(ShellPalette.line.opacity(0.30))
-                    .frame(height: 0.5)
+                    .fill(ShellPalette.sidebarDivider)
+                    .frame(maxWidth: .infinity, minHeight: 1, maxHeight: 1)
             }
 
-            if showsClear {
+            if showsClear && isControlHovered {
                 Button(action: clearAction) {
                     Label("Clear", systemImage: "arrow.down.to.line.compact")
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.64))
+                .disabled(!isClearEnabled)
+                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(isClearEnabled ? 0.72 : 0.44))
                 .help("Clear inactive tabs")
+                .fixedSize()
             }
         }
-        .frame(height: 18)
+        .padding(.horizontal, ShellSidebarTabControlMetrics.horizontalInset)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: ShellSidebarTabControlMetrics.hitHeight,
+            maxHeight: ShellSidebarTabControlMetrics.hitHeight,
+            alignment: .center
+        )
+        .contentShape(Rectangle())
+        .onHover { isControlHovered = $0 }
+        .animation(.easeInOut(duration: 0.12), value: isControlHovered)
     }
 }
 
@@ -2228,6 +2258,7 @@ private struct ShellCompactEmptyAction: View {
             .background(
                 ShellSidebarRowBackground(state: visualState)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable()

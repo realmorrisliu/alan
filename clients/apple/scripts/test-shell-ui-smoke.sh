@@ -7,7 +7,7 @@ DERIVED_DATA="${ALAN_UI_SMOKE_DERIVED_DATA:-$REPO_ROOT/debug/DerivedData/apple-s
 OUTPUT_DIR="${ALAN_UI_SMOKE_OUTPUT_DIR:-$REPO_ROOT/debug/artifacts/apple-shell-ui-smoke}"
 DEFAULT_APP_HOME="${HOME:-/Users/${USER:-$(id -un)}}"
 DEFAULT_APP_PATH="$DEFAULT_APP_HOME/Applications/Alan Dev.app"
-DEFAULT_BUILT_APP_PATH="$DERIVED_DATA/Build/Products/Debug/Alan.app"
+DEFAULT_BUILT_APP_PATH="$DERIVED_DATA/Build/Products/Debug/Alan Dev.app"
 DEFAULT_APP_EXECUTABLE="$DEFAULT_APP_PATH/Contents/MacOS/Alan Dev"
 CUSTOM_SMOKE_TMPDIR=0
 CUSTOM_CONTROL_NAMESPACE=0
@@ -73,7 +73,7 @@ REQUIRE_TERMINAL_STEPS="${ALAN_REQUIRE_TERMINAL_UI_SMOKE:-0}"
 REQUIRE_UI_SCRIPTING_STEPS="${ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE:-0}"
 REQUIRE_RESTART_RESTORE_STEPS="${ALAN_REQUIRE_RESTART_RESTORE_UI_SMOKE:-0}"
 SMOKE_BUNDLE_ID="${ALAN_UI_SMOKE_BUNDLE_ID:-}"
-SMOKE_DISPLAY_NAME="${ALAN_UI_SMOKE_DISPLAY_NAME:-Alan UI Smoke}"
+SMOKE_DISPLAY_NAME="${ALAN_UI_SMOKE_DISPLAY_NAME:-Alan Dev}"
 SMOKE_HOME="$OUTPUT_DIR/home"
 MANIFEST_PATH="$OUTPUT_DIR/manifest.txt"
 RESTART_RESTORE_CWD="$OUTPUT_DIR/restart-restore-cwd"
@@ -110,7 +110,7 @@ Options:
   --help                      Show this help text.
 
 Environment:
-  ALAN_UI_SMOKE_SKIP_BUILD=0 builds and launches the repo-local Debug Alan.app.
+  ALAN_UI_SMOKE_SKIP_BUILD=0 builds and launches the repo-local Debug Alan Dev.app.
 
   ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 makes terminal-specific smoke steps fail
   when local Ghostty artifacts are missing or terminal delivery is unavailable.
@@ -234,7 +234,7 @@ resolve_smoke_bundle_id() {
     if [[ "$SKIP_BUILD" == "1" ]]; then
         SMOKE_BUNDLE_ID="$(bundle_identifier_for "$APP_PATH")"
     fi
-    SMOKE_BUNDLE_ID="${SMOKE_BUNDLE_ID:-app.alanworks.macos.ui-smoke}"
+    SMOKE_BUNDLE_ID="${SMOKE_BUNDLE_ID:-app.alanworks.macos.dev}"
 }
 
 case "$RUN_TERMINAL_STEPS" in
@@ -271,7 +271,7 @@ resolve_app_executable
 resolve_smoke_bundle_id
 if [[ "$SKIP_BUILD" != "1" ]]; then
     command -v xcodebuild >/dev/null 2>&1 \
-        || fail "xcodebuild is required to build the UI smoke app; pass --skip-build --app /path/to/Alan.app to reuse a built app"
+        || fail "xcodebuild is required to build the UI smoke app; pass --skip-build --app /path/to/Alan Dev.app to reuse a built app"
 fi
 [[ -x "$CAPTURE" ]] || fail "missing capture helper: $CAPTURE"
 
@@ -905,6 +905,7 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
         -destination 'generic/platform=macOS' \
         -derivedDataPath "$DERIVED_DATA" \
         PRODUCT_BUNDLE_IDENTIFIER="$SMOKE_BUNDLE_ID" \
+        PRODUCT_NAME="Alan Dev" \
         INFOPLIST_KEY_CFBundleDisplayName="$SMOKE_DISPLAY_NAME" \
         build
 fi

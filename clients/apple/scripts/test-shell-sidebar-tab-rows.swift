@@ -208,7 +208,8 @@ private enum ShellSidebarTabRowTests {
             ) == ShellSidebarTemporaryTabSectionPresentation(
                 showsControlRow: false,
                 showsDivider: false,
-                showsClear: false
+                showsClear: false,
+                isClearEnabled: false
             ),
             "empty spaces must not reserve temporary-section divider space"
         )
@@ -221,7 +222,8 @@ private enum ShellSidebarTabRowTests {
             ) == ShellSidebarTemporaryTabSectionPresentation(
                 showsControlRow: false,
                 showsDivider: false,
-                showsClear: false
+                showsClear: false,
+                isClearEnabled: false
             ),
             "pinned-only spaces must place New Tab directly after pinned tabs"
         )
@@ -234,9 +236,10 @@ private enum ShellSidebarTabRowTests {
             ) == ShellSidebarTemporaryTabSectionPresentation(
                 showsControlRow: true,
                 showsDivider: true,
-                showsClear: false
+                showsClear: true,
+                isClearEnabled: false
             ),
-            "unpinned-only spaces must show the temporary-section divider without Clear"
+            "unpinned-only spaces must reveal disabled Clear from the temporary-section divider"
         )
 
         expect(
@@ -247,7 +250,8 @@ private enum ShellSidebarTabRowTests {
             ) == ShellSidebarTemporaryTabSectionPresentation(
                 showsControlRow: true,
                 showsDivider: true,
-                showsClear: true
+                showsClear: true,
+                isClearEnabled: true
             ),
             "mixed spaces with clearable temporary tabs must show divider and Clear"
         )
