@@ -1,8 +1,10 @@
 ## 1. Row Metrics And Subtitle Semantics
 
 - [ ] 1.1 Add a single compact sidebar row metric source for row height, icon slot, text spacing, close slot, horizontal inset, and drag midpoint.
-- [ ] 1.2 Add a focused helper for meaningful sidebar tab subtitles so fallback or duplicate metadata can use the single-line layout.
-- [ ] 1.3 Cover subtitle and metric helper behavior with focused Swift script tests or adjacent model tests.
+- [ ] 1.2 Add a task-title source priority helper for sidebar tabs, including automatic agent/activity titles and locked user-edited titles.
+- [ ] 1.3 Add a focused helper for required, recommended, and hidden sidebar subtitles so fallback or duplicate metadata can use the single-line layout.
+- [ ] 1.4 Add a trailing accessory state projection that shows state glyph/progress at rest and yields to the close button on hover or keyboard focus.
+- [ ] 1.5 Cover title priority, title lock, subtitle tier, trailing accessory, and metric helper behavior with focused Swift script tests or adjacent model tests.
 
 ## 2. Clear Temporary Tabs Behavior
 
@@ -15,18 +17,20 @@
 
 - [ ] 3.1 Update `ShellCompactEmptyAction` or its replacement so New Tab uses the compact row metrics and Arc-like idle, hover, and keyboard-focus states.
 - [ ] 3.2 Update `ShellTabSidebarRow` so ordinary tabs render compact single-line and two-line layouts without row-size shifts.
-- [ ] 3.3 Add the Clear affordance above New Tab only when the active Space has eligible inactive unpinned tabs.
-- [ ] 3.4 Repair sidebar tab drag so the drag/drop session carries dragged tab identity and source location reliably instead of depending only on transient row gesture state.
-- [ ] 3.5 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
-- [ ] 3.6 Preserve existing context menu, close button, pin/unpin, reorder, and tab creation behavior.
+- [ ] 3.3 Keep the existing leading split indicator dedicated to pane topology and focused-pane interaction.
+- [ ] 3.4 Add the trailing state accessory behavior without changing row width or replacing required subtitle/accessibility state.
+- [ ] 3.5 Add the Clear affordance above New Tab only when the active Space has eligible inactive unpinned tabs.
+- [ ] 3.6 Repair sidebar tab drag so the drag/drop session carries dragged tab identity and source location reliably instead of depending only on transient row gesture state.
+- [ ] 3.7 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
+- [ ] 3.8 Preserve existing context menu, close button, pin/unpin, reorder, and tab creation behavior.
 
 ## 4. Verification
 
-- [ ] 4.1 Run the focused Swift script tests covering row semantics, Clear behavior, drag/drop payload validation, and tab organization.
+- [ ] 4.1 Run the focused Swift script tests covering row semantics, task-title priority, title lock, subtitle tiers, trailing state accessory, Clear behavior, drag/drop payload validation, and tab organization.
 - [ ] 4.2 Run `bash clients/apple/scripts/test-shell-tab-organization.sh`.
 - [ ] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [ ] 4.4 Run the relevant macOS build or test lane for the Alan app.
-- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, Clear visible, single-line tab, and two-line tab states.
+- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, Clear visible, single-line tab, two-line task-title tab, actionable-state tab, idle trailing accessory, and hover close-button replacement states.
 - [ ] 4.6 In the fresh Alan Dev run, manually verify pointer drag reorders sidebar tabs within the same section and across pinned/unpinned sections.
 - [ ] 4.7 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
 

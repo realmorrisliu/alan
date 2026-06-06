@@ -15,6 +15,13 @@ or active work.
 - Keep real tab rows compact while supporting either a vertically centered
   single line or a meaningful two-line presentation within the same visual
   system.
+- Shift tab identity toward task-first titles: automatic agent/activity titles
+  should make tabs distinguishable by what they are doing, while user-edited
+  titles remain locked and are not overwritten.
+- Use subtitles selectively: required for actionable states, recommended for
+  task-title disambiguation, and hidden for fallback or duplicate metadata.
+- Keep the existing leading split indicator unchanged, and use the trailing
+  accessory slot for state glyphs at rest and the close button on hover.
 - Add a Clear affordance in the active Space tab list that closes eligible
   temporary tabs in one action.
 - Define eligible temporary tabs as current-Space unpinned tabs that are not the
