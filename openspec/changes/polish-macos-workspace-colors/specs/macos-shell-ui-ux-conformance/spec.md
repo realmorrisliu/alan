@@ -48,15 +48,31 @@ a generic workspace placeholder rather than as an empty terminal surface.
 - **THEN** alan creates a normal terminal tab in the current Space
 - **AND** the new tab becomes selected through the existing tab creation path
 
-### Requirement: Terminal surface styling is content-scoped
-The default macOS shell SHALL apply terminal canvas and terminal-surface chrome
-only to terminal content rendering, not to the generic workspace canvas or
-non-terminal content.
+### Requirement: Workspace containers own frame chrome
+The default macOS shell SHALL keep rounded clipping, rim, and shadow frame
+chrome owned by workspace and split containers rather than by individual content
+render kinds.
 
-#### Scenario: Terminal content owns the terminal surface
+#### Scenario: Workspace panel owns the right-side frame
+- **WHEN** the shell renders terminal, markdown, settings, unavailable, or empty
+  workspace content on the right side
+- **THEN** the outer rounded clipping, rim, and shadow come from the shared
+  workspace panel frame
+- **AND** the generic workspace canvas does not use a terminal-specific surface
+  frame to produce that boundary
+
+#### Scenario: Mixed pane trees do not self-frame terminal leaves
+- **WHEN** a split pane tree contains terminal content next to markdown,
+  settings, unavailable, or future non-terminal content
+- **THEN** terminal leaves do not add an extra rounded rim or shadow frame of
+  their own
+- **AND** internal boundaries are expressed by the split container and divider
+  treatment rather than by content-specific outer frames
+
+#### Scenario: Terminal content owns terminal canvas and runtime controls
 - **WHEN** a mounted content leaf has render kind `terminal`
-- **THEN** alan renders the terminal dark canvas and terminal-specific chrome
-  for that terminal content
+- **THEN** alan renders the terminal dark canvas and terminal-specific runtime
+  controls for that terminal content
 - **AND** terminal input, search, paste, runtime metadata, and terminal lifecycle
   behavior remain scoped to the terminal content instance
 

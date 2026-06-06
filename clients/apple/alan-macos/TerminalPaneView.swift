@@ -8,7 +8,7 @@ struct TerminalPaneView: View {
     let spaceID: String?
     let selectedPaneID: String?
     let zoomedPaneID: String?
-    let terminalSurfaceInsets: EdgeInsets
+    let workspacePanelInsets: EdgeInsets
     let onClosePane: ((ShellPane) -> Void)?
 
     init(
@@ -17,7 +17,7 @@ struct TerminalPaneView: View {
         spaceID: String? = nil,
         selectedPaneID: String? = nil,
         zoomedPaneID: String? = nil,
-        terminalSurfaceInsets: EdgeInsets,
+        workspacePanelInsets: EdgeInsets,
         onClosePane: ((ShellPane) -> Void)? = nil
     ) {
         self.host = host
@@ -25,14 +25,14 @@ struct TerminalPaneView: View {
         self.spaceID = spaceID
         self.selectedPaneID = selectedPaneID
         self.zoomedPaneID = zoomedPaneID
-        self.terminalSurfaceInsets = terminalSurfaceInsets
+        self.workspacePanelInsets = workspacePanelInsets
         self.onClosePane = onClosePane
     }
 
     var body: some View {
         paneCanvas
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(terminalSurfaceInsets)
+            .padding(workspacePanelInsets)
     }
 
     private var paneCanvas: some View {
@@ -59,36 +59,13 @@ struct TerminalPaneView: View {
 
     @ViewBuilder
     private func workspaceContentTree(for tree: ShellPaneTreeNode) -> some View {
-        let ownsOuterTerminalSurface = terminalTreeOwnsOuterSurface(tree)
-
         ShellPaneTreeLayoutView(
             node: tree,
             host: host,
             selectedPaneID: displaySelectedPaneID,
-            terminalLeafOwnsSurfaceFrame: !ownsOuterTerminalSurface,
             onClosePane: onClosePane
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func terminalTreeOwnsOuterSurface(_ node: ShellPaneTreeNode) -> Bool {
-        switch node.kind {
-        case .pane:
-            guard let paneID = node.paneID,
-                  let pane = host.shellState.pane(paneID: paneID)
-            else {
-                return false
-            }
-            let descriptor = ShellContentRenderingRegistry.descriptor(
-                forPaneSlotID: paneID,
-                in: host.shellState.contentStateProjection(),
-                fallbackPane: pane
-            )
-            return descriptor.renderKind == .terminal
-        case .split:
-            let children = node.children ?? []
-            return !children.isEmpty && children.allSatisfy(terminalTreeOwnsOuterSurface)
-        }
     }
 
     private var displayTab: ShellTab? {
@@ -494,9 +471,9 @@ private struct QuickTerminalContentView: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous)
                 .strokeBorder(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
         }
     }
@@ -550,7 +527,7 @@ private struct ShellEmptyWorkspacePlaceholder: View {
 
 private struct ShellWorkspacePanelFrame: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous)
 
     func body(content: Content) -> some View {
         content
@@ -558,8 +535,8 @@ private struct ShellWorkspacePanelFrame: ViewModifier {
             .background {
                 shape
                     .fill(ShellPalette.rootBacking)
-                    .shellShadow(ShellShadows.terminalSurfaceRim)
-                    .shellShadow(ShellShadows.terminalSurface)
+                    .shellShadow(ShellShadows.workspacePanelRim)
+                    .shellShadow(ShellShadows.workspacePanel)
             }
             .overlay {
                 workspacePanelRim
@@ -599,71 +576,9 @@ private struct ShellWorkspacePanelFrame: ViewModifier {
     }
 }
 
-private struct ShellTerminalSurfaceFrame: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
-    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
-
-    func body(content: Content) -> some View {
-        content
-            .clipShape(shape)
-            .background {
-                ShellMaterialShape(
-                    role: .terminalSurround,
-                    shape: shape
-                )
-                .shellShadow(ShellShadows.terminalSurfaceRim)
-                .shellShadow(ShellShadows.terminalSurface)
-            }
-            .overlay {
-                terminalSurfaceRim
-            }
-    }
-
-    private var terminalSurfaceRim: some View {
-        ZStack {
-            shape
-                .strokeBorder(
-                    ShellPalette.line.opacity(colorScheme == .light ? 0.30 : 0.26),
-                    lineWidth: 0.85
-                )
-
-            shape
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(colorScheme == .light ? 0.18 : 0.07),
-                            Color.white.opacity(0.015),
-                            Color.black.opacity(colorScheme == .light ? 0.14 : 0.32),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 0.65
-                )
-
-            shape
-                .inset(by: 1)
-                .strokeBorder(
-                    Color.white.opacity(colorScheme == .light ? 0.06 : 0.03),
-                    lineWidth: 0.4
-                )
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 private extension View {
     func shellWorkspacePanelFrame() -> some View {
         modifier(ShellWorkspacePanelFrame())
-    }
-
-    @ViewBuilder
-    func shellTerminalSurfaceFrame(enabled: Bool) -> some View {
-        if enabled {
-            modifier(ShellTerminalSurfaceFrame())
-        } else {
-            self
-        }
     }
 }
 
@@ -671,7 +586,6 @@ private struct ShellPaneTreeLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
-    let terminalLeafOwnsSurfaceFrame: Bool
     let onClosePane: ((ShellPane) -> Void)?
 
     var body: some View {
@@ -685,7 +599,6 @@ private struct ShellPaneTreeLayoutView: View {
                 node: node,
                 host: host,
                 selectedPaneID: selectedPaneID,
-                terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                 onClosePane: onClosePane
             )
         }
@@ -719,7 +632,6 @@ private struct ShellPaneTreeLayoutView: View {
             bootProfile: host.bootProfile(for: pane),
             restoredTranscriptSnapshot: host.restoredTranscriptSnapshot(for: pane),
             isSelected: selectedPaneID == pane.paneID,
-            ownsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
             renderPriority: host.terminalRenderPriority(for: pane),
             isZoomed: host.isPaneZoomed(pane.paneID),
             canZoom: host.canZoomPane(pane.paneID),
@@ -849,7 +761,6 @@ private struct ShellSplitLayoutView: View {
     let node: ShellPaneTreeNode
     @ObservedObject var host: ShellHostController
     let selectedPaneID: String?
-    let terminalLeafOwnsSurfaceFrame: Bool
     let onClosePane: ((ShellPane) -> Void)?
     @State private var dragStartRatio: Double?
     @State private var dragPreviewRatio: Double?
@@ -867,7 +778,6 @@ private struct ShellSplitLayoutView: View {
                             node: children[0],
                             host: host,
                             selectedPaneID: selectedPaneID,
-                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(width: primaryLength(total: proxy.size.width))
@@ -877,7 +787,6 @@ private struct ShellSplitLayoutView: View {
                             node: children[1],
                             host: host,
                             selectedPaneID: selectedPaneID,
-                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(width: secondaryLength(total: proxy.size.width))
@@ -888,7 +797,6 @@ private struct ShellSplitLayoutView: View {
                             node: children[0],
                             host: host,
                             selectedPaneID: selectedPaneID,
-                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(height: primaryLength(total: proxy.size.height))
@@ -898,7 +806,6 @@ private struct ShellSplitLayoutView: View {
                             node: children[1],
                             host: host,
                             selectedPaneID: selectedPaneID,
-                            terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                             onClosePane: onClosePane
                         )
                             .frame(height: secondaryLength(total: proxy.size.height))
@@ -926,7 +833,6 @@ private struct ShellSplitLayoutView: View {
                 node: child,
                 host: host,
                 selectedPaneID: selectedPaneID,
-                terminalLeafOwnsSurfaceFrame: terminalLeafOwnsSurfaceFrame,
                 onClosePane: onClosePane
             )
         }
@@ -1019,7 +925,6 @@ private struct ShellTerminalLeafView: View {
     let bootProfile: AlanShellBootProfile?
     let restoredTranscriptSnapshot: TerminalTranscriptSnapshot?
     let isSelected: Bool
-    let ownsSurfaceFrame: Bool
     let renderPriority: TerminalRuntimeRenderPriority
     let isZoomed: Bool
     let canZoom: Bool
@@ -1119,7 +1024,6 @@ private struct ShellTerminalLeafView: View {
                 }
             }
         }
-        .shellTerminalSurfaceFrame(enabled: ownsSurfaceFrame)
     }
 }
 

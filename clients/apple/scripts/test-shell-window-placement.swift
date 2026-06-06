@@ -28,7 +28,7 @@ private enum ShellWindowPlacementTests {
         try verifiesCollapsedSidebarRetentionIncludesLeftResizeFrame()
         try verifiesPrimaryShellWindowDisablesGlobalBackgroundDragging()
         try verifiesTitlebarPointOutsideContentViewCanTriggerDoubleClickZoom()
-        try verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom()
+        try verifiesWorkspacePanelTitleBarDoesNotTriggerDoubleClickZoom()
         try verifiesTrafficLightControlsDoNotTriggerDoubleClickZoom()
         try verifiesTrafficLightGapsCanTriggerDoubleClickZoom()
         try verifiesSidebarChromeBlankAreaCanTriggerDoubleClickZoom()
@@ -37,7 +37,7 @@ private enum ShellWindowPlacementTests {
         try verifiesSidebarToolbarButtonsDoNotTriggerDoubleClickZoom()
         try verifiesTitlebarOverlayAcceptsTopBlankHit()
         try verifiesTitlebarOverlayAcceptsSidebarChromeBlankHit()
-        try verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit()
+        try verifiesTitlebarOverlayRejectsWorkspacePanelTitleBarHit()
         try verifiesTitlebarOverlayRejectsTrafficLightHit()
         try verifiesAppearanceModeAppliesToAttachedWindowImmediately()
         try verifiesSystemModeClearsExplicitWindowAppearanceImmediately()
@@ -94,24 +94,24 @@ private enum ShellWindowPlacementTests {
     }
 
     private static func verifiesWorkspaceInsetFollowsPinnedSidebarProgress() throws {
-        let expandedInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+        let expandedInsets = ShellWorkspaceMetrics.workspacePanelInsets(
             expandedSidebarProgress: 1
         )
-        let midTransitionInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+        let midTransitionInsets = ShellWorkspaceMetrics.workspacePanelInsets(
             expandedSidebarProgress: 0.5
         )
-        let collapsedInsets = ShellWorkspaceMetrics.terminalSurfaceInsets(
+        let collapsedInsets = ShellWorkspaceMetrics.workspacePanelInsets(
             expandedSidebarProgress: 0
         )
 
-        expect(expandedInsets.leading == 0, "expanded sidebar must remove terminal leading inset")
+        expect(expandedInsets.leading == 0, "expanded sidebar must remove workspace panel leading inset")
         expect(
-            midTransitionInsets.leading == ShellWorkspaceMetrics.terminalSurfaceInset / 2,
+            midTransitionInsets.leading == ShellWorkspaceMetrics.workspacePanelInset / 2,
             "workspace leading inset must move continuously with pinned sidebar progress"
         )
         expect(
-            collapsedInsets.leading == ShellWorkspaceMetrics.terminalSurfaceInset,
-            "collapsed pinned sidebar must restore terminal leading inset"
+            collapsedInsets.leading == ShellWorkspaceMetrics.workspacePanelInset,
+            "collapsed pinned sidebar must restore workspace panel leading inset"
         )
     }
 
@@ -362,7 +362,7 @@ private enum ShellWindowPlacementTests {
         )
     }
 
-    private static func verifiesTerminalSurfaceTitleBarDoesNotTriggerDoubleClickZoom() throws {
+    private static func verifiesWorkspacePanelTitleBarDoesNotTriggerDoubleClickZoom() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 520),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -373,7 +373,7 @@ private enum ShellWindowPlacementTests {
 
         let location = CGPoint(
             x: 760,
-            y: window.frame.height - ShellWorkspaceMetrics.terminalSurfaceInset - 12
+            y: window.frame.height - ShellWorkspaceMetrics.workspacePanelInset - 12
         )
 
         expect(
@@ -382,7 +382,7 @@ private enum ShellWindowPlacementTests {
                 in: window,
                 chromeSurface: chromeSurface
             ),
-            "terminal surface title-bar controls must receive clicks instead of the window zoom overlay"
+            "workspace panel title-bar controls must receive clicks instead of the window zoom overlay"
         )
     }
 
@@ -554,7 +554,7 @@ private enum ShellWindowPlacementTests {
         )
     }
 
-    private static func verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit() throws {
+    private static func verifiesTitlebarOverlayRejectsWorkspacePanelTitleBarHit() throws {
         let window = makeTestWindow()
         let overlay = ShellWindowDoubleClickZoomOverlayView(
             frame: CGRect(origin: .zero, size: window.frame.size)
@@ -564,13 +564,13 @@ private enum ShellWindowPlacementTests {
 
         let windowPoint = CGPoint(
             x: window.frame.width - 40,
-            y: window.frame.height - ShellWorkspaceMetrics.terminalSurfaceInset - 12
+            y: window.frame.height - ShellWorkspaceMetrics.workspacePanelInset - 12
         )
         let overlayPoint = overlay.convert(windowPoint, from: nil)
 
         expect(
             overlay.hitTest(overlayPoint) == nil,
-            "titlebar overlay must leave terminal surface title-bar controls clickable"
+            "titlebar overlay must leave workspace panel title-bar controls clickable"
         )
     }
 

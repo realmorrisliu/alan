@@ -25,8 +25,10 @@ chrome even though no terminal content is mounted.
   terminal surface.
 - Keep the empty placeholder terminal-first by preserving the `New Tab` primary
   action that creates a normal terminal tab in the current Space.
-- Keep terminal dark canvas, rim, and shadow treatment scoped to terminal
-  content rendering.
+- Keep all rounded rim, clipping, and shadow frame treatment owned by the
+  workspace panel and split/container layer. Terminal content keeps its dark
+  canvas and terminal-specific runtime controls, but it does not own a surface
+  frame.
 - Preserve existing markdown/settings content dispatch and avoid creating
   terminal runtimes for non-terminal content.
 
@@ -68,26 +70,32 @@ chrome even though no terminal content is mounted.
    terminal frame. That fixes the screenshot superficially while leaving the
    wrong ownership boundary in place.
 
-3. **Terminal styling belongs to terminal content.**
+3. **Frames belong to workspace containers; terminal styling belongs to terminal content.**
 
-   Terminal leaves keep the dark terminal canvas and terminal-only controls.
-   The outer workspace container may still provide shared layout clipping,
-   insets, and generic bounds, but the terminal color and terminal-surface
-   treatment must be driven by `ShellContentRenderKind.terminal`, not by the
-   workspace canvas itself. Markdown and settings continue through their bounded
-   content renderers.
+   The outer workspace panel owns the right-side rounded clipping, rim, and
+   shadow. Split layout owns internal boundaries and dividers. Terminal leaves
+   keep the dark terminal canvas and terminal-only controls, but they do not own
+   rounded rim/shadow frame chrome, even in mixed terminal/settings/markdown
+   pane trees. Markdown and settings continue through their bounded content
+   renderers.
 
    Alternative considered: keep one terminal-styled frame around the whole pane
    tree because most current content is terminal content. That preserves the old
    look but conflicts with the content-container contract and makes future
    non-terminal surfaces inherit terminal chrome by default.
 
+   Alternative considered: give terminal leaves their own frame only in mixed
+   pane trees. That preserves more of the old split-terminal visual treatment,
+   but it creates two different ownership models: terminal becomes a
+   self-framed content type while settings and markdown are framed by the
+   workspace. The selected design keeps frame ownership uniform.
+
 ## Risks / Trade-offs
 
-- **Risk:** Moving terminal frame ownership could subtly change split-pane
-  clipping, dividers, and titlebar edges.  
-  **Mitigation:** keep a shared generic workspace frame for layout bounds if
-  needed, and verify single-pane terminal, split terminal, mixed content,
+- **Risk:** Removing terminal leaf frame ownership could make mixed split panes
+  look too flat if dividers do not carry enough boundary information.
+  **Mitigation:** keep the outer workspace panel frame, preserve split divider
+  contrast, and verify single-pane terminal, split terminal, mixed content,
   settings, markdown, and empty Space states.
 
 - **Risk:** Changing the `windowBackdrop` role globally may affect Quick
@@ -104,6 +112,12 @@ chrome even though no terminal content is mounted.
   become stale.  
   **Mitigation:** update tests to assert the new ownership boundary rather than
   the old wrapper location.
+
+- **Risk:** Historical names such as `terminalSurfaceInsets` can keep implying
+  terminal-owned workspace chrome after the architecture changes.
+  **Mitigation:** rename the workspace panel metrics and view parameters to
+  `workspacePanel...` while leaving true terminal runtime/surface-controller
+  names unchanged.
 
 ## Migration Plan
 

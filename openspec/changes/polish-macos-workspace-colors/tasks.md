@@ -18,6 +18,8 @@
 - [x] 3.2 Preserve single-terminal, split-terminal, and restored-transcript terminal rendering after moving the terminal surface boundary.
 - [x] 3.3 Preserve markdown and settings rendering through `ShellBoundedContentLeafView` without terminal runtime creation or terminal-only dark canvas assumptions.
 - [x] 3.4 Preserve split layout sizing, divider behavior, focus styling, zoom behavior, and close/move actions across terminal, markdown, settings, and unavailable content leaves.
+- [x] 3.5 Remove mixed-tree terminal leaf frame ownership so all rounded rim, clipping, and shadow frame chrome is owned by workspace/split containers.
+- [x] 3.6 Rename workspace panel metrics and view parameters away from `terminalSurface...` naming while preserving true terminal runtime/surface-controller names.
 
 ## 4. Verification
 
@@ -28,9 +30,12 @@
 - [x] 4.5 Fresh relaunch Alan Dev and capture light-mode screenshots for empty Space and terminal tab; verify markdown/settings bounded-content ownership through source and contract checks.
 - [x] 4.6 Fresh relaunch Alan Dev and verify dark-mode screenshots or appearance-toggle states for empty Space and settings content; verify markdown remains on the bounded-content path.
 - [x] 4.7 Confirm the light-mode root backing samples as `rgb(1,1,1)` outside content-specific surfaces.
+- [x] 4.8 Update shell UI contract checks for container-owned frame chrome and workspace panel naming.
+- [x] 4.9 Re-run OpenSpec validation, shell contract checks, affected focused script tests, and the macOS app build after the ownership/naming cleanup.
 
 ## 5. Local Commit And Archive Readiness
 
 - [x] 5.1 Commit the implementation locally in this isolated worktree without opening a PR.
-- [ ] 5.2 Before any future archive, sync accepted spec behavior into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
-- [ ] 5.3 Archive the OpenSpec change only after the implementation is accepted and the long-lived spec is updated.
+- [x] 5.2 Commit the container-owned frame cleanup locally in this isolated worktree without opening a PR.
+- [ ] 5.3 Before any future archive, sync accepted spec behavior into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
+- [ ] 5.4 Archive the OpenSpec change only after the implementation is accepted and the long-lived spec is updated.

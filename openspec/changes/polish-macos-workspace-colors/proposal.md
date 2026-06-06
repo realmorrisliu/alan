@@ -18,8 +18,9 @@ general content container for terminal, settings, markdown, and future content.
   terminal surface.
 - Keep the empty Space action terminal-first: the primary action remains
   `New Tab` and creates a normal terminal tab in the current Space.
-- Keep terminal-specific dark canvas, rim, and shadow treatment scoped to
-  terminal content leaves.
+- Keep all rounded rim, clipping, and shadow frame treatment scoped to the
+  workspace panel and split/container layer; terminal content keeps only its
+  dark canvas and terminal-specific runtime controls.
 - Keep existing settings and markdown content rendering as bounded content
   surfaces rather than terminal runtime surfaces.
 

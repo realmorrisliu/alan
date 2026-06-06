@@ -251,7 +251,7 @@ enum ShellWindowSizing {
 
 enum ShellWindowDoubleClickZoomHitTesting {
     static let topChromeBandHeight: CGFloat = 36
-    static let contentInteractionTopInset: CGFloat = ShellWorkspaceMetrics.terminalSurfaceInset
+    static let contentInteractionTopInset: CGFloat = ShellWorkspaceMetrics.workspacePanelInset
 
     static func isWindowTopChromeZoomCandidate(
         locationInWindow point: CGPoint,
