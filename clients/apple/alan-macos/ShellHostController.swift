@@ -1341,7 +1341,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let tab = shellState.tab(tabID: tabID),
               let paneID = tab.contains(paneID: shellState.focusedPaneID ?? "")
                 ? shellState.focusedPaneID
-                : tab.paneTree.paneIDs.first
+                : tab.paneTree.paneIDs.first,
+              shellState.terminalBackedPane(paneID: paneID) != nil
         else {
             return false
         }

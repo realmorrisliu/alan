@@ -4,6 +4,7 @@ enum ShellStateMutationError: String, Error {
     case spaceNotFound = "space_not_found"
     case tabNotFound = "tab_not_found"
     case paneNotFound = "pane_not_found"
+    case unsupportedContent = "unsupported_content"
     case splitNotFound = "split_not_found"
     case spatialFocusTargetNotFound = "spatial_focus_target_not_found"
     case lastTab = "last_tab"
@@ -774,6 +775,12 @@ extension ShellStateSnapshot {
         else {
             throw ShellStateMutationError.paneNotFound
         }
+        if contentIntent == nil,
+           !isTerminalBackedPane(pane)
+        {
+            throw ShellStateMutationError.unsupportedContent
+        }
+
         if case .some(.settings) = contentIntent,
            let existingSettingsResult = try focusingExistingSettingsContent()
         {
@@ -1449,9 +1456,9 @@ extension ShellStateSnapshot {
             throw ShellStateMutationError.tabNotFound
         }
         guard let primaryPaneID = sourceTab.paneTree.paneIDs.first,
-              let primaryPane = pane(paneID: primaryPaneID)
+              let primaryPane = terminalBackedPane(paneID: primaryPaneID)
         else {
-            throw ShellStateMutationError.paneNotFound
+            throw ShellStateMutationError.unsupportedContent
         }
 
         let opened = try openingTab(

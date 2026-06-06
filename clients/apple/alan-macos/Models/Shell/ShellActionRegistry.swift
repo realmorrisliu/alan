@@ -891,13 +891,11 @@ private func terminalContentIDIfAvailable(
     for pane: ShellPane,
     in state: ShellStateSnapshot
 ) -> String? {
-    if let mountedContent = state.contentStateProjection().contentMounted(in: pane.paneID) {
+    if let mountedContent = state.explicitContentMounted(in: pane.paneID) {
         return mountedContent.kind == .terminal ? mountedContent.contentID : nil
     }
 
-    if pane.isQuickTerminalPane,
-       state.quickTerminal?.paneID == pane.paneID
-    {
+    if state.isTerminalBackedPane(pane) {
         return pane.terminalContentID
     }
 
@@ -984,9 +982,9 @@ private func duplicateTabAvailability(
         return .unavailable(reason: "Tab is not available")
     }
     guard let primaryPaneID = tab.paneTree.paneIDs.first,
-          state.pane(paneID: primaryPaneID) != nil
+          state.terminalBackedPane(paneID: primaryPaneID) != nil
     else {
-        return .unavailable(reason: "Tab launch context is not available")
+        return .unavailable(reason: "Tab is not a terminal")
     }
     return .available
 }
@@ -998,12 +996,21 @@ private func openTabInSplitViewAvailability(
     guard let tab = targetedTab(in: state, target: target) else {
         return .unavailable(reason: "Tab is not available")
     }
-    guard let primaryPaneID = tab.paneTree.paneIDs.first,
-          state.pane(paneID: primaryPaneID) != nil
-    else {
+    guard splitSourceTerminalPane(for: tab, in: state) != nil else {
         return .unavailable(reason: "Tab cannot be split")
     }
     return .available
+}
+
+private func splitSourceTerminalPane(
+    for tab: ShellTab,
+    in state: ShellStateSnapshot
+) -> ShellPane? {
+    let paneID = tab.contains(paneID: state.focusedPaneID ?? "")
+        ? state.focusedPaneID
+        : tab.paneTree.paneIDs.first
+    guard let paneID else { return nil }
+    return state.terminalBackedPane(paneID: paneID)
 }
 
 private func targetedTab(

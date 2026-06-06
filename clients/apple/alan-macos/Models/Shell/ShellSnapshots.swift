@@ -1408,6 +1408,34 @@ extension ShellStateSnapshot {
         panes.first { $0.paneID == paneID }
     }
 
+    func explicitContentMounted(in paneID: String) -> ShellContentInstance? {
+        guard let paneSlot = paneSlots?.first(where: { $0.paneSlotID == paneID }) else {
+            return nil
+        }
+        return contents?.first { $0.contentID == paneSlot.contentID }
+    }
+
+    func isTerminalBackedPane(_ pane: ShellPane) -> Bool {
+        if let mountedContent = explicitContentMounted(in: pane.paneID) {
+            return mountedContent.kind == .terminal
+        }
+        if pane.isQuickTerminalPane,
+           quickTerminal?.paneID == pane.paneID
+        {
+            return true
+        }
+        return pane.launchTarget != nil
+    }
+
+    func terminalBackedPane(paneID: String) -> ShellPane? {
+        guard let pane = pane(paneID: paneID),
+              isTerminalBackedPane(pane)
+        else {
+            return nil
+        }
+        return pane
+    }
+
     func tabs(in spaceID: String?) -> [ShellTab] {
         guard let spaceID else {
             return spaces.flatMap(\.tabs)

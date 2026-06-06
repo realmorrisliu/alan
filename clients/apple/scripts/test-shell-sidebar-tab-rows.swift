@@ -16,6 +16,7 @@ private enum ShellSidebarTabRowTests {
         try verifiesClearKeepsSelectedPinnedOtherSpaceAndProtectedTabs()
         try verifiesTabContextMenuModelIsTabScoped()
         try verifiesDuplicateAndOpenSplitActionsRouteClickedTab()
+        try verifiesDuplicateAndOpenSplitRejectContentTabs()
         try verifiesTemporarySectionPresentationFollowsUnpinnedTabs()
         try verifiesDragPayloadCarriesSourceIdentity()
         try verifiesDragMutationIndexAdjustsSameSectionForwardDrop()
@@ -199,6 +200,70 @@ private enum ShellSidebarTabRowTests {
         )
     }
 
+    private static func verifiesDuplicateAndOpenSplitRejectContentTabs() throws {
+        let markdownState = try ShellStateSnapshot
+            .bootstrapDefault(workingDirectory: "/tmp")
+            .openingMarkdownTab(
+                fileURL: URL(fileURLWithPath: "/tmp/readme.md"),
+                in: "space_main",
+                title: "Readme"
+            )
+            .state
+        try expectContentTabActionsRejected(in: markdownState, label: "Markdown")
+
+        let settingsState = try ShellStateSnapshot
+            .bootstrapDefault(workingDirectory: "/tmp")
+            .openingSettingsTab(
+                in: "space_main",
+                title: "Settings"
+            )
+            .state
+        try expectContentTabActionsRejected(in: settingsState, label: "Settings")
+    }
+
+    private static func expectContentTabActionsRejected(
+        in state: ShellStateSnapshot,
+        label: String
+    ) throws {
+        let contentTabID = try requireFocusedTabID(in: state)
+        let contentTab = try requireTab(contentTabID, in: state)
+        let contentPaneID = try requirePrimaryPaneID(in: contentTab)
+
+        var effects: [ShellActionEffect] = []
+        let duplicate = ShellActionRegistry.standard.execute(
+            .tabDuplicate,
+            target: .contextTab(contentTabID),
+            state: state
+        ) { effect in
+            effects.append(effect)
+            return true
+        }
+        let openSplit = ShellActionRegistry.standard.execute(
+            .tabOpenInSplitView,
+            target: .contextTab(contentTabID),
+            state: state
+        ) { effect in
+            effects.append(effect)
+            return true
+        }
+
+        expect(duplicate == .unavailable(reason: "Tab is not a terminal"), "\(label) tabs must not enable Duplicate Tab")
+        expect(openSplit == .unavailable(reason: "Tab cannot be split"), "\(label) tabs must not enable Open in Split View")
+        expect(effects.isEmpty, "\(label) tabs must not emit duplicate or split effects")
+
+        do {
+            _ = try state.duplicatingTab(contentTabID)
+            fail("\(label) tabs must not duplicate through direct state mutation")
+        } catch ShellStateMutationError.unsupportedContent {
+        }
+
+        do {
+            _ = try state.splittingPane(contentPaneID, placement: .right)
+            fail("\(label) panes must not split into a terminal through direct state mutation")
+        } catch ShellStateMutationError.unsupportedContent {
+        }
+    }
+
     private static func verifiesTemporarySectionPresentationFollowsUnpinnedTabs() throws {
         expect(
             ShellSidebarTemporaryTabSectionPresentation.model(
@@ -325,6 +390,13 @@ private enum ShellSidebarTabRowTests {
             throw TestFailure("missing tab \(tabID)")
         }
         return tab
+    }
+
+    private static func requirePrimaryPaneID(in tab: ShellTab) throws -> String {
+        guard let paneID = tab.paneTree.paneIDs.first else {
+            throw TestFailure("missing primary pane in \(tab.tabID)")
+        }
+        return paneID
     }
 
     private static func expect(

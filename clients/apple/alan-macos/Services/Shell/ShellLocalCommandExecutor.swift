@@ -943,6 +943,16 @@ enum AlanShellLocalCommandExecutor {
                 errorCode: error.rawValue,
                 errorMessage: "The requested pane does not exist."
             )
+        case .unsupportedContent:
+            return response(
+                for: command,
+                state: state,
+                applied: false,
+                tabID: command.tabID,
+                paneID: command.paneID,
+                errorCode: error.rawValue,
+                errorMessage: "This action requires terminal content."
+            )
         case .splitNotFound:
             return response(
                 for: command,
