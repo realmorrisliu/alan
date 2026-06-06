@@ -23,8 +23,8 @@ reuse that safety model instead of inventing a separate temporary-tab concept.
   meaningful two-line row without changing the row's overall visual system.
 - Make ordinary tab rows fastest to identify by task first, then context, then
   process or structure.
-- Support automatic task titles from agent/activity signals while preserving a
-  user-edited title lock.
+- Support task titles supplied through terminal or agent metadata while
+  preserving a user-edited title lock.
 - Use the existing leading split indicator unchanged, with state glyphs in the
   trailing accessory slot and state text in the subtitle when needed.
 - Add a Clear action that closes inactive temporary tabs in the current Space.
@@ -42,9 +42,9 @@ reuse that safety model instead of inventing a separate temporary-tab concept.
 - No changes to daemon APIs, runtime session APIs, provider configuration, or
   terminal runtime contracts.
 - No dark-mode redesign beyond preserving existing adaptive color behavior.
-- No full agent-title-generation backend in this change if the implementation
-  only has activity/session labels available; the row contract should define
-  where generated titles fit when the signal exists.
+- No Alan-owned title-generation backend in this change. Agents and terminal
+  programs remain responsible for setting useful terminal titles or activity
+  details; Alan is responsible for displaying those signals cleanly.
 
 ## Decisions
 
@@ -90,33 +90,37 @@ Alternatives considered:
 - Always show subtitles with smaller fonts. This keeps context but still makes
   ordinary idle tabs visually busy.
 
-### Prefer task-first titles with user title lock
+### Prefer provided task titles with user title lock
 
 The row title should be the stable identity of the tab. For agent-backed or
 activity-backed tabs, the best title is the task being done, not merely the
-directory or process. A generated or activity-derived task title such as
-`Fix sidebar tab drag` should outrank `alan` or `Codex` when it is available and
-safe to show.
+directory or process. A terminal-provided or agent-provided task title such as
+`Fix sidebar tab drag` should outrank `alan` or `Codex` when it is available,
+safe to show, and not just a generic process or status label.
 
 Title source priority should be:
 
 1. User-edited locked title.
-2. Automatic agent/activity task title.
-3. Trusted activity detail or command subject, if it reads like a task title.
+2. Terminal-provided or agent-provided task title.
+3. Trusted activity detail or command subject, if it reads like a task title and
+   is supplied by the running tool.
 4. Content title for non-terminal content.
 5. Repository, worktree, or working-directory title.
 6. Process or tab-kind fallback.
 
-Automatic task titles may update by default while the tab remains unlocked.
-Once the user manually renames a tab, the title becomes locked and automatic
-updates must not overwrite it. State labels such as `Running`, `Thinking`,
-`Failed`, or `Input needed` should not replace the task title; they belong in
-the trailing accessory and subtitle.
+Provided task titles may update by default while the tab remains unlocked. Once
+the user manually renames a tab, the title becomes locked and terminal, agent,
+repository, process, or status updates must not overwrite it. State labels such
+as `Running`, `Thinking`, `Failed`, or `Input needed` should not replace the
+task title; they belong in the trailing accessory and subtitle.
 
 Alternatives considered:
 
 - Keep directory-first titles and put the task in the subtitle. This is stable
   but makes multiple `alan` + `Codex` tabs slow to distinguish.
+- Have Alan call an LLM to generate tab titles itself. This adds cost, latency,
+  privacy and freshness questions, and duplicates a responsibility that agents
+  such as Codex can already own through terminal title updates.
 - Let title fully track the latest strongest signal, including state. This can
   feel smart but makes the row identity drift while the user is scanning.
 
