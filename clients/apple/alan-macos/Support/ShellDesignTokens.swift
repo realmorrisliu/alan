@@ -30,6 +30,10 @@ private extension Color {
 }
 
 enum ShellPalette {
+    static let rootBacking = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        dark: (0.055, 0.061, 0.074)
+    )
     static let canvas = Color.shellAdaptive(
         light: (0.94, 0.94, 0.965),
         dark: (0.045, 0.050, 0.062)
@@ -255,7 +259,7 @@ enum ShellRadii {
     static let overlay: CGFloat = 12
     static let floatingSidebarPanel: CGFloat = 14
     static let titlebarTool: CGFloat = 9
-    static let terminalSurface: CGFloat = 10
+    static let workspacePanel: CGFloat = 10
 }
 
 enum ShellSidebarMetrics {
@@ -277,20 +281,20 @@ enum ShellSidebarMetrics {
 }
 
 enum ShellWorkspaceMetrics {
-    static let terminalSurfaceInset: CGFloat = 8
+    static let workspacePanelInset: CGFloat = 8
 
-    static func terminalSurfaceInsets(expandedSidebarProgress: CGFloat) -> EdgeInsets {
+    static func workspacePanelInsets(expandedSidebarProgress: CGFloat) -> EdgeInsets {
         let progress = min(max(expandedSidebarProgress, 0), 1)
         return EdgeInsets(
-            top: terminalSurfaceInset,
-            leading: terminalSurfaceInset * (1 - progress),
-            bottom: terminalSurfaceInset,
-            trailing: terminalSurfaceInset
+            top: workspacePanelInset,
+            leading: workspacePanelInset * (1 - progress),
+            bottom: workspacePanelInset,
+            trailing: workspacePanelInset
         )
     }
 
-    static func terminalSurfaceInsets(hasExpandedSidebar: Bool) -> EdgeInsets {
-        terminalSurfaceInsets(expandedSidebarProgress: hasExpandedSidebar ? 1 : 0)
+    static func workspacePanelInsets(hasExpandedSidebar: Bool) -> EdgeInsets {
+        workspacePanelInsets(expandedSidebarProgress: hasExpandedSidebar ? 1 : 0)
     }
 }
 
@@ -321,7 +325,7 @@ enum ShellShadows {
         x: -0.2,
         y: 0.9
     )
-    static let terminalSurface = ShellShadowStyle(
+    static let workspacePanel = ShellShadowStyle(
         color: Color.shellAdaptive(
             light: (0.18, 0.20, 0.28),
             lightAlpha: 0.22,
@@ -332,7 +336,7 @@ enum ShellShadows {
         x: -0.7,
         y: 1.4
     )
-    static let terminalSurfaceRim = ShellShadowStyle(
+    static let workspacePanelRim = ShellShadowStyle(
         color: Color.shellAdaptive(
             light: (0.18, 0.20, 0.28),
             lightAlpha: 0.12,

@@ -187,6 +187,92 @@ require_pane_title_bar_trailing_close() {
     fi
 }
 
+require_workspace_color_ownership_contract() {
+    local pane_file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "static let rootBacking = Color\\.shellAdaptive\\(" \
+        "shell root backing must have a dedicated adaptive opaque token"
+
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "light: \\(1\\.0, 1\\.0, 1\\.0\\)" \
+        "shell root backing light color must resolve to rgb(1,1,1)"
+
+    reject_pattern \
+        "clients/apple/alan-macos/MacShellRootView.swift" \
+        "ShellMaterialBackgroundView\\(\\.windowBackdrop\\)" \
+        "mac shell root must use the opaque root backing instead of root-window material"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellEmptyWorkspacePlaceholder" \
+        "empty Space must render through a workspace placeholder instead of inline terminal chrome"
+
+    reject_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "terminalTreeOwnsOuterSurface" \
+        "terminal-only pane trees must not need special outer terminal surface ownership"
+
+    reject_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "terminalLeafOwnsSurfaceFrame" \
+        "mixed content trees must not let terminal leaves own rounded frame chrome"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellWorkspacePanelFrame" \
+        "workspace panes must define a generic panel frame for all content kinds"
+
+    reject_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellTerminalSurfaceFrame" \
+        "terminal content leaves must not own rounded frame chrome"
+
+    if awk '
+        /private var paneCanvas: some View/ {
+            in_canvas = 1
+        }
+
+        in_canvas && /ShellTerminalSurfaceFrame/ {
+            found = 1
+        }
+
+        in_canvas && /private var displayTab/ {
+            in_canvas = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$pane_file"; then
+        printf 'error: workspace paneCanvas must not own ShellTerminalSurfaceFrame\n' >&2
+        exit 1
+    fi
+
+    if ! awk '
+        /private var paneCanvas: some View/ {
+            in_canvas = 1
+        }
+
+        in_canvas && /shellWorkspacePanelFrame/ {
+            found = 1
+        }
+
+        in_canvas && /private var displayTab/ {
+            in_canvas = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$pane_file"; then
+        printf 'error: workspace paneCanvas must own ShellWorkspacePanelFrame\n' >&2
+        exit 1
+    fi
+}
+
 require_active_complex_split_count_contrast() {
     local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
 
@@ -315,6 +401,7 @@ reject_keydown_programmatic_text_delivery
 require_quick_terminal_peak_nonactivating_panel
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
+require_workspace_color_ownership_contract
 require_active_complex_split_count_contrast
 require_tab_organization_sidebar_contract
 require_semantic_terminal_actions_contract
@@ -1034,10 +1121,10 @@ require_pattern \
     "func handleControlPlaneCommand\\(_ command: AlanShellControlCommand\\)" \
     "control-plane protocol commands must stay separate from UI command vocabulary while sharing shell mutation authority"
 
-require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "ShellTerminalSurfaceFrame" \
-    "terminal panes must share one outer rounded terminal surface frame"
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellWorkspacePanelFrame" \
+        "workspace panes must share one outer rounded workspace panel frame"
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
@@ -1074,10 +1161,10 @@ require_pattern \
     "AnimatablePair<CGFloat, CGFloat>" \
     "window chrome placement must animate both pinned layout progress and floating-to-pinned morph progress"
 
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "expandedSidebarProgress" \
-    "workspace view must expose continuous sidebar progress for terminal surface spacing"
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
+        "expandedSidebarProgress" \
+        "workspace view must expose continuous sidebar progress for workspace panel spacing"
 
 require_pattern \
     "clients/apple/alan-macos/MacShellRootView.swift" \
@@ -1099,25 +1186,25 @@ reject_pattern \
     "if !isSidebarCollapsed \\{" \
     "pinned sidebar must not be conditionally inserted or removed"
 
-require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "terminalSurfaceInsets: EdgeInsets" \
-    "terminal pane must receive semantic terminal surface edge insets"
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "workspacePanelInsets: EdgeInsets" \
+        "terminal pane must receive semantic workspace panel edge insets"
 
-require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "padding\\(terminalSurfaceInsets\\)" \
-    "terminal pane must apply state-aware terminal surface edge insets"
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "padding\\(workspacePanelInsets\\)" \
+        "terminal pane must apply state-aware workspace panel edge insets"
 
-reject_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
-    "cornerRadius = ShellRadii\\.terminalSurface" \
-    "terminal host view must not apply an inner rounded corner inside the outer terminal surface"
+    reject_pattern \
+        "clients/apple/alan-macos/TerminalHostView.swift" \
+        "cornerRadius = ShellRadii\\.workspacePanel" \
+        "terminal host view must not apply an inner rounded corner inside the outer workspace panel"
 
-require_pattern \
-    "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-    "terminalSurfaceInsets\\(expandedSidebarProgress" \
-    "terminal workspace surface insets must support continuous sidebar progress"
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "workspacePanelInsets\\(expandedSidebarProgress" \
+        "workspace panel insets must support continuous sidebar progress"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSwipeMonitor.swift" \
@@ -1259,10 +1346,10 @@ reject_pattern \
     "preferredColorScheme" \
     "mac shell appearance switching must not rely on clearing a stale SwiftUI preferredColorScheme preference"
 
-reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
-    "padding\\(ShellWorkspaceMetrics\\.terminalSurfaceInset\\)" \
-    "terminal surface must not apply equal workspace inset when the sidebar is expanded"
+    reject_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "padding\\(ShellWorkspaceMetrics\\.workspacePanelInset\\)" \
+        "workspace panel must not apply equal workspace inset when the sidebar is expanded"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -1639,10 +1726,10 @@ require_pattern \
     "window\\.isMovableByWindowBackground = false" \
     "hidden-titlebar shell windows must keep tab and space controls out of the implicit window drag region"
 
-require_pattern \
-    "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
-    "contentInteractionTopInset" \
-    "window double-click zoom overlay must not cover terminal surface title-bar controls"
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
+        "contentInteractionTopInset" \
+        "window double-click zoom overlay must not cover workspace panel title-bar controls"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \
@@ -1654,10 +1741,10 @@ require_pattern \
     "width: sidebarWidth" \
     "window double-click zoom hit testing must know the sidebar chrome width"
 
-require_pattern \
-    "clients/apple/scripts/test-shell-window-placement.swift" \
-    "verifiesTitlebarOverlayRejectsTerminalSurfaceTitleBarHit" \
-    "shell window placement tests must prove terminal title-bar controls are not intercepted by zoom overlay"
+    require_pattern \
+        "clients/apple/scripts/test-shell-window-placement.swift" \
+        "verifiesTitlebarOverlayRejectsWorkspacePanelTitleBarHit" \
+        "shell window placement tests must prove workspace panel title-bar controls are not intercepted by zoom overlay"
 
 require_pattern \
     "clients/apple/scripts/test-shell-window-placement.swift" \

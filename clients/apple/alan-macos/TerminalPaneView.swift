@@ -8,7 +8,7 @@ struct TerminalPaneView: View {
     let spaceID: String?
     let selectedPaneID: String?
     let zoomedPaneID: String?
-    let terminalSurfaceInsets: EdgeInsets
+    let workspacePanelInsets: EdgeInsets
     let onClosePane: ((ShellPane) -> Void)?
 
     init(
@@ -17,7 +17,7 @@ struct TerminalPaneView: View {
         spaceID: String? = nil,
         selectedPaneID: String? = nil,
         zoomedPaneID: String? = nil,
-        terminalSurfaceInsets: EdgeInsets,
+        workspacePanelInsets: EdgeInsets,
         onClosePane: ((ShellPane) -> Void)? = nil
     ) {
         self.host = host
@@ -25,65 +25,47 @@ struct TerminalPaneView: View {
         self.spaceID = spaceID
         self.selectedPaneID = selectedPaneID
         self.zoomedPaneID = zoomedPaneID
-        self.terminalSurfaceInsets = terminalSurfaceInsets
+        self.workspacePanelInsets = workspacePanelInsets
         self.onClosePane = onClosePane
     }
 
     var body: some View {
         paneCanvas
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(terminalSurfaceInsets)
+            .padding(workspacePanelInsets)
     }
 
     private var paneCanvas: some View {
         Group {
             if let paneTree = displayPaneTree {
-                ShellPaneTreeLayoutView(
-                    node: paneTree,
-                    host: host,
-                    selectedPaneID: displaySelectedPaneID,
-                    onClosePane: onClosePane
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                workspaceContentTree(for: paneTree)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Empty Space")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(ShellPalette.ink)
-                    Text("Start a terminal in this space.")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(ShellPalette.mutedInk)
-                    Button {
-                        _ = host.performShellAutomationCommand(
-                            .createTab(
-                                ShellAutomationCreateTabRequest(
-                                    launchTarget: .shell,
-                                    spaceID: displaySpaceID,
-                                    title: nil,
-                                    workingDirectory: nil
-                                )
+                ShellEmptyWorkspacePlaceholder {
+                    _ = host.performShellAutomationCommand(
+                        .createTab(
+                            ShellAutomationCreateTabRequest(
+                                launchTarget: .shell,
+                                spaceID: displaySpaceID,
+                                title: nil,
+                                workingDirectory: nil
                             )
                         )
-                    } label: {
-                        Label("New Tab", systemImage: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 11)
-                            .frame(height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .background {
-                        ShellMaterialShape(
-                            role: .controlGlassHover,
-                            shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                        )
-                    }
-                    .help("Create a tab in this space")
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .padding(28)
             }
         }
-        .modifier(ShellTerminalSurfaceFrame())
+        .shellWorkspacePanelFrame()
+    }
+
+    @ViewBuilder
+    private func workspaceContentTree(for tree: ShellPaneTreeNode) -> some View {
+        ShellPaneTreeLayoutView(
+            node: tree,
+            host: host,
+            selectedPaneID: displaySelectedPaneID,
+            onClosePane: onClosePane
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var displayTab: ShellTab? {
@@ -489,9 +471,9 @@ private struct QuickTerminalContentView: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+            RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous)
                 .strokeBorder(ShellPalette.line.opacity(0.26), lineWidth: 0.8)
         }
     }
@@ -512,27 +494,56 @@ private struct QuickTerminalContentView: View {
     }
 }
 
-private struct ShellTerminalSurfaceFrame: ViewModifier {
+private struct ShellEmptyWorkspacePlaceholder: View {
+    let onCreateTerminalTab: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Empty Space")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(ShellPalette.ink)
+            Text("Start a terminal in this space.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ShellPalette.mutedInk)
+            Button(action: onCreateTerminalTab) {
+                Label("New Tab", systemImage: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+            }
+            .buttonStyle(.plain)
+            .background {
+                ShellMaterialShape(
+                    role: .controlGlassHover,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                )
+            }
+            .help("Create a tab in this space")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(28)
+    }
+}
+
+private struct ShellWorkspacePanelFrame: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.workspacePanel, style: .continuous)
 
     func body(content: Content) -> some View {
         content
             .clipShape(shape)
             .background {
-                ShellMaterialShape(
-                    role: .terminalSurround,
-                    shape: shape
-                )
-                .shellShadow(ShellShadows.terminalSurfaceRim)
-                .shellShadow(ShellShadows.terminalSurface)
+                shape
+                    .fill(ShellPalette.rootBacking)
+                    .shellShadow(ShellShadows.workspacePanelRim)
+                    .shellShadow(ShellShadows.workspacePanel)
             }
             .overlay {
-                terminalSurfaceRim
+                workspacePanelRim
             }
     }
 
-    private var terminalSurfaceRim: some View {
+    private var workspacePanelRim: some View {
         ZStack {
             shape
                 .strokeBorder(
@@ -562,6 +573,12 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
                 )
         }
         .allowsHitTesting(false)
+    }
+}
+
+private extension View {
+    func shellWorkspacePanelFrame() -> some View {
+        modifier(ShellWorkspacePanelFrame())
     }
 }
 

@@ -30,6 +30,9 @@ target
 # Coverage artifacts
 lcov.info
 
+# Local linked worktrees.
+.worktrees/
+
 # Local release signing/notarization secrets.
 .env
 .env.local
