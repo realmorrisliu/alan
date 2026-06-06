@@ -1533,9 +1533,9 @@ private enum ShellSidebarRowVisualState: Equatable {
         case .normal:
             return ShellRadii.row
         case .hover:
-            return ShellRadii.surface
+            return ShellRadii.control
         case .selected:
-            return ShellRadii.overlay
+            return ShellRadii.row
         }
     }
 
@@ -1607,7 +1607,7 @@ private struct ShellSidebarRowBackground: View {
 }
 
 private enum ShellSidebarTypography {
-    static let titleSize: CGFloat = 13
+    static let titleSize: CGFloat = 14
     static let secondarySize: CGFloat = 11
     static let markerSize: CGFloat = 9
     static let closeSize: CGFloat = 9.5
@@ -1623,8 +1623,8 @@ private enum ShellSidebarTypography {
 }
 
 private enum ShellSidebarRowMetrics {
-    static let height: CGFloat = 40
-    static let horizontalInset: CGFloat = 10
+    static let height: CGFloat = 36
+    static let horizontalInset: CGFloat = 8
     static let leadingSlot: CGFloat = 24
     static let trailingSlot: CGFloat = 20
     static let dragMidpoint: CGFloat = height / 2
@@ -1706,11 +1706,11 @@ private struct ShellTabSidebarRow: View {
     let onClose: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             leadingSlot
                 .frame(width: ShellSidebarRowMetrics.leadingSlot, height: ShellSidebarRowMetrics.leadingSlot, alignment: .center)
 
-            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 2) {
+            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 1) {
                 HStack(spacing: 6) {
                     Text(title)
                         .font(

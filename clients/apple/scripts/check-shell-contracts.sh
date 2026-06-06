@@ -332,8 +332,52 @@ require_tab_organization_sidebar_contract() {
 
     require_pattern \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-        "static let height: CGFloat = 40" \
-        "sidebar tab rows must stay compact at 40pt high"
+        "static let height: CGFloat = 36" \
+        "sidebar tab rows must stay compact at 36pt high"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let horizontalInset: CGFloat = 8" \
+        "sidebar tab rows must use compact 8pt internal horizontal padding"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let titleSize: CGFloat = 14" \
+        "sidebar tab row titles must stay readable at 14pt"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "VStack\\(alignment: \\.leading, spacing: subtitle == nil \\? 0 : 1\\)" \
+        "sidebar tab title and subtitle spacing must stay tight at 1pt"
+
+    if ! awk '
+        /case \.hover:/ {
+            in_hover = 1
+            next
+        }
+
+        in_hover && /return ShellRadii\.control/ {
+            hover_found = 1
+            in_hover = 0
+        }
+
+        /case \.selected:/ {
+            in_selected = 1
+            next
+        }
+
+        in_selected && /return ShellRadii\.row/ {
+            selected_found = 1
+            in_selected = 0
+        }
+
+        END {
+            exit hover_found && selected_found ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: sidebar tab row hover and selected corners must use compact ShellRadii.control/row treatment\n' >&2
+        exit 1
+    fi
 
     require_pattern \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
