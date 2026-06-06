@@ -467,7 +467,7 @@ launch_smoke_app_open() {
     : >"$OUTPUT_DIR/alan-ui-smoke.stdout.log"
     : >"$OUTPUT_DIR/alan-ui-smoke.stderr.log"
     install_launch_environment
-    open -n "$APP_PATH"
+    open -n "$APP_PATH" --args -ApplePersistenceIgnoreState YES
     wait_for_app_pid
     clear_launch_env
 }

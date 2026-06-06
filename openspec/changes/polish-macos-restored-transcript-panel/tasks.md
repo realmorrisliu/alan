@@ -29,4 +29,4 @@
 - [x] 4.6 Run targeted Apple shell/runtime tests and OpenSpec validation.
 - [ ] 4.7 Perform a fresh Alan dev relaunch visual check after implementation and record evidence before claiming UI completion.
 
-  Attempted `test-shell-ui-smoke.sh` with rebuilt and direct-launch smoke bundles. The app process launched, but the smoke window never appeared for capture in this environment, so visual evidence remains blocked.
+  Attempted `test-shell-ui-smoke.sh` with rebuilt and direct-launch smoke bundles. Initial LaunchServices smoke launches restored AppKit's persistent window state and produced a frontmost process with zero visible windows. Updating the smoke launch to pass `-ApplePersistenceIgnoreState YES` made the rebuilt smoke app detectable (`window_detected=true`, `frame=88,105,1335,776`), but both the ScreenCaptureKit helper and `screencapture` failed to produce an image in this environment. Visual evidence remains blocked on local screen-capture capability.
