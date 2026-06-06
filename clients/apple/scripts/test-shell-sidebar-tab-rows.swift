@@ -16,6 +16,7 @@ private enum ShellSidebarTabRowTests {
         try verifiesClearKeepsSelectedPinnedOtherSpaceAndProtectedTabs()
         try verifiesTabContextMenuModelIsTabScoped()
         try verifiesDuplicateAndOpenSplitActionsRouteClickedTab()
+        try verifiesTemporarySectionPresentationFollowsUnpinnedTabs()
         try verifiesDragPayloadCarriesSourceIdentity()
         try verifiesDragMutationIndexAdjustsSameSectionForwardDrop()
         print("Shell sidebar tab row tests passed.")
@@ -195,6 +196,60 @@ private enum ShellSidebarTabRowTests {
         expect(
             effects == [.duplicateTab(clickedTabID), .openTabInSplitView(clickedTabID)],
             "context menu actions must route the clicked tab id"
+        )
+    }
+
+    private static func verifiesTemporarySectionPresentationFollowsUnpinnedTabs() throws {
+        expect(
+            ShellSidebarTemporaryTabSectionPresentation.model(
+                pinnedTabCount: 0,
+                unpinnedTabCount: 0,
+                clearableTabCount: 0
+            ) == ShellSidebarTemporaryTabSectionPresentation(
+                showsControlRow: false,
+                showsDivider: false,
+                showsClear: false
+            ),
+            "empty spaces must not reserve temporary-section divider space"
+        )
+
+        expect(
+            ShellSidebarTemporaryTabSectionPresentation.model(
+                pinnedTabCount: 2,
+                unpinnedTabCount: 0,
+                clearableTabCount: 0
+            ) == ShellSidebarTemporaryTabSectionPresentation(
+                showsControlRow: false,
+                showsDivider: false,
+                showsClear: false
+            ),
+            "pinned-only spaces must place New Tab directly after pinned tabs"
+        )
+
+        expect(
+            ShellSidebarTemporaryTabSectionPresentation.model(
+                pinnedTabCount: 0,
+                unpinnedTabCount: 1,
+                clearableTabCount: 0
+            ) == ShellSidebarTemporaryTabSectionPresentation(
+                showsControlRow: true,
+                showsDivider: true,
+                showsClear: false
+            ),
+            "unpinned-only spaces must show the temporary-section divider without Clear"
+        )
+
+        expect(
+            ShellSidebarTemporaryTabSectionPresentation.model(
+                pinnedTabCount: 1,
+                unpinnedTabCount: 2,
+                clearableTabCount: 1
+            ) == ShellSidebarTemporaryTabSectionPresentation(
+                showsControlRow: true,
+                showsDivider: true,
+                showsClear: true
+            ),
+            "mixed spaces with clearable temporary tabs must show divider and Clear"
         )
     }
 

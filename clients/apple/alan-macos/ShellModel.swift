@@ -14,6 +14,25 @@ struct ShellSidebarTabStateAccessory: Equatable {
     let accessibilityLabel: String
 }
 
+struct ShellSidebarTemporaryTabSectionPresentation: Equatable {
+    let showsControlRow: Bool
+    let showsDivider: Bool
+    let showsClear: Bool
+
+    static func model(
+        pinnedTabCount: Int,
+        unpinnedTabCount: Int,
+        clearableTabCount: Int
+    ) -> ShellSidebarTemporaryTabSectionPresentation {
+        let hasUnpinnedTabs = unpinnedTabCount > 0
+        return ShellSidebarTemporaryTabSectionPresentation(
+            showsControlRow: hasUnpinnedTabs,
+            showsDivider: hasUnpinnedTabs,
+            showsClear: hasUnpinnedTabs && clearableTabCount > 0
+        )
+    }
+}
+
 struct ShellSidebarTabContextMenuModel: Equatable {
     let primaryActionTitles: [String]
     let organizationActionTitles: [String]

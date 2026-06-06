@@ -177,6 +177,11 @@ struct ShellSidebarView: View {
     private func tabOrganizationSections(for space: ShellSpace) -> some View {
         let pinnedTabs = space.pinnedTabs
         let unpinnedTabs = space.unpinnedTabs
+        let temporarySectionPresentation = ShellSidebarTemporaryTabSectionPresentation.model(
+            pinnedTabCount: pinnedTabs.count,
+            unpinnedTabCount: unpinnedTabs.count,
+            clearableTabCount: host.clearableInactiveTabCount(in: space.spaceID)
+        )
 
         if !pinnedTabs.isEmpty {
             tabRows(
@@ -186,8 +191,8 @@ struct ShellSidebarView: View {
             )
         }
 
-        if !space.tabs.isEmpty {
-            tabControlRow(for: space)
+        if temporarySectionPresentation.showsControlRow {
+            tabControlRow(for: space, presentation: temporarySectionPresentation)
         }
         newTabRow(for: space)
 
@@ -212,10 +217,13 @@ struct ShellSidebarView: View {
         .help("Create a tab in this space")
     }
 
-    private func tabControlRow(for space: ShellSpace) -> some View {
-        let clearableCount = host.clearableInactiveTabCount(in: space.spaceID)
-        return ShellSidebarTabControlRow(
-            showsClear: clearableCount > 0,
+    private func tabControlRow(
+        for space: ShellSpace,
+        presentation: ShellSidebarTemporaryTabSectionPresentation
+    ) -> some View {
+        ShellSidebarTabControlRow(
+            showsDivider: presentation.showsDivider,
+            showsClear: presentation.showsClear,
             clearAction: {
                 host.clearInactiveTemporaryTabs(in: space.spaceID)
             }
@@ -1620,14 +1628,17 @@ private enum ShellSidebarTabDragState {
 }
 
 private struct ShellSidebarTabControlRow: View {
+    let showsDivider: Bool
     let showsClear: Bool
     let clearAction: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Rectangle()
-                .fill(ShellPalette.line.opacity(0.30))
-                .frame(height: 0.5)
+            if showsDivider {
+                Rectangle()
+                    .fill(ShellPalette.line.opacity(0.30))
+                    .frame(height: 0.5)
+            }
 
             if showsClear {
                 Button(action: clearAction) {
