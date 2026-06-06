@@ -97,6 +97,15 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **THEN** alan keeps the trailing accessory slot visually quiet until hover or
   keyboard focus reveals the close button
 
+#### Scenario: Pinned state is conveyed by section position
+- **WHEN** a tab is pinned in the default sidebar
+- **THEN** alan displays it in the pinned tab section above the New Tab row and
+  divider
+- **AND** alan does not show a separate inline pin glyph in the tab row title or
+  trailing accessory area
+- **AND** pin and unpin actions remain available through existing command and
+  context-menu surfaces
+
 #### Scenario: Clear appears only for eligible temporary tabs
 - **WHEN** the active Space has at least one unpinned tab that is not selected
   and whose active task state does not protect it from pruning
