@@ -22,6 +22,8 @@ or active work.
   task-title disambiguation, and hidden for fallback or duplicate metadata.
 - Keep the existing leading split indicator unchanged, and use the trailing
   accessory slot for state glyphs at rest and the close button on hover.
+- Remove the inline pin glyph from tab rows because pinned position and section
+  grouping already convey pinned state visually.
 - Add a Clear affordance in the active Space tab list that closes eligible
   temporary tabs in one action.
 - Define eligible temporary tabs as current-Space unpinned tabs that are not the

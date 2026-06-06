@@ -27,6 +27,8 @@ reuse that safety model instead of inventing a separate temporary-tab concept.
   preserving a user-edited title lock.
 - Use the existing leading split indicator unchanged, with state glyphs in the
   trailing accessory slot and state text in the subtitle when needed.
+- Remove the inline pin glyph because pinned state is already conveyed by a
+  tab's position in the pinned section.
 - Add a Clear action that closes inactive temporary tabs in the current Space.
 - Keep Clear conservative: unpinned tabs only, never the selected tab, and never
   tabs protected by active task state.
@@ -129,6 +131,13 @@ Alternatives considered:
 The leading split/topology indicator should stay dedicated to pane structure and
 pane focus. It should not become a state or agent icon, because split structure
 is already interactive and stable in that position.
+
+Pinned state should not consume inline title-row space. Pinned tabs are visually
+identified by their placement in the pinned section above the divider, so a
+separate `pin.fill` glyph after the title is redundant and makes the compact row
+harder to scan. Pin/unpin actions should remain available through the existing
+context menu and command paths, and accessibility labels may continue to expose
+the pinned state.
 
 The trailing accessory slot should carry state at rest and become the close
 button when the row is hovered or keyboard focused. High-priority states should
