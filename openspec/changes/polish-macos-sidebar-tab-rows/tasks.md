@@ -1,7 +1,7 @@
 ## 1. Row Metrics And Subtitle Semantics
 
 - [ ] 1.1 Add a single compact sidebar row metric source for row height, icon slot, text spacing, close slot, horizontal inset, and drag midpoint.
-- [ ] 1.2 Add a task-title source priority helper for sidebar tabs, including automatic agent/activity titles and locked user-edited titles.
+- [ ] 1.2 Add a task-title source priority helper for sidebar tabs, including terminal-provided or agent-provided titles and locked user-edited titles.
 - [ ] 1.3 Add a focused helper for required, recommended, and hidden sidebar subtitles so fallback or duplicate metadata can use the single-line layout.
 - [ ] 1.4 Add a trailing accessory state projection that shows state glyph/progress at rest and yields to the close button on hover or keyboard focus.
 - [ ] 1.5 Cover title priority, title lock, subtitle tier, trailing accessory, and metric helper behavior with focused Swift script tests or adjacent model tests.

@@ -41,9 +41,9 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **AND** the row does not resize the sidebar or shift adjacent rows during
   hover, selection, close-affordance display, or activity progress updates
 
-#### Scenario: Task title identifies agent work
-- **WHEN** an unlocked sidebar tab has an automatic agent or activity task title
-  that describes the work being done
+#### Scenario: Provided task title identifies agent work
+- **WHEN** an unlocked sidebar tab has a terminal-provided or agent-provided
+  task title that describes the work being done
 - **THEN** alan uses that task title as the primary row title instead of falling
   back to the repository, directory, process, or agent name
 - **AND** state labels such as running, thinking, failed, or input needed do not
@@ -52,7 +52,7 @@ the terminal sidebar feel like a dashboard or debug surface.
 #### Scenario: User-edited title is locked
 - **WHEN** the user manually edits a sidebar tab title
 - **THEN** alan treats the title as locked
-- **AND** automatic agent, activity, repository, process, or status changes do
+- **AND** terminal, agent, activity, repository, process, or status updates do
   not overwrite that locked title
 
 #### Scenario: Subtitle is required for actionable state
@@ -63,9 +63,9 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **AND** the subtitle may include context tokens after the state when space
   allows
 
-#### Scenario: Subtitle disambiguates task titles
-- **WHEN** a tab title is a generated or activity-derived task title and context
-  is available
+#### Scenario: Subtitle disambiguates provided task titles
+- **WHEN** a tab title is a terminal-provided or agent-provided task title and
+  context is available
 - **THEN** alan shows a subtitle that starts with stable project, repository,
   worktree, directory, or branch context
 - **AND** the subtitle may include agent, process, command, progress, or split
