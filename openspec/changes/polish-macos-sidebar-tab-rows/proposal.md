@@ -1,0 +1,46 @@
+## Why
+
+The macOS sidebar tab list is currently taller and heavier than the Arc-like
+reference Alan is targeting, especially around the New Tab row and ordinary
+terminal tab rows. The sidebar also lacks a lightweight Clear affordance for
+removing inactive temporary tabs without touching pinned tabs, the current tab,
+or active work.
+
+## What Changes
+
+- Tighten the sidebar row system so New Tab and ordinary tab rows share one
+  compact geometry.
+- Make New Tab match Arc-style states: quiet at rest, full-row rounded material
+  background on hover or keyboard focus, and no persistent background.
+- Keep real tab rows compact while supporting either a vertically centered
+  single line or a meaningful two-line presentation within the same visual
+  system.
+- Add a Clear affordance in the active Space tab list that closes eligible
+  temporary tabs in one action.
+- Define eligible temporary tabs as current-Space unpinned tabs that are not the
+  selected tab and whose active task state does not protect them from pruning.
+- Preserve existing tab creation, selection, pin/unpin, close, and drag/reorder
+  data model semantics.
+
+## Capabilities
+
+### New Capabilities
+
+- None.
+
+### Modified Capabilities
+
+- `macos-shell-ui-ux-conformance`: Refine the default sidebar tab row visual and
+  interaction contract for New Tab, compact tab rows, and Clear inactive tabs.
+
+## Impact
+
+- Affected code:
+  - `clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift`
+  - `clients/apple/alan-macos/Support/ShellDesignTokens.swift`, if shared row
+    metrics belong in tokens instead of the view file
+  - `clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift`
+  - `clients/apple/alan-macos/ShellHostController.swift`
+  - Relevant shell action or sidebar tests under `clients/apple/scripts/`
+- No network protocol, daemon API, provider, runtime, or dependency changes.
+- No breaking changes.
