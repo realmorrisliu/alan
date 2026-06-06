@@ -54,6 +54,7 @@ struct TerminalPaneView: View {
                 }
             }
         }
+        .shellWorkspacePanelFrame()
     }
 
     @ViewBuilder
@@ -68,7 +69,6 @@ struct TerminalPaneView: View {
             onClosePane: onClosePane
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .shellTerminalSurfaceFrame(enabled: ownsOuterTerminalSurface)
     }
 
     private func terminalTreeOwnsOuterSurface(_ node: ShellPaneTreeNode) -> Bool {
@@ -548,6 +548,57 @@ private struct ShellEmptyWorkspacePlaceholder: View {
     }
 }
 
+private struct ShellWorkspacePanelFrame: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(shape)
+            .background {
+                shape
+                    .fill(ShellPalette.rootBacking)
+                    .shellShadow(ShellShadows.terminalSurfaceRim)
+                    .shellShadow(ShellShadows.terminalSurface)
+            }
+            .overlay {
+                workspacePanelRim
+            }
+    }
+
+    private var workspacePanelRim: some View {
+        ZStack {
+            shape
+                .strokeBorder(
+                    ShellPalette.line.opacity(colorScheme == .light ? 0.30 : 0.26),
+                    lineWidth: 0.85
+                )
+
+            shape
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .light ? 0.18 : 0.07),
+                            Color.white.opacity(0.015),
+                            Color.black.opacity(colorScheme == .light ? 0.14 : 0.32),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.65
+                )
+
+            shape
+                .inset(by: 1)
+                .strokeBorder(
+                    Color.white.opacity(colorScheme == .light ? 0.06 : 0.03),
+                    lineWidth: 0.4
+                )
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 private struct ShellTerminalSurfaceFrame: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     private let shape = RoundedRectangle(cornerRadius: ShellRadii.terminalSurface, style: .continuous)
@@ -602,6 +653,10 @@ private struct ShellTerminalSurfaceFrame: ViewModifier {
 }
 
 private extension View {
+    func shellWorkspacePanelFrame() -> some View {
+        modifier(ShellWorkspacePanelFrame())
+    }
+
     @ViewBuilder
     func shellTerminalSurfaceFrame(enabled: Bool) -> some View {
         if enabled {

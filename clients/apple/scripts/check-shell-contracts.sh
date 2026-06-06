@@ -213,12 +213,17 @@ require_workspace_color_ownership_contract() {
     require_pattern \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "terminalTreeOwnsOuterSurface" \
-        "terminal-only pane trees must preserve one outer terminal surface frame"
+        "terminal-only pane trees must preserve the outer workspace panel as the only surface frame"
 
     require_pattern \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "terminalLeafOwnsSurfaceFrame" \
         "mixed content trees must let terminal leaves own their own terminal surface frame"
+
+    require_pattern \
+        "clients/apple/alan-macos/TerminalPaneView.swift" \
+        "ShellWorkspacePanelFrame" \
+        "workspace panes must define a generic panel frame for all content kinds"
 
     if awk '
         /private var paneCanvas: some View/ {
@@ -238,6 +243,27 @@ require_workspace_color_ownership_contract() {
         }
     ' "$pane_file"; then
         printf 'error: workspace paneCanvas must not own ShellTerminalSurfaceFrame\n' >&2
+        exit 1
+    fi
+
+    if ! awk '
+        /private var paneCanvas: some View/ {
+            in_canvas = 1
+        }
+
+        in_canvas && /shellWorkspacePanelFrame/ {
+            found = 1
+        }
+
+        in_canvas && /private var displayTab/ {
+            in_canvas = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$pane_file"; then
+        printf 'error: workspace paneCanvas must own ShellWorkspacePanelFrame\n' >&2
         exit 1
     fi
 }
