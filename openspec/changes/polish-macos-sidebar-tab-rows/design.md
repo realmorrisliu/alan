@@ -94,6 +94,30 @@ Alternatives considered:
   heavy for an Arc-like lightweight cleanup control, and the eligibility rule is
   already conservative.
 
+### Repair tab dragging at the drag/drop boundary
+
+The underlying reorder model is already covered by `test-shell-tab-organization`
+and passes; the weak point is the SwiftUI drag/drop boundary. The current
+sidebar drop delegate relies on view-local `activeTabDrag` state to identify the
+dragged tab, while the drag session also carries an `NSItemProvider` payload.
+That state can be lost or cleared independently of the drop session, which makes
+the drop target unable to apply the reorder even though the state mutation path
+works.
+
+The implementation should treat the drag payload as the source of truth for the
+dragged tab identity and use row-local state only for transient visual preview.
+The drop delegate should load or otherwise receive a typed local payload that
+contains the tab ID and source location, validate it against the current
+`ShellStateSnapshot`, compute the target index, and route through
+`ShellHostController.reorderTab`.
+
+Alternatives considered:
+
+- Keep relying on `activeTabDrag` and adjust the cleanup delay. This may mask
+  one timing case but keeps source identity outside the drag session.
+- Route all reorders through command buttons only. This preserves model
+  behavior but abandons the expected sidebar pointer interaction.
+
 ### Show Clear only when it can act
 
 Clear should appear as a subtle trailing affordance in the divider/control row
@@ -121,6 +145,9 @@ Alternatives considered:
 - [Risk] Batch closing can expose assumptions in mutation result focus repair.
   -> Add model tests for selected-tab preservation, protected-tab retention, and
   empty-Space outcomes.
+- [Risk] SwiftUI drag/drop testing is harder than model testing.
+  -> Cover pure target-index and payload validation helpers with automated tests
+  and require fresh Alan Dev manual verification for actual pointer drag.
 
 ## Migration Plan
 
