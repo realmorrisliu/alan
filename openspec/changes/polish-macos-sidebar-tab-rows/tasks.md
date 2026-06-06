@@ -16,15 +16,19 @@
 - [ ] 3.1 Update `ShellCompactEmptyAction` or its replacement so New Tab uses the compact row metrics and Arc-like idle, hover, and keyboard-focus states.
 - [ ] 3.2 Update `ShellTabSidebarRow` so ordinary tabs render compact single-line and two-line layouts without row-size shifts.
 - [ ] 3.3 Add the Clear affordance above New Tab only when the active Space has eligible inactive unpinned tabs.
-- [ ] 3.4 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
-- [ ] 3.5 Preserve existing context menu, close button, pin/unpin, reorder, and tab creation behavior.
+- [ ] 3.4 Repair sidebar tab drag so the drag/drop session carries dragged tab identity and source location reliably instead of depending only on transient row gesture state.
+- [ ] 3.5 Update drag/drop insertion midpoint and hit geometry to match the compact row metrics.
+- [ ] 3.6 Preserve existing context menu, close button, pin/unpin, reorder, and tab creation behavior.
 
 ## 4. Verification
 
-- [ ] 4.1 Run the focused Swift script tests covering row semantics, Clear behavior, and tab organization.
-- [ ] 4.2 Run the relevant macOS build or test lane for the Alan app.
-- [ ] 4.3 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, Clear visible, single-line tab, and two-line tab states.
-- [ ] 4.4 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
+- [ ] 4.1 Run the focused Swift script tests covering row semantics, Clear behavior, drag/drop payload validation, and tab organization.
+- [ ] 4.2 Run `bash clients/apple/scripts/test-shell-tab-organization.sh`.
+- [ ] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [ ] 4.4 Run the relevant macOS build or test lane for the Alan app.
+- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, Clear visible, single-line tab, and two-line tab states.
+- [ ] 4.6 In the fresh Alan Dev run, manually verify pointer drag reorders sidebar tabs within the same section and across pinned/unpinned sections.
+- [ ] 4.7 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
 
 ## 5. Review And Archive Readiness
 

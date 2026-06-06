@@ -19,6 +19,8 @@ or active work.
   temporary tabs in one action.
 - Define eligible temporary tabs as current-Space unpinned tabs that are not the
   selected tab and whose active task state does not protect them from pruning.
+- Repair sidebar tab drag/reorder so pointer drag from a tab row reliably
+  carries the dragged tab identity into the drop target and applies the reorder.
 - Preserve existing tab creation, selection, pin/unpin, close, and drag/reorder
   data model semantics.
 

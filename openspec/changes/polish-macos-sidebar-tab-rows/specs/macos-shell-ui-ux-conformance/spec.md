@@ -68,3 +68,26 @@ the terminal sidebar feel like a dashboard or debug surface.
   than the former taller-row midpoint
 - **AND** hover, selected, close, and progress states do not change the
   insertion hit geometry
+
+#### Scenario: Tab drag carries source identity through the drop session
+- **WHEN** the user starts dragging a sidebar tab row
+- **THEN** the drag session carries the dragged tab identity and source
+  organization location as part of the drag payload or an equivalent
+  session-scoped source record
+- **AND** the drop target does not depend solely on transient hover or row
+  gesture state that can be cleared before the drop is performed
+
+#### Scenario: Dropping a tab reorders the sidebar
+- **WHEN** the user drops a dragged tab onto a valid pinned or unpinned sidebar
+  insertion target in the current Space
+- **THEN** alan routes the drop through the same host reorder operation used by
+  command and automation paths
+- **AND** the tab order, pin state, selected tab, and pane identity match the
+  requested insertion target
+
+#### Scenario: Invalid tab drop leaves order unchanged
+- **WHEN** the user drops a tab payload with a missing tab, stale source
+  location, incompatible section, or invalid target index
+- **THEN** alan rejects the drop without changing tab order, pin state, selected
+  tab, or pane identity
+- **AND** alan clears any insertion preview state after the rejected drop
