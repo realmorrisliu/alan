@@ -9,6 +9,9 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case quickTerminalPromote = "shell.quick_terminal.promote"
     case newTerminalTab = "shell.tab.new_terminal"
     case tabClose = "shell.tab.close"
+    case tabRename = "shell.tab.rename"
+    case tabDuplicate = "shell.tab.duplicate"
+    case tabOpenInSplitView = "shell.tab.open_in_split_view"
     case tabSelectPrevious = "shell.tab.select_previous"
     case tabSelectNext = "shell.tab.select_next"
     case tabPin = "shell.tab.pin"
@@ -217,6 +220,9 @@ enum ShellActionEffect: Equatable {
     case workspaceCommand(ShellWorkspaceCommand)
     case openTab(ShellLaunchTarget, spaceID: String?)
     case closeTab(String?)
+    case renameTab(String?)
+    case duplicateTab(String?)
+    case openTabInSplitView(String?)
     case closePane(String?)
     case selectAdjacentTab(Int)
     case selectAdjacentSpace(Int)
@@ -487,6 +493,21 @@ final class ShellActionRegistry {
                 return .closeTab(tabID)
             }
             return .closeTab(nil)
+        case .renameTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .renameTab(tabID)
+            }
+            return .renameTab(nil)
+        case .duplicateTab:
+            if case .tab(let tabID) = resolvedTarget {
+                return .duplicateTab(tabID)
+            }
+            return .duplicateTab(nil)
+        case .openTabInSplitView:
+            if case .tab(let tabID) = resolvedTarget {
+                return .openTabInSplitView(tabID)
+            }
+            return .openTabInSplitView(nil)
         case .closePane:
             if case .pane(let paneID) = resolvedTarget {
                 return .closePane(paneID)
@@ -704,6 +725,27 @@ private let standardActions: [ShellActionDescriptor] = [
         defaultShortcut: ShellActionShortcut(key: "w", modifiers: [.command], context: .shell),
         effect: .closeTab(nil),
         availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabRename,
+        title: "Rename...",
+        targetKind: .tab,
+        effect: .renameTab(nil),
+        availability: selectedTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabDuplicate,
+        title: "Duplicate Tab",
+        targetKind: .tab,
+        effect: .duplicateTab(nil),
+        availability: duplicateTabAvailability
+    ),
+    ShellActionDescriptor(
+        id: .tabOpenInSplitView,
+        title: "Open in Split View",
+        targetKind: .tab,
+        effect: .openTabInSplitView(nil),
+        availability: openTabInSplitViewAvailability
     ),
     ShellActionDescriptor(
         id: .tabSelectPrevious,
@@ -932,6 +974,36 @@ private func selectedTabAvailability(
             ? .unavailable(reason: "No selected tab")
             : .available
     }
+}
+
+private func duplicateTabAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let tab = targetedTab(in: state, target: target) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    guard let primaryPaneID = tab.paneTree.paneIDs.first,
+          state.pane(paneID: primaryPaneID) != nil
+    else {
+        return .unavailable(reason: "Tab launch context is not available")
+    }
+    return .available
+}
+
+private func openTabInSplitViewAvailability(
+    state: ShellStateSnapshot,
+    target: ShellActionTarget
+) -> ShellActionAvailability {
+    guard let tab = targetedTab(in: state, target: target) else {
+        return .unavailable(reason: "Tab is not available")
+    }
+    guard let primaryPaneID = tab.paneTree.paneIDs.first,
+          state.pane(paneID: primaryPaneID) != nil
+    else {
+        return .unavailable(reason: "Tab cannot be split")
+    }
+    return .available
 }
 
 private func targetedTab(

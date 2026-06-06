@@ -818,7 +818,8 @@ extension ShellStateSnapshot {
                 newLeafNodeID: "node_\(newPaneID)",
                 newPaneID: newPaneID
             ),
-            isPinned: tab.isPinned
+            isPinned: tab.isPinned,
+            isTitleUserLocked: tab.isTitleUserLocked
         )
 
         let nextSpaces = spaces.map { space in
@@ -906,7 +907,8 @@ extension ShellStateSnapshot {
             kind: tab.kind,
             title: tab.title,
             paneTree: updatedPaneTree,
-            isPinned: tab.isPinned
+            isPinned: tab.isPinned,
+            isTitleUserLocked: tab.isTitleUserLocked
         )
         let nextSpaces = spaces.map { space in
             guard space.spaceID == pane.spaceID else { return space }
@@ -978,7 +980,8 @@ extension ShellStateSnapshot {
             kind: sourceTab.kind,
             title: sourceTab.title,
             paneTree: sourcePaneTree,
-            isPinned: sourceTab.isPinned
+            isPinned: sourceTab.isPinned,
+            isTitleUserLocked: sourceTab.isTitleUserLocked
         )
         let newTab = ShellTab(
             tabID: newTabID,
@@ -1085,7 +1088,8 @@ extension ShellStateSnapshot {
                 splitNodeID: newSplitNodeID,
                 newLeafNodeID: newLeafNodeID
             ),
-            isPinned: targetTab.isPinned
+            isPinned: targetTab.isPinned,
+            isTitleUserLocked: targetTab.isTitleUserLocked
         )
 
         let updatedSourcePaneTree = sourceTab.paneTree.removingPane(paneID)
@@ -1101,7 +1105,8 @@ extension ShellStateSnapshot {
                                 kind: sourceTab.kind,
                                 title: sourceTab.title,
                                 paneTree: updatedSourcePaneTree,
-                                isPinned: sourceTab.isPinned
+                                isPinned: sourceTab.isPinned,
+                                isTitleUserLocked: sourceTab.isTitleUserLocked
                             )
                         )
                     }
@@ -1209,7 +1214,8 @@ extension ShellStateSnapshot {
             kind: tab.kind,
             title: tab.title,
             paneTree: movedTree,
-            isPinned: tab.isPinned
+            isPinned: tab.isPinned,
+            isTitleUserLocked: tab.isTitleUserLocked
         )
         let nextSpaces = spaces.map { space in
             guard space.spaceID == pane.spaceID else { return space }
@@ -1265,7 +1271,8 @@ extension ShellStateSnapshot {
             kind: sourceTab.kind,
             title: sourceTab.title,
             paneTree: sourceTab.paneTree,
-            isPinned: targetSection == .pinned
+            isPinned: targetSection == .pinned,
+            isTitleUserLocked: sourceTab.isTitleUserLocked
         )
 
         var nextSpaces = spaces
@@ -1411,6 +1418,125 @@ extension ShellStateSnapshot {
         )
     }
 
+    func renamingTab(
+        _ tabID: String,
+        title: String
+    ) throws -> ShellStateMutationResult {
+        try settingTabTitle(
+            tabID,
+            title: ShellStateSnapshot.visibleTabTitle(title),
+            isTitleUserLocked: true,
+            respectsUserTitleLock: false
+        )
+    }
+
+    func settingAutomaticTabTitle(
+        _ tabID: String,
+        title: String?
+    ) throws -> ShellStateMutationResult {
+        try settingTabTitle(
+            tabID,
+            title: title.flatMap(ShellStateSnapshot.visibleTabTitle),
+            isTitleUserLocked: false,
+            respectsUserTitleLock: true
+        )
+    }
+
+    func duplicatingTab(_ tabID: String) throws -> ShellStateMutationResult {
+        guard let sourceLocation = tabOrganizationLocation(tabID: tabID),
+              let sourceTab = tab(tabID: tabID)
+        else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        guard let primaryPaneID = sourceTab.paneTree.paneIDs.first,
+              let primaryPane = pane(paneID: primaryPaneID)
+        else {
+            throw ShellStateMutationError.paneNotFound
+        }
+
+        let opened = try openingTab(
+            launchTarget: primaryPane.resolvedLaunchTarget,
+            in: sourceLocation.spaceID,
+            title: sourceTab.title,
+            workingDirectory: primaryPane.cwd,
+            terminalProfileID: primaryPane.terminalProfileID
+        )
+        guard let duplicatedTabID = opened.tabID else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        return try opened.state.organizingTab(
+            tabID: duplicatedTabID,
+            targetSpaceID: sourceLocation.spaceID,
+            section: sourceLocation.section,
+            index: sourceLocation.index + 1
+        )
+    }
+
+    func clearableInactiveTemporaryTabIDs(
+        in spaceID: String,
+        activeTaskByTabID: [String: ShellTabActiveTaskState] = [:]
+    ) throws -> [String] {
+        guard let space = space(spaceID: spaceID) else {
+            throw ShellStateMutationError.spaceNotFound
+        }
+
+        return space.unpinnedTabs.compactMap { tab in
+            guard tab.tabID != space.resolvedSelectedTabID else { return nil }
+            let activeTask = activeTaskByTabID[tab.tabID] ?? .inactive
+            return activeTask.protectsFromPruning ? nil : tab.tabID
+        }
+    }
+
+    func clearingInactiveTemporaryTabs(
+        in spaceID: String,
+        activeTaskByTabID: [String: ShellTabActiveTaskState] = [:]
+    ) throws -> ShellStateMutationResult {
+        let clearableTabIDs = Set(
+            try clearableInactiveTemporaryTabIDs(in: spaceID, activeTaskByTabID: activeTaskByTabID)
+        )
+        guard !clearableTabIDs.isEmpty else {
+            return ShellStateMutationResult(
+                state: self,
+                spaceID: focusedSpaceID,
+                tabID: focusedTabID,
+                paneID: focusedPaneID
+            )
+        }
+
+        let removedPaneIDs = Set(
+            spaces
+                .flatMap(\.tabs)
+                .filter { clearableTabIDs.contains($0.tabID) }
+                .flatMap(\.paneTree.paneIDs)
+        )
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == spaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs.filter { !clearableTabIDs.contains($0.tabID) },
+                selectedTabID: space.selectedTabID,
+                terminalProfileID: space.terminalProfileID
+            )
+        }
+        let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
+        let nextFocusedPaneID = focusedPaneID.flatMap { candidate in
+            nextPanes.contains(where: { $0.paneID == candidate }) ? candidate : nil
+        }
+        let nextState = replacing(
+            spaces: rebuildingAttention(in: nextSpaces, panes: nextPanes),
+            panes: nextPanes,
+            focusedPaneID: nextFocusedPaneID
+        )
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: nextState.focusedSpaceID,
+            tabID: nextState.focusedTabID,
+            paneID: nextState.focusedPaneID
+        )
+    }
+
     func settingAttention(
         _ attention: ShellAttentionState,
         for paneID: String
@@ -1465,7 +1591,8 @@ extension ShellStateSnapshot {
             kind: targetTab.kind,
             title: targetTab.title,
             paneTree: paneTree,
-            isPinned: targetTab.isPinned
+            isPinned: targetTab.isPinned,
+            isTitleUserLocked: targetTab.isTitleUserLocked
         )
         let nextSpaces = spaces.map { space in
             guard space.spaceID == targetSpace.spaceID else { return space }
@@ -1491,6 +1618,66 @@ extension ShellStateSnapshot {
             tabID: updatedTab.tabID,
             paneID: focusedPaneID
         )
+    }
+
+    private func settingTabTitle(
+        _ tabID: String,
+        title: String?,
+        isTitleUserLocked: Bool,
+        respectsUserTitleLock: Bool
+    ) throws -> ShellStateMutationResult {
+        guard let targetTab = tab(tabID: tabID) else {
+            throw ShellStateMutationError.tabNotFound
+        }
+        if respectsUserTitleLock, targetTab.isTitleUserLocked {
+            return ShellStateMutationResult(
+                state: self,
+                spaceID: focusedSpaceID,
+                tabID: focusedTabID,
+                paneID: focusedPaneID
+            )
+        }
+
+        let updatedTab = ShellTab(
+            tabID: targetTab.tabID,
+            kind: targetTab.kind,
+            title: title,
+            paneTree: targetTab.paneTree,
+            isPinned: targetTab.isPinned,
+            isTitleUserLocked: isTitleUserLocked
+        )
+        let nextSpaces = spaces.map { space in
+            ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs.map { tab in
+                    tab.tabID == tabID ? updatedTab : tab
+                },
+                selectedTabID: space.selectedTabID,
+                terminalProfileID: space.terminalProfileID
+            )
+        }
+        let nextState = replacing(
+            spaces: nextSpaces,
+            panes: panes,
+            focusedPaneID: focusedPaneID
+        )
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: nextState.focusedSpaceID,
+            tabID: tabID,
+            paneID: nextState.focusedPaneID
+        )
+    }
+
+    private static func visibleTabTitle(_ raw: String) -> String? {
+        let collapsed = raw
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let clipped = String(collapsed.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return clipped.isEmpty ? nil : clipped
     }
 
     func closingTab(_ tabID: String) throws -> ShellStateMutationResult {

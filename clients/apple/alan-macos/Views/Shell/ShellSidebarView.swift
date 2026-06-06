@@ -14,8 +14,10 @@ struct ShellSidebarView: View {
     @State private var hoveredTabID: String?
     @State private var tabListScrollOffsetY: CGFloat = 0
     @State private var activityFreshnessNow = Date()
-    @State private var activeTabDrag: ShellSidebarTabDragState?
-    @State private var tabInsertionPreview: ShellSidebarTabInsertionTarget?
+    @State private var activeTabDrag: ShellSidebarTabDragSource?
+    @State private var tabInsertionPreview: ShellSidebarTabDropTarget?
+    @State private var renamingTabID: String?
+    @State private var renameDraftTitle = ""
     @StateObject private var tabListWheelRouter = ShellSidebarTabListWheelRouter()
 
     init(
@@ -45,6 +47,26 @@ struct ShellSidebarView: View {
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()
         }
+        .alert("Rename Tab", isPresented: renameAlertBinding) {
+            TextField("Title", text: $renameDraftTitle)
+            Button("Rename") {
+                commitRename()
+            }
+            Button("Cancel", role: .cancel) {
+                renamingTabID = nil
+            }
+        }
+    }
+
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renamingTabID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    renamingTabID = nil
+                }
+            }
+        )
     }
 
     private var sidebarContent: some View {
@@ -162,10 +184,11 @@ struct ShellSidebarView: View {
                 in: space,
                 section: .pinned
             )
-            ShellSidebarTabSectionDivider()
-                .padding(.vertical, 4)
         }
 
+        if !space.tabs.isEmpty {
+            tabControlRow(for: space)
+        }
         newTabRow(for: space)
 
         tabRows(
@@ -187,6 +210,17 @@ struct ShellSidebarView: View {
             }
         )
         .help("Create a tab in this space")
+    }
+
+    private func tabControlRow(for space: ShellSpace) -> some View {
+        let clearableCount = host.clearableInactiveTabCount(in: space.spaceID)
+        return ShellSidebarTabControlRow(
+            showsClear: clearableCount > 0,
+            clearAction: {
+                host.clearInactiveTemporaryTabs(in: space.spaceID)
+            }
+        )
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -213,7 +247,7 @@ struct ShellSidebarView: View {
         .onDrop(
             of: [.plainText],
             delegate: ShellSidebarTabDropDelegate(
-                target: ShellSidebarTabInsertionTarget(
+                target: ShellSidebarTabDropTarget(
                     spaceID: space.spaceID,
                     section: section,
                     index: tabs.count
@@ -231,7 +265,7 @@ struct ShellSidebarView: View {
         section: ShellTabOrganizationSection,
         index: Int
     ) -> some View {
-        let target = ShellSidebarTabInsertionTarget(
+        let target = ShellSidebarTabDropTarget(
             spaceID: spaceID,
             section: section,
             index: index
@@ -511,6 +545,7 @@ struct ShellSidebarView: View {
             subtitle: projection.secondaryLine,
             isActivitySubtitle: projection.activity != nil,
             progress: projection.progress,
+            stateAccessory: projection.stateAccessory,
             attention: strongestAttention(for: tab),
             showsAlanMarker: showsAlanMarker(for: tab, activity: projection.activity),
             paneSummary: paneSummary(for: tab),
@@ -544,12 +579,19 @@ struct ShellSidebarView: View {
         )
         .onDrag {
             beginTabDragIfNeeded(tab: tab, space: space, section: section, index: index)
-            return NSItemProvider(object: tab.tabID as NSString)
+            let source = ShellSidebarTabDragSource(
+                tabID: tab.tabID,
+                sourceSpaceID: space.spaceID,
+                sourceSection: section,
+                sourceIndex: index
+            )
+            let payload = (try? source.encodedPlainTextPayload()) ?? tab.tabID
+            return NSItemProvider(object: payload as NSString)
         }
         .onDrop(
             of: [.plainText],
             delegate: ShellSidebarTabDropDelegate(
-                target: ShellSidebarTabInsertionTarget(
+                target: ShellSidebarTabDropTarget(
                     spaceID: space.spaceID,
                     section: section,
                     index: index
@@ -560,16 +602,23 @@ struct ShellSidebarView: View {
             )
         )
         .contextMenu {
-            Button(host.shellActionTitle(.newTerminalTab)) {
-                host.performShellAction(.newTerminalTab, target: .contextSpace(space.spaceID))
+            Button(host.shellActionTitle(.tabRename)) {
+                beginRenaming(tab: tab)
             }
+            .disabled(!host.shellActionAvailability(.tabRename, target: .contextTab(tab.tabID)).isAvailable)
+
+            Button(host.shellActionTitle(.tabDuplicate)) {
+                host.performShellAction(.tabDuplicate, target: .contextTab(tab.tabID))
+            }
+            .disabled(!host.shellActionAvailability(.tabDuplicate, target: .contextTab(tab.tabID)).isAvailable)
+
+            Button(host.shellActionTitle(.tabOpenInSplitView)) {
+                host.performShellAction(.tabOpenInSplitView, target: .contextTab(tab.tabID))
+            }
+            .disabled(!host.shellActionAvailability(.tabOpenInSplitView, target: .contextTab(tab.tabID)).isAvailable)
+
             Divider()
             if host.isTabPinned(tabID: tab.tabID) {
-                Button(host.shellActionTitle(.tabUpdatePin)) {
-                    host.performShellAction(.tabUpdatePin, target: .contextTab(tab.tabID))
-                }
-                .disabled(!host.shellActionAvailability(.tabUpdatePin, target: .contextTab(tab.tabID)).isAvailable)
-
                 Button(host.shellActionTitle(.tabUnpin)) {
                     host.performShellAction(.tabUnpin, target: .contextTab(tab.tabID))
                 }
@@ -612,13 +661,25 @@ struct ShellSidebarView: View {
         }
     }
 
+    private func beginRenaming(tab: ShellTab) {
+        renamingTabID = tab.tabID
+        renameDraftTitle = tab.title ?? ""
+    }
+
+    private func commitRename() {
+        guard let tabID = renamingTabID else { return }
+        let title = renameDraftTitle
+        renamingTabID = nil
+        host.renameTab(tabID: tabID, title: title)
+    }
+
     private func beginTabDragIfNeeded(
         tab: ShellTab,
         space: ShellSpace,
         section: ShellTabOrganizationSection,
         index: Int
     ) {
-        let nextDrag = ShellSidebarTabDragState(
+        let nextDrag = ShellSidebarTabDragSource(
             tabID: tab.tabID,
             sourceSpaceID: space.spaceID,
             sourceSection: section,
@@ -779,25 +840,16 @@ private struct ShellSidebarTabListOffsetPreferenceKey: PreferenceKey {
     }
 }
 
-private struct ShellSidebarTabDragState: Equatable {
-    static let dragThreshold: CGFloat = 7
-
-    let tabID: String
-    let sourceSpaceID: String
-    let sourceSection: ShellTabOrganizationSection
-    let sourceIndex: Int
-}
-
-private struct ShellSidebarTabInsertionTarget: Equatable {
+private struct ShellSidebarTabDropTarget: Equatable {
     let spaceID: String
     let section: ShellTabOrganizationSection
     let index: Int
 }
 
 private struct ShellSidebarTabDropDelegate: DropDelegate {
-    let target: ShellSidebarTabInsertionTarget
-    @Binding var activeDrag: ShellSidebarTabDragState?
-    @Binding var preview: ShellSidebarTabInsertionTarget?
+    let target: ShellSidebarTabDropTarget
+    @Binding var activeDrag: ShellSidebarTabDragSource?
+    @Binding var preview: ShellSidebarTabDropTarget?
     let host: ShellHostController
 
     func dropEntered(info: DropInfo) {
@@ -816,26 +868,47 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard let activeDrag else {
-            preview = nil
-            return false
-        }
-
         let insertionTarget = resolvedTarget(for: info)
         preview = nil
-        self.activeDrag = nil
 
+        if let activeDrag {
+            self.activeDrag = nil
+            return performDrop(source: activeDrag, insertionTarget: insertionTarget)
+        }
+
+        self.activeDrag = nil
+        guard let provider = info.itemProviders(for: [.plainText]).first else {
+            return false
+        }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let payload = object as? String,
+                  let source = try? ShellSidebarTabDragSource.decodedPlainTextPayload(payload)
+            else {
+                return
+            }
+            DispatchQueue.main.async {
+                _ = performDrop(source: source, insertionTarget: insertionTarget)
+            }
+        }
+        return true
+    }
+
+    private func performDrop(
+        source: ShellSidebarTabDragSource,
+        insertionTarget: ShellSidebarTabDropTarget
+    ) -> Bool {
+        let activeDrag = source
         let mutationIndex = mutationIndex(for: insertionTarget, activeDrag: activeDrag)
 
-        if activeDrag.sourceSpaceID == insertionTarget.spaceID,
-           activeDrag.sourceSection == insertionTarget.section,
-           activeDrag.sourceIndex == mutationIndex
+        if source.sourceSpaceID == insertionTarget.spaceID,
+           source.sourceSection == insertionTarget.section,
+           source.sourceIndex == mutationIndex
         {
             return true
         }
 
         return host.reorderTab(
-            tabID: activeDrag.tabID,
+            tabID: source.tabID,
             targetSpaceID: insertionTarget.spaceID,
             section: insertionTarget.section,
             index: mutationIndex
@@ -843,21 +916,21 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
     }
 
     private func mutationIndex(
-        for insertionTarget: ShellSidebarTabInsertionTarget,
-        activeDrag: ShellSidebarTabDragState
+        for insertionTarget: ShellSidebarTabDropTarget,
+        activeDrag: ShellSidebarTabDragSource
     ) -> Int {
-        guard activeDrag.sourceSpaceID == insertionTarget.spaceID,
-              activeDrag.sourceSection == insertionTarget.section,
-              insertionTarget.index > activeDrag.sourceIndex
-        else {
-            return insertionTarget.index
-        }
-
-        return insertionTarget.index - 1
+        ShellSidebarTabDropModel.mutationIndex(
+            for: ShellSidebarTabInsertionTarget(
+                spaceID: insertionTarget.spaceID,
+                section: insertionTarget.section,
+                index: insertionTarget.index
+            ),
+            source: activeDrag
+        )
     }
 
-    private func resolvedTarget(for info: DropInfo) -> ShellSidebarTabInsertionTarget {
-        let rowMidpoint: CGFloat = 24
+    private func resolvedTarget(for info: DropInfo) -> ShellSidebarTabDropTarget {
+        let rowMidpoint = ShellSidebarRowMetrics.dragMidpoint
         let sectionCount = host.shellState
             .space(spaceID: target.spaceID)?
             .tabs(in: target.section)
@@ -865,7 +938,7 @@ private struct ShellSidebarTabDropDelegate: DropDelegate {
         let adjustedIndex = info.location.y > rowMidpoint
             ? target.index + 1
             : target.index
-        return ShellSidebarTabInsertionTarget(
+        return ShellSidebarTabDropTarget(
             spaceID: target.spaceID,
             section: target.section,
             index: min(max(adjustedIndex, 0), sectionCount)
@@ -1522,7 +1595,6 @@ private enum ShellSidebarTypography {
     static let titleSize: CGFloat = 13
     static let secondarySize: CGFloat = 11
     static let markerSize: CGFloat = 9
-    static let pinSize: CGFloat = 8.5
     static let closeSize: CGFloat = 9.5
 
     static func titleWeight(isSelected: Bool) -> Font.Weight {
@@ -1535,14 +1607,52 @@ private enum ShellSidebarTypography {
     static let markerWeight: Font.Weight = .semibold
 }
 
+private enum ShellSidebarRowMetrics {
+    static let height: CGFloat = 44
+    static let horizontalInset: CGFloat = 10
+    static let leadingSlot: CGFloat = 24
+    static let trailingSlot: CGFloat = 20
+    static let dragMidpoint: CGFloat = height / 2
+}
+
+private enum ShellSidebarTabDragState {
+    static let dragThreshold: CGFloat = 7
+}
+
+private struct ShellSidebarTabControlRow: View {
+    let showsClear: Bool
+    let clearAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(ShellPalette.line.opacity(0.30))
+                .frame(height: 0.5)
+
+            if showsClear {
+                Button(action: clearAction) {
+                    Label("Clear", systemImage: "arrow.down.to.line.compact")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.64))
+                .help("Clear inactive tabs")
+            }
+        }
+        .frame(height: 18)
+    }
+}
+
 private struct ShellTabSidebarRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isKeyboardFocused: Bool
     @State private var isCloseHovered = false
     let title: String
-    let subtitle: String
+    let subtitle: String?
     let isActivitySubtitle: Bool
     let progress: TerminalActivityProgress?
+    let stateAccessory: ShellSidebarTabStateAccessory?
     let attention: ShellAttentionState?
     let showsAlanMarker: Bool
     let paneSummary: ShellTabPaneSummary?
@@ -1557,9 +1667,9 @@ private struct ShellTabSidebarRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             leadingSlot
-                .frame(width: 24, height: 24, alignment: .center)
+                .frame(width: ShellSidebarRowMetrics.leadingSlot, height: ShellSidebarRowMetrics.leadingSlot, alignment: .center)
 
-            VStack(alignment: .leading, spacing: progress == nil ? 3 : 5) {
+            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 2) {
                 HStack(spacing: 6) {
                     Text(title)
                         .font(
@@ -1583,23 +1693,14 @@ private struct ShellTabSidebarRow: View {
                             .foregroundStyle(ShellPalette.accent)
                     }
 
-                    if isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(
-                                .system(
-                                    size: ShellSidebarTypography.pinSize,
-                                    weight: ShellSidebarTypography.markerWeight
-                                )
-                            )
-                            .foregroundStyle(ShellPalette.accent.opacity(isSelected ? 0.84 : 0.64))
-                            .help("Pinned tab")
-                    }
                 }
 
-                subtitleText
-                    .foregroundStyle(subtitleForeground)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let subtitle {
+                    subtitleText(subtitle)
+                        .foregroundStyle(subtitleForeground)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
 
                 if let progress {
                     ShellSidebarActivityProgressRail(progress: progress, isSelected: isSelected)
@@ -1609,8 +1710,8 @@ private struct ShellTabSidebarRow: View {
 
             closeButtonSlot
         }
-        .padding(.horizontal, ShellSidebarMetrics.rowInset)
-        .padding(.vertical, 8)
+        .padding(.horizontal, ShellSidebarRowMetrics.horizontalInset)
+        .frame(minHeight: ShellSidebarRowMetrics.height)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             ShellSidebarRowBackground(state: visualState)
@@ -1645,33 +1746,47 @@ private struct ShellTabSidebarRow: View {
         isSelected || isInteractionActive
     }
 
+    @ViewBuilder
     private var closeButtonSlot: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(
-                    .system(
-                        size: ShellSidebarTypography.closeSize,
-                        weight: ShellSidebarTypography.markerWeight
-                    )
-                )
-                .foregroundStyle(closeForeground)
-                .frame(width: 20, height: 20)
-                .contentShape(Circle())
-                .background {
-                    if isCloseHovered || isKeyboardFocused {
-                        Circle()
-                            .fill(ShellPalette.sidebarInk.opacity(isSelected ? 0.05 : 0.035))
-                    }
+        ZStack {
+            if showsCloseButton {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(
+                            .system(
+                                size: ShellSidebarTypography.closeSize,
+                                weight: ShellSidebarTypography.markerWeight
+                            )
+                        )
+                        .foregroundStyle(closeForeground)
+                        .frame(width: ShellSidebarRowMetrics.trailingSlot, height: ShellSidebarRowMetrics.trailingSlot)
+                        .contentShape(Circle())
+                        .background {
+                            if isCloseHovered || isKeyboardFocused {
+                                Circle()
+                                    .fill(ShellPalette.sidebarInk.opacity(isSelected ? 0.05 : 0.035))
+                            }
+                        }
                 }
-        }
-        .buttonStyle(.plain)
-        .opacity(showsCloseButton ? 1 : 0)
-        .allowsHitTesting(showsCloseButton)
-        .accessibilityHidden(!showsCloseButton)
-        .help("Close tab")
-        .accessibilityLabel("Close tab")
-        .onHover { isHovering in
-            isCloseHovered = isHovering
+                .buttonStyle(.plain)
+                .help("Close tab")
+                .accessibilityLabel("Close tab")
+                .accessibilityHidden(!showsCloseButton)
+                .onHover { isHovering in
+                    isCloseHovered = isHovering
+                }
+            } else if let stateAccessory {
+                Image(systemName: stateAccessory.systemImageName)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(ShellPalette.sidebarMutedInk.opacity(0.70))
+                    .frame(width: ShellSidebarRowMetrics.trailingSlot, height: ShellSidebarRowMetrics.trailingSlot)
+                    .help(stateAccessory.accessibilityLabel)
+                    .accessibilityLabel(stateAccessory.accessibilityLabel)
+            } else {
+                Color.clear
+                    .frame(width: ShellSidebarRowMetrics.trailingSlot, height: ShellSidebarRowMetrics.trailingSlot)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
@@ -1689,7 +1804,7 @@ private struct ShellTabSidebarRow: View {
         }
     }
 
-    private var subtitleText: Text {
+    private func subtitleText(_ subtitle: String) -> Text {
         let parts = subtitle.components(separatedBy: " · ")
         guard isActivitySubtitle, !parts.isEmpty else {
             return Text(subtitle)
@@ -1741,7 +1856,10 @@ private struct ShellTabSidebarRow: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [title, subtitle]
+        var parts = [title]
+        if let subtitle {
+            parts.append(subtitle)
+        }
         if isSelected {
             parts.append("selected")
         }
@@ -2086,14 +2204,15 @@ private struct ShellCompactEmptyAction: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 15, weight: .regular))
+                    .frame(width: ShellSidebarRowMetrics.leadingSlot, height: ShellSidebarRowMetrics.leadingSlot)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: ShellSidebarTypography.titleSize, weight: .regular))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, ShellSidebarRowMetrics.horizontalInset)
+            .frame(minHeight: ShellSidebarRowMetrics.height)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 ShellSidebarRowBackground(state: visualState)

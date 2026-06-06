@@ -4439,8 +4439,10 @@ private enum ShellRuntimeMetadataTests {
 
         expect(projection.activity?.status == .needsInput, "tab activity must pick the most actionable pane")
         expect(
-            projection.secondaryLine == "Pane 2 · Codex · Input needed",
-            "background pane activity must include a short pane hint"
+            projection.secondaryLine?.hasPrefix("Input needed") == true
+                && projection.secondaryLine?.contains("Pane 2") == true
+                && projection.secondaryLine?.contains("Codex") == true,
+            "background pane activity must put actionable state first and retain a short pane hint"
         )
         expect(projection.progress == nil, "non-progress displayed activity must not inherit another pane progress")
     }
@@ -4649,7 +4651,12 @@ private enum ShellRuntimeMetadataTests {
             focusedTabID: "tab_other",
             now: now
         )
-        expect(failedProjection.secondaryLine == "Pane 2 · Codex · Error", "failed activity must outrank progress")
+        expect(
+            failedProjection.secondaryLine?.hasPrefix("Error") == true
+                && failedProjection.secondaryLine?.contains("Pane 2") == true
+                && failedProjection.secondaryLine?.contains("Codex") == true,
+            "failed activity must outrank progress and keep the background pane hint"
+        )
         expect(failedProjection.progress == nil, "progress rail must not be shown for a different pane's progress")
 
         controller.updateTerminalMetadata(
@@ -4697,8 +4704,9 @@ private enum ShellRuntimeMetadataTests {
             now: now
         )
         expect(
-            backgroundProjection.secondaryLine == "Shell · Command failed 2",
-            "background command failure must remain sidebar-worthy"
+            backgroundProjection.secondaryLine?.hasPrefix("Command failed 2") == true
+                && backgroundProjection.secondaryLine?.contains("Shell") == true,
+            "background command failure must remain sidebar-worthy with state first"
         )
     }
 
@@ -4724,7 +4732,8 @@ private enum ShellRuntimeMetadataTests {
             now: now
         )
         expect(
-            unacknowledgedProjection.secondaryLine == "Shell · Command failed 2",
+            unacknowledgedProjection.secondaryLine?.hasPrefix("Command failed 2") == true
+                && unacknowledgedProjection.secondaryLine?.contains("Shell") == true,
             "background command failure must remain visible before focus acknowledgement"
         )
 
@@ -5958,7 +5967,8 @@ private enum ShellRuntimeMetadataTests {
             "focused markdown content must provide a user-facing type hint"
         )
         expect(
-            !projection.title.contains("pane_") && !projection.secondaryLine.contains("content_"),
+            !projection.title.contains("pane_")
+                && projection.secondaryLine?.contains("content_") != true,
             "content-aware sidebar labels must not expose implementation identifiers"
         )
 
