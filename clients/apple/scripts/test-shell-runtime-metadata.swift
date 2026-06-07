@@ -181,6 +181,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesManifestActiveTaskProjection()
         verifiesTerminalProfileStoreFallbackValidationAndCorruptRecovery()
         verifiesTerminalProfileLaunchResolutionAndEnvironmentProjection()
+        verifiesTerminalProfileRebindingPreservesSpaceIconMetadata()
         verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip()
         verifiesTerminalProfileInheritanceForSpacesTabsAndSplits()
         verifiesGlobalDefaultTerminalProfileDefersWorkingDirectory()
@@ -8666,6 +8667,30 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesTerminalProfileRebindingPreservesSpaceIconMetadata() {
+        let initialState = stateWithContext(
+            windowID: "window_icon_rebind",
+            context: context(
+                processState: "running",
+                rendererHealth: "healthy",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            spacePresentationIconSystemName: "rectangle.stack.fill"
+        )
+
+        let reboundState = initialState.settingTerminalProfile("alan", forSpaceID: "space_1")
+        expect(
+            reboundState?.space(spaceID: "space_1")?.terminalProfileID == "alan",
+            "rebinding a Space terminal profile must update the Space profile reference"
+        )
+        expect(
+            reboundState?.space(spaceID: "space_1")?.presentationIconSystemName
+                == "rectangle.stack.fill",
+            "rebinding a Space terminal profile must preserve explicit Space icon metadata"
+        )
+    }
+
     private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {
         let now = Date(timeIntervalSince1970: 2_001)
         let manifest = ShellContentWorkspaceManifest(
@@ -10471,6 +10496,7 @@ private enum ShellRuntimeMetadataTests {
         windowID: String,
         context: ShellContextSnapshot,
         spaceTerminalProfileID: String? = nil,
+        spacePresentationIconSystemName: String? = nil,
         paneTerminalProfileID: String? = nil
     ) -> ShellStateSnapshot {
         let pane = pane(
@@ -10504,7 +10530,8 @@ private enum ShellRuntimeMetadataTests {
                             )
                         )
                     ],
-                    terminalProfileID: spaceTerminalProfileID
+                    terminalProfileID: spaceTerminalProfileID,
+                    presentationIconSystemName: spacePresentationIconSystemName
                 )
             ],
             panes: [pane]

@@ -324,7 +324,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: terminalProfileID
+                terminalProfileID: terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         return ShellStateSnapshot(
