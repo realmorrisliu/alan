@@ -545,16 +545,10 @@ impl DistributionSource {
             candidates.push((DistributionSourceKind::EnvironmentOverride, path));
         }
 
-        if let Ok(executable) = env::current_exe()
-            && let Some(resources) = executable
-                .parent()
-                .and_then(Path::parent)
-                .filter(|path| path.ends_with("Resources"))
-        {
-            candidates.push((
-                DistributionSourceKind::BundledResource,
-                resources.join("alan-emacs"),
-            ));
+        if let Ok(executable) = env::current_exe() {
+            for resource in bundled_resource_candidates_from_executable(&executable) {
+                candidates.push((DistributionSourceKind::BundledResource, resource));
+            }
         }
 
         candidates.push((
@@ -598,6 +592,34 @@ impl DistributionSourceKind {
             Self::BundledResource => "bundled resource",
             Self::DevelopmentSource => "development source",
         }
+    }
+}
+
+fn bundled_resource_candidates_from_executable(executable: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for executable in executable_and_resolved_targets(executable) {
+        if let Some(resources) = executable
+            .parent()
+            .and_then(Path::parent)
+            .filter(|path| path.ends_with("Resources"))
+        {
+            push_unique_path(&mut candidates, resources.join("alan-emacs"));
+        }
+    }
+    candidates
+}
+
+fn executable_and_resolved_targets(executable: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![normalize_lexical(executable)];
+    if let Ok(resolved) = fs::canonicalize(executable) {
+        push_unique_path(&mut paths, normalize_lexical(&resolved));
+    }
+    paths
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| path_eq(existing, &path)) {
+        paths.push(path);
     }
 }
 
@@ -1274,6 +1296,28 @@ mod tests {
             emacs_lisp_string_literal("/tmp/alan \"probe\"\\marker\n"),
             "\"/tmp/alan \\\"probe\\\"\\\\marker\\n\""
         );
+    }
+
+    #[test]
+    fn bundled_resource_candidates_follow_cli_symlink() {
+        let temp = TempDir::new().unwrap();
+        let resources = temp.path().join("Alan.app/Contents/Resources");
+        let executable = resources.join("bin/alan");
+        let command_dir = temp.path().join("usr/local/bin");
+        let command_link = command_dir.join("alan");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(resources.join("alan-emacs")).unwrap();
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::write(&executable, "").unwrap();
+        symlink_dir_or_file(&executable, &command_link).unwrap();
+
+        let candidates = bundled_resource_candidates_from_executable(&command_link);
+
+        assert_eq!(candidates.len(), 1);
+        assert!(paths_equal_existing_or_lexical(
+            &candidates[0],
+            &resources.join("alan-emacs")
+        ));
     }
 
     #[test]

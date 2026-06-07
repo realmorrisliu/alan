@@ -71,8 +71,10 @@ The installer should materialize the distribution into:
 ```
 
 The source may be `tools/alan-emacs` in development or a bundled resource in a
-release app/CLI installation. The selected Emacs config entry points at the
-managed copy, not at the source checkout.
+release app/CLI installation. Release lookup should consider both the current
+executable path and its resolved symlink target so PATH-visible command links
+can still find `Contents/Resources/alan-emacs`. The selected Emacs config entry
+points at the managed copy, not at the source checkout.
 
 Alternative considered: symlink directly to `tools/alan-emacs`. That is fast
 for local hacking, but it leaks source checkout layout into user configuration

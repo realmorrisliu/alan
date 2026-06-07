@@ -23,6 +23,12 @@ contract.
 - **AND** the user's selected Emacs config entry points to the Alan-managed
   installed copy rather than to the source checkout
 
+#### Scenario: Bundled distribution is found through command link
+- **WHEN** the installed CLI is invoked through a PATH-visible symlink
+- **THEN** Alan resolves the executable target before falling back to
+  development source discovery
+- **AND** it can locate the bundled `Contents/Resources/alan-emacs` distribution
+
 #### Scenario: Status reports ownership
 - **WHEN** the user runs `alan emacs status`
 - **THEN** Alan reports whether Alan Emacs is installed
