@@ -787,6 +787,7 @@ private struct ShellSplitLayoutView: View {
                             onClosePane: onClosePane
                         )
                             .frame(width: primaryLength(total: proxy.size.width))
+                            .frame(maxHeight: .infinity, alignment: .topLeading)
                         ShellSplitDividerView(direction: .vertical)
                             .gesture(resizeGesture(totalLength: proxy.size.width))
                         ShellPaneTreeLayoutView(
@@ -796,6 +797,7 @@ private struct ShellSplitLayoutView: View {
                             onClosePane: onClosePane
                         )
                             .frame(width: secondaryLength(total: proxy.size.width))
+                            .frame(maxHeight: .infinity, alignment: .topLeading)
                     }
                 } else {
                     VStack(spacing: 0) {
@@ -806,6 +808,7 @@ private struct ShellSplitLayoutView: View {
                             onClosePane: onClosePane
                         )
                             .frame(height: primaryLength(total: proxy.size.height))
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         ShellSplitDividerView(direction: .horizontal)
                             .gesture(resizeGesture(totalLength: proxy.size.height))
                         ShellPaneTreeLayoutView(
@@ -815,6 +818,7 @@ private struct ShellSplitLayoutView: View {
                             onClosePane: onClosePane
                         )
                             .frame(height: secondaryLength(total: proxy.size.height))
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                 }
             }
@@ -1032,6 +1036,7 @@ private struct ShellTerminalLeafView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1053,25 +1058,28 @@ private struct RestoredTerminalTranscriptView: View {
 
     var body: some View {
         if !lines.isEmpty {
-            ScrollView([.vertical, .horizontal]) {
-                HStack(alignment: .top, spacing: 0) {
-                    Text(presentation.transcriptText)
-                        .font(
-                            .system(
-                                size: presentation.fontSize,
-                                weight: .regular,
-                                design: .monospaced
+            GeometryReader { proxy in
+                ScrollView([.vertical, .horizontal]) {
+                    HStack(alignment: .top, spacing: 0) {
+                        Text(presentation.transcriptText)
+                            .font(
+                                .system(
+                                    size: presentation.fontSize,
+                                    weight: .regular,
+                                    design: .monospaced
+                                )
                             )
-                        )
-                        .foregroundStyle(Color.white.opacity(0.72))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 0)
+                            .foregroundStyle(Color.white.opacity(0.72))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, presentation.leadingInset)
+                    .padding(.trailing, presentation.trailingInset)
+                    .padding(.vertical, presentation.verticalInset)
+                    .frame(minWidth: proxy.size.width, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.leading, presentation.leadingInset)
-                .padding(.trailing, presentation.trailingInset)
-                .padding(.vertical, presentation.verticalInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .frame(
                 maxWidth: .infinity,
