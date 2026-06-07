@@ -1,12 +1,13 @@
 ## ADDED Requirements
 
-### Requirement: Terminal PTYs are Alan-owned
-The macOS terminal runtime SHALL allocate and own the PTY, child process,
-process group metadata, lifecycle phase, delivery state, and exit observation
-for each terminal ContentInstance through Alan terminal runtime services.
+### Requirement: Alan-owned PTY runtime path owns terminal PTYs
+For Alan-owned PTY runtime path selections, the macOS terminal runtime SHALL
+allocate and own the PTY, child process, process group metadata, lifecycle
+phase, delivery state, and exit observation through Alan terminal runtime
+services.
 
 #### Scenario: Terminal content starts with Alan-owned PTY
-- **WHEN** a terminal ContentInstance is created through the Alan-owned runtime path
+- **WHEN** a terminal ContentInstance is created through the Alan-owned PTY runtime path
 - **THEN** Alan allocates the PTY, launches the terminal child process, records the process group, and creates the runtime handle before attaching a renderer
 - **AND** the runtime handle is keyed by terminal ContentInstance identity
 
@@ -16,9 +17,10 @@ for each terminal ContentInstance through Alan terminal runtime services.
 - **AND** renderer attachment can occur later without starting a second child process
 
 ### Requirement: Ghostty attaches to Alan-provided PTYs
-The Ghostty integration SHALL act as a renderer and terminal-protocol adapter
-over PTY endpoints supplied by Alan, and MUST NOT be the authoritative owner of
-terminal child-process lifecycle in the Alan-owned PTY runtime path.
+When the Alan-owned PTY runtime path is selected, the Ghostty integration SHALL
+act as a renderer and terminal-protocol adapter over PTY endpoints supplied by
+Alan, and MUST NOT be the authoritative owner of terminal child-process
+lifecycle.
 
 #### Scenario: Renderer attaches to live PTY
 - **WHEN** a terminal host view mounts for terminal content with an Alan-owned PTY runtime
@@ -31,9 +33,10 @@ terminal child-process lifecycle in the Alan-owned PTY runtime path.
 - **AND** the Alan-owned PTY runtime, child process, process group, and delivery state remain alive unless the terminal content is closing
 
 ### Requirement: Runtime control uses Alan process handles
-The terminal runtime service SHALL implement resize, text delivery, EOF,
-interrupt, terminate, kill, and exit-status observation using Alan-owned PTY and
-process handles rather than renderer-owned process state.
+For Alan-owned PTY runtimes, the terminal runtime service SHALL implement
+resize, text delivery, EOF, interrupt, terminate, kill, and exit-status
+observation using Alan-owned PTY and process handles rather than renderer-owned
+process state.
 
 #### Scenario: Terminal is resized
 - **WHEN** a terminal ContentInstance size changes

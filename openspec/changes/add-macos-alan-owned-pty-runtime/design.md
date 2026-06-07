@@ -43,11 +43,11 @@ the process boundary becomes Alan-owned and testable.
 1. Make Alan the PTY and process owner.
 
    `AlanTerminalRuntimeService` should create an Alan-owned
-   `AlanTerminalPtyHandle` for each terminal ContentInstance. That handle owns
-   PTY allocation, child launch, process group metadata, resize propagation,
-   stdin delivery, EOF, signal requests, exit observation, and bounded transcript
-   capture. Host views and Ghostty adapters receive only the attachment
-   interface they need.
+   `AlanTerminalPtyHandle` for each terminal ContentInstance selected for the
+   Alan-owned PTY runtime path. That handle owns PTY allocation, child launch,
+   process group metadata, resize propagation, stdin delivery, EOF, signal
+   requests, exit observation, and bounded transcript capture. Host views and
+   Ghostty adapters receive only the attachment interface they need.
 
    Alternative considered: keep asking Ghostty for more process-control seams.
    That preserves the current shape but keeps Alan's lifecycle semantics behind

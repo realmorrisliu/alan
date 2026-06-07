@@ -16,7 +16,7 @@
 
 - [ ] 3.1 Identify the Ghostty fork seam required to attach a renderer to an externally owned PTY endpoint.
 - [ ] 3.2 Patch the Alan-maintained Ghostty fork with the minimal external-PTY attachment support needed by Alan.
-- [ ] 3.3 Update Alan's Ghostty bridge to attach to Alan-provided PTY endpoints in the Alan-owned runtime path.
+- [ ] 3.3 Update Alan's Ghostty bridge to attach to Alan-provided PTY endpoints in the Alan-owned PTY runtime path.
 - [ ] 3.4 Preserve renderer readiness, surface lifecycle, scrollback, input adapter, and metadata projection behavior across the new attachment path.
 
 ## 4. Process Control And Lifecycle
