@@ -187,6 +187,80 @@ require_pane_title_bar_trailing_close() {
     fi
 }
 
+require_restored_transcript_full_width_layout() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    if ! awk '
+        /private struct RestoredTerminalTranscriptView: View/ {
+            in_view = 1
+        }
+
+        in_view && /GeometryReader/ {
+            saw_geometry_reader = 1
+        }
+
+        in_view && /ScrollView\(\[\.vertical, \.horizontal\]\)/ {
+            saw_two_axis_scroll = 1
+        }
+
+        in_view && /frame\(minWidth: proxy\.size\.width, alignment: \.topLeading\)/ {
+            saw_viewport_min_width = 1
+        }
+
+        in_view && /private func paneMoveActionID/ {
+            in_view = 0
+        }
+
+        END {
+            exit saw_geometry_reader && saw_two_axis_scroll && saw_viewport_min_width ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: restored transcript scroll content must fill the pane viewport before horizontal scrolling\n' >&2
+        exit 1
+    fi
+}
+
+require_split_terminal_full_pane_layout() {
+    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+
+    if ! awk '
+        /private struct ShellSplitLayoutView: View/ {
+            in_split_layout = 1
+        }
+
+        in_split_layout && /frame\(maxHeight: \.infinity, alignment: \.topLeading\)/ {
+            split_max_height += 1
+        }
+
+        in_split_layout && /frame\(maxWidth: \.infinity, alignment: \.topLeading\)/ {
+            split_max_width += 1
+        }
+
+        in_split_layout && /private struct ShellSplitDividerView: View/ {
+            in_split_layout = 0
+        }
+
+        /private struct ShellTerminalLeafView: View/ {
+            in_terminal_leaf = 1
+        }
+
+        in_terminal_leaf && /frame\(maxWidth: \.infinity, maxHeight: \.infinity, alignment: \.topLeading\)/ {
+            saw_terminal_leaf_full_frame = 1
+        }
+
+        in_terminal_leaf && /private struct RestoredTerminalTranscriptView: View/ {
+            in_terminal_leaf = 0
+        }
+
+        END {
+            exit split_max_height >= 2 && split_max_width >= 2 && saw_terminal_leaf_full_frame ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: split terminal panes must keep child terminals expanded and top-leading aligned\n' >&2
+        exit 1
+    fi
+}
+
 require_workspace_color_ownership_contract() {
     local pane_file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
 
@@ -501,6 +575,8 @@ reject_keydown_programmatic_text_delivery
 require_quick_terminal_peak_nonactivating_panel
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
+require_restored_transcript_full_width_layout
+require_split_terminal_full_pane_layout
 require_workspace_color_ownership_contract
 require_active_complex_split_count_contrast
 require_tab_organization_sidebar_contract
