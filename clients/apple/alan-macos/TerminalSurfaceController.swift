@@ -64,7 +64,7 @@ struct AlanTerminalClearCommandTracker {
                     currentLine.removeLast()
                 }
             case 0x00..<0x20:
-                continue
+                currentLine = ""
             default:
                 currentLine.append(String(scalar))
             }

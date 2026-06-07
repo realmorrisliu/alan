@@ -343,6 +343,26 @@ private enum TerminalSurfaceControllerTests {
             tracker.observeCommittedText("x\r") == false,
             "edited input that is no longer exactly clear must not dismiss the restored transcript"
         )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("clear") == false,
+            "test setup must keep clear pending before line cancel"
+        )
+        expect(
+            tracker.observeCommittedText("\u{03}") == false,
+            "control-c must invalidate pending clear tracking"
+        )
+        expect(
+            tracker.observeCommittedText("\r") == false,
+            "submitting after a cancelled clear line must not dismiss the restored transcript"
+        )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("clear\u{15}\r") == false,
+            "line-edit control inputs must invalidate pending clear tracking"
+        )
     }
 
     private static func verifiesRegistryBackedShellShortcuts() {
