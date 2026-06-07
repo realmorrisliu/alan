@@ -457,6 +457,9 @@ private struct QuickTerminalContentView: View {
                         onShellAction: { actionID, target in
                             host.performShellAction(actionID, target: target, source: .terminalHost)
                         },
+                        onClearRestoredTranscript: {
+                            _ = host.clearRestoredTranscriptSnapshot(for: pane)
+                        },
                         onCloseRequest: { requiresConfirmation in
                             guard !requiresConfirmation else { return }
                             _ = host.closeQuickTerminalAfterTerminalRuntimeExit()
@@ -657,6 +660,9 @@ private struct ShellPaneTreeLayoutView: View {
             activationDelegate: host,
             onShellAction: { actionID, target in
                 host.performShellAction(actionID, target: target, source: .terminalHost)
+            },
+            onClearRestoredTranscript: {
+                _ = host.clearRestoredTranscriptSnapshot(for: pane)
             },
             onToggleZoom: {
                 if host.isPaneZoomed(pane.paneID) {
@@ -935,6 +941,7 @@ private struct ShellTerminalLeafView: View {
     let runtimeRegistry: TerminalRuntimeRegistry
     let activationDelegate: TerminalHostActivationDelegate?
     let onShellAction: (ShellActionID, ShellActionTarget) -> Void
+    let onClearRestoredTranscript: () -> Void
     let onToggleZoom: () -> Void
     let onMovePane: (ShellPaneSplitDirection) -> Void
     let onCopyTerminalSelection: () -> Void
@@ -983,6 +990,7 @@ private struct ShellTerminalLeafView: View {
                         runtimeRegistry: runtimeRegistry,
                         activationDelegate: activationDelegate,
                         onShellAction: onShellAction,
+                        onClearRestoredTranscript: onClearRestoredTranscript,
                         onCloseRequest: { requiresConfirmation in
                             guard !requiresConfirmation else { return }
                             onTerminalRuntimeExit()
@@ -1039,29 +1047,38 @@ private struct RestoredTerminalTranscriptView: View {
         return boundedLines
     }
 
-    private var transcriptText: String {
-        lines.joined(separator: "\n")
-    }
-
-    private var height: CGFloat {
-        let visibleRows = max(1, min(lines.count, 12))
-        return CGFloat(visibleRows) * 17 + 20
+    private var presentation: RestoredTerminalTranscriptPanelPresentation {
+        RestoredTerminalTranscriptPanelPresentation(snapshot: snapshot)
     }
 
     var body: some View {
         if !lines.isEmpty {
             ScrollView([.vertical, .horizontal]) {
-                Text(transcriptText)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .lineSpacing(2)
-                    .foregroundStyle(Color.white.opacity(0.68))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                HStack(alignment: .top, spacing: 0) {
+                    Text(presentation.transcriptText)
+                        .font(
+                            .system(
+                                size: presentation.fontSize,
+                                weight: .regular,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.leading, presentation.leadingInset)
+                .padding(.trailing, presentation.trailingInset)
+                .padding(.vertical, presentation.verticalInset)
             }
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: presentation.height,
+                maxHeight: presentation.height,
+                alignment: .topLeading
+            )
             .background(ShellPalette.terminal)
             .overlay(alignment: .bottom) {
                 Rectangle()

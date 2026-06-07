@@ -360,6 +360,7 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot)
     func captureTranscriptText(in range: AlanTerminalBufferRange) -> String?
     func seedRestoredTranscriptSnapshot(_ snapshot: TerminalTranscriptSnapshot)
+    func clearRestoredTranscriptSnapshot()
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult
     func requestGracefulShutdown(
@@ -583,6 +584,11 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         let bounded = snapshot.boundedForManifest()
         seededTranscriptSnapshot = bounded
         transcriptRingBufferLines = bounded.transcriptLines
+    }
+
+    func clearRestoredTranscriptSnapshot() {
+        seededTranscriptSnapshot = nil
+        transcriptRingBufferLines = []
     }
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
@@ -944,6 +950,7 @@ protocol AlanTerminalRuntimeService: AnyObject {
         _ snapshot: TerminalTranscriptSnapshot,
         forTerminalContentID contentID: String
     )
+    func clearRestoredTranscriptSnapshot(forTerminalContentID contentID: String)
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult
     func sendKey(
         toTerminalContentID contentID: String,
@@ -1223,6 +1230,11 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         handlesByContentID[contentID]?.seedRestoredTranscriptSnapshot(bounded)
     }
 
+    func clearRestoredTranscriptSnapshot(forTerminalContentID contentID: String) {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
+        handlesByContentID[contentID]?.clearRestoredTranscriptSnapshot()
+    }
+
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {
         guard let handle = handlesByContentID[contentID] else {
             return .missingTarget(
@@ -1410,6 +1422,11 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
         let bounded = snapshot.boundedForManifest()
         seededTranscriptSnapshot = bounded
         transcriptRingBufferLines = bounded.transcriptLines
+    }
+
+    func clearRestoredTranscriptSnapshot() {
+        seededTranscriptSnapshot = nil
+        transcriptRingBufferLines = []
     }
 
     func recordTranscriptOutput(_ text: String) {
@@ -1753,6 +1770,11 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
         let bounded = snapshot.boundedForManifest()
         restoredTranscriptSnapshotsByContentID[contentID] = bounded
         handlesByContentID[contentID]?.seedRestoredTranscriptSnapshot(bounded)
+    }
+
+    func clearRestoredTranscriptSnapshot(forTerminalContentID contentID: String) {
+        restoredTranscriptSnapshotsByContentID.removeValue(forKey: contentID)
+        handlesByContentID[contentID]?.clearRestoredTranscriptSnapshot()
     }
 
     func sendText(toTerminalContentID contentID: String, text: String) -> TerminalRuntimeDeliveryResult {

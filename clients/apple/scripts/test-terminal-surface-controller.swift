@@ -20,6 +20,8 @@ private enum TerminalSurfaceControllerTests {
         verifiesNativeScrollViewForwardsWheelEvents()
         verifiesNativeScrollViewForwardsMouseEvents()
         verifiesInputCommandRouting()
+        verifiesTerminalClearIntentRecognition()
+        verifiesTypedClearCommandTracker()
         verifiesRegistryBackedShellShortcuts()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
         verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath()
@@ -223,6 +225,21 @@ private enum TerminalSurfaceControllerTests {
             "command-d must route to registered shell split right before terminal bindings"
         )
 
+        let clearTerminal = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "k",
+                keyCode: 40,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            clearTerminal == .shellAction(.terminalClear, .currentSelection),
+            "command-k must route to the terminal clear action before terminal bindings"
+        )
+
         let focusRight = router.routeKeyboard(
             AlanTerminalKeyInput(
                 characters: nil,
@@ -266,6 +283,85 @@ private enum TerminalSurfaceControllerTests {
         expect(
             paneZoom == .shellAction(.paneZoomToggle, .currentSelection),
             "command-shift-return must route to registered pane zoom before terminal bindings"
+        )
+    }
+
+    private static func verifiesTerminalClearIntentRecognition() {
+        let controlL = AlanTerminalKeyInput(
+            characters: "\u{0c}",
+            keyCode: 37,
+            modifiers: [.control],
+            phase: .down,
+            isRepeat: false
+        )
+        expect(
+            AlanTerminalClearIntent.isControlL(controlL),
+            "control-l must be recognized as a terminal clear intent without stealing delivery"
+        )
+
+        let plainL = AlanTerminalKeyInput(
+            characters: "l",
+            keyCode: 37,
+            modifiers: [],
+            phase: .down,
+            isRepeat: false
+        )
+        expect(
+            AlanTerminalClearIntent.isControlL(plainL) == false,
+            "plain l must not be recognized as a terminal clear intent"
+        )
+    }
+
+    private static func verifiesTypedClearCommandTracker() {
+        var tracker = AlanTerminalClearCommandTracker()
+
+        expect(
+            tracker.observeCommittedText("clear") == false,
+            "typing clear without submitting it must not dismiss the restored transcript"
+        )
+        expect(
+            tracker.observeCommittedText("\r"),
+            "submitting a clean clear command must dismiss the restored transcript"
+        )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("unclear\r") == false,
+            "commands that merely contain clear must not dismiss the restored transcript"
+        )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("clear") == false,
+            "test setup must keep the command pending before edit"
+        )
+        expect(
+            tracker.observeCommittedText("\u{7f}") == false,
+            "deleting part of clear must not dismiss the restored transcript"
+        )
+        expect(
+            tracker.observeCommittedText("x\r") == false,
+            "edited input that is no longer exactly clear must not dismiss the restored transcript"
+        )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("clear") == false,
+            "test setup must keep clear pending before line cancel"
+        )
+        expect(
+            tracker.observeCommittedText("\u{03}") == false,
+            "control-c must invalidate pending clear tracking"
+        )
+        expect(
+            tracker.observeCommittedText("\r") == false,
+            "submitting after a cancelled clear line must not dismiss the restored transcript"
+        )
+
+        tracker = AlanTerminalClearCommandTracker()
+        expect(
+            tracker.observeCommittedText("clear\u{15}\r") == false,
+            "line-edit control inputs must invalidate pending clear tracking"
         )
     }
 

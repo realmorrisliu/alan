@@ -83,6 +83,12 @@ struct AlanMacShellCommands: Commands {
             .keyboardShortcut("f", modifiers: .command)
             .disabled(!host.canOpenTerminalSearch(source: .menuBar))
 
+            Button(host.shellActionTitle(.terminalClear)) {
+                host.performShellAction(.terminalClear)
+            }
+            .shellActionKeyboardShortcut(host.shellActionShortcut(.terminalClear))
+            .disabled(!host.shellActionAvailability(.terminalClear).isAvailable)
+
             Button(host.shellActionTitle(.quickTerminalToggle)) {
                 host.performShellAction(.quickTerminalToggle)
             }

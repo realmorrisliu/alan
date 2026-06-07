@@ -35,6 +35,7 @@ enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
     case paneMoveUp = "shell.pane.move_up"
     case paneMoveDown = "shell.pane.move_down"
     case paneClose = "shell.pane.close"
+    case terminalClear = "shell.terminal.clear"
     case findOpen = "shell.find.open"
     case spaceSelectPrevious = "shell.space.select_previous"
     case spaceSelectNext = "shell.space.select_next"
@@ -234,6 +235,7 @@ enum ShellActionEffect: Equatable {
     case moveTabToSpace(tabID: String?, spaceID: String?)
     case movePaneInTab(String?, placement: ShellPaneSplitDirection)
     case promoteQuickTerminal(spaceID: String?)
+    case terminalClear(String?)
     case disabledPlaceholder
 }
 
@@ -488,6 +490,11 @@ final class ShellActionRegistry {
                 return .promoteQuickTerminal(spaceID: spaceID)
             }
             return .promoteQuickTerminal(spaceID: nil)
+        case .terminalClear:
+            if case .pane(let paneID) = resolvedTarget {
+                return .terminalClear(paneID)
+            }
+            return .terminalClear(nil)
         case .closeTab:
             if case .tab(let tabID) = resolvedTarget {
                 return .closeTab(tabID)
@@ -717,6 +724,14 @@ private let standardActions: [ShellActionDescriptor] = [
         defaultShortcut: ShellActionShortcut(key: "w", modifiers: [.command, .shift], context: .shell),
         effect: .closePane(nil),
         availability: focusedPaneAvailability
+    ),
+    ShellActionDescriptor(
+        id: .terminalClear,
+        title: "Clear Terminal",
+        targetKind: .pane,
+        defaultShortcut: ShellActionShortcut(key: "k", modifiers: [.command], context: .shell),
+        effect: .terminalClear(nil),
+        availability: terminalContentAvailability
     ),
     ShellActionDescriptor(
         id: .tabClose,

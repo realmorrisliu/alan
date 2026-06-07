@@ -200,6 +200,24 @@ resolve_app_path() {
     fi
 }
 
+canonicalize_existing_path() {
+    local path="$1"
+    local parent
+    local name
+    if [[ -d "$path" ]]; then
+        cd "$path" && pwd -P
+        return
+    fi
+
+    parent=$(dirname "$path")
+    name=$(basename "$path")
+    if [[ -d "$parent" ]]; then
+        printf '%s/%s\n' "$(cd "$parent" && pwd -P)" "$name"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
 bundle_identifier_for() {
     local app_path="$1"
     plutil -extract CFBundleIdentifier raw -o - "$app_path/Contents/Info.plist" 2>/dev/null || true
@@ -266,6 +284,7 @@ case "$LAUNCH_MODE" in
 esac
 
 resolve_app_path
+APP_PATH="$(canonicalize_existing_path "$APP_PATH")"
 command -v plutil >/dev/null 2>&1 || fail "plutil is required for UI smoke"
 resolve_app_executable
 resolve_smoke_bundle_id
@@ -467,7 +486,7 @@ launch_smoke_app_open() {
     : >"$OUTPUT_DIR/alan-ui-smoke.stdout.log"
     : >"$OUTPUT_DIR/alan-ui-smoke.stderr.log"
     install_launch_environment
-    open -n "$APP_PATH"
+    open -n "$APP_PATH" --args -ApplePersistenceIgnoreState YES
     wait_for_app_pid
     clear_launch_env
 }
@@ -580,6 +599,20 @@ wait_for_file_text() {
     fail "timed out waiting for $label"
 }
 
+wait_for_file_without_text() {
+    local path="$1"
+    local needle="$2"
+    local label="$3"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if [[ -f "$path" ]] && ! grep -F "$needle" "$path" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label"
+}
+
 wait_for_window_capture() {
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
     while (( SECONDS < deadline )); do
@@ -641,7 +674,7 @@ OSA
 
 run_osascript() {
     osascript - "$APP_PID" "$TIMEOUT_SECONDS" "$@" <<'OSA'
-on waitForWindow(targetPID, timeoutSeconds)
+on waitForProcess(targetPID, timeoutSeconds)
     tell application "System Events"
         set deadline to (current date) + timeoutSeconds
         repeat
@@ -649,19 +682,19 @@ on waitForWindow(targetPID, timeoutSeconds)
             if (count of matches) > 0 then
                 set targetProcess to item 1 of matches
                 set frontmost of targetProcess to true
-                if exists window 1 of targetProcess then return targetProcess
+                return targetProcess
             end if
-            if (current date) > deadline then error "alan window did not appear"
+            if (current date) > deadline then error "alan process did not appear"
             delay 0.25
         end repeat
     end tell
-end waitForWindow
+end waitForProcess
 
 on run argv
     set targetPID to (item 1 of argv) as integer
     set timeoutSeconds to (item 2 of argv) as integer
     set actionName to item 3 of argv
-    set targetProcess to waitForWindow(targetPID, timeoutSeconds)
+    set targetProcess to waitForProcess(targetPID, timeoutSeconds)
 
     tell application "System Events"
         set frontmost of targetProcess to true
@@ -679,6 +712,8 @@ on run argv
             key code 36
         else if actionName is "escape" then
             key code 53
+        else if actionName is "terminal-clear" then
+            keystroke "k" using command down
         else if actionName is "quit-confirm" then
             set clickedQuit to false
             repeat with candidateMenuBarItem in menu bar items of menu bar 1 of targetProcess
@@ -695,8 +730,9 @@ on run argv
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then error "alan exited before close confirmation"
+                if (count of matches) = 0 then return
                 set targetProcess to item 1 of matches
+                set frontmost of targetProcess to true
                 repeat with candidateWindow in windows of targetProcess
                     if exists button "Close" of candidateWindow then
                         click button "Close" of candidateWindow
@@ -709,6 +745,10 @@ on run argv
                         end if
                     end repeat
                 end repeat
+                key code 36
+                delay 0.25
+                set matches to every process whose unix id is targetPID
+                if (count of matches) = 0 then return
                 if (current date) > closeDeadline then error "close confirmation did not appear"
                 delay 0.25
             end repeat
@@ -759,8 +799,10 @@ run_restart_restore_step() {
     local after_json
     local terminal_result
     local state_result
+    local clear_state_result
     local restored_pane_id
     local cwd_result
+    local clear_deadline
 
     manifest_path=$(workspace_manifest_path)
     tab_result=$(control_tab_open_cwd "$RESTART_RESTORE_CWD")
@@ -817,6 +859,56 @@ run_restart_restore_step() {
 
     restored_pane_id=$(json_get "$state_result" focused_pane_id)
     [[ -n "$restored_pane_id" ]] || fail "restart restore relaunch did not expose a focused pane"
+
+    run_ui_step terminal-clear \
+        || fail "restart restore terminal clear delivery failed"
+    clear_deadline=$((SECONDS + TIMEOUT_SECONDS))
+    clear_state_result=""
+    while (( SECONDS < clear_deadline )); do
+        clear_state_result=$(control_state)
+        require_control_applied "$clear_state_result" "restart restore state after clear"
+        if ! grep -F "$before_token" "$clear_state_result" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.5
+    done
+    [[ -n "$clear_state_result" ]] || fail "restart restore clear did not produce control state"
+    if grep -F "$before_token" "$clear_state_result" >/dev/null 2>&1; then
+        fail "restored transcript token remained in control state after clear"
+    fi
+    wait_for_file_without_text \
+        "$manifest_path" \
+        "$before_token" \
+        "persisted manifest to drop restored transcript token after clear"
+    append_manifest "restart_restore_clear_removed=$before_token"
+    sleep 1
+    capture_step restart-clear
+
+    run_ui_step quit-confirm \
+        || fail "restart restore post-clear quit confirmation failed"
+    wait_for_app_exit "restart restore post-clear confirmed quit"
+
+    info "relaunching alan smoke app after restored transcript clear"
+    if [[ "$LAUNCH_MODE" == "direct" ]]; then
+        launch_smoke_app_direct
+    else
+        launch_smoke_app_open
+    fi
+    append_manifest "clear_relaunch_pid=$APP_PID"
+    wait_for_window_capture
+    wait_for_file "$STATE_PATH" "shell control-plane state after clear relaunch"
+    sleep 1
+
+    state_result=$(control_state)
+    require_control_applied "$state_result" "restart restore state after clear relaunch"
+    if grep -F "$before_token" "$state_result" >/dev/null 2>&1; then
+        fail "cleared restored transcript token returned after relaunch"
+    fi
+    append_manifest "restart_restore_clear_relaunch_absent=$before_token"
+    capture_step restart-after-clear-relaunch
+
+    restored_pane_id=$(json_get "$state_result" focused_pane_id)
+    [[ -n "$restored_pane_id" ]] || fail "restart restore clear relaunch did not expose a focused pane"
 
     rm -f "$pwd_file"
     after_json=$(json_escape_fragment "$after_token")

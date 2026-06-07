@@ -166,6 +166,9 @@ private enum ShellRuntimeMetadataTests {
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript()
+        verifiesRestoredTranscriptPanelPresentationMatchesTerminalLayout()
+        verifiesRestoredTranscriptDismissalClearsStateCacheAndManifest()
+        verifiesTerminalClearActionDismissesRestoredTranscriptAndForwardsClear()
         verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest()
         verifiesExplicitSpaceDeletionRemovesManifestSpace()
         verifiesPinSnapshotIsExplicitAndDoesNotTrackTransientChanges()
@@ -7460,6 +7463,145 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesRestoredTranscriptPanelPresentationMatchesTerminalLayout() {
+        let snapshot = restoredTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/repo/app",
+            title: "npm run dev",
+            lines: (0..<20).map { "row-\($0)" }
+        )
+        let presentation = RestoredTerminalTranscriptPanelPresentation(snapshot: snapshot)
+
+        expect(
+            presentation.fontSize >= 13,
+            "restored transcript panel must use a terminal-sized monospace font"
+        )
+        expect(
+            presentation.leadingInset == 0,
+            "restored transcript text must share the live terminal text column"
+        )
+        expect(
+            presentation.visibleRows == RestoredTerminalTranscriptPanelPresentation.maxVisibleRows,
+            "restored transcript panel must bound visible history without shrinking text width"
+        )
+        expect(
+            presentation.height == CGFloat(presentation.visibleRows)
+                * RestoredTerminalTranscriptPanelPresentation.rowHeight
+                + RestoredTerminalTranscriptPanelPresentation.verticalInset * 2,
+            "restored transcript panel height must derive from terminal-like row metrics"
+        )
+    }
+
+    private static func verifiesRestoredTranscriptDismissalClearsStateCacheAndManifest() {
+        let windowID = "manifest_clear_transcript_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
+        let transcript = restoredTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/repo/app",
+            title: "npm run dev",
+            lines: ["server ready", "listening on 3000"]
+        )
+        let manifest = contentManifest(
+            windowID: windowID,
+            cwd: "/repo/app",
+            transcriptSnapshot: transcript
+        )
+        let controller = makeController(
+            windowID: windowID,
+            shellState: ShellWorkspaceMaterializer.materialize(
+                manifest: manifest,
+                defaultWorkingDirectory: "/fallback",
+                now: Date(timeIntervalSince1970: 102)
+            ),
+            terminalRuntimeRegistry: registry,
+            workspaceManifestStore: store,
+            workspaceManifest: manifest
+        )
+
+        guard let pane = controller.pane(paneID: "pane_1") else {
+            fail("test setup must create restored pane")
+        }
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+        expect(
+            handle.seededTranscriptSnapshot?.transcriptLines == ["server ready", "listening on 3000"],
+            "test setup must seed restored transcript into the runtime"
+        )
+
+        expect(
+            controller.clearRestoredTranscriptSnapshot(forTerminalContentID: "content_pane_1"),
+            "clear restored transcript must report that it removed a transcript"
+        )
+        expect(
+            controller.restoredTranscriptSnapshot(for: pane) == nil,
+            "cleared restored transcript must disappear from shell state"
+        )
+        expect(
+            handle.seededTranscriptSnapshot == nil,
+            "cleared restored transcript must disappear from the runtime cache and mounted handle"
+        )
+
+        guard let savedManifest = decodeManifest(at: manifestURL),
+              let tab = savedManifest.spaces.flatMap(\.tabs).first
+        else {
+            fail("clearing restored transcript must persist the workspace manifest")
+        }
+        expect(
+            terminalPayload(in: tab.liveSnapshot, paneSlotID: "pane_1")?.transcriptSnapshot == nil,
+            "cleared restored transcript must not be written back to future live manifest snapshots"
+        )
+    }
+
+    private static func verifiesTerminalClearActionDismissesRestoredTranscriptAndForwardsClear() {
+        let windowID = "manifest_clear_action_\(UUID().uuidString)"
+        let service = FakeAlanTerminalRuntimeService()
+        let registry = TerminalRuntimeRegistry(runtimeService: service)
+        let transcript = restoredTranscriptSnapshot(
+            contentID: "content_pane_1",
+            cwd: "/repo/app",
+            title: "npm run dev",
+            lines: ["old output"]
+        )
+        let manifest = contentManifest(
+            windowID: windowID,
+            cwd: "/repo/app",
+            transcriptSnapshot: transcript
+        )
+        let controller = makeController(
+            windowID: windowID,
+            shellState: ShellWorkspaceMaterializer.materialize(
+                manifest: manifest,
+                defaultWorkingDirectory: "/fallback",
+                now: Date(timeIntervalSince1970: 103)
+            ),
+            terminalRuntimeRegistry: registry,
+            workspaceManifest: manifest
+        )
+        guard let pane = controller.pane(paneID: "pane_1") else {
+            fail("test setup must create clear-action pane")
+        }
+        let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
+
+        let result = controller.performShellAction(.terminalClear)
+
+        expect(result == .executed, "terminal clear action must execute for terminal panes")
+        expect(
+            controller.restoredTranscriptSnapshot(for: pane) == nil,
+            "terminal clear action must dismiss the restored transcript panel"
+        )
+        expect(
+            handle.seededTranscriptSnapshot == nil,
+            "terminal clear action must clear the restored transcript runtime seed"
+        )
+        expect(
+            handle.deliveredText.last == "\u{0c}",
+            "terminal clear action must forward a clear control character to the live terminal"
+        )
+    }
+
     private static func verifiesClosingLastTabLeavesSelectedSpaceEmptyAndPersistsManifest() {
         let windowID = "manifest_close_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
@@ -10018,6 +10160,72 @@ private enum ShellRuntimeMetadataTests {
     private static func manifestURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)-workspace.json")
+    }
+
+    private static func restoredTranscriptSnapshot(
+        contentID: String,
+        cwd: String,
+        title: String,
+        lines: [String]
+    ) -> TerminalTranscriptSnapshot {
+        TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: cwd,
+            title: title,
+            dimensions: TerminalTranscriptDimensions(columns: 120, rows: 30),
+            viewport: TerminalTranscriptViewport(firstVisibleRow: 0, cursorRow: max(0, lines.count - 1)),
+            transcriptLines: lines,
+            processSummary: TerminalTranscriptProcessSummary(
+                processState: "inactive",
+                program: "zsh",
+                argvPreview: nil,
+                lastCommandExitCode: 0
+            ),
+            capturedAt: Date(timeIntervalSince1970: 101),
+            alternateScreen: false
+        )
+    }
+
+    private static func contentManifest(
+        windowID: String,
+        cwd: String,
+        transcriptSnapshot: TerminalTranscriptSnapshot?
+    ) -> ShellContentWorkspaceManifest {
+        ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: windowID,
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_main",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: Date(timeIntervalSince1970: 100),
+                    updatedAt: Date(timeIntervalSince1970: 100),
+                    tabs: [
+                        ShellContentWorkspaceTabRecord(
+                            tabID: "tab_main",
+                            title: "Shell",
+                            kind: .terminal,
+                            createdAt: Date(timeIntervalSince1970: 100),
+                            lastActivatedAt: Date(timeIntervalSince1970: 100),
+                            lastActivityAt: Date(timeIntervalSince1970: 100),
+                            isPinned: false,
+                            pinSnapshot: nil,
+                            liveSnapshot: contentRestoreSnapshot(
+                                paneSlotID: "pane_1",
+                                contentID: "content_pane_1",
+                                cwd: cwd,
+                                transcriptSnapshot: transcriptSnapshot
+                            ),
+                            activeTask: .inactive
+                        )
+                    ]
+                )
+            ]
+        )
     }
 
     private static func restoreSnapshot(

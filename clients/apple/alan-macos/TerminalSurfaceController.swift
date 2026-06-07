@@ -38,6 +38,45 @@ final class AlanTerminalModeTracker {
     }
 }
 
+enum AlanTerminalClearIntent {
+    static func isControlL(_ input: AlanTerminalKeyInput) -> Bool {
+        guard input.phase == .down, !input.isRepeat else { return false }
+        guard input.modifiers == [.control] else { return false }
+        guard let characters = input.characters, !characters.isEmpty else { return false }
+        return characters == "\u{0c}" || characters.lowercased() == "l"
+    }
+}
+
+struct AlanTerminalClearCommandTracker {
+    private var currentLine = ""
+
+    mutating func observeCommittedText(_ text: String?) -> Bool {
+        guard let text, !text.isEmpty else { return false }
+
+        var detected = false
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x0A, 0x0D:
+                detected = detected || currentLine.trimmingCharacters(in: .whitespaces) == "clear"
+                currentLine = ""
+            case 0x08, 0x7F:
+                if !currentLine.isEmpty {
+                    currentLine.removeLast()
+                }
+            case 0x00..<0x20:
+                currentLine = ""
+            default:
+                currentLine.append(String(scalar))
+            }
+        }
+        return detected
+    }
+
+    mutating func reset() {
+        currentLine = ""
+    }
+}
+
 struct AlanTerminalScrollbackMetrics: Equatable {
     let totalRows: Int
     let visibleRows: Int
