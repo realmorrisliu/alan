@@ -96,10 +96,22 @@ impl<P: EmacsProbe> EmacsManager<P> {
             .context("Cannot run emacs. Install Emacs before running `alan emacs install`.")?;
         self.ensure_bare_emacs_default_matches(&selection)?;
 
-        self.materialize_distribution()?;
-        self.link_selected_config_entry(&selection)?;
-        self.remove_legacy_source_links_except(&selection)?;
-        self.verify_bare_startup_loads(&selection.candidate.path)?;
+        let mut rollback = InstallRollback::begin(&self.paths, &selection, &candidates)?;
+        let install_result = (|| -> Result<()> {
+            self.materialize_distribution()?;
+            self.link_selected_config_entry(&selection)?;
+            self.remove_legacy_source_links_except(&selection)?;
+            self.verify_bare_startup_loads(&selection.candidate.path)
+        })();
+        if let Err(err) = install_result {
+            if let Err(rollback_err) = rollback.rollback(&self.paths) {
+                return Err(err.context(format!(
+                    "Alan Emacs install rollback failed: {rollback_err}"
+                )));
+            }
+            return Err(err);
+        }
+        rollback.commit()?;
 
         println!("emacs:  {version}");
         println!("install: {}", self.paths.current_dir.display());
@@ -809,6 +821,129 @@ impl ConfigEntryState {
 struct ConfigSelection {
     candidate: ConfigCandidate,
     reason: SelectionReason,
+}
+
+struct InstallRollback {
+    current_backup: Option<PathBuf>,
+    config_entries: Vec<ConfigEntryBackup>,
+}
+
+impl InstallRollback {
+    fn begin(
+        paths: &EmacsPaths,
+        selection: &ConfigSelection,
+        candidates: &[ConfigCandidate],
+    ) -> Result<Self> {
+        let current_backup = backup_current_install_dir(paths)?;
+        let mut config_entries = vec![ConfigEntryBackup::from_candidate(&selection.candidate)?];
+
+        for candidate in candidates {
+            if path_eq(&candidate.path, &selection.candidate.path) {
+                continue;
+            }
+            if matches!(candidate.state, ConfigEntryState::LegacySourceLink { .. }) {
+                config_entries.push(ConfigEntryBackup::from_candidate(candidate)?);
+            }
+        }
+
+        Ok(Self {
+            current_backup,
+            config_entries,
+        })
+    }
+
+    fn rollback(&mut self, paths: &EmacsPaths) -> Result<()> {
+        remove_path_if_exists(&paths.current_dir)?;
+        if let Some(backup) = self.current_backup.take() {
+            fs::rename(&backup, &paths.current_dir).with_context(|| {
+                format!(
+                    "Cannot restore {} from {}",
+                    paths.current_dir.display(),
+                    backup.display()
+                )
+            })?;
+        }
+
+        for entry in &self.config_entries {
+            entry.restore()?;
+        }
+        Ok(())
+    }
+
+    fn commit(mut self) -> Result<()> {
+        if let Some(backup) = self.current_backup.take() {
+            remove_path_if_exists(&backup)?;
+        }
+        Ok(())
+    }
+}
+
+fn backup_current_install_dir(paths: &EmacsPaths) -> Result<Option<PathBuf>> {
+    match fs::symlink_metadata(&paths.current_dir) {
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("Cannot inspect {}", paths.current_dir.display()));
+        }
+    }
+
+    fs::create_dir_all(&paths.managed_root)
+        .with_context(|| format!("Cannot create {}", paths.managed_root.display()))?;
+    let backup = paths
+        .managed_root
+        .join(format!("current.rollback-{}", startup_probe_nonce()));
+    remove_path_if_exists(&backup)?;
+    fs::rename(&paths.current_dir, &backup).with_context(|| {
+        format!(
+            "Cannot back up {} to {}",
+            paths.current_dir.display(),
+            backup.display()
+        )
+    })?;
+    Ok(Some(backup))
+}
+
+struct ConfigEntryBackup {
+    path: PathBuf,
+    state: RestorableConfigEntry,
+}
+
+impl ConfigEntryBackup {
+    fn from_candidate(candidate: &ConfigCandidate) -> Result<Self> {
+        let state = match &candidate.state {
+            ConfigEntryState::Missing => RestorableConfigEntry::Missing,
+            ConfigEntryState::EmptyDirectory => RestorableConfigEntry::EmptyDirectory,
+            ConfigEntryState::ManagedLink { target }
+            | ConfigEntryState::LegacySourceLink { target } => RestorableConfigEntry::Symlink {
+                target: target.clone(),
+            },
+            _ => bail!(
+                "Cannot create rollback snapshot for non-Alan-owned Emacs config: {}",
+                candidate.path.display()
+            ),
+        };
+        Ok(Self {
+            path: candidate.path.clone(),
+            state,
+        })
+    }
+
+    fn restore(&self) -> Result<()> {
+        remove_path_if_exists(&self.path)?;
+        match &self.state {
+            RestorableConfigEntry::Missing => Ok(()),
+            RestorableConfigEntry::EmptyDirectory => fs::create_dir_all(&self.path)
+                .with_context(|| format!("Cannot restore {}", self.path.display())),
+            RestorableConfigEntry::Symlink { target } => symlink_dir(target, &self.path),
+        }
+    }
+}
+
+enum RestorableConfigEntry {
+    Missing,
+    EmptyDirectory,
+    Symlink { target: PathBuf },
 }
 
 #[derive(Clone, Debug)]
@@ -1631,6 +1766,72 @@ mod tests {
         let target = fs::read_link(&default_dir).unwrap();
         assert!(path_eq(&target, &foreign_target));
         assert!(foreign_target.join("init.el").is_file());
+    }
+
+    #[test]
+    fn install_rolls_back_legacy_source_link_when_startup_verification_fails() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let legacy_source = make_source(&temp.path().join("legacy-checkout"));
+        let current_source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        symlink_dir(&legacy_source, &default_dir).unwrap();
+        let mut manager = make_manager(&home, current_source, default_dir.clone());
+        manager.probe.load_check.loaded = false;
+
+        let err = manager.install().unwrap_err();
+
+        assert!(err.to_string().contains("Alan Emacs load marker"));
+        let target = fs::read_link(&default_dir).unwrap();
+        assert!(path_eq(&target, &legacy_source));
+        assert!(!manager.paths.current_dir.exists());
+    }
+
+    #[test]
+    fn install_rolls_back_existing_managed_copy_when_startup_verification_fails() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let source = make_source(temp.path());
+        let default_dir = home.join(".emacs.d");
+        let mut manager = make_manager(&home, source, default_dir.clone());
+        fs::create_dir_all(&manager.paths.current_dir).unwrap();
+        fs::write(manager.paths.current_dir.join("sentinel"), "old current").unwrap();
+        symlink_dir(&manager.paths.current_dir, &default_dir).unwrap();
+        manager.probe.load_check.loaded = false;
+
+        let err = manager.install().unwrap_err();
+
+        assert!(err.to_string().contains("Alan Emacs load marker"));
+        let target = fs::read_link(&default_dir).unwrap();
+        assert!(path_eq(&target, &manager.paths.current_dir));
+        assert_eq!(
+            fs::read_to_string(manager.paths.current_dir.join("sentinel")).unwrap(),
+            "old current"
+        );
+    }
+
+    #[test]
+    fn install_rolls_back_removed_secondary_legacy_link_when_startup_verification_fails() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(home.join(".config")).unwrap();
+        let legacy_source = make_source(&temp.path().join("legacy-checkout"));
+        let current_source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        let secondary_legacy = home.join(".config/emacs");
+        symlink_dir(&legacy_source, &secondary_legacy).unwrap();
+        let mut manager = make_manager(&home, current_source, default_dir.clone());
+        manager.probe.load_check.loaded = false;
+
+        let err = manager.install().unwrap_err();
+
+        assert!(err.to_string().contains("Alan Emacs load marker"));
+        assert!(!default_dir.exists());
+        let target = fs::read_link(&secondary_legacy).unwrap();
+        assert!(path_eq(&target, &legacy_source));
+        assert!(!manager.paths.current_dir.exists());
     }
 
     #[test]

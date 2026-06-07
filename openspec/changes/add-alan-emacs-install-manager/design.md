@@ -147,6 +147,13 @@ extra arguments. That would solve some editor-call paths, but it would not make
 plain `emacs` behave correctly and would create inconsistent behavior between
 manual and CLI-launched editing.
 
+Because bare-startup verification happens after Alan has linked the selected
+config entry, install must treat materialization, config linking, legacy-link
+cleanup, and verification as one rollbackable operation. If verification fails,
+Alan restores the selected config entry and the previous managed `current` copy
+when one existed, so a failed install does not leave plain `emacs` pointed at a
+bad Alan-managed copy.
+
 ### Alan terminal panes set simple editor variables
 
 Alan for macOS terminal boot profiles should include:

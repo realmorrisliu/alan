@@ -96,6 +96,13 @@ shadowing, or `--init-directory` arguments.
 - **THEN** it verifies through ordinary Emacs startup discovery that bare
   `emacs` loads Alan Emacs from the installed distribution
 
+#### Scenario: Failed startup verification rolls back install state
+- **WHEN** `alan emacs install` replaces Alan-owned install state
+- **AND** ordinary Emacs startup verification fails
+- **THEN** it restores the previous selected config entry state
+- **AND** it restores the previous Alan-managed installed copy when one existed
+- **AND** it does not leave bare `emacs` pointed at the failed installed copy
+
 #### Scenario: Doctor checks daemon without controlling it
 - **WHEN** `alan emacs doctor` detects an Emacs daemon or `emacsclient` endpoint
 - **THEN** it may report whether the daemon appears to load Alan Emacs
