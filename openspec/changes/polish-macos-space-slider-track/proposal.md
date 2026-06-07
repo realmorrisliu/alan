@@ -14,6 +14,8 @@ is converging on.
   pill surfaces.
 - Support a Space icon in every Space tab and use `icon + title` when width
   allows.
+- Distribute Space targets across the full rounded track until the minimum
+  target width is reached, instead of retaining a fixed maximum target width.
 - Replace hover-driven width, scale, and opacity changes with stable geometry;
   hover may only apply subtle foreground or tint treatment.
 - Remove the nine-Space visual cap. All Spaces participate in the slider.

@@ -106,6 +106,12 @@ enum ShellPalette {
         dark: (0.215, 0.235, 0.282),
         darkAlpha: 0.72
     )
+    static let sidebarSpaceSliderTrack = Color.shellAdaptive(
+        light: (0.770, 0.775, 0.805),
+        lightAlpha: 0.54,
+        dark: (0.185, 0.205, 0.245),
+        darkAlpha: 0.74
+    )
     static let commandGlassTint = Color.shellAdaptive(
         light: (0.720, 0.730, 0.790),
         lightAlpha: 1.0,

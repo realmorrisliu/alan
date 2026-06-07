@@ -1201,6 +1201,35 @@ struct ShellContentTab: Identifiable, Codable, Equatable {
     }
 }
 
+enum ShellSpacePresentationIcon {
+    static let defaultSystemName = "square.grid.2x2"
+
+    static func resolvedSystemName(_ systemName: String?) -> String {
+        guard let systemName,
+              isSupportedSystemName(systemName)
+        else {
+            return defaultSystemName
+        }
+        return systemName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func isSupportedSystemName(_ systemName: String?) -> Bool {
+        guard let systemName else { return false }
+        let trimmed = systemName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+        else {
+            return false
+        }
+        return trimmed.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.alphanumerics.contains(scalar)
+                || scalar == "."
+                || scalar == "-"
+                || scalar == "_"
+        }
+    }
+}
+
 struct ShellSpace: Identifiable, Codable, Equatable {
     let spaceID: String
     let title: String
@@ -1208,8 +1237,13 @@ struct ShellSpace: Identifiable, Codable, Equatable {
     let tabs: [ShellTab]
     let selectedTabID: String?
     let terminalProfileID: String?
+    let presentationIconSystemName: String?
 
     var id: String { spaceID }
+
+    var resolvedPresentationIconSystemName: String {
+        ShellSpacePresentationIcon.resolvedSystemName(presentationIconSystemName)
+    }
 
     private enum CodingKeys: String, CodingKey {
         case spaceID = "space_id"
@@ -1218,6 +1252,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         case tabs
         case selectedTabID = "selected_tab_id"
         case terminalProfileID = "terminal_profile_id"
+        case presentationIconSystemName = "presentation_icon"
     }
 
     init(
@@ -1226,7 +1261,8 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         attention: ShellAttentionState,
         tabs: [ShellTab],
         selectedTabID: String? = nil,
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
@@ -1234,6 +1270,7 @@ struct ShellSpace: Identifiable, Codable, Equatable {
         self.tabs = tabs
         self.selectedTabID = selectedTabID
         self.terminalProfileID = terminalProfileID
+        self.presentationIconSystemName = presentationIconSystemName
     }
 
     init(from decoder: Decoder) throws {
@@ -1244,7 +1281,11 @@ struct ShellSpace: Identifiable, Codable, Equatable {
             attention: try container.decode(ShellAttentionState.self, forKey: .attention),
             tabs: try container.decode([ShellTab].self, forKey: .tabs),
             selectedTabID: try container.decodeIfPresent(String.self, forKey: .selectedTabID),
-            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID),
+            presentationIconSystemName: try container.decodeIfPresent(
+                String.self,
+                forKey: .presentationIconSystemName
+            )
         )
     }
 }
@@ -1256,6 +1297,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
     let tabs: [ShellContentTab]
     let selectedTabID: String?
     let terminalProfileID: String?
+    let presentationIconSystemName: String?
 
     var id: String { spaceID }
 
@@ -1266,6 +1308,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         case tabs
         case selectedTabID = "selected_tab_id"
         case terminalProfileID = "terminal_profile_id"
+        case presentationIconSystemName = "presentation_icon"
     }
 
     init(
@@ -1274,7 +1317,8 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         attention: ShellAttentionState,
         tabs: [ShellContentTab],
         selectedTabID: String? = nil,
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
@@ -1282,6 +1326,7 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
         self.tabs = tabs
         self.selectedTabID = selectedTabID
         self.terminalProfileID = terminalProfileID
+        self.presentationIconSystemName = presentationIconSystemName
     }
 
     init(from decoder: Decoder) throws {
@@ -1292,7 +1337,11 @@ struct ShellContentSpace: Identifiable, Codable, Equatable {
             attention: try container.decode(ShellAttentionState.self, forKey: .attention),
             tabs: try container.decode([ShellContentTab].self, forKey: .tabs),
             selectedTabID: try container.decodeIfPresent(String.self, forKey: .selectedTabID),
-            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID),
+            presentationIconSystemName: try container.decodeIfPresent(
+                String.self,
+                forKey: .presentationIconSystemName
+            )
         )
     }
 }
@@ -1406,7 +1455,8 @@ extension ShellSpace {
             attention: attention,
             tabs: tabs,
             selectedTabID: resolvedPreferred ?? resolvedExisting ?? tabs.first?.tabID,
-            terminalProfileID: terminalProfileID
+            terminalProfileID: terminalProfileID,
+            presentationIconSystemName: presentationIconSystemName
         )
     }
 
@@ -1665,7 +1715,8 @@ extension ShellContentStateSnapshot {
                     )
                 },
                 selectedTabID: space.resolvedSelectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -1778,7 +1829,8 @@ extension ShellContentStateSnapshot {
                 ),
                 tabs: tabs,
                 selectedTabID: space.resolvedSelectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 

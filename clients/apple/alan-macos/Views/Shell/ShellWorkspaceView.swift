@@ -37,11 +37,7 @@ struct ShellSpaceKeyboardShortcuts: View {
             .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectNext))
 
             ForEach(
-                Array(
-                    host.spaces
-                        .prefix(ShellSidebarSpaceSliderLayout.maximumVisibleSpaces)
-                        .enumerated()
-                ),
+                Array(host.spaces.enumerated()),
                 id: \.element.spaceID
             ) { index, _ in
                 let target = ShellActionTarget.spaceIndex(index)

@@ -90,7 +90,7 @@ struct ShellSidebarView: View {
             onForwardVerticalWheel: tabListWheelRouter.forward
         )
         .frame(maxWidth: .infinity)
-        .frame(height: 30)
+        .frame(height: ShellSidebarSpaceSliderLayout.trackHeight + 4)
     }
 
     private var spaceContentPager: some View {
@@ -1011,6 +1011,14 @@ private struct ShellSidebarScrollBoundary: View {
     }
 }
 
+private struct ShellSidebarSpaceSliderScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 private struct ShellSidebarSpaceSlider: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
@@ -1023,39 +1031,95 @@ private struct ShellSidebarSpaceSlider: View {
     @State private var scrubState: ShellSidebarSpaceSliderScrubState?
     @State private var wheelIntentState = ShellSidebarSpaceSliderWheelIntentState()
     @State private var wheelCommitToken = 0
+    @State private var trackScrollOffsetX: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
             let spaces = visibleSpaces
             let layout = sliderLayout(availableWidth: proxy.size.width)
+            let trackWidth = max(proxy.size.width - (ShellSidebarMetrics.edgeInset * 2), 0)
 
-            HStack(spacing: ShellSidebarSpaceSliderLayout.spacing) {
-                ForEach(Array(spaces.enumerated()), id: \.element.spaceID) { index, space in
-                    if let item = layout.items.first(where: { $0.index == index }) {
-                        spaceControl(for: space, item: item)
+            ScrollViewReader { scrollProxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(
+                        cornerRadius: ShellSidebarSpaceSliderLayout.trackHeight * 0.5,
+                        style: .continuous
+                    )
+                    .fill(ShellPalette.sidebarSpaceSliderTrack)
+                    .overlay {
+                        RoundedRectangle(
+                            cornerRadius: ShellSidebarSpaceSliderLayout.trackHeight * 0.5,
+                            style: .continuous
+                        )
+                        .stroke(ShellPalette.line.opacity(0.22), lineWidth: 0.6)
                     }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: ShellSidebarSpaceSliderLayout.spacing) {
+                            ForEach(Array(spaces.enumerated()), id: \.element.spaceID) { index, space in
+                                if let item = layout.items.first(where: { $0.index == index }) {
+                                    spaceControl(for: space, item: item)
+                                        .id(space.spaceID)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                        .frame(
+                            width: max(layout.contentWidth + 4, trackWidth),
+                            height: ShellSidebarSpaceSliderLayout.trackHeight,
+                            alignment: .leading
+                        )
+                        .background {
+                            GeometryReader { contentProxy in
+                                Color.clear.preference(
+                                    key: ShellSidebarSpaceSliderScrollOffsetKey.self,
+                                    value: max(
+                                        0,
+                                        -contentProxy.frame(in: .named("spaceSliderTrack")).minX
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    .frame(width: trackWidth, height: ShellSidebarSpaceSliderLayout.trackHeight)
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: ShellSidebarSpaceSliderLayout.trackHeight * 0.5,
+                            style: .continuous
+                        )
+                    )
+                }
+                .frame(width: trackWidth, height: ShellSidebarSpaceSliderLayout.trackHeight)
+                .coordinateSpace(name: "spaceSliderTrack")
+                .padding(.horizontal, ShellSidebarMetrics.edgeInset)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+                .simultaneousGesture(dragScrubGesture(layout: layout))
+                .background {
+                    ShellSidebarSpaceSliderWheelMonitor(
+                        onScroll: { event, deltaX, deltaY in
+                            handleWheel(
+                                event: event,
+                                deltaX: deltaX,
+                                deltaY: deltaY,
+                                availableWidth: proxy.size.width
+                            )
+                        },
+                        onReset: resetWheelIntent,
+                        onContextMenuIntent: cancelScrubPreview
+                    )
+                }
+                .onPreferenceChange(ShellSidebarSpaceSliderScrollOffsetKey.self) { offset in
+                    trackScrollOffsetX = offset
+                }
+                .onChange(of: autoScrollSpaceID) { _, spaceID in
+                    scrollSpaceIntoView(spaceID, scrollProxy: scrollProxy)
+                }
+                .onAppear {
+                    scrollSpaceIntoView(autoScrollSpaceID, scrollProxy: scrollProxy, animated: false)
                 }
             }
-            .padding(.horizontal, ShellSidebarMetrics.edgeInset)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .offset(x: reduceMotion ? 0 : scrubState?.edgeResistanceOffset ?? 0)
-            .contentShape(Rectangle())
-            .simultaneousGesture(dragScrubGesture(layout: layout))
-            .background {
-                ShellSidebarSpaceSliderWheelMonitor(
-                    onScroll: { event, deltaX, deltaY in
-                        handleWheel(
-                            event: event,
-                            deltaX: deltaX,
-                            deltaY: deltaY,
-                            availableWidth: proxy.size.width
-                        )
-                    },
-                    onReset: resetWheelIntent,
-                    onContextMenuIntent: cancelScrubPreview
-                )
-            }
             .focusable()
             .focused($isKeyboardFocused)
             .focusEffectDisabled()
@@ -1082,7 +1146,7 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private var visibleSpaces: [ShellSpace] {
-        Array(host.spaces.prefix(ShellSidebarSpaceSliderLayout.maximumVisibleSpaces))
+        host.spaces
     }
 
     private func sliderLayout(availableWidth: CGFloat) -> ShellSidebarSpaceSliderLayout {
@@ -1113,27 +1177,18 @@ private struct ShellSidebarSpaceSlider: View {
             cancelScrubPreview()
             host.select(spaceID: visibleSpaces[targetIndex].spaceID)
         } label: {
-            switch item.mode {
-            case .fullTitle, .shortTitle:
-                ShellSidebarSpaceTitlePill(
-                    title: space.title,
-                    mode: item.mode,
-                    attention: strongestAttention(for: space),
-                    isSelected: item.isSelected,
-                    isFocused: item.isFocused
-                )
-            case .indicator:
-                ShellSidebarSpaceDot(
-                    attention: strongestAttention(for: space),
-                    isHovered: hoveredSpaceID == space.spaceID,
-                    isPreviewed: item.isFocused
-                )
-            }
+            ShellSidebarSpaceTrackTarget(
+                title: space.title,
+                systemImage: space.resolvedPresentationIconSystemName,
+                mode: item.mode,
+                attention: strongestAttention(for: space),
+                isSelected: item.isSelected,
+                isFocused: item.isFocused,
+                isHovered: hoveredSpaceID == space.spaceID
+            )
         }
         .buttonStyle(.plain)
-        .frame(width: item.width, height: 22)
-        .scaleEffect(item.visualScale)
-        .opacity(Double(item.opacity))
+        .frame(width: item.width, height: ShellSidebarSpaceSliderLayout.itemHeight)
         .contentShape(Rectangle())
         .contextMenu {
             spaceContextMenu(for: space)
@@ -1144,7 +1199,6 @@ private struct ShellSidebarSpaceSlider: View {
         .onHover { isHovering in
             hoveredSpaceID = isHovering ? space.spaceID : nil
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: item)
     }
 
     @ViewBuilder
@@ -1190,6 +1244,10 @@ private struct ShellSidebarSpaceSlider: View {
         return previewedSpaceID
     }
 
+    private var autoScrollSpaceID: String? {
+        scrubFocusSpaceID ?? resolvedDisplaySpaceID
+    }
+
     private var visibleSpaceIDs: [String] {
         visibleSpaces.map(\.spaceID)
     }
@@ -1214,7 +1272,7 @@ private struct ShellSidebarSpaceSlider: View {
     ) {
         guard var nextState = scrubStateForUpdating(source: .drag) else { return }
         nextState.updateDrag(
-            locationX: value.location.x - ShellSidebarMetrics.edgeInset,
+            locationX: value.location.x - ShellSidebarMetrics.edgeInset + trackScrollOffsetX,
             translationX: value.translation.width,
             layout: layout
         )
@@ -1304,6 +1362,22 @@ private struct ShellSidebarSpaceSlider: View {
             }
             commitScrubSelection()
             resetWheelIntent()
+        }
+    }
+
+    private func scrollSpaceIntoView(
+        _ spaceID: String?,
+        scrollProxy: ScrollViewProxy,
+        animated: Bool = true
+    ) {
+        guard let spaceID else { return }
+        let action = {
+            scrollProxy.scrollTo(spaceID, anchor: .center)
+        }
+        if animated, !reduceMotion {
+            withAnimation(.easeOut(duration: 0.14), action)
+        } else {
+            action()
         }
     }
 
@@ -1400,126 +1474,127 @@ private struct ShellSidebarSpaceSlider: View {
     }
 }
 
-private struct ShellSidebarSpaceTitlePill: View {
+private struct ShellSidebarSpaceTrackTarget: View {
     let title: String
+    let systemImage: String
     let mode: ShellSidebarSpaceSliderLayout.DisplayMode
     let attention: ShellAttentionState
     let isSelected: Bool
     let isFocused: Bool
+    let isHovered: Bool
 
     var body: some View {
-        HStack(spacing: 5) {
-            if attention != .idle {
-                Circle()
-                    .fill(ShellPalette.attention.opacity(0.82))
-                    .frame(width: 4.5, height: 4.5)
-            }
+        HStack(spacing: textSpacing) {
+            Image(systemName: systemImage)
+                .font(.system(size: iconSize, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(iconForeground)
+                .frame(width: 15, height: 15)
 
-            Text(title)
-                .font(font)
-                .foregroundStyle(foreground)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if mode != .iconOnly {
+                Text(title)
+                    .font(font)
+                    .foregroundStyle(textForeground)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.horizontal, horizontalPadding)
-        .frame(maxWidth: .infinity, minHeight: 22, alignment: .center)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: ShellSidebarSpaceSliderLayout.itemHeight,
+            alignment: .center
+        )
         .background {
-            if showsBackground {
-                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                    .fill(background)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                            .stroke(ShellPalette.line.opacity(isSelected ? 0.18 : 0.12), lineWidth: 0.6)
-                    }
+            if isSelected {
+                ShellLiquidGlassSurface(
+                    shape: Capsule(),
+                    tint: ShellPalette.sidebarSelection,
+                    tintOpacity: 0.30,
+                    strokeOpacity: 0.24,
+                    usesSystemGlassInLightMode: true
+                )
+            } else if isFocused || isHovered {
+                Capsule()
+                    .strokeBorder(focusStroke, lineWidth: 0.7)
             }
         }
-        .shellShadow(isSelected ? ShellShadows.navigationSelection : ShellShadows.none)
     }
 
     private var font: Font {
         switch mode {
         case .fullTitle:
-            return .system(size: 12.2, weight: isSelected ? .semibold : .medium)
-        case .shortTitle:
-            return .system(size: 11.4, weight: isFocused ? .semibold : .medium)
-        case .indicator:
+            return .system(size: 12, weight: isSelected ? .semibold : .medium)
+        case .truncatedTitle:
+            return .system(size: 11.6, weight: isSelected || isFocused ? .semibold : .medium)
+        case .iconOnly:
             return .system(size: 11.4, weight: .medium)
         }
     }
 
     private var horizontalPadding: CGFloat {
-        mode == .fullTitle ? 8 : 6
+        switch mode {
+        case .fullTitle:
+            return 8
+        case .truncatedTitle:
+            return 6
+        case .iconOnly:
+            return 0
+        }
     }
 
-    private var showsBackground: Bool {
-        isSelected || isFocused || mode == .fullTitle
+    private var textSpacing: CGFloat {
+        switch mode {
+        case .fullTitle:
+            return 5
+        case .truncatedTitle:
+            return 4
+        case .iconOnly:
+            return 0
+        }
     }
 
-    private var background: Color {
+    private var iconSize: CGFloat {
+        switch mode {
+        case .fullTitle, .truncatedTitle:
+            return 11.4
+        case .iconOnly:
+            return 12.4
+        }
+    }
+
+    private var textForeground: Color {
         if isSelected {
-            return ShellPalette.sidebarSelection
+            return ShellPalette.sidebarInk.opacity(0.92)
         }
-        if isFocused {
-            return ShellPalette.sidebarHover
-        }
-        return ShellPalette.materialTopWash.opacity(0.7)
-    }
-
-    private var foreground: Color {
-        if isSelected || isFocused {
-            return ShellPalette.sidebarInk.opacity(0.88)
+        if isFocused || isHovered {
+            return ShellPalette.sidebarInk.opacity(0.82)
         }
         return ShellPalette.sidebarMutedInk.opacity(0.72)
     }
-}
 
-private struct ShellSidebarSpaceDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let attention: ShellAttentionState
-    let isHovered: Bool
-    let isPreviewed: Bool
-
-    var body: some View {
-        ZStack {
-            if isHovered || isPreviewed {
-                RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                    .fill(ShellPalette.sidebarHover)
-            }
-
-            Circle()
-                .fill(dotFill)
-                .frame(width: dotSize, height: dotSize)
-                .overlay {
-                    Circle()
-                        .stroke(dotStroke, lineWidth: 0.6)
-                }
+    private var iconForeground: Color {
+        if attention != .idle {
+            return ShellPalette.attention.opacity(isSelected ? 0.94 : 0.86)
         }
-        .frame(width: 18, height: 22)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isPreviewed)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: attention)
-    }
-
-    private var dotSize: CGFloat {
-        isHovered || isPreviewed || attention != .idle ? 6.5 : 5.2
-    }
-
-    private var dotFill: Color {
-        if isPreviewed {
+        if isSelected {
+            return ShellPalette.sidebarInk.opacity(0.92)
+        }
+        if isFocused {
             return ShellPalette.accent.opacity(0.82)
         }
-        if attention != .idle {
-            return ShellPalette.attention.opacity(0.82)
+        if isHovered {
+            return ShellPalette.sidebarInk.opacity(0.78)
         }
-        return ShellPalette.sidebarMutedInk.opacity(isHovered ? 0.72 : 0.46)
+        return ShellPalette.sidebarMutedInk.opacity(0.62)
     }
 
-    private var dotStroke: Color {
-        if isPreviewed {
+    private var focusStroke: Color {
+        if isFocused {
             return ShellPalette.accent.opacity(0.34)
         }
-        return ShellPalette.line.opacity(isHovered ? 0.24 : 0.12)
+        return ShellPalette.sidebarInk.opacity(0.14)
     }
 }
 

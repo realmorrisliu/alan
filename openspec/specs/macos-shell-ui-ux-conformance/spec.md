@@ -22,9 +22,9 @@ theme panels, and ornamental controls.
 #### Scenario: Stable compact controls
 - **WHEN** the user hovers, selects, inserts, closes, creates, or switches tabs
   and Spaces
-- **THEN** rows, icon controls, dots, counters, and status marks keep stable
+- **THEN** rows, icon controls, counters, and status marks keep stable
   dimensions and do not resize the sidebar or terminal content
-- **AND** the top Space slider aligns its visible controls to the sidebar edge
+- **AND** the top Space slider aligns its rounded track to the sidebar edge
   inset so Space slider targets and tab rows share one optical column
 - **AND** the titlebar New Space button directly creates a standard new Space
   instead of opening a menu of Space variants
@@ -34,9 +34,15 @@ theme panels, and ornamental controls.
 
 #### Scenario: Space slider replaces header and dock
 - **WHEN** the default sidebar displays Space navigation
-- **THEN** the selected Space is represented by its title in the top Space
-  slider, non-selected Spaces use the representation required by the active
-  Space slider density tier, and no Space icon is shown in the slider
+- **THEN** Space navigation is presented as a continuous rounded top track whose
+  selected Space is a compact liquid-glass tab inside that track
+- **AND** the track uses a visible neutral gray native track fill rather than a
+  barely visible transparent control tint
+- **AND** inactive Spaces sit in the shared track background using icon and
+  title foreground treatment rather than individual framed pills, cards, or
+  dot-only indicators
+- **AND** each Space target can show its Space icon with a title when width
+  allows and can collapse to an icon-only circular target at minimum width
 - **AND** alan does not show a separate bottom Space dock in the default sidebar
 - **AND** the top Space slider remains a fixed sidebar-level control while
   Space tab content pages move beneath it during Space paging gestures
@@ -61,43 +67,69 @@ theme panels, and ornamental controls.
   Space
 
 ### Requirement: Space slider supports adaptive density and scrub navigation
-The default macOS shell Space slider SHALL adapt its visual density to the
-number of Spaces and SHALL support deliberate preview-first scrub navigation
-without making the default sidebar visually noisy or unstable.
+The default macOS shell Space slider SHALL use a continuous rounded track that
+adapts Space target widths to available sidebar space, supports every Space
+without an arbitrary count cap, and preserves preview-first scrub navigation
+without hover-driven geometry changes or cover-flow motion.
 
-#### Scenario: Low-density Space slider shows full titles
-- **WHEN** the default sidebar has 1 to 3 Spaces
-- **THEN** the Space slider shows every Space as a named, single-line
-  Safari-like tab or pill control
-- **AND** the selected Space has the strongest material and text treatment
-- **AND** inactive Spaces remain readable without using Space icons
+#### Scenario: Rounded track owns Space navigation
+- **WHEN** the default sidebar displays one or more Spaces
+- **THEN** the Space slider renders one rounded track as the shared navigation
+  surface
+- **AND** the track background reads as a Safari-like gray track rather than a
+  nearly transparent overlay
+- **AND** each Space is represented by a distinct target inside that track
+- **AND** the selected Space uses the strongest selected-state treatment as a
+  compact liquid-glass tab inside the track
+- **AND** inactive Spaces remain visually embedded in the track background
 
-#### Scenario: Mid-density Space slider shows active and short titles
-- **WHEN** the default sidebar has 4 to 6 Spaces
-- **THEN** the Space slider shows the selected Space with its full title
-- **AND** every inactive Space remains visible as a compact short-title control
-- **AND** inactive Space titles truncate on one line before they resize the
-  sidebar, wrap text, or overlap adjacent controls
+#### Scenario: Space targets use icon and title when width allows
+- **WHEN** a Space target has enough allocated width for its icon and title
+- **THEN** alan shows the Space icon followed by a single-line title
+- **AND** the title truncates before it wraps, overlaps adjacent targets, or
+  changes sidebar width
 
-#### Scenario: High-density Space slider uses active title and indicators
-- **WHEN** the default sidebar has 7 to 9 Spaces
-- **THEN** the Space slider shows the selected Space as a title control
-- **AND** inactive Spaces render as compact indicators in the default idle state
-- **AND** hovered or scrub-focused inactive indicators can expand into short
-  title controls without changing slider height or sidebar width
+#### Scenario: Space targets distribute across the full track before overflow
+- **WHEN** the equal per-Space target width is at or above the minimum Space
+  target width
+- **THEN** alan divides the full rounded track evenly across every Space target
+- **AND** alan does not leave unused trailing track space solely because a Space
+  target reached a fixed maximum width
+- **AND** alan chooses full-title, truncated-title, or icon-only content from
+  that equal per-Space width
 
-#### Scenario: Space count is capped at nine
-- **WHEN** the user attempts to create Spaces from the default macOS shell
-- **THEN** alan allows at most 9 Spaces in the Space slider model
-- **AND** creation affordances do not produce a tenth visible Space in the
-  default sidebar
+#### Scenario: Space targets collapse to icon-only minimums
+- **WHEN** the track cannot fit readable title labels for every Space
+- **THEN** alan truncates every Space title according to the equal per-Space
+  width
+- **AND** alan may collapse Space targets to icon-only targets before horizontal
+  overflow is needed
+- **AND** the icon-only target remains a distinct click, context-menu,
+  keyboard, VoiceOver, and scrub target with its title exposed
+  accessibly
 
-#### Scenario: Hover previews without switching
+#### Scenario: All Spaces participate without a nine-Space cap
+- **WHEN** the user creates more than nine Spaces
+- **THEN** alan includes every Space in the Space slider model
+- **AND** creation affordances continue to produce additional Spaces instead of
+  hiding or refusing the tenth Space solely because of slider capacity
+
+#### Scenario: Overflow scrolls horizontally inside the track
+- **WHEN** all Space targets are at their icon-only minimum width and the total
+  target width still exceeds the available track width
+- **THEN** the Space slider content scrolls horizontally within the rounded
+  track
+- **AND** alan keeps the selected Space visible when selection changes
+- **AND** alan does not resize the sidebar, wrap targets to another row, or
+  replace overflow Spaces with an unrelated menu
+
+#### Scenario: Hover previews without geometry shifts
 - **WHEN** the pointer hovers a non-selected Space in the slider
-- **THEN** alan locally highlights or expands that Space according to the active
-  density tier
-- **AND** alan does not switch the selected Space, move the tab pager, or change
-  focused terminal content merely because of hover
+- **THEN** alan may apply subtle foreground, tint, or focus treatment to that
+  Space target
+- **AND** alan does not expand the target, scale it, fade neighboring targets,
+  switch the selected Space, move the tab pager, or change focused terminal
+  content merely because of hover
 
 #### Scenario: Click switching remains immediate
 - **WHEN** the user clicks a non-selected Space in the slider
@@ -114,12 +146,21 @@ without making the default sidebar visually noisy or unstable.
 - **AND** alan does not commit Space selection until drag release or a short
   dwell after wheel or trackpad input stops
 
-#### Scenario: Scrub uses lightweight cover-flow motion
+#### Scenario: Scrub uses stable track treatment
 - **WHEN** reduced motion is disabled and Space scrub is active
-- **THEN** the scrub-focused Space is emphasized as the largest title control
-- **AND** nearby Spaces scale or fade by distance to communicate direction
-- **AND** the effect remains bounded inside the sidebar Space slider rather than
-  introducing a large carousel or decorative overlay
+- **THEN** the scrub-focused Space is emphasized through the same stable track
+  target language used for hover, keyboard focus, and selected state
+- **AND** nearby Spaces do not scale, fade by distance, shift width, or create a
+  cover-flow or carousel effect
+- **AND** the effect remains bounded inside the sidebar Space slider
+
+#### Scenario: Scrub accounts for horizontal scroll offset
+- **WHEN** the Space slider content is horizontally scrolled
+- **AND** the user drag-scrubs or wheel-scrubs over the track
+- **THEN** alan resolves the scrub-focused Space from the visible target frames
+  and current horizontal scroll offset
+- **AND** scrub preview, commit, cancel, and selected-Space visibility remain
+  consistent with the visible track positions
 
 #### Scenario: Vertical scrolling is preserved
 - **WHEN** wheel or trackpad input over the Space slider is vertical or
@@ -129,25 +170,34 @@ without making the default sidebar visually noisy or unstable.
 
 #### Scenario: Space context menus remain available
 - **WHEN** the user right-clicks or opens the context menu for a selected,
-  hovered, or scrub-focused Space target
+  hovered, keyboard-focused, or scrub-focused Space target
 - **THEN** alan opens the context menu for that Space
 - **AND** any active scrub preview is canceled before the context menu action
   changes Space-level settings
 
 #### Scenario: Reduced motion preserves the state model
 - **WHEN** reduced motion is enabled
-- **THEN** hover and scrub use bounded highlight, opacity, and width changes
-  instead of cover-flow scale, springy movement, or perspective-like motion
+- **THEN** hover and scrub use bounded foreground, tint, outline, or selected
+  treatment without width changes, scale, spring, perspective-like motion, or
+  cover-flow movement
 - **AND** click, hover, scrub preview, commit, cancel, and keyboard behavior
   remain equivalent
 
 #### Scenario: Keyboard and accessibility navigation remain explicit
 - **WHEN** keyboard focus or VoiceOver reaches the Space slider
 - **THEN** each Space is exposed as a distinct actionable target with its title,
-  selected state, and tab count
+  icon meaning when relevant, selected state, and tab count
 - **AND** left and right keyboard navigation can move preview focus without
   immediately switching Spaces
 - **AND** Enter commits the focused Space and Escape cancels preview focus
+
+#### Scenario: Track remains borderless relative to the sidebar
+- **WHEN** the top Space slider is visible
+- **THEN** the track reads as lightweight native sidebar navigation rather than
+  a nested card, dashboard section, or detached toolbar
+- **AND** selected, hover, focus, and scrub states do not introduce notification
+  dots, oversized badges, decorative shadows, or persistent framed cards for
+  inactive Spaces
 
 ### Requirement: Collapsed sidebar uses a lightweight floating panel
 When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
