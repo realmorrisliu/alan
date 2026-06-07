@@ -1,0 +1,17 @@
+default:
+    @just --list
+
+doctor:
+    ./bin/alan-emacs doctor
+
+install:
+    ./bin/alan-emacs install
+
+update:
+    ./bin/alan-emacs update
+
+check:
+    ./bin/alan-emacs check
+
+rollback:
+    ./bin/alan-emacs rollback

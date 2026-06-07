@@ -1,0 +1,11 @@
+.DS_Store
+*.elc
+
+# Local, machine-specific overrides.
+/alan-local.el
+
+# Kept out of the source repo if a future package module is added.
+/elpa/
+/eln-cache/
+/auto-save-list/
+/transient/
