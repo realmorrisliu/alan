@@ -135,11 +135,12 @@ pane focus. It should not become a state or agent icon, because split structure
 is already interactive and stable in that position.
 
 Pinned state should not consume inline title-row space. Pinned tabs are visually
-identified by their placement in the pinned section above the divider, so a
-separate `pin.fill` glyph after the title is redundant and makes the compact row
-harder to scan. Pin/unpin actions should remain available through the existing
-context menu and command paths, and accessibility labels may continue to expose
-the pinned state.
+identified by their placement in the pinned section. When there are no unpinned
+tabs, New Tab should follow the pinned rows directly without a divider or empty
+control-row gap. A separate `pin.fill` glyph after the title is redundant and
+makes the compact row harder to scan. Pin/unpin actions should remain available
+through the existing context menu and command paths, and accessibility labels may
+continue to expose the pinned state.
 
 The trailing accessory slot should carry state at rest and become the close
 button when the row is hovered or keyboard focused. High-priority states should
@@ -270,12 +271,19 @@ Alternatives considered:
 - Route all reorders through command buttons only. This preserves model
   behavior but abandons the expected sidebar pointer interaction.
 
-### Show Clear only when it can act
+### Show the temporary section control only when unpinned tabs exist
 
-Clear should appear as a subtle trailing affordance in the divider/control row
-above New Tab only when the active Space has at least one eligible inactive
-temporary tab. If no tabs are eligible, Clear should be hidden rather than
-disabled.
+The divider/control row above New Tab marks the start of the temporary tab
+section, matching Arc's behavior. It should appear whenever the active Space has
+at least one unpinned tab, whether or not pinned tabs also exist. It should be
+hidden entirely when the Space has no unpinned tabs, including empty Spaces and
+Spaces with pinned tabs only, so New Tab stays visually grouped with the pinned
+rows in those cases.
+
+Clear should appear as a subtle trailing affordance in that divider/control row
+only when the active Space has at least one eligible inactive temporary tab. If
+no tabs are eligible, Clear should be hidden rather than disabled, while the
+divider remains visible if unpinned tabs exist.
 
 Alternatives considered:
 

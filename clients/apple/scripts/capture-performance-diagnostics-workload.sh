@@ -22,8 +22,8 @@ if [[ "$LAUNCH_MODE" == "direct" ]]; then
     CONTROL_TMPDIR="$SMOKE_OUTPUT_DIR/tmp"
 fi
 if [[ "$UI_SMOKE_SKIP_BUILD" == "1" && -z "$UI_SMOKE_APP_PATH" ]]; then
-    UI_SMOKE_APP_PATH="$UI_SMOKE_DERIVED_DATA/Build/Products/Debug/Alan.app"
-    UI_SMOKE_APP_EXECUTABLE="$UI_SMOKE_APP_PATH/Contents/MacOS/Alan"
+    UI_SMOKE_APP_PATH="$UI_SMOKE_DERIVED_DATA/Build/Products/Debug/Alan Dev.app"
+    UI_SMOKE_APP_EXECUTABLE="$UI_SMOKE_APP_PATH/Contents/MacOS/Alan Dev"
 fi
 CONTROL_ROOT="${CONTROL_TMPDIR%/}/$CONTROL_NAMESPACE/window_main"
 COMMANDS_DIR="$CONTROL_ROOT/commands"

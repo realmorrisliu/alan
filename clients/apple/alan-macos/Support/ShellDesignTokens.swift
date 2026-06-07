@@ -208,6 +208,12 @@ enum ShellPalette {
         light: (0.82, 0.83, 0.89),
         dark: (0.255, 0.285, 0.345)
     )
+    static let sidebarDivider = Color.shellAdaptive(
+        light: (0.50, 0.51, 0.60),
+        lightAlpha: 0.52,
+        dark: (0.42, 0.46, 0.54),
+        darkAlpha: 0.60
+    )
     static let panel = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
         lightAlpha: 0.74,
@@ -263,7 +269,7 @@ enum ShellRadii {
 }
 
 enum ShellSidebarMetrics {
-    static let edgeInset: CGFloat = 12
+    static let edgeInset: CGFloat = 8
     static let rowInset: CGFloat = 10
     static let iconColumnWidth: CGFloat = 16
     static let iconPointSize: CGFloat = 12

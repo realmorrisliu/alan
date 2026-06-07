@@ -99,8 +99,11 @@ the terminal sidebar feel like a dashboard or debug surface.
 
 #### Scenario: Pinned state is conveyed by section position
 - **WHEN** a tab is pinned in the default sidebar
-- **THEN** alan displays it in the pinned tab section above the New Tab row and
-  divider
+- **THEN** alan displays it in the pinned tab section above the temporary tab
+  section
+- **AND WHEN** the active Space has no unpinned tabs
+- **THEN** the New Tab row follows the pinned rows without a divider or empty
+  control-row gap
 - **AND** alan does not show a separate inline pin glyph in the tab row title or
   trailing accessory area
 - **AND** pin and unpin actions remain available through existing command and
@@ -158,6 +161,15 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **WHEN** the active Space has no eligible inactive unpinned tabs
 - **THEN** alan does not show a disabled or persistent Clear affordance in the
   default sidebar
+
+#### Scenario: Temporary section divider appears only with unpinned tabs
+- **WHEN** the active Space has at least one unpinned tab
+- **THEN** alan shows a subtle divider/control row above New Tab to mark the
+  start of the temporary tab section
+- **AND** the divider/control row appears whether or not pinned tabs also exist
+- **AND WHEN** the active Space has no unpinned tabs
+- **THEN** alan hides the divider/control row entirely and does not reserve its
+  height
 
 #### Scenario: Clear closes only inactive temporary tabs
 - **WHEN** the user activates Clear

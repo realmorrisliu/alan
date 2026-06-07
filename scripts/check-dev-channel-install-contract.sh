@@ -31,6 +31,15 @@ reject_pattern() {
 
 "$SCRIPT_DIR/test-install-channel-descriptor.sh" >/dev/null
 
+display_name_plist_value="$(
+    plutil -extract CFBundleDisplayName raw -o - \
+        "$REPO_ROOT/clients/apple/alan-macos/Info.plist" 2>/dev/null || true
+)"
+expected_display_name_plist_value='$(PRODUCT_NAME)'
+if [[ "$display_name_plist_value" != "$expected_display_name_plist_value" ]]; then
+    fail "app Info.plist CFBundleDisplayName must expand PRODUCT_NAME so Alan Dev builds display as Alan Dev"
+fi
+
 require_pattern "justfile" "^install-dev:" "justfile must expose install-dev"
 require_pattern "justfile" "^uninstall-dev:" "justfile must expose uninstall-dev"
 require_pattern "justfile" "^dev-channel-smoke:" "justfile must expose dev-channel-smoke"

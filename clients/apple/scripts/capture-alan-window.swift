@@ -5,7 +5,7 @@ import Foundation
 import ScreenCaptureKit
 
 struct CaptureOptions {
-    var bundleID = "app.alanworks.macos"
+    var bundleID = "app.alanworks.macos.dev"
     var processID: pid_t?
     var titleContains: String?
     var outputPath: String?
@@ -357,8 +357,8 @@ enum CaptureAlanWindow {
 
             Options:
               --output <path>            Write PNG screenshot to this path.
-              --channel <stable|dev>     Match Alan or Alan Dev by bundle id. Default: stable
-              --bundle-id <bundle_id>    Bundle identifier to match. Default: app.alanworks.macos
+              --channel <stable|dev>     Match Alan or Alan Dev by bundle id. Default: dev
+              --bundle-id <bundle_id>    Bundle identifier to match. Default: app.alanworks.macos.dev
               --pid <pid>                Match a specific process ID instead of bundle id.
               --title-contains <text>    Match only windows whose title contains this text.
               --list                     Print matching windows without capturing.
