@@ -23,7 +23,9 @@ alan emacs uninstall
 ```
 
 Then it selects exactly one Emacs config entry from the user's actual Emacs
-behavior and filesystem state. It refuses to overwrite non-Alan-owned config.
+behavior and filesystem state. It refuses to overwrite non-Alan-owned config,
+including `~/.emacs.el` and `~/.emacs` startup files that would shadow the
+installed directory.
 
 ## Layout
 

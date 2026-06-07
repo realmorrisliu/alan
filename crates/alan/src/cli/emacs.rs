@@ -207,19 +207,35 @@ impl<P: EmacsProbe> EmacsManager<P> {
 
     fn config_candidates(&self) -> Result<Vec<ConfigCandidate>> {
         let mut candidates = Vec::new();
+        candidates.push(ConfigCandidate::inspect(
+            ".emacs.el",
+            self.paths.home_dir.join(".emacs.el"),
+            ConfigCandidateKind::StartupFile,
+            &self.paths,
+            &self.source,
+        )?);
+        candidates.push(ConfigCandidate::inspect(
+            ".emacs",
+            self.paths.home_dir.join(".emacs"),
+            ConfigCandidateKind::StartupFile,
+            &self.paths,
+            &self.source,
+        )?);
         let emacs_d = self.paths.home_dir.join(".emacs.d");
         candidates.push(ConfigCandidate::inspect(
             ".emacs.d",
             emacs_d,
+            ConfigCandidateKind::ConfigDirectory,
             &self.paths,
             &self.source,
         )?);
 
         let xdg = self.paths.config_home.join("emacs");
-        if !path_eq(&xdg, &candidates[0].path) {
+        if !path_eq(&xdg, &self.paths.home_dir.join(".emacs.d")) {
             candidates.push(ConfigCandidate::inspect(
                 "xdg-config",
                 xdg,
+                ConfigCandidateKind::ConfigDirectory,
                 &self.paths,
                 &self.source,
             )?);
@@ -231,7 +247,10 @@ impl<P: EmacsProbe> EmacsManager<P> {
     fn select_config_entry(&self, candidates: &[ConfigCandidate]) -> Result<ConfigSelection> {
         let managed: Vec<_> = candidates
             .iter()
-            .filter(|candidate| matches!(candidate.state, ConfigEntryState::ManagedLink { .. }))
+            .filter(|candidate| {
+                candidate.kind == ConfigCandidateKind::ConfigDirectory
+                    && matches!(candidate.state, ConfigEntryState::ManagedLink { .. })
+            })
             .collect();
         ensure!(
             managed.len() <= 1,
@@ -255,7 +274,10 @@ impl<P: EmacsProbe> EmacsManager<P> {
 
         let empty: Vec<_> = candidates
             .iter()
-            .filter(|candidate| matches!(candidate.state, ConfigEntryState::EmptyDirectory))
+            .filter(|candidate| {
+                candidate.kind == ConfigCandidateKind::ConfigDirectory
+                    && matches!(candidate.state, ConfigEntryState::EmptyDirectory)
+            })
             .collect();
         ensure!(
             empty.len() <= 1,
@@ -273,10 +295,10 @@ impl<P: EmacsProbe> EmacsManager<P> {
             .probe
             .default_user_emacs_directory()
             .context("Cannot determine Emacs default user config directory")?;
-        let Some(candidate) = candidates
-            .iter()
-            .find(|candidate| path_eq(&candidate.path, &default_dir))
-        else {
+        let Some(candidate) = candidates.iter().find(|candidate| {
+            candidate.kind == ConfigCandidateKind::ConfigDirectory
+                && path_eq(&candidate.path, &default_dir)
+        }) else {
             bail!(
                 "Emacs default config directory is unsupported: {}",
                 default_dir.display()
@@ -564,6 +586,7 @@ impl DistributionSourceKind {
 struct ConfigCandidate {
     label: &'static str,
     path: PathBuf,
+    kind: ConfigCandidateKind,
     state: ConfigEntryState,
 }
 
@@ -571,13 +594,25 @@ impl ConfigCandidate {
     fn inspect(
         label: &'static str,
         path: PathBuf,
+        kind: ConfigCandidateKind,
         paths: &EmacsPaths,
         source: &DistributionSource,
     ) -> Result<Self> {
         let path = normalize_lexical(&path);
-        let state = ConfigEntryState::inspect(&path, paths, source)?;
-        Ok(Self { label, path, state })
+        let state = ConfigEntryState::inspect(&path, kind, paths, source)?;
+        Ok(Self {
+            label,
+            path,
+            kind,
+            state,
+        })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigCandidateKind {
+    ConfigDirectory,
+    StartupFile,
 }
 
 #[derive(Clone, Debug)]
@@ -586,6 +621,7 @@ enum ConfigEntryState {
     EmptyDirectory,
     ManagedLink { target: PathBuf },
     LegacySourceLink { target: PathBuf },
+    StartupFileConflict { target: Option<PathBuf> },
     UserOwnedSymlink { target: PathBuf },
     UserOwnedDirectory,
     UserOwnedFile,
@@ -593,12 +629,30 @@ enum ConfigEntryState {
 }
 
 impl ConfigEntryState {
-    fn inspect(path: &Path, paths: &EmacsPaths, source: &DistributionSource) -> Result<Self> {
+    fn inspect(
+        path: &Path,
+        kind: ConfigCandidateKind,
+        paths: &EmacsPaths,
+        source: &DistributionSource,
+    ) -> Result<Self> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Self::Missing),
             Err(err) => return Ok(Self::Unreadable(err.to_string())),
         };
+
+        if kind == ConfigCandidateKind::StartupFile {
+            let target = if metadata.file_type().is_symlink() {
+                Some(resolve_symlink_target(
+                    path,
+                    fs::read_link(path)
+                        .with_context(|| format!("Cannot read symlink {}", path.display()))?,
+                ))
+            } else {
+                None
+            };
+            return Ok(Self::StartupFileConflict { target });
+        }
 
         if metadata.file_type().is_symlink() {
             let target = fs::read_link(path)
@@ -630,7 +684,8 @@ impl ConfigEntryState {
     fn is_user_owned(&self) -> bool {
         matches!(
             self,
-            Self::UserOwnedSymlink { .. }
+            Self::StartupFileConflict { .. }
+                | Self::UserOwnedSymlink { .. }
                 | Self::UserOwnedDirectory
                 | Self::UserOwnedFile
                 | Self::Unreadable(_)
@@ -653,6 +708,16 @@ impl ConfigEntryState {
             }
             Self::LegacySourceLink { target } => {
                 format!("legacy Alan source link to {}", target.display())
+            }
+            Self::StartupFileConflict { target } => {
+                if let Some(target) = target {
+                    format!(
+                        "startup file shadows Emacs config directory; symlink to {}",
+                        target.display()
+                    )
+                } else {
+                    "startup file shadows Emacs config directory".to_string()
+                }
             }
             Self::UserOwnedSymlink { target } => {
                 format!("non-Alan symlink to {}", target.display())
@@ -1192,6 +1257,40 @@ mod tests {
     }
 
     #[test]
+    fn install_refuses_legacy_emacs_init_file() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join(".emacs"), "(setq user-config t)").unwrap();
+        let source = make_source(temp.path());
+        let manager = make_manager(&home, source, home.join(".emacs.d"));
+
+        let err = manager.install().unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("Refusing to overwrite"));
+        assert!(message.contains(".emacs"));
+        assert!(!manager.paths.current_dir.exists());
+    }
+
+    #[test]
+    fn install_refuses_legacy_emacs_el_init_file() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join(".emacs.el"), "(setq user-config t)").unwrap();
+        let source = make_source(temp.path());
+        let manager = make_manager(&home, source, home.join(".emacs.d"));
+
+        let err = manager.install().unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("Refusing to overwrite"));
+        assert!(message.contains(".emacs.el"));
+        assert!(!manager.paths.current_dir.exists());
+    }
+
+    #[test]
     fn refuses_multiple_user_owned_configs() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
@@ -1272,6 +1371,30 @@ mod tests {
                 .is_symlink()
         );
         assert!(!home.join(".config/emacs").exists());
+    }
+
+    #[test]
+    fn doctor_fails_when_startup_file_shadows_installed_config() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let source = make_source(temp.path());
+        let default_dir = home.join(".emacs.d");
+        let manager = make_manager(&home, source, default_dir.clone());
+        manager.install().unwrap();
+
+        fs::write(home.join(".emacs"), "(setq user-config t)").unwrap();
+        let selection_err = manager
+            .select_config_entry(&manager.config_candidates().unwrap())
+            .unwrap_err();
+        let selection_message = selection_err.to_string();
+        assert!(selection_message.contains(".emacs"));
+        assert!(selection_message.contains("startup file shadows"));
+
+        let err = manager.doctor().unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("Alan Emacs doctor found issues"));
     }
 
     #[test]

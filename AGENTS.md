@@ -357,7 +357,9 @@ alan emacs doctor
 entry to that Alan-managed copy. The installer chooses exactly one config entry
 from `~/.emacs.d` and `$XDG_CONFIG_HOME/emacs` / `~/.config/emacs`, reuses
 Alan-owned state, accepts a single empty candidate, probes the installed
-`emacs` default when needed, and refuses non-Alan-owned user config.
+`emacs` default when needed, and refuses non-Alan-owned user config. It also
+refuses `~/.emacs.el` and `~/.emacs` startup files because ordinary Emacs loads
+those before directory init files.
 
 `alan emacs` intentionally manages only Alan-owned distribution state. It must
 not wrap `brew services`, `launchctl`, `systemctl`, or Emacs daemon lifecycle

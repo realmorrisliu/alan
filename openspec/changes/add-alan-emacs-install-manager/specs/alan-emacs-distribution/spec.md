@@ -36,6 +36,10 @@ instead of hard-coding `~/.emacs.d` or `$XDG_CONFIG_HOME/emacs`.
 Candidate entries SHALL include `~/.emacs.d` and `$XDG_CONFIG_HOME/emacs`, using
 `~/.config/emacs` when `XDG_CONFIG_HOME` is unset.
 
+Alan SHALL treat legacy startup files `~/.emacs.el` and `~/.emacs` as
+non-Alan-owned conflicts because they take precedence over directory init files
+in ordinary Emacs startup.
+
 #### Scenario: Existing Alan-owned entry is reused
 - **WHEN** one candidate config entry already points to Alan-managed Emacs
   distribution state
@@ -59,6 +63,12 @@ Candidate entries SHALL include `~/.emacs.d` and `$XDG_CONFIG_HOME/emacs`, using
 - **WHEN** a candidate config entry contains non-Alan-owned user configuration
 - **THEN** `alan emacs install` does not overwrite it
 - **AND** it reports the conflicting path and stops safely
+
+#### Scenario: Legacy startup file shadows config directory
+- **WHEN** `~/.emacs.el` or `~/.emacs` exists
+- **THEN** `alan emacs install` does not report success
+- **AND** it reports the startup file as a conflict before linking or replacing
+  the selected config directory
 
 ### Requirement: Bare Emacs Loads Alan Emacs After Install
 After successful installation, invoking ordinary `emacs` SHALL load the

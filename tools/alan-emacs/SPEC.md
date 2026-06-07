@@ -48,7 +48,8 @@ $XDG_CONFIG_HOME/emacs, or ~/.config/emacs when XDG_CONFIG_HOME is unset
 
 It must reuse Alan-owned state, accept a single empty candidate, or probe the
 installed `emacs` default user config directory. It must refuse non-empty
-non-Alan-owned config entries.
+non-Alan-owned config entries, including `~/.emacs.el` and `~/.emacs` startup
+files that take precedence over directory init files.
 
 ### Health And Removal
 
