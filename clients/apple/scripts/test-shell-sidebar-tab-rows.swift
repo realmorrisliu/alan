@@ -301,10 +301,10 @@ private enum ShellSidebarTabRowTests {
             ) == ShellSidebarTemporaryTabSectionPresentation(
                 showsControlRow: true,
                 showsDivider: true,
-                showsClear: true,
+                showsClear: false,
                 isClearEnabled: false
             ),
-            "unpinned-only spaces must reveal disabled Clear from the temporary-section divider"
+            "unpinned-only spaces without clearable tabs must keep the divider but hide Clear"
         )
 
         expect(

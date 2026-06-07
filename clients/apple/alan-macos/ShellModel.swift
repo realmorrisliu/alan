@@ -26,11 +26,12 @@ struct ShellSidebarTemporaryTabSectionPresentation: Equatable {
         clearableTabCount: Int
     ) -> ShellSidebarTemporaryTabSectionPresentation {
         let hasUnpinnedTabs = unpinnedTabCount > 0
+        let hasClearableTabs = hasUnpinnedTabs && clearableTabCount > 0
         return ShellSidebarTemporaryTabSectionPresentation(
             showsControlRow: hasUnpinnedTabs,
             showsDivider: hasUnpinnedTabs,
-            showsClear: hasUnpinnedTabs,
-            isClearEnabled: hasUnpinnedTabs && clearableTabCount > 0
+            showsClear: hasClearableTabs,
+            isClearEnabled: hasClearableTabs
         )
     }
 }
