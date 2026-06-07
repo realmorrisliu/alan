@@ -77,8 +77,8 @@ shadowing, or `--init-directory` arguments.
 
 #### Scenario: Install verifies bare Emacs
 - **WHEN** `alan emacs install` completes
-- **THEN** it verifies that bare `emacs` loads Alan Emacs from the installed
-  distribution
+- **THEN** it verifies through ordinary Emacs startup discovery that bare
+  `emacs` loads Alan Emacs from the installed distribution
 
 #### Scenario: Doctor checks daemon without controlling it
 - **WHEN** `alan emacs doctor` detects an Emacs daemon or `emacsclient` endpoint

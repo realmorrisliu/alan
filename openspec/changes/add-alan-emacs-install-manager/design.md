@@ -127,8 +127,9 @@ emacs
 ```
 
 No wrapper or `--init-directory` should be required for normal use. `alan emacs
-doctor` should verify this by running Emacs in batch mode and confirming that
-Alan Emacs loaded from the managed install.
+doctor` should verify this with a real startup-discovery probe, not by manually
+loading the installed init file, and confirm that Alan Emacs loaded from the
+managed install.
 
 Alternative considered: inject `EDITOR` or `VISUAL` as a wrapper path with
 extra arguments. That would solve some editor-call paths, but it would not make

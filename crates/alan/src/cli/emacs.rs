@@ -6,6 +6,7 @@ use std::{
     env, fs, io,
     path::{Component, Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// Alan-owned Emacs distribution commands.
@@ -95,7 +96,7 @@ impl<P: EmacsProbe> EmacsManager<P> {
         self.materialize_distribution()?;
         self.link_selected_config_entry(&selection)?;
         self.remove_legacy_source_links_except(&selection)?;
-        self.verify_installed_distribution_loads()?;
+        self.verify_bare_startup_loads(&selection.candidate.path)?;
 
         println!("emacs:  {version}");
         println!("install: {}", self.paths.current_dir.display());
@@ -121,12 +122,16 @@ impl<P: EmacsProbe> EmacsManager<P> {
         }
 
         let candidates = self.config_candidates()?;
+        let mut startup_expected_config = None;
         match self.select_config_entry(&candidates) {
             Ok(selection) => match self.ensure_bare_emacs_default_matches(&selection) {
-                Ok(default_dir) => println!(
-                    "check:   bare emacs default entry is {}",
-                    default_dir.display()
-                ),
+                Ok(default_dir) => {
+                    println!(
+                        "check:   bare emacs default entry is {}",
+                        default_dir.display()
+                    );
+                    startup_expected_config = Some(selection.candidate.path);
+                }
                 Err(err) => {
                     ok = false;
                     println!("check:   bare emacs default mismatch ({err})");
@@ -149,11 +154,16 @@ impl<P: EmacsProbe> EmacsManager<P> {
             }
         }
 
-        match self.verify_installed_distribution_loads() {
-            Ok(()) => println!("check:   Alan Emacs init loads in batch mode"),
-            Err(err) => {
-                ok = false;
-                println!("check:   Alan Emacs init load failed ({err})");
+        match startup_expected_config.as_deref() {
+            Some(expected_config) => match self.verify_bare_startup_loads(expected_config) {
+                Ok(()) => println!("check:   bare Emacs startup loads Alan Emacs"),
+                Err(err) => {
+                    ok = false;
+                    println!("check:   bare Emacs startup failed ({err})");
+                }
+            },
+            None => {
+                println!("check:   bare Emacs startup skipped (config selection unresolved)");
             }
         }
 
@@ -412,19 +422,28 @@ impl<P: EmacsProbe> EmacsManager<P> {
         Ok(())
     }
 
-    fn verify_installed_distribution_loads(&self) -> Result<()> {
+    fn verify_bare_startup_loads(&self, expected_config_dir: &Path) -> Result<()> {
         let check = self
             .probe
-            .verify_distribution_loads(&self.paths.current_dir)
-            .context("Cannot verify Alan Emacs distribution load")?;
+            .verify_bare_startup_loads()
+            .context("Cannot verify bare Emacs startup")?;
         ensure!(check.loaded, "Alan Emacs load marker was not observed");
         let Some(user_dir) = check.user_emacs_directory else {
             bail!("Alan Emacs did not report user-emacs-directory");
         };
         ensure!(
-            path_eq(&user_dir, &self.paths.current_dir),
-            "Alan Emacs loaded from {}, expected {}",
+            path_eq(&user_dir, expected_config_dir),
+            "bare Emacs startup used {}, expected {}",
             user_dir.display(),
+            expected_config_dir.display()
+        );
+        let Some(resolved_dir) = check.resolved_user_emacs_directory else {
+            bail!("Alan Emacs did not report resolved user-emacs-directory");
+        };
+        ensure!(
+            path_eq(&resolved_dir, &self.paths.current_dir),
+            "bare Emacs startup resolved to {}, expected {}",
+            resolved_dir.display(),
             self.paths.current_dir.display()
         );
         Ok(())
@@ -779,7 +798,7 @@ impl InstalledCopyState {
 trait EmacsProbe {
     fn emacs_version_line(&self) -> Result<String>;
     fn default_user_emacs_directory(&self) -> Result<PathBuf>;
-    fn verify_distribution_loads(&self, install_dir: &Path) -> Result<LoadCheck>;
+    fn verify_bare_startup_loads(&self) -> Result<LoadCheck>;
     fn daemon_observation(&self) -> DaemonObservation;
 }
 
@@ -828,30 +847,58 @@ impl EmacsProbe for CommandEmacsProbe {
         Ok(normalize_lexical(Path::new(&stdout)))
     }
 
-    fn verify_distribution_loads(&self, install_dir: &Path) -> Result<LoadCheck> {
-        let init = install_dir.join("init.el");
-        let init_arg = init.to_string_lossy().to_string();
+    fn verify_bare_startup_loads(&self) -> Result<LoadCheck> {
+        let nonce = startup_probe_nonce();
+        let marker_path = env::temp_dir().join(format!("alan-emacs-startup-{nonce}.txt"));
+        let _ = fs::remove_file(&marker_path);
+
+        let marker_literal = emacs_lisp_string_literal(&marker_path.to_string_lossy());
+        let eval = format!(
+            "(progn \
+             (with-temp-file {marker_literal} \
+               (insert (if (and (boundp 'alan-emacs-loaded) alan-emacs-loaded) \
+                           (concat (expand-file-name user-emacs-directory) \
+                                   \"\\n\" \
+                                   (file-truename user-emacs-directory)) \
+                           \"\"))) \
+             (kill-emacs 0))"
+        );
+        let daemon_arg = format!("--fg-daemon=alan-emacs-probe-{nonce}");
         let output = Command::new("emacs")
-            .args([
-                "--batch",
-                "-Q",
-                "--load",
-                init_arg.as_str(),
-                "--eval",
-                "(princ (if (and (boundp 'alan-emacs-loaded) alan-emacs-loaded) (expand-file-name user-emacs-directory) \"\"))",
-            ])
+            .args([daemon_arg.as_str(), "--eval", eval.as_str()])
             .output()
-            .context("Cannot run emacs load verification")?;
+            .context("Cannot run bare Emacs startup verification")?;
+
+        let marker = match fs::read_to_string(&marker_path) {
+            Ok(marker) => marker,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(err) => {
+                return Err(err).with_context(|| format!("Cannot read {}", marker_path.display()));
+            }
+        };
+        let _ = fs::remove_file(&marker_path);
+
         ensure!(
             output.status.success(),
-            "emacs load verification failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "bare Emacs startup verification failed: {}",
+            command_output_summary(&output)
         );
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let mut marker_lines = marker.lines();
+        let user_emacs_directory = marker_lines
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| normalize_lexical(Path::new(value)));
+        let resolved_user_emacs_directory = marker_lines
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| normalize_lexical(Path::new(value)));
+        let loaded = user_emacs_directory.is_some();
         Ok(LoadCheck {
-            loaded: !stdout.is_empty(),
-            user_emacs_directory: (!stdout.is_empty())
-                .then(|| normalize_lexical(Path::new(&stdout))),
+            loaded,
+            user_emacs_directory,
+            resolved_user_emacs_directory,
         })
     }
 
@@ -890,6 +937,7 @@ impl EmacsProbe for CommandEmacsProbe {
 struct LoadCheck {
     loaded: bool,
     user_emacs_directory: Option<PathBuf>,
+    resolved_user_emacs_directory: Option<PathBuf>,
 }
 
 enum DaemonObservation {
@@ -995,6 +1043,44 @@ fn format_candidate_paths(candidates: &[&ConfigCandidate]) -> String {
         .join(", ")
 }
 
+fn startup_probe_nonce() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{timestamp}", std::process::id())
+}
+
+fn emacs_lisp_string_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            _ => literal.push(ch),
+        }
+    }
+    literal.push('"');
+    literal
+}
+
+fn command_output_summary(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        format!("emacs exited with {}", output.status)
+    } else {
+        stdout
+    }
+}
+
 fn resolve_symlink_target(link_path: &Path, target: PathBuf) -> PathBuf {
     if target.is_absolute() {
         normalize_lexical(&target)
@@ -1084,6 +1170,7 @@ mod tests {
     struct LoadCheckFixture {
         loaded: bool,
         user_emacs_directory: Option<PathBuf>,
+        resolved_user_emacs_directory: Option<PathBuf>,
     }
 
     #[derive(Clone)]
@@ -1103,10 +1190,14 @@ mod tests {
             Ok(self.default_dir.clone())
         }
 
-        fn verify_distribution_loads(&self, _install_dir: &Path) -> Result<LoadCheck> {
+        fn verify_bare_startup_loads(&self) -> Result<LoadCheck> {
             Ok(LoadCheck {
                 loaded: self.load_check.loaded,
                 user_emacs_directory: self.load_check.user_emacs_directory.clone(),
+                resolved_user_emacs_directory: self
+                    .load_check
+                    .resolved_user_emacs_directory
+                    .clone(),
             })
         }
 
@@ -1138,6 +1229,7 @@ mod tests {
             home.join(".local/share"),
         );
         let current_dir = paths.current_dir.clone();
+        let startup_user_dir = default_dir.clone();
         EmacsManager {
             paths,
             source: DistributionSource {
@@ -1149,7 +1241,8 @@ mod tests {
                 default_dir,
                 load_check: LoadCheckFixture {
                     loaded: true,
-                    user_emacs_directory: Some(current_dir),
+                    user_emacs_directory: Some(startup_user_dir),
+                    resolved_user_emacs_directory: Some(current_dir),
                 },
                 daemon: DaemonObservationFixture::Unavailable {
                     reason: "not running".to_string(),
@@ -1173,6 +1266,45 @@ mod tests {
         .unwrap();
         fs::write(source.join("lisp/alan-core.el"), "(provide 'alan-core)\n").unwrap();
         source
+    }
+
+    #[test]
+    fn emacs_lisp_string_literal_escapes_probe_marker_paths() {
+        assert_eq!(
+            emacs_lisp_string_literal("/tmp/alan \"probe\"\\marker\n"),
+            "\"/tmp/alan \\\"probe\\\"\\\\marker\\n\""
+        );
+    }
+
+    #[test]
+    fn bare_startup_check_rejects_unexpected_config_entry() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let source = make_source(temp.path());
+        let default_dir = home.join(".emacs.d");
+        let mut manager = make_manager(&home, source, default_dir.clone());
+        manager.probe.load_check.user_emacs_directory = Some(home.join(".config/emacs"));
+
+        let err = manager.verify_bare_startup_loads(&default_dir).unwrap_err();
+
+        assert!(err.to_string().contains("bare Emacs startup used"));
+    }
+
+    #[test]
+    fn bare_startup_check_rejects_config_entry_not_resolving_to_current() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let source = make_source(temp.path());
+        let default_dir = home.join(".emacs.d");
+        let mut manager = make_manager(&home, source, default_dir.clone());
+        manager.probe.load_check.resolved_user_emacs_directory =
+            Some(home.join(".local/share/alan/emacs/old"));
+
+        let err = manager.verify_bare_startup_loads(&default_dir).unwrap_err();
+
+        assert!(err.to_string().contains("bare Emacs startup resolved"));
     }
 
     #[test]
