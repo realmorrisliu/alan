@@ -80,3 +80,44 @@ branch is merged to `main`.
 - **WHEN** the feature branch removes renderer-owned process lifecycle code
 - **THEN** Ghostty remains responsible for renderer and terminal-protocol behavior
 - **AND** Alan remains responsible for PTY and child-process lifecycle
+
+## MODIFIED Requirements
+
+### Requirement: Terminal runtime service supports bounded graceful shutdown requests
+The terminal runtime service SHALL expose a service-owned graceful shutdown
+request path backed by Alan-owned PTY and process handles for live terminal
+ContentInstances so confirmed close can give foreground work a chance to exit
+and print final transcript output before forced runtime finalization.
+
+#### Scenario: Graceful shutdown is requested for active terminal work
+- **WHEN** the shell host has received user confirmation for closing active
+  terminal work
+- **THEN** the runtime service requests graceful shutdown for the corresponding
+  terminal ContentInstance through Alan-owned PTY/process runtime handles without
+  exposing PTY handles, process handles, or Ghostty surface pointers to the shell
+  host
+- **AND** the shell host can observe whether the terminal returned to inactive
+  foreground-work state or exited before the bounded wait expires
+
+#### Scenario: Graceful shutdown cannot be requested
+- **WHEN** the Alan-owned runtime is missing, failed, exited, or unable to
+  receive the graceful shutdown request
+- **THEN** the runtime service returns an explicit request result
+- **AND** confirmed close may continue to capture the latest available transcript
+  and force-finalize the runtime
+
+#### Scenario: Alan-owned process signal delivery is available
+- **WHEN** active terminal work has an Alan-owned foreground process group
+  eligible for graceful signal delivery
+- **THEN** the runtime service delivers the configured graceful termination
+  signal through Alan-owned process handles according to policy
+- **AND** the result records the attempted delivery without using Ghostty-owned
+  process state
+
+#### Scenario: Alan-owned process signal delivery is unavailable
+- **WHEN** the Alan-owned runtime cannot identify an eligible foreground process
+  group or the platform refuses signal delivery
+- **THEN** the runtime service returns an explicit unavailable or failed result
+  and may continue bounded observation before forced finalization
+- **AND** Alan does not treat Ghostty terminal-level input or renderer-owned
+  process state as a fallback process owner
