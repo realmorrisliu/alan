@@ -59,3 +59,34 @@ terminal ContentInstance delivery policy.
 - **WHEN** `terminal.send_text` targets terminal content whose renderer is still attached but whose Alan-owned PTY is closed
 - **THEN** the response reports `applied: false` with a stable closed-runtime error
 - **AND** no accepted bytes are claimed
+
+## MODIFIED Requirements
+
+### Requirement: Terminal Startup Uses Resolved Terminal Profile
+The macOS terminal lifecycle SHALL launch terminal content by resolving the
+Terminal Profile into an Alan-owned terminal boot request used by the
+Alan-owned PTY runtime.
+
+#### Scenario: Terminal content starts with profile command
+- **WHEN** terminal content is created with `terminal_profile_id` `alan`
+- **AND** local Terminal Profile `alan` is a `sudo_user` profile for Unix user
+  `alan`
+- **THEN** alan resolves the terminal boot command to the structured sudo-user
+  launch for `alan`
+- **AND** the Alan-owned PTY runtime receives the command, working directory,
+  and environment through the terminal boot request before child process launch
+- **AND** Ghostty receives renderer attachment to Alan's PTY endpoint rather
+  than owning the launch command, working directory, or environment
+
+#### Scenario: Profile metadata is projected to terminal environment
+- **WHEN** terminal content starts with a resolved Terminal Profile
+- **THEN** alan exposes non-secret profile metadata such as profile id and launch
+  kind through terminal environment variables passed to the Alan-owned PTY
+  runtime
+- **AND** alan does not expose provider credentials or secret values through
+  those variables
+
+#### Scenario: Custom command startup is marked active
+- **WHEN** terminal content starts with a `custom_command` Terminal Profile
+- **THEN** alan treats the terminal startup as a foreground command until the
+  terminal runtime reports completion or a shell-integration state update

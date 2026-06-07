@@ -10,7 +10,7 @@
 - [ ] 2.1 Add Alan-owned PTY/process runtime protocols for allocation, launch, resize, input, EOF, signals, exit observation, and bounded transcript capture.
 - [ ] 2.2 Add fake PTY and fake process-controller implementations for focused tests.
 - [ ] 2.3 Replace terminal runtime construction with the Alan-owned PTY runtime on the implementation branch, without adding a long-lived fallback selector.
-- [ ] 2.4 Route terminal launch profiles and environment projection into the Alan-owned PTY runtime.
+- [ ] 2.4 Route Terminal Profile command, cwd, environment, and non-secret metadata projection into the Alan-owned PTY runtime boot request.
 
 ## 3. Ghostty Attachment
 

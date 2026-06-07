@@ -36,7 +36,8 @@ None.
 - `macos-terminal-runtime-foundation`: Add Alan-owned PTY/process ownership and
   Ghostty renderer attachment boundaries.
 - `macos-shell-terminal-lifecycle`: Add lifecycle semantics for Alan-owned
-  terminal child processes, signal delivery, and runtime replacement.
+  terminal child processes, signal delivery, runtime replacement, and Terminal
+  Profile launch ownership.
 - `macos-shell-build-test-contract`: Add repository-managed Ghostty fork and
   submodule setup, validation, and integration-test requirements.
 
