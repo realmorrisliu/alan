@@ -76,6 +76,11 @@ executable path and its resolved symlink target so PATH-visible command links
 can still find `Contents/Resources/alan-emacs`. The selected Emacs config entry
 points at the managed copy, not at the source checkout.
 
+Source discovery is a hard requirement for `install`, but it should not block
+`status`, `doctor`, or `uninstall`. Those commands can still inspect or remove
+Alan-owned managed state when a previous development checkout was removed or an
+app bundle resource is damaged.
+
 Alternative considered: symlink directly to `tools/alan-emacs`. That is fast
 for local hacking, but it leaks source checkout layout into user configuration
 and does not match release distribution.

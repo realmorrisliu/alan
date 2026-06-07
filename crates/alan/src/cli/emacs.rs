@@ -35,7 +35,7 @@ pub fn run_emacs(action: EmacsAction) -> Result<()> {
 
 struct EmacsManager<P: EmacsProbe> {
     paths: EmacsPaths,
-    source: DistributionSource,
+    source: SourceDiscovery,
     probe: P,
 }
 
@@ -43,7 +43,7 @@ impl EmacsManager<CommandEmacsProbe> {
     fn discover() -> Result<Self> {
         Ok(Self {
             paths: EmacsPaths::from_environment()?,
-            source: DistributionSource::discover()?,
+            source: SourceDiscovery::discover(),
             probe: CommandEmacsProbe,
         })
     }
@@ -51,11 +51,14 @@ impl EmacsManager<CommandEmacsProbe> {
 
 impl<P: EmacsProbe> EmacsManager<P> {
     fn print_status(&self) -> Result<()> {
-        println!(
-            "source:  {} ({})",
-            self.source.path.display(),
-            self.source.kind.label()
-        );
+        match &self.source {
+            SourceDiscovery::Available(source) => println!(
+                "source:  {} ({})",
+                source.path.display(),
+                source.kind.label()
+            ),
+            SourceDiscovery::Unavailable(reason) => println!("source:  unavailable ({reason})"),
+        }
         println!(
             "install: {} ({})",
             self.paths.current_dir.display(),
@@ -222,14 +225,14 @@ impl<P: EmacsProbe> EmacsManager<P> {
             self.paths.home_dir.join(".emacs.el"),
             ConfigCandidateKind::StartupFile,
             &self.paths,
-            &self.source,
+            self.source.as_available(),
         )?);
         candidates.push(ConfigCandidate::inspect(
             ".emacs",
             self.paths.home_dir.join(".emacs"),
             ConfigCandidateKind::StartupFile,
             &self.paths,
-            &self.source,
+            self.source.as_available(),
         )?);
         let emacs_d = self.paths.home_dir.join(".emacs.d");
         candidates.push(ConfigCandidate::inspect(
@@ -237,7 +240,7 @@ impl<P: EmacsProbe> EmacsManager<P> {
             emacs_d,
             ConfigCandidateKind::ConfigDirectory,
             &self.paths,
-            &self.source,
+            self.source.as_available(),
         )?);
 
         let xdg = self.paths.config_home.join("emacs");
@@ -247,7 +250,7 @@ impl<P: EmacsProbe> EmacsManager<P> {
                 xdg,
                 ConfigCandidateKind::ConfigDirectory,
                 &self.paths,
-                &self.source,
+                self.source.as_available(),
             )?);
         }
 
@@ -346,7 +349,8 @@ impl<P: EmacsProbe> EmacsManager<P> {
     }
 
     fn materialize_distribution(&self) -> Result<()> {
-        ensure_distribution_dir(&self.source.path)?;
+        let source = self.required_source()?;
+        ensure_distribution_dir(&source.path)?;
         fs::create_dir_all(&self.paths.managed_root)
             .with_context(|| format!("Cannot create {}", self.paths.managed_root.display()))?;
 
@@ -356,8 +360,8 @@ impl<P: EmacsProbe> EmacsManager<P> {
             .join(format!("current.tmp-{}", std::process::id()));
         remove_path_if_exists(&temp_dir)
             .with_context(|| format!("Cannot clear {}", temp_dir.display()))?;
-        copy_dir_recursive(&self.source.path, &temp_dir)
-            .with_context(|| format!("Cannot copy {}", self.source.path.display()))?;
+        copy_dir_recursive(&source.path, &temp_dir)
+            .with_context(|| format!("Cannot copy {}", source.path.display()))?;
         ensure_distribution_dir(&temp_dir)?;
 
         remove_path_if_exists(&self.paths.current_dir)
@@ -371,7 +375,7 @@ impl<P: EmacsProbe> EmacsManager<P> {
         })?;
 
         if let (Ok(source), Ok(current)) = (
-            fs::canonicalize(&self.source.path),
+            fs::canonicalize(&source.path),
             fs::canonicalize(&self.paths.current_dir),
         ) {
             ensure!(
@@ -485,6 +489,15 @@ impl<P: EmacsProbe> EmacsManager<P> {
         );
         remove_path_if_exists(&self.paths.managed_root)
     }
+
+    fn required_source(&self) -> Result<&DistributionSource> {
+        match &self.source {
+            SourceDiscovery::Available(source) => Ok(source),
+            SourceDiscovery::Unavailable(reason) => {
+                bail!("Cannot find Alan Emacs distribution resource: {reason}")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -532,6 +545,28 @@ impl EmacsPaths {
 struct DistributionSource {
     kind: DistributionSourceKind,
     path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+enum SourceDiscovery {
+    Available(DistributionSource),
+    Unavailable(String),
+}
+
+impl SourceDiscovery {
+    fn discover() -> Self {
+        match DistributionSource::discover() {
+            Ok(source) => Self::Available(source),
+            Err(err) => Self::Unavailable(err.to_string()),
+        }
+    }
+
+    fn as_available(&self) -> Option<&DistributionSource> {
+        match self {
+            Self::Available(source) => Some(source),
+            Self::Unavailable(_) => None,
+        }
+    }
 }
 
 impl DistributionSource {
@@ -637,7 +672,7 @@ impl ConfigCandidate {
         path: PathBuf,
         kind: ConfigCandidateKind,
         paths: &EmacsPaths,
-        source: &DistributionSource,
+        source: Option<&DistributionSource>,
     ) -> Result<Self> {
         let path = normalize_lexical(&path);
         let state = ConfigEntryState::inspect(&path, kind, paths, source)?;
@@ -674,7 +709,7 @@ impl ConfigEntryState {
         path: &Path,
         kind: ConfigCandidateKind,
         paths: &EmacsPaths,
-        source: &DistributionSource,
+        source: Option<&DistributionSource>,
     ) -> Result<Self> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -702,7 +737,7 @@ impl ConfigEntryState {
             if path_within(&target, &paths.managed_root) {
                 return Ok(Self::ManagedLink { target });
             }
-            if paths_equal_existing_or_lexical(&target, &source.path) {
+            if source.is_some_and(|source| paths_equal_existing_or_lexical(&target, &source.path)) {
                 return Ok(Self::LegacySourceLink { target });
             }
             return Ok(Self::UserOwnedSymlink { target });
@@ -1254,10 +1289,10 @@ mod tests {
         let startup_user_dir = default_dir.clone();
         EmacsManager {
             paths,
-            source: DistributionSource {
+            source: SourceDiscovery::Available(DistributionSource {
                 kind: DistributionSourceKind::DevelopmentSource,
                 path: source,
-            },
+            }),
             probe: StaticProbe {
                 version: Some("GNU Emacs 30.2".to_string()),
                 default_dir,
@@ -1612,6 +1647,23 @@ mod tests {
         assert!(!default_dir.exists());
         assert!(!manager.paths.managed_root.exists());
         assert!(home.join(".config/emacs/init.el").is_file());
+    }
+
+    #[test]
+    fn uninstall_removes_managed_state_when_source_is_unavailable() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let source = make_source(temp.path());
+        let default_dir = home.join(".emacs.d");
+        let mut manager = make_manager(&home, source, default_dir.clone());
+        manager.install().unwrap();
+        manager.source = SourceDiscovery::Unavailable("source removed".to_string());
+
+        manager.uninstall().unwrap();
+
+        assert!(!default_dir.exists());
+        assert!(!manager.paths.managed_root.exists());
     }
 
     #[test]

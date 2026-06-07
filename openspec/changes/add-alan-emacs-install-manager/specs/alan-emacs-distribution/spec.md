@@ -103,6 +103,12 @@ configuration.
 - **THEN** `alan emacs uninstall` may remove that config entry link and the
   Alan-managed installed copy
 
+#### Scenario: Alan-owned install is removed when source is unavailable
+- **WHEN** the bundled or development Alan Emacs source can no longer be found
+- **AND** the selected config entry points to Alan-managed installed state
+- **THEN** `alan emacs uninstall` still removes the Alan-owned config entry link
+  and Alan-managed installed copy
+
 #### Scenario: User config is preserved
 - **WHEN** the selected config entry is not Alan-owned
 - **THEN** `alan emacs uninstall` refuses to remove it
