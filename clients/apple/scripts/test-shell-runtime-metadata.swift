@@ -8471,6 +8471,14 @@ private enum ShellRuntimeMetadataTests {
             "boot environment must expose resolved profile state"
         )
         expect(
+            boot.environment["EDITOR"] == "emacs",
+            "boot environment must expose plain emacs as EDITOR"
+        )
+        expect(
+            boot.environment["VISUAL"] == "emacs",
+            "boot environment must expose plain emacs as VISUAL"
+        )
+        expect(
             boot.workingDirectory == "/Users/alan",
             "profile default working directory must apply when pane cwd is absent"
         )
