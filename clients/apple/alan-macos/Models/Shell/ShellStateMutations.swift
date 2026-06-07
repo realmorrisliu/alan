@@ -165,7 +165,8 @@ extension ShellStateSnapshot {
                 activity: nil,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
     }
 
@@ -211,7 +212,8 @@ extension ShellStateSnapshot {
                 activity: activity,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
         let nextSpaces = rebuildingAttention(in: spaces, panes: updatedPanes)
         return ShellStateMutationResult(
@@ -322,7 +324,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: terminalProfileID
+                terminalProfileID: terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         return ShellStateSnapshot(
@@ -451,7 +454,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs + [tab],
                 selectedTabID: tabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextPanes = panes + [prepared.pane]
@@ -691,7 +695,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs + [newTab],
                 selectedTabID: newTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -716,7 +721,8 @@ extension ShellStateSnapshot {
                 activity: current.activity,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
 
         let retained = retainedContentRecords(in: nextSpaces, panes: nextPanes)
@@ -839,7 +845,8 @@ extension ShellStateSnapshot {
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextPanes = panes + [prepared.pane]
@@ -927,7 +934,8 @@ extension ShellStateSnapshot {
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextPanes = panes.filter { $0.paneID != paneID }
@@ -1010,7 +1018,8 @@ extension ShellStateSnapshot {
                     return [updatedSourceTab, newTab]
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let formatter = ISO8601DateFormatter()
@@ -1034,7 +1043,8 @@ extension ShellStateSnapshot {
                 activity: current.activity,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
 
         return ShellStateMutationResult(
@@ -1134,7 +1144,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: nextTabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -1158,7 +1169,8 @@ extension ShellStateSnapshot {
                 activity: current.activity,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
 
         let nextState = replacing(
@@ -1234,7 +1246,8 @@ extension ShellStateSnapshot {
                     existingTab.tabID == updatedTab.tabID ? updatedTab : existingTab
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -1289,7 +1302,8 @@ extension ShellStateSnapshot {
             attention: sourceSpace.attention,
             tabs: sourceSpace.tabs.filter { $0.tabID != tabID },
             selectedTabID: sourceSpace.selectedTabID,
-            terminalProfileID: sourceSpace.terminalProfileID
+            terminalProfileID: sourceSpace.terminalProfileID,
+            presentationIconSystemName: sourceSpace.presentationIconSystemName
         )
 
         let targetSpaceAfterRemoval = nextSpaces[targetSpaceIndex]
@@ -1310,7 +1324,8 @@ extension ShellStateSnapshot {
             attention: targetSpaceAfterRemoval.attention,
             tabs: targetTabs,
             selectedTabID: targetSpaceAfterRemoval.selectedTabID,
-            terminalProfileID: targetSpaceAfterRemoval.terminalProfileID
+            terminalProfileID: targetSpaceAfterRemoval.terminalProfileID,
+            presentationIconSystemName: targetSpaceAfterRemoval.presentationIconSystemName
         )
 
         let nextPanes = panes.map { pane in
@@ -1524,7 +1539,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: space.tabs.filter { !clearableTabIDs.contains($0.tabID) },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
@@ -1566,7 +1582,8 @@ extension ShellStateSnapshot {
                 activity: current.activity,
                 alanBinding: current.alanBinding,
                 terminalProfileID: current.terminalProfileID
-            )
+
+                )
         }
 
         return ShellStateMutationResult(
@@ -1611,7 +1628,8 @@ extension ShellStateSnapshot {
                     tab.tabID == updatedTab.tabID ? updatedTab : tab
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -1662,7 +1680,8 @@ extension ShellStateSnapshot {
                     tab.tabID == tabID ? updatedTab : tab
                 },
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextState = replacing(
@@ -1705,7 +1724,8 @@ extension ShellStateSnapshot {
                 attention: space.attention,
                 tabs: remainingTabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
         let nextPanes = panes.filter { !removedPaneIDs.contains($0.paneID) }
@@ -1836,7 +1856,8 @@ extension ShellStateSnapshot {
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
                 selectedTabID: space.resolvedSelectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
     }

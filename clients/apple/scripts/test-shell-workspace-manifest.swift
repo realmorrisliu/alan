@@ -15,6 +15,9 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMissingManifestCreatesDefaultWithoutMigratingShellState()
         try verifiesCorruptManifestIsQuarantined()
         try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
+        try verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence()
+        try verifiesContentSpaceIconMetadataRoundTripsSeparatelyFromTerminalProfile()
+        try verifiesInvalidSpaceIconFallsBackButPreservesManifestEvidence()
         try verifiesMaterializerPreservesEmptySelectedSpace()
         try verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs()
         try verifiesMaterializerPreservesInactiveSpaceSelection()
@@ -142,6 +145,181 @@ private enum ShellWorkspaceManifestTests {
         expect(
             decoded.spaces.first?.selectedTabID == "tab_second",
             "old manifest repair must seed selected space remembered tab from global selected tab"
+        )
+    }
+
+    private static func verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence() throws {
+        let tab = makeContentTab(
+            tabID: "tab_icon_default",
+            title: "Icon Default",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/icon/default",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let oldManifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let oldData = try encoder.encode(oldManifest)
+        let oldText = String(data: oldData, encoding: .utf8) ?? ""
+        expect(
+            !oldText.contains("\"presentation_icon\""),
+            "old-manifest setup must not include Space icon metadata"
+        )
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: oldData)
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: decoded,
+            defaultWorkingDirectory: "/tmp",
+            now: referenceDate
+        )
+
+        expect(
+            decoded.spaces.first?.presentationIconSystemName == nil,
+            "absent Space icon metadata must remain absent on the decoded manifest record"
+        )
+        expect(
+            state.spaces.first?.presentationIconSystemName == nil,
+            "ShellSpace projection must preserve absent explicit icon metadata"
+        )
+        expect(
+            state.spaces.first?.resolvedPresentationIconSystemName
+                == ShellSpacePresentationIcon.defaultSystemName,
+            "ShellSpace projection must expose a deterministic default icon for display"
+        )
+
+        let rewrittenText = String(data: try encoder.encode(decoded), encoding: .utf8) ?? ""
+        expect(
+            !rewrittenText.contains("\"presentation_icon\""),
+            "default display icon must not rewrite old manifest evidence"
+        )
+    }
+
+    private static func verifiesContentSpaceIconMetadataRoundTripsSeparatelyFromTerminalProfile() throws {
+        let tab = makeContentTab(
+            tabID: "tab_icon_explicit",
+            title: "Icon Explicit",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/icon/explicit",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: tab.tabID,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: tab.tabID,
+                    tabs: [tab],
+                    terminalProfileID: "alan",
+                    presentationIconSystemName: "rectangle.stack.fill"
+                )
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(manifest)
+        let json = String(data: data, encoding: .utf8) ?? ""
+        expect(json.contains("\"presentation_icon\""), "explicit Space icon must be stored on the Space record")
+        expect(json.contains("\"terminal_profile_id\""), "terminal profile reference must remain separately stored")
+        expect(
+            !json.contains("\"profile_icon\""),
+            "Space presentation icon must not be encoded as Terminal Profile icon metadata"
+        )
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: decoded,
+            defaultWorkingDirectory: "/tmp",
+            now: referenceDate
+        )
+
+        expect(
+            decoded.spaces.first?.presentationIconSystemName == "rectangle.stack.fill",
+            "decoded manifest Space record must preserve explicit icon metadata"
+        )
+        expect(
+            state.spaces.first?.presentationIconSystemName == "rectangle.stack.fill",
+            "ShellSpace projection must expose explicit icon metadata"
+        )
+        expect(
+            state.spaces.first?.terminalProfileID == "alan",
+            "Space icon metadata must not rewrite the Terminal Profile reference"
+        )
+    }
+
+    private static func verifiesInvalidSpaceIconFallsBackButPreservesManifestEvidence() throws {
+        let tab = makeContentTab(
+            tabID: "tab_icon_invalid",
+            title: "Icon Invalid",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/icon/invalid",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: tab.tabID,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: tab.tabID,
+                    tabs: [tab],
+                    presentationIconSystemName: "not a renderable symbol"
+                )
+            ]
+        )
+
+        let state = ShellWorkspaceMaterializer.materialize(
+            manifest: manifest,
+            defaultWorkingDirectory: "/tmp",
+            now: referenceDate
+        )
+
+        expect(
+            manifest.spaces.first?.presentationIconSystemName == "not a renderable symbol",
+            "invalid Space icon evidence must remain on the manifest record"
+        )
+        expect(
+            state.spaces.first?.presentationIconSystemName == "not a renderable symbol",
+            "ShellSpace projection must preserve the explicit invalid icon evidence"
+        )
+        expect(
+            state.spaces.first?.resolvedPresentationIconSystemName
+                == ShellSpacePresentationIcon.defaultSystemName,
+            "unsupported Space icon metadata must fall back to the deterministic display icon"
+        )
+        expect(
+            state.spaces.first?.tabs.first?.tabID == tab.tabID,
+            "invalid Space icon metadata must not drop tabs"
         )
     }
 

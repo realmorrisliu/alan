@@ -26,6 +26,8 @@ extension instead of deriving icons from Terminal Profiles.
   cards or notification-dot styling.
 - Show `icon + title` when width allows, then truncated title, then icon-only
   circular targets at the minimum width.
+- Distribute Space targets evenly across the full track until that equal share
+  would fall below the minimum target width.
 - Remove the nine-Space cap; all Spaces participate in the slider.
 - Horizontally scroll the track when icon-only targets still overflow the
   sidebar width.
@@ -75,16 +77,20 @@ not introduce independent framed pills or resize the item.
 
 ### Replace density tiers with width allocation
 
-The layout model should stop using fixed count buckets and `maximumVisibleSpaces`.
-All Spaces should be measured and included. Width allocation should prefer the
-selected Space and nearby readable title labels, but every Space must have a
-stable minimum circular target that can show the Space icon.
+The layout model should stop using fixed count buckets, fixed maximum Space
+target widths, and `maximumVisibleSpaces`. All Spaces should be measured and
+included. Width allocation should divide the available rounded track evenly
+across every Space until that equal share would drop below the stable minimum
+target width.
 
 The collapse path is:
 
-1. `icon + full title` when the item fits.
-2. `icon + truncated title` when the track has partial room.
-3. `icon-only circle` at the minimum width.
+1. `icon + full title` when the equal per-Space width can support it.
+2. `icon + truncated title` when the equal per-Space width has partial room.
+3. `icon-only` when the equal per-Space width is above the minimum but cannot
+   support a title.
+4. Minimum-width icon-only targets with horizontal overflow when equal division
+   would fall below the minimum width.
 
 If all items are already at their minimum circular width and still exceed the
 available track width, the track scrolls horizontally instead of hiding Spaces

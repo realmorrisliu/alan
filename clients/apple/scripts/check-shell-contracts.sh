@@ -646,15 +646,55 @@ require_pattern \
     "ShellSidebarSpaceSlider" \
     "sidebar Space navigation must render through the top Space slider"
 
-require_pattern \
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "maximumVisibleSpaces|ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces" \
+    "continuous Space slider must not retain the old 9-Space cap"
+
+reject_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
-    "maximumVisibleSpaces = 9" \
-    "adaptive Space slider must cap the default sidebar at 9 visible Spaces"
+    "case low|case medium|case high|visualScale|opacity\\(" \
+    "continuous Space slider must not retain count-density tiers or hover scale/fade geometry"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
-    "case low|case medium|case high" \
-    "adaptive Space slider must define low, medium, and high density tiers"
+    "case fullTitle|case truncatedTitle|case iconOnly" \
+    "continuous Space slider must define full, truncated, and icon-only collapse modes"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "distributedItemWidth" \
+    "continuous Space slider must distribute Space targets across the full track before minimum-width overflow"
+
+reject_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "fullTitleItemWidth|truncatedTitleItemWidth|width\\(for: mode\\)" \
+    "continuous Space slider must not retain fixed maximum Space target widths"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
+    "isHorizontallyScrollable|contentWidth > availableWidth" \
+    "continuous Space slider must expose horizontal overflow sizing"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+    "sidebarSpaceSliderTrack" \
+    "continuous Space slider track must use a dedicated Safari-like gray track token"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "ShellPalette\\.sidebarSpaceSliderTrack" \
+    "continuous Space slider track must render with the dedicated gray track token"
+
+reject_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "sidebarControl\\.opacity\\(0\\.46\\)" \
+    "continuous Space slider track must not use the old too-light sidebar control fill"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
+    "resolvedPresentationIconSystemName|presentation_icon" \
+    "ShellSpace projection must expose optional Space presentation icon metadata"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
@@ -667,29 +707,19 @@ require_pattern \
     "adaptive Space slider must keep press-drag scrub behind an explicit horizontal threshold"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
-    "ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces" \
-    "host Space creation must share the 9-Space slider cap"
-
-require_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
-    "ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces" \
-    "local space.create must share the 9-Space slider cap"
-
-require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift" \
-    "prefix\\(ShellSidebarSpaceSliderLayout\\.maximumVisibleSpaces\\)" \
-    "hidden Space index shortcuts must share the 9-Space slider cap"
-
-require_pattern \
-    "clients/apple/alan-macos/MacShellRootView.swift" \
-    "\\.disabled\\(!canCreateTerminalSpace\\)" \
-    "titlebar New Space must disable when the adaptive slider cap is reached"
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths" \
+    "runtime tests must prove Space creation can exceed the old slider cap"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
     "spaceContextMenu\\(" \
     "Space profile selection must be exposed through the Space context menu"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "host\\.setTerminalProfile\\([^\\n]+forSpaceID: space\\.spaceID\\)" \
+    "Space context-menu profile actions must target the Space whose menu was opened"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -717,9 +747,19 @@ require_pattern \
     "Space slider vertical pass-through wheel input must be forwarded to the active tab list"
 
 require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "locationX: value\\.location\\.x - ShellSidebarMetrics\\.edgeInset \\+ trackScrollOffsetX" \
+    "Space slider drag scrub must account for the horizontal track scroll offset"
+
+require_pattern \
     "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
     "verifiesPassThroughWheelForwardingDecision" \
     "Space slider layout tests must cover pass-through wheel forwarding to the tab list"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesReadableSpacesDistributeAcrossTheFullTrack|verifiesTruncatedSpacesDistributeAcrossTheFullTrack|verifiesIconOnlySpacesDistributeUntilMinimumWidth" \
+    "Space slider layout tests must prove targets distribute across the full track before minimum-width overflow"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -788,8 +828,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-shell-runtime-metadata.swift" \
-    "verifiesSpaceCreateCapAppliesToControlCommandPaths" \
-    "shell runtime tests must prove space.create shares the sidebar Space cap"
+    "verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths" \
+    "shell runtime tests must prove space.create can exceed the old sidebar Space cap"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
@@ -1858,8 +1898,18 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
-    "verifiesDensityTiers" \
-    "shell sidebar Space slider tests must verify adaptive density tiers"
+    "verifiesMoreThanNineSpacesParticipate" \
+    "shell sidebar Space slider tests must verify every Space participates"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesIconOnlyCollapseAndOverflowSizing" \
+    "shell sidebar Space slider tests must verify icon-only overflow sizing"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
+    "verifiesHoverDoesNotChangeGeometry" \
+    "shell sidebar Space slider tests must verify hover keeps stable geometry"
 
 require_pattern \
     "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
@@ -1870,6 +1920,16 @@ require_pattern \
     "clients/apple/scripts/test-shell-sidebar-space-slider-layout.swift" \
     "verifiesScrubCancelRestoresTheSelectedSource" \
     "shell sidebar Space slider tests must verify scrub cancel restores the selected Space"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-workspace-manifest.swift" \
+    "verifiesContentSpaceIconMetadataRoundTripsSeparatelyFromTerminalProfile" \
+    "workspace manifest tests must verify explicit Space icon metadata round-trips outside Terminal Profiles"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-workspace-manifest.swift" \
+    "verifiesInvalidSpaceIconFallsBackButPreservesManifestEvidence" \
+    "workspace manifest tests must verify invalid Space icon metadata falls back without data loss"
 
 require_pattern \
     "clients/apple/alan-macos/Support/ShellWindowPlacement.swift" \

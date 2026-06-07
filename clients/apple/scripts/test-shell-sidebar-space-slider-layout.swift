@@ -10,14 +10,17 @@ struct ShellSidebarSpaceSliderLayoutTestRunner {
 
 private enum ShellSidebarSpaceSliderLayoutTests {
     static func run() throws {
-        try verifiesDensityTiers()
-        try verifiesLowDensityUsesFullTitles()
-        try verifiesMediumDensityUsesSelectedFullTitleAndShortTitles()
-        try verifiesHighDensityUsesSelectedTitleAndIndicators()
-        try verifiesHighDensityHoverExpandsTheHoveredIndicator()
+        try verifiesOneSpaceUsesFullTitleTrackTarget()
+        try verifiesSeveralSpacesUseReadableTrackTargets()
+        try verifiesReadableSpacesDistributeAcrossTheFullTrack()
+        try verifiesTruncatedTitlesWhenPartialWidthFits()
+        try verifiesTruncatedSpacesDistributeAcrossTheFullTrack()
+        try verifiesIconOnlySpacesDistributeUntilMinimumWidth()
+        try verifiesMoreThanNineSpacesParticipate()
+        try verifiesIconOnlyCollapseAndOverflowSizing()
+        try verifiesHoverDoesNotChangeGeometry()
         try verifiesScrubFocusIsDistinctFromSelectedSpace()
-        try verifiesMaximumVisibleSpaceCap()
-        try verifiesReducedMotionRemovesScaleEmphasis()
+        try verifiesReducedMotionPreservesStableGeometry()
         try verifiesClickSelectionRules()
         try verifiesDragScrubPreviewAndCommitTarget()
         try verifiesDragScrubUsesEdgeResistanceAtBounds()
@@ -29,82 +32,143 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         print("Shell sidebar Space slider layout tests passed.")
     }
 
-    private static func verifiesDensityTiers() throws {
-        expect(ShellSidebarSpaceSliderLayout.density(for: 1) == .low, "1 Space must be low density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 3) == .low, "3 Spaces must be low density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 4) == .medium, "4 Spaces must be medium density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 6) == .medium, "6 Spaces must be medium density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 7) == .high, "7 Spaces must be high density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 9) == .high, "9 Spaces must be high density")
-        expect(ShellSidebarSpaceSliderLayout.density(for: 12) == .high, "Space count must cap into high density")
+    private static func verifiesOneSpaceUsesFullTitleTrackTarget() throws {
+        let layout = make(spaceCount: 1, selectedIndex: 0, availableWidth: 240)
+
+        expect(layout.items.count == 1, "single-Space layout must include the Space")
+        expect(layout.items[0].mode == .fullTitle, "single-Space target must show icon and full title")
+        expect(layout.items[0].isSelected, "selected item must be preserved")
+        expect(!layout.isHorizontallyScrollable, "single-Space track must not require overflow scrolling")
+        expect(layout.contentWidth <= 240, "single-Space content must fit inside the track")
     }
 
-    private static func verifiesLowDensityUsesFullTitles() throws {
-        let layout = make(spaceCount: 3, selectedIndex: 1)
+    private static func verifiesSeveralSpacesUseReadableTrackTargets() throws {
+        let layout = make(spaceCount: 3, selectedIndex: 1, availableWidth: 300)
 
-        expect(layout.density == .low, "3 Spaces must use low density")
         expect(
             layout.items.map(\.mode) == [.fullTitle, .fullTitle, .fullTitle],
-            "low density must render every Space as a full title"
+            "readable track width must show icon and full title for every Space"
         )
-        expect(layout.items[1].isSelected, "selected item must be preserved")
+        expect(layout.contentWidth <= 300, "readable targets must fit without overflow")
     }
 
-    private static func verifiesMediumDensityUsesSelectedFullTitleAndShortTitles() throws {
-        let layout = make(spaceCount: 6, selectedIndex: 2)
+    private static func verifiesReadableSpacesDistributeAcrossTheFullTrack() throws {
+        let layout = make(spaceCount: 2, selectedIndex: 0, availableWidth: 300)
+        let expectedItemWidth = (300 - ShellSidebarSpaceSliderLayout.spacing) / 2
 
-        expect(layout.density == .medium, "6 Spaces must use medium density")
-        expect(layout.items[2].mode == .fullTitle, "selected medium-density Space must be full title")
         expect(
-            layout.items.enumerated().allSatisfy { index, item in
-                index == 2 || item.mode == .shortTitle
-            },
-            "inactive medium-density Spaces must be short titles"
+            layout.items.map(\.mode) == [.fullTitle, .fullTitle],
+            "wide readable Spaces must keep full title labels"
         )
-    }
-
-    private static func verifiesHighDensityUsesSelectedTitleAndIndicators() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 4)
-
-        expect(layout.density == .high, "9 Spaces must use high density")
-        expect(layout.items[4].mode == .fullTitle, "selected high-density Space must be full title")
         expect(
-            layout.items.enumerated().allSatisfy { index, item in
-                index == 4 || item.mode == .indicator
-            },
-            "inactive high-density Spaces must be indicators"
+            layout.items.allSatisfy { rounded($0.width) == rounded(expectedItemWidth) },
+            "readable Space targets must distribute across the full track instead of using a fixed maximum width"
+        )
+        expect(
+            rounded(layout.contentWidth) == rounded(300),
+            "readable Space targets must fill the whole track before minimum-width collapse"
         )
     }
 
-    private static func verifiesHighDensityHoverExpandsTheHoveredIndicator() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 0, hoveredIndex: 5)
+    private static func verifiesTruncatedTitlesWhenPartialWidthFits() throws {
+        let layout = make(spaceCount: 3, selectedIndex: 1, availableWidth: 180)
 
-        expect(layout.items[5].mode == .shortTitle, "hovered high-density indicator must expand to a short title")
-        expect(layout.items[5].isFocused, "hovered item must become focused for local preview")
-        expect(layout.items[4].visualScale >= 1, "neighboring items must remain visually stable")
+        expect(
+            layout.items.map(\.mode) == [.truncatedTitle, .truncatedTitle, .truncatedTitle],
+            "partial track width must keep icon and truncated title targets before icon-only collapse"
+        )
+        expect(layout.contentWidth <= 180, "truncated targets must fit inside the available track")
+        expect(!layout.isHorizontallyScrollable, "truncated targets must not scroll until minimums overflow")
+    }
+
+    private static func verifiesTruncatedSpacesDistributeAcrossTheFullTrack() throws {
+        let layout = make(spaceCount: 4, selectedIndex: 1, availableWidth: 240)
+        let expectedItemWidth = (240 - ShellSidebarSpaceSliderLayout.spacing * 3) / 4
+
+        expect(
+            layout.items.map(\.mode) == [
+                .truncatedTitle,
+                .truncatedTitle,
+                .truncatedTitle,
+                .truncatedTitle,
+            ],
+            "partial-width Spaces must keep truncated title labels before icon-only collapse"
+        )
+        expect(
+            layout.items.allSatisfy { rounded($0.width) == rounded(expectedItemWidth) },
+            "truncated Space targets must distribute across the full track instead of using a fixed width"
+        )
+        expect(
+            rounded(layout.contentWidth) == rounded(240),
+            "truncated Space targets must fill the whole track before minimum-width collapse"
+        )
+    }
+
+    private static func verifiesIconOnlySpacesDistributeUntilMinimumWidth() throws {
+        let layout = make(spaceCount: 7, selectedIndex: 3, availableWidth: 240)
+        let expectedItemWidth = (240 - ShellSidebarSpaceSliderLayout.spacing * 6) / 7
+
+        expect(
+            layout.items.allSatisfy { $0.mode == .iconOnly },
+            "narrow Spaces may collapse to icon-only before minimum overflow"
+        )
+        expect(
+            layout.items.allSatisfy { rounded($0.width) == rounded(expectedItemWidth) },
+            "icon-only Space targets must still distribute across the full track until the minimum width is reached"
+        )
+        expect(
+            rounded(layout.contentWidth) == rounded(240),
+            "icon-only Space targets above the minimum width must fill the whole track without scrolling"
+        )
+        expect(!layout.isHorizontallyScrollable, "icon-only distribution above minimum width must not scroll")
+    }
+
+    private static func verifiesMoreThanNineSpacesParticipate() throws {
+        let layout = make(spaceCount: 12, selectedIndex: 10, availableWidth: 360)
+
+        expect(layout.items.count == 12, "layout must include every Space instead of capping at nine")
+        expect(layout.items[10].isSelected, "selected Space beyond the old cap must remain selectable")
+        expect(layout.items.map(\.index) == Array(0..<12), "item indices must preserve every Space target")
+    }
+
+    private static func verifiesIconOnlyCollapseAndOverflowSizing() throws {
+        let layout = make(spaceCount: 14, selectedIndex: 12, availableWidth: 240)
+
+        expect(
+            layout.items.allSatisfy { $0.mode == .iconOnly },
+            "overflow track must collapse every Space to icon-only minimum targets"
+        )
+        expect(layout.items.count == 14, "icon-only overflow must still include every Space")
+        expect(layout.contentWidth > 240, "minimum icon-only targets must report overflow content width")
+        expect(layout.isHorizontallyScrollable, "minimum overflow must request horizontal track scrolling")
+    }
+
+    private static func verifiesHoverDoesNotChangeGeometry() throws {
+        let base = make(spaceCount: 9, selectedIndex: 0, availableWidth: 240)
+        let hovered = make(spaceCount: 9, selectedIndex: 0, hoveredIndex: 5, availableWidth: 240)
+
+        expect(geometrySignature(base) == geometrySignature(hovered), "hover must not change Space frames")
+        expect(hovered.items[5].isFocused, "hovered item must still be identified as focused")
     }
 
     private static func verifiesScrubFocusIsDistinctFromSelectedSpace() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 0, scrubFocusIndex: 6)
+        let base = make(spaceCount: 9, selectedIndex: 0, availableWidth: 240)
+        let focused = make(spaceCount: 9, selectedIndex: 0, scrubFocusIndex: 6, availableWidth: 240)
 
-        expect(layout.items[0].isSelected, "selected Space marker must remain on the active Space")
-        expect(layout.items[6].isFocused, "scrub focus must mark the preview Space")
-        expect(layout.items[6].mode == .fullTitle, "scrub-focused high-density Space must become a title")
+        expect(focused.items[0].isSelected, "selected Space marker must remain on the active Space")
+        expect(focused.items[6].isFocused, "scrub focus must mark the preview Space")
+        expect(geometrySignature(base) == geometrySignature(focused), "scrub focus must not shift target frames")
     }
 
-    private static func verifiesMaximumVisibleSpaceCap() throws {
-        let layout = make(spaceCount: 12, selectedIndex: 10)
-
-        expect(
-            ShellSidebarSpaceSliderLayout.maximumVisibleSpaces == 9,
-            "maximum visible Space count must be 9"
+    private static func verifiesReducedMotionPreservesStableGeometry() throws {
+        let animated = ShellSidebarSpaceSliderLayout.make(
+            spaceCount: 9,
+            selectedIndex: 0,
+            scrubFocusIndex: 4,
+            availableWidth: 240,
+            reduceMotion: false
         )
-        expect(layout.items.count == 9, "layout must cap rendered Spaces at 9")
-        expect(layout.items[8].isSelected, "selected index must clamp into the visible range")
-    }
-
-    private static func verifiesReducedMotionRemovesScaleEmphasis() throws {
-        let layout = ShellSidebarSpaceSliderLayout.make(
+        let reduced = ShellSidebarSpaceSliderLayout.make(
             spaceCount: 9,
             selectedIndex: 0,
             scrubFocusIndex: 4,
@@ -113,8 +177,8 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         )
 
         expect(
-            layout.items.allSatisfy { $0.visualScale == 1 },
-            "reduced motion must disable scale emphasis"
+            geometrySignature(animated) == geometrySignature(reduced),
+            "reduced motion must preserve the same stable target geometry"
         )
     }
 
@@ -146,8 +210,8 @@ private enum ShellSidebarSpaceSliderLayoutTests {
     }
 
     private static func verifiesDragScrubPreviewAndCommitTarget() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 2)
-        var scrub = try makeScrub(source: .drag, selectedIndex: 2, spaceCount: 9)
+        let layout = make(spaceCount: 12, selectedIndex: 2, availableWidth: 360)
+        var scrub = try makeScrub(source: .drag, selectedIndex: 2, spaceCount: 12)
         let targetX = try expectValue(layout.midpoint(for: 6), "target midpoint must exist")
 
         scrub.updateDrag(locationX: targetX, translationX: 3, layout: layout)
@@ -160,9 +224,9 @@ private enum ShellSidebarSpaceSliderLayoutTests {
     }
 
     private static func verifiesDragScrubUsesEdgeResistanceAtBounds() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 4)
-        var leadingScrub = try makeScrub(source: .drag, selectedIndex: 4, spaceCount: 9)
-        var trailingScrub = try makeScrub(source: .drag, selectedIndex: 4, spaceCount: 9)
+        let layout = make(spaceCount: 12, selectedIndex: 4, availableWidth: 360)
+        var leadingScrub = try makeScrub(source: .drag, selectedIndex: 4, spaceCount: 12)
+        var trailingScrub = try makeScrub(source: .drag, selectedIndex: 4, spaceCount: 12)
 
         leadingScrub.updateDrag(locationX: -40, translationX: -80, layout: layout)
         trailingScrub.updateDrag(locationX: layout.contentWidth + 40, translationX: 80, layout: layout)
@@ -172,7 +236,7 @@ private enum ShellSidebarSpaceSliderLayoutTests {
             leadingScrub.edgeResistanceOffset < 0,
             "leading edge drag must expose a resisted offset"
         )
-        expect(trailingScrub.focusIndex == 8, "trailing edge drag must clamp to the last Space")
+        expect(trailingScrub.focusIndex == 11, "trailing edge drag must clamp to the last Space")
         expect(
             trailingScrub.edgeResistanceOffset > 0,
             "trailing edge drag must expose a resisted offset"
@@ -180,20 +244,20 @@ private enum ShellSidebarSpaceSliderLayoutTests {
     }
 
     private static func verifiesWheelScrubPreviewAndCommitTarget() throws {
-        var scrub = try makeScrub(source: .wheel, selectedIndex: 3, spaceCount: 9)
+        var scrub = try makeScrub(source: .wheel, selectedIndex: 3, spaceCount: 12)
 
-        scrub.updateWheel(deltaX: 10, itemSpan: 24, spaceCount: 9)
+        scrub.updateWheel(deltaX: 10, itemSpan: 24, spaceCount: 12)
         expect(scrub.focusIndex == 3, "small wheel scrub must enter preview without moving focus")
 
-        scrub.updateWheel(deltaX: 58, itemSpan: 24, spaceCount: 9)
+        scrub.updateWheel(deltaX: 58, itemSpan: 24, spaceCount: 12)
         expect(scrub.focusIndex == 5, "wheel scrub must move preview focus after enough horizontal input")
         expect(scrub.hasPreviewTarget, "wheel scrub must preview before commit")
         expect(scrub.commitIndex == 5, "wheel dwell must commit the focused Space")
     }
 
     private static func verifiesScrubCancelRestoresTheSelectedSource() throws {
-        let layout = make(spaceCount: 9, selectedIndex: 2)
-        var scrub = try makeScrub(source: .drag, selectedIndex: 2, spaceCount: 9)
+        let layout = make(spaceCount: 12, selectedIndex: 2, availableWidth: 360)
+        var scrub = try makeScrub(source: .drag, selectedIndex: 2, spaceCount: 12)
         let targetX = try expectValue(layout.midpoint(for: 6), "target midpoint must exist")
 
         scrub.updateDrag(locationX: targetX, translationX: 48, layout: layout)
@@ -295,16 +359,29 @@ private enum ShellSidebarSpaceSliderLayoutTests {
         spaceCount: Int,
         selectedIndex: Int?,
         hoveredIndex: Int? = nil,
-        scrubFocusIndex: Int? = nil
+        scrubFocusIndex: Int? = nil,
+        availableWidth: CGFloat = 240
     ) -> ShellSidebarSpaceSliderLayout {
         ShellSidebarSpaceSliderLayout.make(
             spaceCount: spaceCount,
             selectedIndex: selectedIndex,
             hoveredIndex: hoveredIndex,
             scrubFocusIndex: scrubFocusIndex,
-            availableWidth: 240,
+            availableWidth: availableWidth,
             reduceMotion: false
         )
+    }
+
+    private static func geometrySignature(
+        _ layout: ShellSidebarSpaceSliderLayout
+    ) -> [String] {
+        layout.items.map { item in
+            "\(item.index):\(item.mode):\(rounded(item.width))"
+        } + ["content:\(rounded(layout.contentWidth))"]
+    }
+
+    private static func rounded(_ value: CGFloat) -> Int {
+        Int((value * 100).rounded())
     }
 
     private static func makeScrub(
