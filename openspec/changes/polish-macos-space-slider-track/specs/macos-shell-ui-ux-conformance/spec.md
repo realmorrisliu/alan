@@ -30,6 +30,8 @@ theme panels, and ornamental controls.
 - **WHEN** the default sidebar displays Space navigation
 - **THEN** Space navigation is presented as a continuous rounded top track whose
   selected Space is a compact liquid-glass tab inside that track
+- **AND** the track uses a visible neutral gray native track fill rather than a
+  barely visible transparent control tint
 - **AND** inactive Spaces sit in the shared track background using icon and
   title foreground treatment rather than individual framed pills, cards, or
   dot-only indicators
@@ -68,6 +70,8 @@ without hover-driven geometry changes or cover-flow motion.
 - **WHEN** the default sidebar displays one or more Spaces
 - **THEN** the Space slider renders one rounded track as the shared navigation
   surface
+- **AND** the track background reads as a Safari-like gray track rather than a
+  nearly transparent overlay
 - **AND** each Space is represented by a distinct target inside that track
 - **AND** the selected Space uses the strongest selected-state treatment as a
   compact liquid-glass tab inside the track
@@ -79,11 +83,21 @@ without hover-driven geometry changes or cover-flow motion.
 - **AND** the title truncates before it wraps, overlaps adjacent targets, or
   changes sidebar width
 
+#### Scenario: Space targets distribute across the full track before overflow
+- **WHEN** the equal per-Space target width is at or above the minimum Space
+  target width
+- **THEN** alan divides the full rounded track evenly across every Space target
+- **AND** alan does not leave unused trailing track space solely because a Space
+  target reached a fixed maximum width
+- **AND** alan chooses full-title, truncated-title, or icon-only content from
+  that equal per-Space width
+
 #### Scenario: Space targets collapse to icon-only minimums
 - **WHEN** the track cannot fit readable title labels for every Space
-- **THEN** alan progressively truncates lower-priority Space titles
-- **AND** alan may collapse any Space target to an icon-only circular target at
-  its minimum width
+- **THEN** alan truncates every Space title according to the equal per-Space
+  width
+- **AND** alan may collapse Space targets to icon-only targets before horizontal
+  overflow is needed
 - **AND** the icon-only target remains a distinct click, context-menu,
   keyboard, VoiceOver, and scrub target with its title exposed
   accessibly

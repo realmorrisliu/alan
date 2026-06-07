@@ -41,7 +41,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesShellHostControllerRoutesSharedAutomationCommands()
         verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
-        verifiesSpaceCreateCapAppliesToControlCommandPaths()
+        verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
@@ -181,6 +181,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesManifestActiveTaskProjection()
         verifiesTerminalProfileStoreFallbackValidationAndCorruptRecovery()
         verifiesTerminalProfileLaunchResolutionAndEnvironmentProjection()
+        verifiesTerminalProfileRebindingPreservesSpaceIconMetadata()
         verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip()
         verifiesTerminalProfileInheritanceForSpacesTabsAndSplits()
         verifiesGlobalDefaultTerminalProfileDefersWorkingDirectory()
@@ -2252,65 +2253,64 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesSpaceCreateCapAppliesToControlCommandPaths() {
-        var cappedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_cap_control")
-        while cappedState.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces {
-            cappedState = cappedState.creatingTerminalSpace(
+    private static func verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths() {
+        var expandedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_track_control")
+        while expandedState.spaces.count < 10 {
+            expandedState = expandedState.creatingTerminalSpace(
                 title: nil,
                 workingDirectory: nil
             ).state
         }
 
         let controller = makeController(
-            windowID: "space_cap_control",
-            shellState: cappedState
+            windowID: "space_track_control",
+            shellState: expandedState
         )
         let directSpaceID = controller.createSpace()
-        expect(directSpaceID == nil, "direct createSpace must reject the capped Space count")
+        expect(directSpaceID != nil, "direct createSpace must allow more than nine Spaces")
         expect(
-            controller.shellState.spaces.count
-                == ShellSidebarSpaceSliderLayout.maximumVisibleSpaces,
-            "direct createSpace must leave the capped Space count unchanged"
+            controller.shellState.spaces.count == 11,
+            "direct createSpace must append the eleventh Space"
         )
 
         let controlPlaneCreate = controller.handleControlPlaneCommand(
             decodeControlCommand(
                 """
                 {
-                  "request_id": "space-cap-control-plane",
+                  "request_id": "space-track-control-plane",
                   "command": "space.create"
                 }
                 """
             )
         )
         expect(
-            controlPlaneCreate.applied == false
-                && controlPlaneCreate.errorCode == "space_create_failed",
-            "control-plane space.create must reject the capped Space count"
+            controlPlaneCreate.applied == true && controlPlaneCreate.spaceID != nil,
+            "control-plane space.create must allow more than nine Spaces"
         )
         expect(
-            controller.shellState.spaces.count
-                == ShellSidebarSpaceSliderLayout.maximumVisibleSpaces,
-            "control-plane space.create must leave the capped Space count unchanged"
+            controller.shellState.spaces.count == 12,
+            "control-plane space.create must append another Space beyond the old cap"
         )
 
         let localCreate = AlanShellLocalCommandExecutor.execute(
             command: decodeControlCommand(
                 """
                 {
-                  "request_id": "space-cap-local",
+                  "request_id": "space-track-local",
                   "command": "space.create"
                 }
                 """
             ),
-            state: cappedState
+            state: expandedState
         )
         expect(
-            localCreate?.response.applied == false
-                && localCreate?.response.errorCode == "space_create_failed",
-            "local space.create must reject the capped Space count"
+            localCreate?.response.applied == true && localCreate?.response.spaceID != nil,
+            "local space.create must allow more than nine Spaces"
         )
-        expect(localCreate?.updatedState == nil, "local space.create must not mutate capped state")
+        expect(
+            localCreate?.updatedState?.spaces.count == 11,
+            "local space.create must return an updated state beyond the old cap"
+        )
     }
 
     private static func verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd() {
@@ -8675,6 +8675,30 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesTerminalProfileRebindingPreservesSpaceIconMetadata() {
+        let initialState = stateWithContext(
+            windowID: "window_icon_rebind",
+            context: context(
+                processState: "running",
+                rendererHealth: "healthy",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            spacePresentationIconSystemName: "rectangle.stack.fill"
+        )
+
+        let reboundState = initialState.settingTerminalProfile("alan", forSpaceID: "space_1")
+        expect(
+            reboundState?.space(spaceID: "space_1")?.terminalProfileID == "alan",
+            "rebinding a Space terminal profile must update the Space profile reference"
+        )
+        expect(
+            reboundState?.space(spaceID: "space_1")?.presentationIconSystemName
+                == "rectangle.stack.fill",
+            "rebinding a Space terminal profile must preserve explicit Space icon metadata"
+        )
+    }
+
     private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {
         let now = Date(timeIntervalSince1970: 2_001)
         let manifest = ShellContentWorkspaceManifest(
@@ -10480,6 +10504,7 @@ private enum ShellRuntimeMetadataTests {
         windowID: String,
         context: ShellContextSnapshot,
         spaceTerminalProfileID: String? = nil,
+        spacePresentationIconSystemName: String? = nil,
         paneTerminalProfileID: String? = nil
     ) -> ShellStateSnapshot {
         let pane = pane(
@@ -10513,7 +10538,8 @@ private enum ShellRuntimeMetadataTests {
                             )
                         )
                     ],
-                    terminalProfileID: spaceTerminalProfileID
+                    terminalProfileID: spaceTerminalProfileID,
+                    presentationIconSystemName: spacePresentationIconSystemName
                 )
             ],
             panes: [pane]

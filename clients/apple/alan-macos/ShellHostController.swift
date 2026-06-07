@@ -931,7 +931,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     attention: space.attention,
                     tabs: space.tabs,
                     selectedTabID: nil,
-                    terminalProfileID: space.terminalProfileID
+                    terminalProfileID: space.terminalProfileID,
+                    presentationIconSystemName: space.presentationIconSystemName
                 )
             }
             shellState = ShellStateSnapshot(
@@ -1189,9 +1190,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        guard shellState.spaces.count < ShellSidebarSpaceSliderLayout.maximumVisibleSpaces else {
-            return nil
-        }
         let resolvedTerminalProfileID = terminalProfileID
             ?? globalDefaultTerminalProfileIDForPaneCapture()
         let result = shellState.creatingSpace(
@@ -2513,7 +2511,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 attention: strongestAttention(in: panes.filter { $0.spaceID == space.spaceID }),
                 tabs: tabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
     }
@@ -2615,7 +2614,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -2944,7 +2944,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 updatedAt: now,
                 selectedTabID: space.resolvedSelectedTabID,
                 tabs: tabRecords,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 

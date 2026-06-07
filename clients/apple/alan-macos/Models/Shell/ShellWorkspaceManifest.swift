@@ -86,6 +86,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var selectedTabID: String? = nil
     var tabs: [ShellWorkspaceTabRecord]
     var terminalProfileID: String? = nil
+    var presentationIconSystemName: String? = nil
 
     var id: String { spaceID }
 
@@ -98,6 +99,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case selectedTabID = "selected_tab_id"
         case tabs
         case terminalProfileID = "terminal_profile_id"
+        case presentationIconSystemName = "presentation_icon"
     }
 
     init(
@@ -108,7 +110,8 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         updatedAt: Date,
         selectedTabID: String? = nil,
         tabs: [ShellWorkspaceTabRecord],
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
@@ -118,6 +121,7 @@ struct ShellWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         self.selectedTabID = selectedTabID
         self.tabs = tabs
         self.terminalProfileID = terminalProfileID
+        self.presentationIconSystemName = presentationIconSystemName
     }
 }
 
@@ -356,6 +360,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
     var selectedTabID: String? = nil
     var tabs: [ShellContentWorkspaceTabRecord]
     var terminalProfileID: String? = nil
+    var presentationIconSystemName: String? = nil
 
     var id: String { spaceID }
 
@@ -368,6 +373,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         case selectedTabID = "selected_tab_id"
         case tabs
         case terminalProfileID = "terminal_profile_id"
+        case presentationIconSystemName = "presentation_icon"
     }
 
     init(
@@ -378,7 +384,8 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         updatedAt: Date,
         selectedTabID: String? = nil,
         tabs: [ShellContentWorkspaceTabRecord],
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) {
         self.spaceID = spaceID
         self.title = title
@@ -388,6 +395,7 @@ struct ShellContentWorkspaceSpaceRecord: Codable, Equatable, Identifiable {
         self.selectedTabID = selectedTabID
         self.tabs = tabs
         self.terminalProfileID = terminalProfileID
+        self.presentationIconSystemName = presentationIconSystemName
     }
 }
 
@@ -667,7 +675,8 @@ extension ShellWorkspaceManifest {
                             activeTask: tab.activeTask
                         )
                     },
-                    terminalProfileID: space.terminalProfileID
+                    terminalProfileID: space.terminalProfileID,
+                    presentationIconSystemName: space.presentationIconSystemName
                 )
             }
         )
@@ -867,7 +876,8 @@ struct ShellWorkspaceMaterializer {
                 ),
                 tabs: contentTabs,
                 selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
         }
 
@@ -1066,7 +1076,8 @@ struct ShellWorkspaceMaterializer {
                     attention: strongestAttention(for: shellTabs, panes: panes),
                     tabs: shellTabs,
                     selectedTabID: space.selectedTabID,
-                    terminalProfileID: space.terminalProfileID
+                    terminalProfileID: space.terminalProfileID,
+                    presentationIconSystemName: space.presentationIconSystemName
                 )
             )
         }

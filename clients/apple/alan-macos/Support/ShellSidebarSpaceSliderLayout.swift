@@ -3,35 +3,34 @@ import Foundation
 
 #if os(macOS)
 struct ShellSidebarSpaceSliderLayout: Equatable {
-    static let maximumVisibleSpaces = 9
-    static let spacing: CGFloat = 7
-    static let minimumItemWidth: CGFloat = 8
-
-    enum Density: Equatable {
-        case low
-        case medium
-        case high
-    }
+    static let spacing: CGFloat = 4
+    static let trackHeight: CGFloat = 28
+    static let itemHeight: CGFloat = 24
+    static let fullTitleMinimumWidth: CGFloat = 92
+    static let truncatedTitleMinimumWidth: CGFloat = 56
+    static let minimumItemWidth: CGFloat = 28
 
     enum DisplayMode: Equatable {
         case fullTitle
-        case shortTitle
-        case indicator
+        case truncatedTitle
+        case iconOnly
     }
 
     struct Item: Equatable {
         let index: Int
         let mode: DisplayMode
         let width: CGFloat
-        let visualScale: CGFloat
-        let opacity: CGFloat
         let isSelected: Bool
         let isFocused: Bool
     }
 
-    let density: Density
     let items: [Item]
     let contentWidth: CGFloat
+    let availableWidth: CGFloat
+
+    var isHorizontallyScrollable: Bool {
+        contentWidth > availableWidth
+    }
 
     static func make(
         spaceCount rawSpaceCount: Int,
@@ -41,146 +40,62 @@ struct ShellSidebarSpaceSliderLayout: Equatable {
         availableWidth: CGFloat,
         reduceMotion: Bool
     ) -> ShellSidebarSpaceSliderLayout {
-        let spaceCount = min(max(rawSpaceCount, 0), maximumVisibleSpaces)
-        let density = density(for: spaceCount)
+        _ = reduceMotion
+        let spaceCount = max(rawSpaceCount, 0)
+        let availableWidth = max(availableWidth, 0)
         guard spaceCount > 0 else {
-            return ShellSidebarSpaceSliderLayout(density: density, items: [], contentWidth: 0)
+            return ShellSidebarSpaceSliderLayout(
+                items: [],
+                contentWidth: 0,
+                availableWidth: availableWidth
+            )
         }
 
         let selectedIndex = clamped(rawSelectedIndex, count: spaceCount)
         let hoveredIndex = clamped(rawHoveredIndex, count: spaceCount)
         let scrubFocusIndex = clamped(rawScrubFocusIndex, count: spaceCount)
         let focusIndex = scrubFocusIndex ?? hoveredIndex
-        let width = max(availableWidth, 0)
-        let spacingWidth = CGFloat(max(spaceCount - 1, 0)) * spacing
-        let itemBudget = max(width - spacingWidth, CGFloat(spaceCount) * minimumItemWidth)
-        let modes = displayModes(
-            density: density,
-            spaceCount: spaceCount,
-            selectedIndex: selectedIndex,
-            hoveredIndex: hoveredIndex,
-            scrubFocusIndex: scrubFocusIndex
-        )
-        let itemWidths = widths(
-            modes: modes,
-            selectedIndex: selectedIndex,
-            focusIndex: focusIndex,
-            itemBudget: itemBudget
-        )
+        let itemWidth = distributedItemWidth(spaceCount: spaceCount, availableWidth: availableWidth)
+        let mode = displayMode(itemWidth: itemWidth)
 
-        let items = modes.enumerated().map { index, mode in
+        let items = (0..<spaceCount).map { index in
             let isFocused = focusIndex == index
-            let distance = focusIndex.map { abs($0 - index) } ?? 0
             return Item(
                 index: index,
                 mode: mode,
-                width: itemWidths[index],
-                visualScale: visualScale(
-                    distanceFromFocus: distance,
-                    isFocused: isFocused,
-                    hasFocus: focusIndex != nil,
-                    reduceMotion: reduceMotion
-                ),
-                opacity: opacity(
-                    distanceFromFocus: distance,
-                    hasFocus: focusIndex != nil
-                ),
+                width: itemWidth,
                 isSelected: selectedIndex == index,
                 isFocused: isFocused
             )
         }
 
-        let contentWidth = itemWidths.reduce(0, +) + spacingWidth
-        return ShellSidebarSpaceSliderLayout(density: density, items: items, contentWidth: contentWidth)
+        let contentWidth = CGFloat(spaceCount) * itemWidth
+            + CGFloat(max(spaceCount - 1, 0)) * spacing
+        return ShellSidebarSpaceSliderLayout(
+            items: items,
+            contentWidth: contentWidth,
+            availableWidth: availableWidth
+        )
     }
 
-    static func density(for spaceCount: Int) -> Density {
-        switch min(max(spaceCount, 0), maximumVisibleSpaces) {
-        case 0...3:
-            return .low
-        case 4...6:
-            return .medium
-        default:
-            return .high
+    private static func displayMode(itemWidth: CGFloat) -> DisplayMode {
+        if itemWidth >= fullTitleMinimumWidth {
+            return .fullTitle
         }
+        if itemWidth >= truncatedTitleMinimumWidth {
+            return .truncatedTitle
+        }
+        return .iconOnly
     }
 
-    private static func displayModes(
-        density: Density,
+    private static func distributedItemWidth(
         spaceCount: Int,
-        selectedIndex: Int?,
-        hoveredIndex: Int?,
-        scrubFocusIndex: Int?
-    ) -> [DisplayMode] {
-        (0..<spaceCount).map { index in
-            switch density {
-            case .low:
-                return .fullTitle
-            case .medium:
-                return selectedIndex == index ? .fullTitle : .shortTitle
-            case .high:
-                if selectedIndex == index || scrubFocusIndex == index {
-                    return .fullTitle
-                }
-                if hoveredIndex == index {
-                    return .shortTitle
-                }
-                return .indicator
-            }
-        }
-    }
-
-    private static func widths(
-        modes: [DisplayMode],
-        selectedIndex: Int?,
-        focusIndex: Int?,
-        itemBudget: CGFloat
-    ) -> [CGFloat] {
-        let weights = modes.enumerated().map { index, mode -> CGFloat in
-            switch mode {
-            case .fullTitle:
-                if selectedIndex == index {
-                    return 3.4
-                }
-                if focusIndex == index {
-                    return 3.1
-                }
-                return 2.6
-            case .shortTitle:
-                return focusIndex == index ? 2.1 : 1.65
-            case .indicator:
-                return focusIndex == index ? 1.0 : 0.72
-            }
-        }
-        let totalWeight = max(weights.reduce(0, +), 1)
-        return weights.map { max(minimumItemWidth, itemBudget * ($0 / totalWeight)) }
-    }
-
-    private static func visualScale(
-        distanceFromFocus distance: Int,
-        isFocused: Bool,
-        hasFocus: Bool,
-        reduceMotion: Bool
+        availableWidth: CGFloat
     ) -> CGFloat {
-        guard hasFocus, !reduceMotion else { return 1 }
-        if isFocused {
-            return 1.035
-        }
-        if distance == 1 {
-            return 1.012
-        }
-        return 1
-    }
-
-    private static func opacity(distanceFromFocus distance: Int, hasFocus: Bool) -> CGFloat {
-        guard hasFocus else { return 1 }
-        if distance <= 1 {
-            return 1
-        }
-        if distance == 2 {
-            return 0.82
-        }
-        return 0.68
+        guard spaceCount > 0 else { return 0 }
+        let spacingWidth = CGFloat(max(spaceCount - 1, 0)) * spacing
+        let distributedWidth = (availableWidth - spacingWidth) / CGFloat(spaceCount)
+        return distributedWidth >= minimumItemWidth ? distributedWidth : minimumItemWidth
     }
 
     private static func clamped(_ index: Int?, count: Int) -> Int? {
@@ -191,7 +106,7 @@ struct ShellSidebarSpaceSliderLayout: Equatable {
     func frame(for index: Int) -> CGRect? {
         var cursor: CGFloat = 0
         for item in items {
-            let frame = CGRect(x: cursor, y: 0, width: item.width, height: 22)
+            let frame = CGRect(x: cursor, y: 0, width: item.width, height: Self.itemHeight)
             if item.index == index {
                 return frame
             }

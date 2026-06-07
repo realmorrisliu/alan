@@ -31,7 +31,8 @@ enum AlanShellPublishedStateMerger {
                 attention: strongestAttention(in: mergedPanes.filter { $0.spaceID == space.spaceID }),
                 tabs: space.tabs,
                 selectedTabID: space.selectedTabID ?? authoritativeSpace?.selectedTabID,
-                terminalProfileID: space.terminalProfileID
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: space.presentationIconSystemName
             )
             .repairingSelectedTabID(
                 preferredTabID: focusedPane?.spaceID == space.spaceID ? focusedPane?.tabID : nil
