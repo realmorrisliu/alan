@@ -114,6 +114,10 @@ Selection rules:
 6. If Emacs probing fails, stop and report that Emacs installation must be fixed
    first.
 
+Alan-owned entries include managed install links and legacy links to Alan Emacs
+source checkouts. Legacy source links are detected by current source equality,
+Alan distribution marker files, or a broken old `tools/alan-emacs` target shape.
+
 Candidates include:
 
 ```text

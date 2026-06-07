@@ -737,7 +737,7 @@ impl ConfigEntryState {
             if path_within(&target, &paths.managed_root) {
                 return Ok(Self::ManagedLink { target });
             }
-            if source.is_some_and(|source| paths_equal_existing_or_lexical(&target, &source.path)) {
+            if is_legacy_source_link_target(&target, source) {
                 return Ok(Self::LegacySourceLink { target });
             }
             return Ok(Self::UserOwnedSymlink { target });
@@ -1019,6 +1019,16 @@ fn ensure_distribution_dir(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+fn is_legacy_source_link_target(target: &Path, source: Option<&DistributionSource>) -> bool {
+    if source.is_some_and(|source| paths_equal_existing_or_lexical(target, &source.path)) {
+        return true;
+    }
+    if ensure_distribution_dir(target).is_ok() {
+        return true;
+    }
+    matches!(target.try_exists(), Ok(false)) && target.ends_with(Path::new("tools/alan-emacs"))
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
@@ -1585,6 +1595,45 @@ mod tests {
     }
 
     #[test]
+    fn install_migrates_legacy_source_link_when_current_source_differs() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let legacy_source = make_source(&temp.path().join("legacy-checkout"));
+        let current_source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        symlink_dir(&legacy_source, &default_dir).unwrap();
+        let manager = make_manager(&home, current_source, default_dir.clone());
+
+        manager.install().unwrap();
+
+        let target = fs::read_link(&default_dir).unwrap();
+        assert!(path_eq(&target, &manager.paths.current_dir));
+    }
+
+    #[test]
+    fn install_preserves_existing_non_alan_tools_named_symlink() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let foreign_target = temp.path().join("foreign/tools/alan-emacs");
+        fs::create_dir_all(&foreign_target).unwrap();
+        fs::write(foreign_target.join("init.el"), "(setq user-config t)").unwrap();
+        let source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        symlink_dir(&foreign_target, &default_dir).unwrap();
+        let manager = make_manager(&home, source, default_dir.clone());
+
+        let err = manager.install().unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("Refusing to overwrite"));
+        let target = fs::read_link(&default_dir).unwrap();
+        assert!(path_eq(&target, &foreign_target));
+        assert!(foreign_target.join("init.el").is_file());
+    }
+
+    #[test]
     fn doctor_fails_when_startup_file_shadows_installed_config() {
         let temp = TempDir::new().unwrap();
         let home = temp.path().join("home");
@@ -1664,6 +1713,40 @@ mod tests {
 
         assert!(!default_dir.exists());
         assert!(!manager.paths.managed_root.exists());
+    }
+
+    #[test]
+    fn uninstall_removes_existing_legacy_source_link_when_source_is_unavailable() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let legacy_source = make_source(&temp.path().join("legacy-checkout"));
+        let current_source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        symlink_dir(&legacy_source, &default_dir).unwrap();
+        let mut manager = make_manager(&home, current_source, default_dir.clone());
+        manager.source = SourceDiscovery::Unavailable("source removed".to_string());
+
+        manager.uninstall().unwrap();
+
+        assert!(!default_dir.exists());
+    }
+
+    #[test]
+    fn uninstall_removes_deleted_legacy_source_link_by_target_shape() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let deleted_source = temp.path().join("deleted-checkout/tools/alan-emacs");
+        let current_source = make_source(&temp.path().join("current-bundle"));
+        let default_dir = home.join(".emacs.d");
+        symlink_dir(&deleted_source, &default_dir).unwrap();
+        let mut manager = make_manager(&home, current_source, default_dir.clone());
+        manager.source = SourceDiscovery::Unavailable("source removed".to_string());
+
+        manager.uninstall().unwrap();
+
+        assert!(fs::symlink_metadata(&default_dir).is_err());
     }
 
     #[test]

@@ -46,12 +46,22 @@ Alan SHALL treat legacy startup files `~/.emacs.el` and `~/.emacs` as
 non-Alan-owned conflicts because they take precedence over directory init files
 in ordinary Emacs startup.
 
+Alan SHALL treat legacy symlinks to Alan Emacs source checkouts as Alan-owned
+legacy state when the symlink target matches the current source, contains Alan
+Emacs distribution marker files, or is a broken old `tools/alan-emacs` target.
+
 #### Scenario: Existing Alan-owned entry is reused
 - **WHEN** one candidate config entry already points to Alan-managed Emacs
   distribution state
 - **THEN** `alan emacs install` reuses that entry
 - **AND** it does not migrate to another entry solely because that other entry is
   also a possible Emacs default
+
+#### Scenario: Legacy source checkout entry is migrated
+- **WHEN** one candidate config entry points to an Alan Emacs source checkout
+  instead of the current discovered distribution source
+- **THEN** `alan emacs install` treats it as Alan-owned legacy state
+- **AND** it migrates the entry to the Alan-managed installed copy
 
 #### Scenario: Empty candidate is selected
 - **WHEN** exactly one candidate entry exists and is empty
@@ -108,6 +118,12 @@ configuration.
 - **AND** the selected config entry points to Alan-managed installed state
 - **THEN** `alan emacs uninstall` still removes the Alan-owned config entry link
   and Alan-managed installed copy
+
+#### Scenario: Legacy source checkout link is removed when source is unavailable
+- **WHEN** the bundled or development Alan Emacs source can no longer be found
+- **AND** the selected config entry points to Alan Emacs legacy source state
+- **THEN** `alan emacs uninstall` still removes the Alan-owned legacy config
+  entry link
 
 #### Scenario: User config is preserved
 - **WHEN** the selected config entry is not Alan-owned
