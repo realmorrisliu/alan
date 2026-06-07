@@ -22,6 +22,7 @@ ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
+ALAN_EMACS_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/alan-emacs"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 SIGNING_IDENTITY="${ALAN_DEVELOPER_ID_APPLICATION:-${ALAN_SIGNING_IDENTITY:-}}"
 NOTARIZE="${ALAN_NOTARIZE:-0}"
@@ -216,6 +217,17 @@ mkdir -p "$EMBEDDED_BIN_DIR"
 cp "$CARGO_RELEASE_BIN" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
+printf 'Embedding Alan Emacs distribution resource...\n'
+rm -rf "$ALAN_EMACS_RESOURCE_DIR"
+ditto --norsrc --noextattr "$REPO_ROOT/tools/alan-emacs" "$ALAN_EMACS_RESOURCE_DIR"
+rm -rf \
+    "$ALAN_EMACS_RESOURCE_DIR/.git" \
+    "$ALAN_EMACS_RESOURCE_DIR/eln-cache" \
+    "$ALAN_EMACS_RESOURCE_DIR/var"
+rm -f \
+    "$ALAN_EMACS_RESOURCE_DIR/.DS_Store" \
+    "$ALAN_EMACS_RESOURCE_DIR/alan-local.el"
+
 printf 'Verifying embedded alan binary architecture...\n'
 thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
@@ -246,6 +258,11 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$ALAN_CLI_NAME")": {
       "path": "Contents/Resources/bin/$(json_escape "$ALAN_CLI_NAME")",
       "sha256": "$(json_escape "$ALAN_SHA")"
+    }
+  },
+  "resources": {
+    "alan-emacs": {
+      "path": "Contents/Resources/alan-emacs"
     }
   }
 }

@@ -7,6 +7,7 @@
 
 (setq user-emacs-directory
       (file-name-directory (or load-file-name buffer-file-name)))
+(setq alan-emacs-loaded t)
 
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
 

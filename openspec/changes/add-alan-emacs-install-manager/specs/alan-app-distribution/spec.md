@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: Alan App Bundles Alan Emacs Distribution Resources
+### Requirement: Alan.app Bundles Alan Emacs Distribution Resources
 Alan release and development distributions SHALL provide a discoverable
 Alan Emacs distribution resource that can be installed by `alan emacs install`
 without relying on the source checkout path.

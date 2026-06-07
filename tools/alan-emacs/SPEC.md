@@ -6,50 +6,56 @@
 starts from vanilla Emacs and grows through explicit, reviewable configuration
 modules.
 
-The first milestone is not an Alan for macOS integration. It is a repeatable
-local workflow:
+The first milestone is not an Alan-to-Emacs bridge. It is a repeatable local
+workflow:
 
 1. Edit `tools/alan-emacs`.
-2. Run one command.
-3. Use the updated configuration from the system Emacs config location.
+2. Run `alan emacs install`.
+3. Use the installed Alan-managed copy from ordinary `emacs`.
 
 ## Requirements
 
 ### Source-Owned Configuration
 
 The `tools/alan-emacs` directory owns `early-init.el`, `init.el`, and the
-`lisp/alan-*.el` modules. The active system Emacs configuration must point at
-this directory
-instead of being copied by hand.
+`lisp/alan-*.el` modules.
 
-### Symlink Installation
+### Alan-Managed Installation
 
-The installer must prefer:
+Installation is owned by the Alan CLI:
 
-```text
-~/.config/emacs -> /path/to/alan/tools/alan-emacs
+```bash
+alan emacs install
 ```
 
-When `XDG_CONFIG_HOME` is set, the target must be:
+The installer materializes this source distribution into Alan-managed user data:
 
 ```text
-$XDG_CONFIG_HOME/emacs
+~/.local/share/alan/emacs/current
 ```
 
-Existing user configuration must not be overwritten silently. Installation
-backs it up before replacing the target with a symlink.
+The user's active Emacs config entry must point at that installed copy, not at
+the source checkout.
 
-### One-Key Update
+### Detector-Driven Config Entry
 
-`just update` must verify that the system config target points at this
-repository and then load the configuration in batch mode. Because installation
-uses a symlink, normal source edits are already visible to Emacs; update is the
-health gate.
+The installer must choose exactly one config entry from:
 
-### Rollback
+```text
+~/.emacs.d
+$XDG_CONFIG_HOME/emacs, or ~/.config/emacs when XDG_CONFIG_HOME is unset
+```
 
-The tool must keep backups of pre-existing config targets and provide a rollback
-command that restores the latest backup by default.
+It must reuse Alan-owned state, accept a single empty candidate, or probe the
+installed `emacs` default user config directory. It must refuse non-empty
+non-Alan-owned config entries.
+
+### Health And Removal
+
+`alan emacs status` reports source, install, and config ownership state.
+`alan emacs doctor` checks Emacs availability, install integrity, and observed
+daemon state without controlling services. `alan emacs uninstall` removes only
+Alan-owned config links and managed install data.
 
 ### Vanilla First
 
@@ -64,6 +70,8 @@ features are follow-up decisions.
 - Do not fork, patch, or bundle GNU Emacs.
 - Do not replicate Spacemacs, Doom, or a layer framework.
 - Do not automatically modify shell startup files or PATH.
+- Do not link user configuration directly to `tools/alan-emacs` in normal use.
+- Do not wrap Homebrew, launchctl, systemctl, or Emacs daemon lifecycle commands.
 - Do not send buffer contents to another process automatically.
 
 ## Open Questions

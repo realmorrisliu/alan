@@ -2,37 +2,28 @@
 
 A small personal Emacs distribution, built from vanilla Emacs upward.
 
-This directory is the source of truth for the Emacs configuration. Installing
-it creates a symlink from the system Emacs config directory to this directory,
-so editing files here immediately changes the active configuration.
+This directory is the source distribution used by `alan emacs install`.
+The installer copies this tree into Alan-managed user data and links the user's
+selected Emacs config entry to that installed copy. User config should not point
+directly at this source checkout in normal use.
 
 ## Commands
 
 ```bash
-just doctor
-just install
-just update
-just check
-just rollback
+alan emacs status
+alan emacs install
+alan emacs doctor
+alan emacs uninstall
 ```
 
-`just install` links:
+`alan emacs install` materializes this distribution under:
 
 ```text
-~/.config/emacs -> /path/to/alan/tools/alan-emacs
+~/.local/share/alan/emacs/current
 ```
 
-If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/emacs`.
-
-Existing config is moved into:
-
-```text
-~/.local/state/alan-emacs/backups/
-```
-
-`just update` verifies the symlink and loads the config with `emacs --batch`.
-Since the install is symlink-based, this is a health check rather than a copy
-step.
+Then it selects exactly one Emacs config entry from the user's actual Emacs
+behavior and filesystem state. It refuses to overwrite non-Alan-owned config.
 
 ## Layout
 
@@ -45,8 +36,6 @@ lisp/
   alan-editing.el
   alan-project.el
   alan-git.el
-bin/
-  alan-emacs
 ```
 
 Machine-local overrides can go in `alan-local.el`. That file is ignored by git.
@@ -58,4 +47,4 @@ Machine-local overrides can go in `alan-local.el`. That file is ignored by git.
   worth adding.
 - Keep modules small and named by workflow.
 - Keep generated state outside the repo where practical.
-- Make install and rollback boring.
+- Keep install and uninstall state owned by `alan emacs`.

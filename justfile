@@ -103,26 +103,6 @@ apple-shell-ghostty-integration:
 apple-shell-ui-smoke:
     bash clients/apple/scripts/test-shell-ui-smoke.sh
 
-# Check the personal Emacs distribution install state
-emacs-doctor:
-    tools/alan-emacs/bin/alan-emacs doctor
-
-# Install the personal Emacs distribution as the active Emacs config
-emacs-install:
-    tools/alan-emacs/bin/alan-emacs install
-
-# Verify the active Emacs config symlink and load the distribution
-emacs-update:
-    tools/alan-emacs/bin/alan-emacs update
-
-# Load the personal Emacs distribution in batch mode
-emacs-check:
-    tools/alan-emacs/bin/alan-emacs check
-
-# Restore the latest backed-up Emacs config
-emacs-rollback:
-    tools/alan-emacs/bin/alan-emacs rollback
-
 # Check release signing and notarization configuration without building
 release-check:
     ALAN_NOTARIZE=1 ./scripts/release-check.sh
