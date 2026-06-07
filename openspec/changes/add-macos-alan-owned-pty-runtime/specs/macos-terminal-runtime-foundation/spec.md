@@ -1,13 +1,12 @@
 ## ADDED Requirements
 
-### Requirement: Alan-owned PTY runtime path owns terminal PTYs
-For Alan-owned PTY runtime path selections, the macOS terminal runtime SHALL
-allocate and own the PTY, child process, process group metadata, lifecycle
-phase, delivery state, and exit observation through Alan terminal runtime
-services.
+### Requirement: Terminal PTYs are Alan-owned
+The macOS terminal runtime SHALL allocate and own the PTY, child process,
+process group metadata, lifecycle phase, delivery state, and exit observation
+through Alan terminal runtime services for each terminal ContentInstance.
 
 #### Scenario: Terminal content starts with Alan-owned PTY
-- **WHEN** a terminal ContentInstance is created through the Alan-owned PTY runtime path
+- **WHEN** a terminal ContentInstance is created
 - **THEN** Alan allocates the PTY, launches the terminal child process, records the process group, and creates the runtime handle before attaching a renderer
 - **AND** the runtime handle is keyed by terminal ContentInstance identity
 
@@ -17,10 +16,9 @@ services.
 - **AND** renderer attachment can occur later without starting a second child process
 
 ### Requirement: Ghostty attaches to Alan-provided PTYs
-When the Alan-owned PTY runtime path is selected, the Ghostty integration SHALL
-act as a renderer and terminal-protocol adapter over PTY endpoints supplied by
-Alan, and MUST NOT be the authoritative owner of terminal child-process
-lifecycle.
+The Ghostty integration SHALL act as a renderer and terminal-protocol adapter
+over PTY endpoints supplied by Alan, and MUST NOT be the authoritative owner of
+terminal child-process lifecycle.
 
 #### Scenario: Renderer attaches to live PTY
 - **WHEN** a terminal host view mounts for terminal content with an Alan-owned PTY runtime
@@ -68,16 +66,17 @@ objects, or unbounded scrollback.
 - **THEN** Alan may use its bounded PTY transcript ring buffer for snapshot capture
 - **AND** the snapshot truthfully records the capture source and fidelity
 
-### Requirement: Legacy Ghostty-owned runtime can coexist during migration
-The terminal runtime service SHALL allow the existing Ghostty-owned process path
-and the Alan-owned PTY path to coexist behind an explicit runtime selection
-boundary until Alan-owned PTY parity is proven.
+### Requirement: Alan-owned PTY runtime replaces Ghostty process ownership
+The terminal runtime service SHALL replace the current Ghostty-owned terminal
+process boundary with Alan-owned PTY runtime handles before the implementation
+branch is merged to `main`.
 
-#### Scenario: Existing runtime path is selected
-- **WHEN** runtime selection chooses the legacy Ghostty-backed path
-- **THEN** current terminal behavior continues to follow the existing Ghostty runtime service contracts
+#### Scenario: Implementation branch is ready to merge
+- **WHEN** the Alan-owned PTY runtime implementation is marked ready for review
+- **THEN** terminal launch, delivery, resize, signal, exit, snapshot, and renderer attachment go through Alan-owned runtime handles
+- **AND** terminal ContentInstances do not rely on a selectable fallback process owner
 
-#### Scenario: Alan-owned path is selected
-- **WHEN** runtime selection chooses the Alan-owned PTY path
-- **THEN** terminal launch, delivery, resize, signal, exit, snapshot, and renderer attachment go through the Alan-owned runtime handles
-- **AND** control-plane responses identify the selected runtime path in debug metadata
+#### Scenario: Obsolete process owner is removed
+- **WHEN** the feature branch removes renderer-owned process lifecycle code
+- **THEN** Ghostty remains responsible for renderer and terminal-protocol behavior
+- **AND** Alan remains responsible for PTY and child-process lifecycle

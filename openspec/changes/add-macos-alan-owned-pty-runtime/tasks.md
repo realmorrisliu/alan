@@ -9,14 +9,14 @@
 
 - [ ] 2.1 Add Alan-owned PTY/process runtime protocols for allocation, launch, resize, input, EOF, signals, exit observation, and bounded transcript capture.
 - [ ] 2.2 Add fake PTY and fake process-controller implementations for focused tests.
-- [ ] 2.3 Add runtime selection plumbing that can choose the existing Ghostty-owned path or the Alan-owned PTY path without changing default behavior initially.
-- [ ] 2.4 Route terminal launch profiles and environment projection into the Alan-owned PTY runtime path.
+- [ ] 2.3 Replace terminal runtime construction with the Alan-owned PTY runtime on the implementation branch, without adding a long-lived fallback selector.
+- [ ] 2.4 Route terminal launch profiles and environment projection into the Alan-owned PTY runtime.
 
 ## 3. Ghostty Attachment
 
 - [ ] 3.1 Identify the Ghostty fork seam required to attach a renderer to an externally owned PTY endpoint.
 - [ ] 3.2 Patch the Alan-maintained Ghostty fork with the minimal external-PTY attachment support needed by Alan.
-- [ ] 3.3 Update Alan's Ghostty bridge to attach to Alan-provided PTY endpoints in the Alan-owned PTY runtime path.
+- [ ] 3.3 Update Alan's Ghostty bridge to attach to Alan-provided PTY endpoints in the Alan-owned PTY runtime.
 - [ ] 3.4 Preserve renderer readiness, surface lifecycle, scrollback, input adapter, and metadata projection behavior across the new attachment path.
 
 ## 4. Process Control And Lifecycle

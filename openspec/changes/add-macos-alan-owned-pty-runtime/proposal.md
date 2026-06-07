@@ -20,9 +20,8 @@ through a reviewed integration boundary.
 - Add a repository-managed Ghostty dependency strategy: an Alan-maintained
   Ghostty fork is vendored as a git submodule, with generated framework,
   resources, and terminfo produced from that pinned source.
-- Require migration compatibility so the current Ghostty-backed runtime can
-  continue to run while the Alan-owned PTY runtime is introduced behind a
-  focused boundary.
+- Replace the current Ghostty-owned process boundary on the implementation
+  branch; do not add a long-lived fallback runtime selector.
 - Add verification requirements for PTY lifecycle, process-group signaling,
   renderer attachment, dependency pinning, and build/test reproducibility.
 

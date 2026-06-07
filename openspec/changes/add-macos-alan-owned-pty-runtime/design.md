@@ -25,8 +25,8 @@ the process boundary becomes Alan-owned and testable.
   reports renderer/protocol metadata without owning child-process truth.
 - Vendor a pinned Alan-maintained Ghostty fork as a repository submodule and
   generate local build artifacts from that source.
-- Preserve the current service-backed runtime while migrating one boundary at a
-  time behind fakes and focused integration tests.
+- Replace the current Ghostty-owned process boundary on the implementation
+  branch before merging the feature to `main`.
 
 **Non-Goals:**
 
@@ -43,11 +43,11 @@ the process boundary becomes Alan-owned and testable.
 1. Make Alan the PTY and process owner.
 
    `AlanTerminalRuntimeService` should create an Alan-owned
-   `AlanTerminalPtyHandle` for each terminal ContentInstance selected for the
-   Alan-owned PTY runtime path. That handle owns PTY allocation, child launch,
-   process group metadata, resize propagation, stdin delivery, EOF, signal
-   requests, exit observation, and bounded transcript capture. Host views and
-   Ghostty adapters receive only the attachment interface they need.
+   `AlanTerminalPtyHandle` for each terminal ContentInstance. That handle owns
+   PTY allocation, child launch, process group metadata, resize propagation,
+   stdin delivery, EOF, signal requests, exit observation, and bounded transcript
+   capture. Host views and Ghostty adapters receive only the attachment
+   interface they need.
 
    Alternative considered: keep asking Ghostty for more process-control seams.
    That preserves the current shape but keeps Alan's lifecycle semantics behind
@@ -76,16 +76,18 @@ the process boundary becomes Alan-owned and testable.
    local checkout. That is useful for experimentation, but it makes review,
    bisecting, and CI reproduction depend on untracked local state.
 
-4. Introduce the runtime behind testable protocols.
+4. Replace the process owner on the implementation branch.
 
-   Production code should keep the current Ghostty-backed service path until the
-   Alan-owned PTY path is ready. The new PTY runtime, Ghostty attachment adapter,
-   and process controller should have fake implementations so most lifecycle and
-   control-plane tests do not require a live Ghostty renderer.
+   The implementation should happen on a dedicated feature branch where terminal
+   ContentInstances are cut over to the Alan-owned PTY runtime before the branch
+   is considered mergeable. The new PTY runtime, Ghostty attachment adapter, and
+   process controller should still have fake implementations so most lifecycle
+   and control-plane tests do not require a live Ghostty renderer.
 
-   Alternative considered: switch the whole terminal runtime in one PR. That
-   increases risk across input, scrollback, selection, rendering, and close
-   behavior at the same time.
+   Alternative considered: introduce a long-lived selector between the current
+   process owner and the Alan-owned PTY runtime. That lowers short-term
+   implementation risk, but it adds a fallback mode that the product does not
+   need if the work is isolated and verified before merge.
 
 5. Keep app-quit semantics honest.
 
@@ -97,33 +99,35 @@ the process boundary becomes Alan-owned and testable.
 ## Risks / Trade-offs
 
 - Ghostty may not expose a clean external-PTY attachment seam -> Patch the
-  Alan-maintained fork in small, reviewed slices and keep the current runtime
-  path available until the seam is proven.
+  Alan-maintained fork in small, reviewed slices and keep the implementation
+  branch unmerged until the seam is proven.
 - Submodule setup can make builds more complex -> Keep generated artifacts
   cached outside normal source diffs and make setup errors explicit.
 - PTY/process ownership touches security-sensitive local execution paths ->
   Keep launch environments, profiles, signals, and file descriptors behind
   narrow runtime APIs with focused tests.
-- Dual runtime paths can drift -> Add contract checks that both paths preserve
-  truthful delivery, metadata projection, and close behavior during migration.
+- One-step replacement has a larger branch-local blast radius -> Keep the work
+  isolated on the implementation branch and require focused fake-runtime,
+  Ghostty integration, and manual terminal UI verification before merge.
 
 ## Migration Plan
 
 1. Add the Ghostty fork submodule and update setup scripts to derive artifacts
    from the pinned revision.
 2. Add Alan PTY/process runtime protocols plus fake implementations.
-3. Implement the Alan-owned PTY runtime path behind a disabled or internal
-   runtime selection seam.
+3. Replace terminal runtime construction with the Alan-owned PTY runtime on the
+   implementation branch.
 4. Adapt the Ghostty bridge to attach to Alan-owned PTYs.
 5. Move terminal launch, resize, input delivery, signal delivery, and exit
    observation to the Alan runtime path.
 6. Run focused fake-runtime tests, Ghostty integration tests, and manual
-   terminal UI verification before making the Alan-owned path default.
-7. Remove the legacy Ghostty-owned process path after parity is proven.
+   terminal UI verification before merging.
+7. Remove obsolete Ghostty-owned process ownership code before the feature
+   branch is merged.
 
-Rollback before defaulting is to disable the Alan-owned PTY runtime selection
-and keep using the existing Ghostty-backed runtime. After defaulting, rollback
-requires restoring the prior runtime selector and dependency setup.
+Rollback before merge is to abandon or revert the implementation branch. After
+merge, rollback is a normal revert of the Alan-owned PTY runtime change set and
+Ghostty dependency setup.
 
 ## Open Questions
 
