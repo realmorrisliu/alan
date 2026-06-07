@@ -1044,6 +1044,7 @@ struct ShellTab: Identifiable, Codable, Equatable {
     let title: String?
     let paneTree: ShellPaneTreeNode
     let isPinned: Bool
+    let isTitleUserLocked: Bool
 
     var id: String { tabID }
 
@@ -1053,6 +1054,7 @@ struct ShellTab: Identifiable, Codable, Equatable {
         case title
         case paneTree = "pane_tree"
         case isPinned = "is_pinned"
+        case isTitleUserLocked = "is_title_user_locked"
     }
 
     init(
@@ -1060,13 +1062,15 @@ struct ShellTab: Identifiable, Codable, Equatable {
         kind: ShellTabKind,
         title: String?,
         paneTree: ShellPaneTreeNode,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        isTitleUserLocked: Bool = false
     ) {
         self.tabID = tabID
         self.kind = kind
         self.title = title
         self.paneTree = paneTree
         self.isPinned = isPinned
+        self.isTitleUserLocked = isTitleUserLocked
     }
 
     init(from decoder: Decoder) throws {
@@ -1076,7 +1080,8 @@ struct ShellTab: Identifiable, Codable, Equatable {
             kind: try container.decode(ShellTabKind.self, forKey: .kind),
             title: try container.decodeIfPresent(String.self, forKey: .title),
             paneTree: try container.decode(ShellPaneTreeNode.self, forKey: .paneTree),
-            isPinned: try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+            isPinned: try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false,
+            isTitleUserLocked: try container.decodeIfPresent(Bool.self, forKey: .isTitleUserLocked) ?? false
         )
     }
 }
@@ -1087,6 +1092,7 @@ struct ShellContentTab: Identifiable, Codable, Equatable {
     let title: String?
     let paneTree: ShellPaneSlotTreeNode
     let isPinned: Bool
+    let isTitleUserLocked: Bool
 
     var id: String { tabID }
 
@@ -1096,6 +1102,35 @@ struct ShellContentTab: Identifiable, Codable, Equatable {
         case title
         case paneTree = "pane_tree"
         case isPinned = "is_pinned"
+        case isTitleUserLocked = "is_title_user_locked"
+    }
+
+    init(
+        tabID: String,
+        kind: ShellTabKind,
+        title: String?,
+        paneTree: ShellPaneSlotTreeNode,
+        isPinned: Bool = false,
+        isTitleUserLocked: Bool = false
+    ) {
+        self.tabID = tabID
+        self.kind = kind
+        self.title = title
+        self.paneTree = paneTree
+        self.isPinned = isPinned
+        self.isTitleUserLocked = isTitleUserLocked
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            tabID: try container.decode(String.self, forKey: .tabID),
+            kind: try container.decode(ShellTabKind.self, forKey: .kind),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            paneTree: try container.decode(ShellPaneSlotTreeNode.self, forKey: .paneTree),
+            isPinned: try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false,
+            isTitleUserLocked: try container.decodeIfPresent(Bool.self, forKey: .isTitleUserLocked) ?? false
+        )
     }
 }
 
@@ -1373,6 +1408,34 @@ extension ShellStateSnapshot {
         panes.first { $0.paneID == paneID }
     }
 
+    func explicitContentMounted(in paneID: String) -> ShellContentInstance? {
+        guard let paneSlot = paneSlots?.first(where: { $0.paneSlotID == paneID }) else {
+            return nil
+        }
+        return contents?.first { $0.contentID == paneSlot.contentID }
+    }
+
+    func isTerminalBackedPane(_ pane: ShellPane) -> Bool {
+        if let mountedContent = explicitContentMounted(in: pane.paneID) {
+            return mountedContent.kind == .terminal
+        }
+        if pane.isQuickTerminalPane,
+           quickTerminal?.paneID == pane.paneID
+        {
+            return true
+        }
+        return pane.launchTarget != nil
+    }
+
+    func terminalBackedPane(paneID: String) -> ShellPane? {
+        guard let pane = pane(paneID: paneID),
+              isTerminalBackedPane(pane)
+        else {
+            return nil
+        }
+        return pane
+    }
+
     func tabs(in spaceID: String?) -> [ShellTab] {
         guard let spaceID else {
             return spaces.flatMap(\.tabs)
@@ -1499,7 +1562,8 @@ extension ShellContentStateSnapshot {
                         kind: tab.kind,
                         title: tab.title,
                         paneTree: ShellPaneSlotTreeNode.migrating(paneTree: tab.paneTree),
-                        isPinned: tab.isPinned
+                        isPinned: tab.isPinned,
+                        isTitleUserLocked: tab.isTitleUserLocked
                     )
                 },
                 selectedTabID: space.resolvedSelectedTabID,
@@ -1603,7 +1667,8 @@ extension ShellContentStateSnapshot {
                     kind: tab.kind,
                     title: tab.title,
                     paneTree: tab.paneTree.restoringPaneTree(),
-                    isPinned: tab.isPinned
+                    isPinned: tab.isPinned,
+                    isTitleUserLocked: tab.isTitleUserLocked
                 )
             }
 

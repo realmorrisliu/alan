@@ -317,6 +317,106 @@ require_tab_organization_sidebar_contract() {
 
     require_pattern \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let hitHeight: CGFloat = 16" \
+        "temporary tab divider hover target must stay compact at 16pt high"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "ShellSidebarTabControlMetrics\\.horizontalInset" \
+        "temporary tab divider must be inset from tab-row edges instead of spanning the full row"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "ShellSidebarTabListMetrics\\.itemSpacing" \
+        "sidebar tab list must use a shared spacing token for section rhythm"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let height: CGFloat = 36" \
+        "sidebar tab rows must stay compact at 36pt high"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let horizontalInset: CGFloat = 8" \
+        "sidebar tab rows must use compact 8pt internal horizontal padding"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let titleSize: CGFloat = 14" \
+        "sidebar tab row titles must stay readable at 14pt"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "VStack\\(alignment: \\.leading, spacing: subtitle == nil \\? 0 : 1\\)" \
+        "sidebar tab title and subtitle spacing must stay tight at 1pt"
+
+    if ! awk '
+        /case \.hover:/ {
+            in_hover = 1
+            next
+        }
+
+        in_hover && /return ShellRadii\.control/ {
+            hover_found = 1
+            in_hover = 0
+        }
+
+        /case \.selected:/ {
+            in_selected = 1
+            next
+        }
+
+        in_selected && /return ShellRadii\.row/ {
+            selected_found = 1
+            in_selected = 0
+        }
+
+        END {
+            exit hover_found && selected_found ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: sidebar tab row hover and selected corners must use compact ShellRadii.control/row treatment\n' >&2
+        exit 1
+    fi
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "static let sliderToListLift: CGFloat = 12" \
+        "sidebar tab list must leave a compact 12pt lift below the space slider"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "\\.padding\\(\\.bottom, ShellSidebarTabListMetrics\\.itemSpacing\\)" \
+        "space slider bottom spacing must match tab-list rhythm"
+
+    if ! awk '
+        /private struct ShellCompactEmptyAction: View/ {
+            in_action = 1
+        }
+
+        in_action && /\.contentShape\(Rectangle\(\)\)/ {
+            found = 1
+        }
+
+        in_action && /private var visualState:/ {
+            in_action = 0
+        }
+
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$file"; then
+        printf 'error: New Tab row must expose a full-row rectangular hover and click hit area\n' >&2
+        exit 1
+    fi
+
+    require_pattern \
+        "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+        "static let edgeInset: CGFloat = 8" \
+        "sidebar edge inset must keep Arc-style tab rows compact at 8pt"
+
+    require_pattern \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
         "\\.tabToSpace\\(" \
         "tab context menus must target the clicked tab when moving to another space"
 
@@ -2268,8 +2368,48 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'DEFAULT_BUILT_APP_PATH="\$DERIVED_DATA/Build/Products/Debug/Alan Dev\.app"' \
+    "UI smoke build mode must default to a repo-local Alan Dev app bundle"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'SMOKE_BUNDLE_ID="\$\{SMOKE_BUNDLE_ID:-app\.alanworks\.macos\.dev\}"' \
+    "UI smoke build mode must default to the Alan Dev bundle id"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'SMOKE_DISPLAY_NAME="\$\{ALAN_UI_SMOKE_DISPLAY_NAME:-Alan Dev\}"' \
+    "UI smoke build mode must default to the Alan Dev display name"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
     'ALAN_UI_SMOKE_APP_PATH:-\$DEFAULT_APP_PATH' \
     "UI smoke must keep an app bundle override for CI and one-off built app validation"
+
+require_pattern \
+    "clients/apple/scripts/capture-alan-window.swift" \
+    'var bundleID = "app\.alanworks\.macos\.dev"' \
+    "window capture helper must default to Alan Dev"
+
+require_pattern \
+    "clients/apple/scripts/capture-alan-window.swift" \
+    "Default: dev" \
+    "window capture usage must document Alan Dev as the default channel"
+
+require_pattern \
+    "clients/apple/scripts/check-shell-app-intents-metadata.sh" \
+    'Build/Products/Debug/Alan Dev\.app' \
+    "App Intents metadata check must default to a built Alan Dev app"
+
+require_pattern \
+    "clients/apple/scripts/capture-performance-diagnostics-workload.sh" \
+    'Build/Products/Debug/Alan Dev\.app' \
+    "performance diagnostics workload must default to a built Alan Dev app"
+
+require_pattern \
+    "clients/apple/scripts/capture-performance-diagnostics-workload.sh" \
+    'Contents/MacOS/Alan Dev' \
+    "performance diagnostics workload must default to the Alan Dev executable"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
@@ -2280,6 +2420,31 @@ require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
     "shell-workspace-window_main\\.json" \
     "UI smoke restart restore must inspect the persisted workspace manifest"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    'frame\(maxWidth: \.infinity, minHeight: 1, maxHeight: 1\)' \
+    "temporary tab divider must render as a full-width visible 1pt rule"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "ShellPalette\\.sidebarDivider" \
+    "temporary tab divider must use a sidebar-specific adaptive divider color"
+
+require_pattern \
+    "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
+    "static let sidebarDivider = Color\\.shellAdaptive" \
+    "sidebar divider color must be adaptive for light and dark mode"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "@State private var isControlHovered = false" \
+    "temporary tab divider row must track hover to reveal Clear"
+
+require_pattern \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    '\.onHover \{ isControlHovered = \$0 \}' \
+    "temporary tab divider row hover must update Clear reveal state"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \

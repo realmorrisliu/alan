@@ -65,6 +65,7 @@ struct ShellWorkspaceManifest: Codable, Equatable {
                             lastActivatedAt: now,
                             lastActivityAt: now,
                             isPinned: false,
+                            isTitleUserLocked: false,
                             pinSnapshot: nil,
                             liveSnapshot: snapshot,
                             activeTask: .inactive
@@ -128,6 +129,7 @@ struct ShellWorkspaceTabRecord: Codable, Equatable, Identifiable {
     var lastActivatedAt: Date
     var lastActivityAt: Date
     var isPinned: Bool
+    var isTitleUserLocked: Bool?
     var pinSnapshot: ShellTabRestoreSnapshot?
     var liveSnapshot: ShellTabRestoreSnapshot?
     var activeTask: ShellTabActiveTaskState
@@ -142,6 +144,7 @@ struct ShellWorkspaceTabRecord: Codable, Equatable, Identifiable {
         case lastActivatedAt = "last_activated_at"
         case lastActivityAt = "last_activity_at"
         case isPinned = "is_pinned"
+        case isTitleUserLocked = "is_title_user_locked"
         case pinSnapshot = "pin_snapshot"
         case liveSnapshot = "live_snapshot"
         case activeTask = "active_task"
@@ -363,6 +366,7 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
     var lastActivatedAt: Date
     var lastActivityAt: Date
     var isPinned: Bool
+    var isTitleUserLocked: Bool?
     var pinSnapshot: ShellContentTabRestoreSnapshot?
     var liveSnapshot: ShellContentTabRestoreSnapshot?
     var activeTask: ShellTabActiveTaskState
@@ -377,6 +381,7 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
         case lastActivatedAt = "last_activated_at"
         case lastActivityAt = "last_activity_at"
         case isPinned = "is_pinned"
+        case isTitleUserLocked = "is_title_user_locked"
         case pinSnapshot = "pin_snapshot"
         case liveSnapshot = "live_snapshot"
         case activeTask = "active_task"
@@ -599,6 +604,7 @@ extension ShellWorkspaceManifest {
                             lastActivatedAt: tab.lastActivatedAt,
                             lastActivityAt: tab.lastActivityAt,
                             isPinned: tab.isPinned,
+                            isTitleUserLocked: tab.isTitleUserLocked,
                             pinSnapshot: tab.pinSnapshot?.migratingTerminalPanesToContentContainers(),
                             liveSnapshot: tab.liveSnapshot?.migratingTerminalPanesToContentContainers(),
                             activeTask: tab.activeTask
@@ -791,7 +797,8 @@ struct ShellWorkspaceMaterializer {
                     kind: tabRecord.kind,
                     title: tabRecord.title,
                     paneTree: restoreSnapshot.paneTree,
-                    isPinned: tabRecord.isPinned
+                    isPinned: tabRecord.isPinned,
+                    isTitleUserLocked: tabRecord.isTitleUserLocked == true
                 )
             }
 
@@ -990,7 +997,8 @@ struct ShellWorkspaceMaterializer {
                     kind: tabRecord.kind,
                     title: tabRecord.title,
                     paneTree: restoreSnapshot.paneTree,
-                    isPinned: tabRecord.isPinned
+                    isPinned: tabRecord.isPinned,
+                    isTitleUserLocked: tabRecord.isTitleUserLocked == true
                 )
             }
 

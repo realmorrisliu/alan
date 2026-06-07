@@ -2,10 +2,135 @@ import Foundation
 
 struct ShellSidebarTabProjection: Equatable {
     let title: String
-    let secondaryLine: String
+    let secondaryLine: String?
     let activity: TerminalActivitySnapshot?
     let progress: TerminalActivityProgress?
+    let stateAccessory: ShellSidebarTabStateAccessory?
     let accessibilityActivityLabel: String?
+}
+
+struct ShellSidebarTabStateAccessory: Equatable {
+    let systemImageName: String
+    let accessibilityLabel: String
+}
+
+struct ShellSidebarTemporaryTabSectionPresentation: Equatable {
+    let showsControlRow: Bool
+    let showsDivider: Bool
+    let showsClear: Bool
+    let isClearEnabled: Bool
+
+    static func model(
+        pinnedTabCount: Int,
+        unpinnedTabCount: Int,
+        clearableTabCount: Int
+    ) -> ShellSidebarTemporaryTabSectionPresentation {
+        let hasUnpinnedTabs = unpinnedTabCount > 0
+        let hasClearableTabs = hasUnpinnedTabs && clearableTabCount > 0
+        return ShellSidebarTemporaryTabSectionPresentation(
+            showsControlRow: hasUnpinnedTabs,
+            showsDivider: hasUnpinnedTabs,
+            showsClear: hasClearableTabs,
+            isClearEnabled: hasClearableTabs
+        )
+    }
+}
+
+struct ShellSidebarTabContextMenuModel: Equatable {
+    let primaryActionTitles: [String]
+    let organizationActionTitles: [String]
+    let destructiveActionTitles: [String]
+
+    var allActionTitles: [String] {
+        primaryActionTitles + organizationActionTitles + destructiveActionTitles
+    }
+
+    static func model(
+        tabID: String,
+        in spaceID: String,
+        state: ShellStateSnapshot
+    ) throws -> ShellSidebarTabContextMenuModel {
+        guard let tab = state.tab(tabID: tabID),
+              state.space(spaceID: spaceID)?.tabs.contains(where: { $0.tabID == tabID }) == true
+        else {
+            throw ShellStateMutationError.tabNotFound
+        }
+
+        let primary = [
+            "Rename...",
+            "Duplicate Tab",
+            "Open in Split View",
+        ]
+        var organization = [
+            tab.isPinned ? "Unpin Tab" : "Pin Tab",
+        ]
+        if state.spaces.contains(where: { $0.spaceID != spaceID }) {
+            organization.append("Move to")
+        }
+
+        return ShellSidebarTabContextMenuModel(
+            primaryActionTitles: primary,
+            organizationActionTitles: organization,
+            destructiveActionTitles: ["Close Tab"]
+        )
+    }
+}
+
+struct ShellSidebarTabDragSource: Codable, Equatable {
+    let tabID: String
+    let sourceSpaceID: String
+    let sourceSection: ShellTabOrganizationSection
+    let sourceIndex: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case sourceSpaceID = "source_space_id"
+        case sourceSection = "source_section"
+        case sourceIndex = "source_index"
+    }
+
+    func encodedPlainTextPayload() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(self)
+        return "alan.sidebar-tab-drag:" + data.base64EncodedString()
+    }
+
+    static func decodedPlainTextPayload(_ payload: String) throws -> ShellSidebarTabDragSource {
+        let prefix = "alan.sidebar-tab-drag:"
+        guard payload.hasPrefix(prefix),
+              let data = Data(base64Encoded: String(payload.dropFirst(prefix.count)))
+        else {
+            throw ShellSidebarTabDragPayloadError.invalidPayload
+        }
+        return try JSONDecoder().decode(ShellSidebarTabDragSource.self, from: data)
+    }
+}
+
+enum ShellSidebarTabDragPayloadError: Error {
+    case invalidPayload
+}
+
+struct ShellSidebarTabInsertionTarget: Equatable {
+    let spaceID: String
+    let section: ShellTabOrganizationSection
+    let index: Int
+}
+
+enum ShellSidebarTabDropModel {
+    static func mutationIndex(
+        for insertionTarget: ShellSidebarTabInsertionTarget,
+        source: ShellSidebarTabDragSource
+    ) -> Int {
+        guard source.sourceSpaceID == insertionTarget.spaceID,
+              source.sourceSection == insertionTarget.section,
+              insertionTarget.index > source.sourceIndex
+        else {
+            return insertionTarget.index
+        }
+
+        return insertionTarget.index - 1
+    }
 }
 
 enum ShellActivityNotificationVisibility: String, Equatable {
@@ -835,7 +960,6 @@ func shellSidebarTabProjection(
     let panes = shellOrderedPanes(for: tab, panes: allPanes)
     let primaryPane = shellPrimaryPane(in: panes, focusedPaneID: focusedPaneID)
     let primaryContent = shellPrimaryContent(in: tab, contentState: contentState, focusedPaneID: focusedPaneID)
-    let title = shellSidebarTabTitle(for: tab, primaryPane: primaryPane, primaryContent: primaryContent)
     let isOwningTabFocused = focusedTabID == tab.tabID
 
     let activityCandidates = panes.enumerated().compactMap { index, pane -> TerminalActivitySnapshot? in
@@ -858,28 +982,136 @@ func shellSidebarTabProjection(
         }
         return activity.withPaneHint(hint)
     }
+    let primaryActivity = TerminalActivitySnapshot.primarySidebarActivity(activityCandidates, now: now)
+    let activityTaskTitle = primaryActivity.flatMap(shellSidebarTaskTitle)
+    let fallbackTitle = shellSidebarTabTitle(for: tab, primaryPane: primaryPane, primaryContent: primaryContent)
+    let title = tab.isTitleUserLocked ? fallbackTitle : (activityTaskTitle ?? fallbackTitle)
+    let contextLine = primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
 
-    if let activity = TerminalActivitySnapshot.primarySidebarActivity(activityCandidates, now: now) {
+    if let activity = primaryActivity {
+        let subtitle = shellSidebarActivitySubtitle(
+            for: activity,
+            contextLine: contextLine,
+            hasTaskTitle: activityTaskTitle != nil
+        )
         return ShellSidebarTabProjection(
             title: title,
-            secondaryLine: activity.display.sourceFirstLabel,
+            secondaryLine: subtitle,
             activity: activity,
             progress: activity.progress,
+            stateAccessory: shellSidebarStateAccessory(for: activity),
             accessibilityActivityLabel: activity.display.sourceFirstLabel
         )
     }
 
     let fallback = shellSidebarContentLine(for: primaryContent)
-        ?? primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) }
-        ?? primaryPane.flatMap { shellSidebarContextLine(for: $0, title: title) }
-        ?? shellFallbackTitle(for: tab.kind)
+        ?? meaningfulSidebarFallbackLine(
+            primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) },
+            title: title
+        )
+        ?? meaningfulSidebarContextLine(contextLine, title: title)
     return ShellSidebarTabProjection(
         title: title,
         secondaryLine: fallback,
         activity: nil,
         progress: nil,
+        stateAccessory: nil,
         accessibilityActivityLabel: nil
     )
+}
+
+private func shellSidebarTaskTitle(for activity: TerminalActivitySnapshot) -> String? {
+    guard let detail = shellVisibleLabel(activity.display.detailLabel) else { return nil }
+    let lowercased = detail.lowercased()
+    guard !["running", "thinking", "working", "done", "error", "input needed"].contains(lowercased),
+          !lowercased.hasPrefix("session "),
+          !lowercased.contains("session_id")
+    else {
+        return nil
+    }
+    return detail
+}
+
+private func shellSidebarActivitySubtitle(
+    for activity: TerminalActivitySnapshot,
+    contextLine: String?,
+    hasTaskTitle: Bool
+) -> String? {
+    let stateLabel = shellVisibleLabel(activity.display.stateLabel)
+    let sourceLabel = shellVisibleLabel(activity.display.sourceLabel)
+    let paneHint = shellVisibleLabel(activity.display.paneHint)
+    let stableContext = shellVisibleLabel(contextLine)
+
+    switch activity.status {
+    case .needsInput, .failed, .paused, .exited:
+        return [stateLabel, paneHint, sourceLabel, stableContext]
+            .compactMap { $0 }
+            .removingAdjacentDuplicates()
+            .joined(separator: " · ")
+    case .progress, .running:
+        if hasTaskTitle {
+            return [paneHint, stableContext, sourceLabel]
+                .compactMap { $0 }
+                .removingAdjacentDuplicates()
+                .joined(separator: " · ")
+        }
+        return activity.display.sourceFirstLabel
+    case .bell:
+        return [stateLabel, stableContext].compactMap { $0 }.joined(separator: " · ")
+    case .done, .idle, .stale:
+        return hasTaskTitle ? stableContext : nil
+    }
+}
+
+private func shellSidebarStateAccessory(
+    for activity: TerminalActivitySnapshot
+) -> ShellSidebarTabStateAccessory? {
+    switch activity.status {
+    case .needsInput:
+        return ShellSidebarTabStateAccessory(systemImageName: "questionmark.circle.fill", accessibilityLabel: "Input needed")
+    case .failed:
+        return ShellSidebarTabStateAccessory(systemImageName: "exclamationmark.triangle.fill", accessibilityLabel: "Error")
+    case .paused:
+        return ShellSidebarTabStateAccessory(systemImageName: "pause.circle.fill", accessibilityLabel: "Paused")
+    case .exited:
+        return ShellSidebarTabStateAccessory(systemImageName: "xmark.circle.fill", accessibilityLabel: "Exited")
+    case .progress, .running:
+        return ShellSidebarTabStateAccessory(systemImageName: "circle.dotted", accessibilityLabel: activity.display.stateLabel)
+    case .bell:
+        return ShellSidebarTabStateAccessory(systemImageName: "bell.fill", accessibilityLabel: activity.display.stateLabel)
+    case .done, .idle, .stale:
+        return nil
+    }
+}
+
+private func meaningfulSidebarContextLine(_ contextLine: String?, title: String) -> String? {
+    guard let contextLine = shellVisibleLabel(contextLine),
+          !shellLabelsMatch(contextLine, title),
+          !["terminal", "shell", "sh", "zsh", "bash", "fish"].contains(contextLine.lowercased())
+    else {
+        return nil
+    }
+    return contextLine
+}
+
+private func meaningfulSidebarFallbackLine(_ line: String?, title: String) -> String? {
+    guard let line = shellVisibleLabel(line),
+          !shellLabelsMatch(line, title),
+          !["terminal", "shell"].contains(line.lowercased())
+    else {
+        return nil
+    }
+    return line
+}
+
+private extension Array where Element == String {
+    func removingAdjacentDuplicates() -> [String] {
+        reduce(into: [String]()) { result, value in
+            if result.last?.caseInsensitiveCompare(value) != .orderedSame {
+                result.append(value)
+            }
+        }
+    }
 }
 
 func shellOrderedPanes(for tab: ShellTab, panes allPanes: [ShellPane]) -> [ShellPane] {

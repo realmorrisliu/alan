@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-DEFAULT_APP_PATH="$REPO_ROOT/debug/xcode-derived/alan-macos-build/Build/Products/Debug/Alan.app"
+DEFAULT_APP_PATH="$REPO_ROOT/debug/xcode-derived/alan-macos-build/Build/Products/Debug/Alan Dev.app"
 APP_PATH="${ALAN_APP_INTENTS_APP_PATH:-$DEFAULT_APP_PATH}"
 ACTIONS_DATA="$APP_PATH/Contents/Resources/Metadata.appintents/extract.actionsdata"
 

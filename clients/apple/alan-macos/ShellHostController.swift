@@ -1313,6 +1313,75 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
+    func renameTab(tabID: String, title: String) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.renamingTab(tabID, title: title)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func duplicateTab(tabID: String) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.duplicatingTab(tabID)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
+    func openTabInSplitView(tabID: String) -> Bool {
+        guard let tab = shellState.tab(tabID: tabID),
+              let paneID = tab.contains(paneID: shellState.focusedPaneID ?? "")
+                ? shellState.focusedPaneID
+                : tab.paneTree.paneIDs.first,
+              shellState.terminalBackedPane(paneID: paneID) != nil
+        else {
+            return false
+        }
+
+        select(tabID: tabID)
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.splittingPane(paneID, placement: .right)
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        refocusSelectedTerminalPane()
+        return true
+    }
+
+    func clearableInactiveTabCount(in spaceID: String) -> Int {
+        (try? shellState.clearableInactiveTemporaryTabIDs(
+            in: spaceID,
+            activeTaskByTabID: activeTaskByTabID()
+        ).count) ?? 0
+    }
+
+    @discardableResult
+    func clearInactiveTemporaryTabs(in spaceID: String) -> Bool {
+        let result: ShellStateMutationResult
+        do {
+            result = try shellState.clearingInactiveTemporaryTabs(
+                in: spaceID,
+                activeTaskByTabID: activeTaskByTabID()
+            )
+        } catch {
+            return false
+        }
+        applyMutationResult(result)
+        return true
+    }
+
+    @discardableResult
     func openContentTab(
         _ contentIntent: ShellContentIntent = .terminal(
             launchTarget: .shell,
@@ -1623,6 +1692,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .closeTab(let tabID):
             guard let tabID = tabID ?? selectedTabID else { return false }
             return requestCloseTab(tabID: tabID)
+        case .renameTab:
+            return false
+        case .duplicateTab(let tabID):
+            guard let tabID else { return false }
+            return duplicateTab(tabID: tabID)
+        case .openTabInSplitView(let tabID):
+            guard let tabID else { return false }
+            return openTabInSplitView(tabID: tabID)
         case .closePane(let paneID):
             guard let paneID = paneID ?? selectedPane?.paneID else { return false }
             return requestClosePane(paneID: paneID)
@@ -2206,8 +2283,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return false
         }
         let transformedPane = transform(existingPane)
-        let currentTabTitle = shellState.tab(tabID: existingPane.tabID)?.title
-        let requestedTabTitle = tabTitleOverride ?? currentTabTitle
+        let currentTab = shellState.tab(tabID: existingPane.tabID)
+        let currentTabTitle = currentTab?.title
+        let requestedTabTitle = currentTab?.isTitleUserLocked == true
+            ? currentTabTitle
+            : (tabTitleOverride ?? currentTabTitle)
 
         guard transformedPane != existingPane || requestedTabTitle != currentTabTitle else {
             return false
@@ -2358,7 +2438,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return shellState.spaces.map { space in
             let tabs = space.tabs.map { tab in
                 let nextTitle: String?
-                if tab.tabID == tabID, let tabTitleOverride {
+                if tab.tabID == tabID, let tabTitleOverride, !tab.isTitleUserLocked {
                     nextTitle = tabTitleOverride
                 } else {
                     nextTitle = tab.title
@@ -2369,7 +2449,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     kind: tab.kind,
                     title: nextTitle,
                     paneTree: tab.paneTree,
-                    isPinned: tab.isPinned
+                    isPinned: tab.isPinned,
+                    isTitleUserLocked: tab.isTitleUserLocked
                 )
             }
 
@@ -2776,6 +2857,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     lastActivatedAt: lastActivatedAt,
                     lastActivityAt: lastActivityAt,
                     isPinned: tab.isPinned,
+                    isTitleUserLocked: tab.isTitleUserLocked,
                     pinSnapshot: tab.isPinned ? existingTab?.pinSnapshot : nil,
                     liveSnapshot: snapshot,
                     activeTask: projectedActiveTask(for: tab, panes: panes)
@@ -2998,6 +3080,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
 
         return .inactive
+    }
+
+    private func activeTaskByTabID() -> [String: ShellTabActiveTaskState] {
+        shellState.spaces
+            .flatMap(\.tabs)
+            .reduce(into: [String: ShellTabActiveTaskState]()) { result, tab in
+                result[tab.tabID] = projectedActiveTask(for: tab, panes: shellState.panes)
+            }
     }
 
     @discardableResult
