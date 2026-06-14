@@ -247,7 +247,6 @@ alan/
 │           │   ├── mod.rs
 │           │   ├── init.rs    # `alan init` command
 │           │   ├── connection.rs # `alan connection` profile/auth commands
-│           │   ├── emacs.rs   # `alan emacs` install/status/doctor/uninstall
 │           │   ├── skills.rs  # `alan skills` inspection commands
 │           │   ├── skill_authoring.rs # `alan skills init/validate/eval`
 │           │   ├── workspace.rs # `alan workspace` commands
@@ -275,12 +274,6 @@ alan/
 │
 └── clients/
     └── apple/                 # Native Apple client (SwiftUI, macOS/iOS)
-
-tools/
-└── alan-emacs/                # Source distribution for Alan-managed Emacs config
-    ├── early-init.el
-    ├── init.el
-    └── lisp/
 ```
 
 ### Crate Dependency Graph
@@ -329,42 +322,6 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo run --bin alan
 ```
-
-### Alan Emacs Development Loop
-
-`tools/alan-emacs` is the source distribution for Alan's vanilla-first Emacs
-configuration. Do not link user Emacs config directly to this source checkout
-and do not reintroduce the old `tools/alan-emacs/bin/alan-emacs` wrapper,
-backup, update, or rollback flow.
-
-When changing Alan Emacs config:
-
-```bash
-# edit tools/alan-emacs/...
-cargo run -p alan -- emacs install
-cargo run -p alan -- emacs doctor
-```
-
-Once the local PATH-visible CLI has been updated, the normal loop is:
-
-```bash
-alan emacs install
-alan emacs doctor
-```
-
-`alan emacs install` copies the source distribution into
-`~/.local/share/alan/emacs/current` and links the detector-selected Emacs config
-entry to that Alan-managed copy. The installer chooses exactly one config entry
-from `~/.emacs.d` and `$XDG_CONFIG_HOME/emacs` / `~/.config/emacs`, reuses
-Alan-owned state, accepts a single empty candidate, probes the installed
-`emacs` default when needed, and refuses non-Alan-owned user config. It also
-refuses `~/.emacs.el` and `~/.emacs` startup files because ordinary Emacs loads
-those before directory init files.
-
-`alan emacs` intentionally manages only Alan-owned distribution state. It must
-not wrap `brew services`, `launchctl`, `systemctl`, or Emacs daemon lifecycle
-commands. `doctor` may report daemon mismatch; restarting a user-managed Emacs
-daemon remains outside Alan.
 
 ---
 

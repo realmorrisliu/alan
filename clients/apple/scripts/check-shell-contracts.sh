@@ -2369,16 +2369,6 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
-    "Contents/Resources/alan-emacs|ALAN_EMACS_RESOURCE_DIR" \
-    "release assembly must embed the Alan Emacs distribution resource"
-
-require_pattern \
-    "scripts/validate-release-app.sh" \
-    "ALAN_EMACS_RESOURCE_DIR" \
-    "release validation must verify the Alan Emacs distribution resource"
-
-require_pattern \
-    "scripts/assemble-release-app.sh" \
     "CARGO_BUILD_TARGET=\"aarch64-apple-darwin\"" \
     "release assembly must pin the embedded CLI to the Apple Silicon Rust target"
 

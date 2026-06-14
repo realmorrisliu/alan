@@ -641,8 +641,6 @@ struct AlanShellBootProfile: Equatable {
 
         var environment: [String: String] = [
             "ALAN_INSTALL_CHANNEL": installChannel.installChannelID,
-            "EDITOR": "emacs",
-            "VISUAL": "emacs",
             "ALAN_SHELL_SOCKET": controlPlaneSocket.path,
             "ALAN_SHELL_WINDOW_ID": shellState.windowID,
             "ALAN_SHELL_SPACE_ID": pane.spaceID,

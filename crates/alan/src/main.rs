@@ -41,11 +41,6 @@ enum Commands {
         #[command(subcommand)]
         action: DaemonAction,
     },
-    /// Manage Alan Emacs distribution install state
-    Emacs {
-        #[command(subcommand)]
-        action: cli::emacs::EmacsAction,
-    },
     /// Initialize a directory as a workspace
     Init {
         /// Path to initialize (defaults to current directory)
@@ -835,9 +830,6 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Init { path, name, silent }) => {
             cli::init::run_init(path, name, silent)?;
-        }
-        Some(Commands::Emacs { action }) => {
-            cli::emacs::run_emacs(action)?;
         }
         Some(Commands::Workspace { action }) => match action {
             WorkspaceAction::List => {
