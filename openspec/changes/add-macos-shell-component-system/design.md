@@ -6,16 +6,22 @@ type) and a nascent control library (`Views/Shell/Controls/ShellFormControls.swi
 with `ShellButton`, `ShellTextField`, `ShellSelectField`, `ShellIconTile`,
 `ShellIconPickerPanel`). What is missing is the *contract that ties them together*
 and *adoption*: the control library is referenced by exactly one surface (the Space
-creation form), while the rest of the UI hand-rolls styling — ~189 direct
-`ShellPalette.*` references, ~71 inline `RoundedRectangle` shapes, and duplicated
-presentational concepts living as `private struct`s inside large feature files:
+creation form), while the rest of the shell UI hand-rolls styling — ~189 direct
+`ShellPalette.*` references, ~71 inline `RoundedRectangle` shapes (both counts on
+shell surfaces, excluding the out-of-scope console), and duplicated presentational
+concepts living as `private struct`s inside large feature files:
 
 - Five row implementations: `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`,
-  `ShellTabSidebarRow`, `TerminalInfoRow`, `TimelineRow`.
-- Three press/hover styles: `SidebarActionButtonStyle`, `InlineActionButtonStyle`,
-  `ShellButtonPressStyle`.
-- Parallel card/chip/field types: `TerminalInfoCard`, `TerminalPaneChip`,
-  `CompactDarkFieldStyle` (the last duplicates `ShellTextField`).
+  `TerminalInfoRow` (all in `TerminalPaneView.swift`), `ShellTabSidebarRow`, and
+  `ShellSidebarTabControlRow` (in `ShellSidebarView.swift`).
+- Parallel card/chip/panel types: `TerminalInfoCard`, `TerminalPaneChip`, and the
+  `ShellWorkspacePanelFrame` modifier (all in `TerminalPaneView.swift`).
+- A canonical press style (`ShellButtonPressStyle`) and field (`ShellTextField`)
+  already exist in the control library but are not adopted across shell surfaces.
+
+(`TimelineRow`, `SidebarActionButtonStyle`, `InlineActionButtonStyle`, and
+`CompactDarkFieldStyle` live only under `Views/Console/` and are intentionally NOT in
+scope — they belong to the isolated legacy/mobile console.)
 
 Two related specs already exist and this design deliberately does not overlap them:
 `macos-app-architecture-maintainability` owns file/ownership boundaries and the

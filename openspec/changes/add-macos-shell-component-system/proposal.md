@@ -3,12 +3,15 @@
 The macOS SwiftUI presentation layer has design tokens (`ShellDesignTokens`) and a
 nascent control library (`ShellFormControls`), but the library is adopted by exactly
 one surface (the Space creation form) while the rest of the UI hand-rolls styling
-inline: ~189 direct `ShellPalette.*` references, ~71 inline `RoundedRectangle`
-shapes, and the same presentational concepts duplicated across giant view files
-(five ad-hoc "row" structs, three button-press styles, separate card/chip/field
-implementations buried as `private struct`s inside 2,500–4,100 line files). There is
-no contract that makes tokens the single styling source or that requires feature
-views to compose shared primitives, so visual drift and duplication grow unchecked.
+inline: ~189 direct `ShellPalette.*` references and ~71 inline `RoundedRectangle`
+shapes across the shell surfaces (excluding the out-of-scope console), and the same
+presentational concepts duplicated across giant view files — five ad-hoc "row"
+structs (`ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`,
+`ShellTabSidebarRow`, `ShellSidebarTabControlRow`) plus separate card/chip
+implementations (`TerminalInfoCard`, `TerminalPaneChip`) buried as `private struct`s
+inside 2,500–4,100 line files. There is no contract that makes tokens the single
+styling source or that requires feature views to compose shared primitives, so
+visual drift and duplication grow unchecked.
 
 ## What Changes
 
@@ -31,9 +34,11 @@ views to compose shared primitives, so visual drift and duplication grow uncheck
   (sidebar, space slider, settings panels, terminal-pane SwiftUI chrome) —
   replacing inline styling with primitives and verifying screenshot parity, rather
   than a single big-bang rewrite.
-- Consolidate the duplicated implementations (five row structs → `ShellRow`; three
-  press styles → one shared style; `TerminalInfoCard`/`TerminalPaneChip`/
-  `CompactDarkFieldStyle` → canonical primitives).
+- Consolidate the duplicated shell implementations (five row structs → `ShellRow`;
+  `TerminalInfoCard`/`TerminalPaneChip` and the `ShellWorkspacePanelFrame` modifier →
+  canonical surface/indicator primitives), and route shell controls through the
+  existing canonical `ShellButtonPressStyle` / `ShellTextField` rather than ad-hoc
+  styles.
 
 Scope is the primary macOS **shell** SwiftUI presentation layer only. Ghostty/AppKit
 terminal-host internals (`TerminalHostView`, terminal surface input/attachment) and

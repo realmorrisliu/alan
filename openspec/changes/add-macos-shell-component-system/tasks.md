@@ -12,11 +12,11 @@
 
 ## 3. Build canonical primitives (consolidating duplicates)
 
-- [ ] 3.1 Implement `ShellRow` (icon + title + subtitle + accessory, with hover/selected/disabled states) to replace `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `ShellTabSidebarRow`, `TerminalInfoRow`, `TimelineRow`
-- [ ] 3.2 Implement card/panel surface modifiers (`shellCardSurface`, `shellPanelSurface`) consolidating `TerminalInfoCard`
+- [ ] 3.1 Implement `ShellRow` (icon + title + subtitle + accessory, with hover/selected/disabled states) to replace the shell row structs `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`, `ShellTabSidebarRow`, and `ShellSidebarTabControlRow` (console's `TimelineRow` is out of scope)
+- [ ] 3.2 Implement card/panel surface modifiers (`shellCardSurface`, `shellPanelSurface`) consolidating `TerminalInfoCard` and the `ShellWorkspacePanelFrame` modifier
 - [ ] 3.3 Implement `ShellBadge`/`ShellChip` consolidating `TerminalPaneChip`
-- [ ] 3.4 Implement one shared press/hover `ButtonStyle`/`ViewModifier` replacing `SidebarActionButtonStyle`, `InlineActionButtonStyle`, `ShellButtonPressStyle`
-- [ ] 3.5 Confirm the canonical field primitive (`ShellTextField` + shared field style) supersedes `CompactDarkFieldStyle`; mark the duplicate for deletion during its surface migration
+- [ ] 3.4 Confirm the existing `ShellButtonPressStyle` is the single canonical press/hover style for shell controls and expose it from the design-system home (no console styles in scope: `SidebarActionButtonStyle`/`InlineActionButtonStyle` are console-only)
+- [ ] 3.5 Confirm the canonical field primitive `ShellTextField` is the shell field treatment (console's `CompactDarkFieldStyle` is out of scope and not touched)
 - [ ] 3.6 Add `ShellSectionHeader` and confirm `ShellFormSectionLabel` coverage
 
 ## 4. Preview galleries and accessibility baseline
