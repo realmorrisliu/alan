@@ -5,8 +5,11 @@
 The macOS SwiftUI client SHALL keep reusable presentational primitives — surfaces,
 controls, rows, indicators, and labels — together in one design-system home under
 `clients/apple/alan-macos/Views/Shell/Components/`, absorbing the existing
-`Views/Shell/Controls/` library. Feature surfaces SHALL compose these primitives
-rather than redefining equivalent presentational structs locally.
+`Views/Shell/Controls/` library. New and migrated shell feature surfaces SHALL
+compose these primitives rather than redefining equivalent presentational structs
+locally. Shell surfaces not yet migrated MAY retain their existing local structs as
+tracked migration debt (see the migration-debt requirement below), but no feature
+file SHALL introduce a *new* local duplicate of an existing primitive's role.
 
 #### Scenario: A reusable presentational primitive is added
 
@@ -16,10 +19,10 @@ rather than redefining equivalent presentational structs locally.
 - **AND** it is `internal` or `public` (not `private` to a feature file) so other
   surfaces can compose it
 
-#### Scenario: A feature file declares a presentational struct
+#### Scenario: A new or migrated feature file needs a presentational treatment
 
-- **WHEN** a shell feature surface file (e.g. sidebar, settings, workspace) needs
-  a row/card/chip/badge/field/button treatment
+- **WHEN** new shell code, or a surface being migrated, needs a
+  row/card/chip/badge/field/button treatment
 - **THEN** it composes the corresponding design-system primitive
 - **AND** it does not declare a new `private struct` that duplicates an existing
   primitive's role
@@ -35,13 +38,15 @@ rather than redefining equivalent presentational structs locally.
 Design tokens SHALL be the single source of styling values for the macOS SwiftUI
 client. Only the design-system layer (primitives and their styles under
 `Views/Shell/Components/`, plus `Support/ShellDesignTokens.swift`) SHALL read raw
-color/number tuples or reference `ShellPalette.*` directly. Feature surfaces SHALL
-consume semantic tokens or primitives instead of raw styling values.
+color/number tuples or reference `ShellPalette.*` directly. New and migrated shell
+feature surfaces SHALL consume semantic tokens or primitives instead of raw styling
+values; the raw `ShellPalette.*` and inline-shape usage remaining in not-yet-migrated
+surfaces is tracked migration debt (see the migration-debt requirement below).
 
-#### Scenario: A feature surface needs a color or shape metric
+#### Scenario: A new or migrated feature surface needs a color or shape metric
 
-- **WHEN** a feature surface needs a background color, selection tint, corner radius,
-  spacing, or border treatment
+- **WHEN** new shell code, or a surface being migrated, needs a background color,
+  selection tint, corner radius, spacing, or border treatment
 - **THEN** it obtains it by composing a design-system primitive or referencing a
   semantic token exposed for that purpose
 - **AND** it does not read a raw `(Double, Double, Double)` tuple or reach into
@@ -56,25 +61,26 @@ consume semantic tokens or primitives instead of raw styling values.
 
 ### Requirement: Style is separated from structure
 
-Reusable appearance behavior SHALL be expressed as `ButtonStyle`,
+Reusable appearance behavior for shell surfaces SHALL be expressed as `ButtonStyle`,
 `TextFieldStyle`, `LabelStyle`, or `ViewModifier` types owned by the design-system
-layer — this covers press feedback, hover state, focus ring, and field chrome.
-Feature surfaces SHALL NOT
-define their own ad-hoc style or modifier types for these concerns, and primitives
-SHALL share one canonical style per concern rather than duplicating it.
+layer — this covers press feedback, hover state, focus ring, and field chrome. New
+and migrated shell feature surfaces SHALL NOT define their own ad-hoc style or
+modifier types for these concerns, and the design-system layer SHALL expose one
+canonical style per concern rather than duplicating it.
 
-#### Scenario: Press or hover feedback is needed
+#### Scenario: Press or hover feedback is needed in a new or migrated shell control
 
-- **WHEN** a control needs press-scale, hover, or focus feedback
+- **WHEN** a new or migrated shell control needs press-scale, hover, or focus feedback
 - **THEN** it applies the shared design-system style/modifier for that concern
-- **AND** the codebase does not contain multiple near-duplicate `ButtonStyle`
-  implementations for the same press/hover behavior
+- **AND** it does not introduce a new shell `ButtonStyle` that duplicates the
+  canonical press/hover style
 
-#### Scenario: Field chrome is needed
+#### Scenario: Field chrome is needed in a new or migrated shell control
 
-- **WHEN** a text-entry control needs border/background/focus chrome
+- **WHEN** a new or migrated shell text-entry control needs border/background/focus
+  chrome
 - **THEN** it uses the canonical design-system field primitive or its shared style
-- **AND** it does not introduce a parallel field-style type that duplicates the
+- **AND** it does not introduce a parallel shell field-style type that duplicates the
   canonical one
 
 ### Requirement: Every primitive ships a preview gallery and accessibility baseline
@@ -97,6 +103,33 @@ Dynamic Type scaling, a VoiceOver-accessible label, and respect for reduce-motio
 - **THEN** it exposes an accessible label and scales legibly without clipping its
   content
 - **AND** any animated feedback honors the reduce-motion setting
+
+### Requirement: Pre-existing inline styling and local structs are tracked migration debt
+
+Pre-existing inline styling SHALL be tracked migration debt: inline styling and
+local presentational structs already present in shell surfaces when the component
+layer is introduced are treated as tracked debt, not as compliant code or as license
+for new violations. The
+inline `ShellPalette.*` / `RoundedRectangle` counts and the enumerated local row/
+card/chip structs in shell surfaces SHALL NOT increase, and each strangler-fig
+migration SHALL reduce them for its targeted surface until they reach zero outside
+the design-system layer.
+
+#### Scenario: Migration debt is enumerated when the component layer lands
+
+- **WHEN** the component layer is introduced (its foundation change)
+- **THEN** the shell surfaces still carrying inline styling or local presentational
+  structs are recorded as the migration backlog (one follow-up change per surface)
+- **AND** the long-lived spec is true at that point: it requires *new and migrated*
+  code to comply and forbids *new* violations, not that all debt is already cleared
+
+#### Scenario: A change would add new inline styling or a duplicate struct
+
+- **WHEN** a change adds a new inline `RoundedRectangle`/`ShellPalette.*` use or a new
+  local row/card/chip struct to a shell surface instead of composing a primitive
+- **THEN** it is rejected: the debt counts SHALL NOT increase
+- **AND** the developer composes the existing primitive or adds one to the
+  design-system home
 
 ### Requirement: Surfaces adopt the component layer via measurable strangler-fig migration
 

@@ -20,10 +20,12 @@ visual drift and duplication grow unchecked.
   labels) plus the shared `ButtonStyle`/`ViewModifier` styles they are built from,
   housed in a dedicated design-system home (`Views/Shell/Components/`, absorbing the
   existing `Controls/`).
-- Establish a **layering contract**: design tokens are the single styling source;
-  only the design-system layer may read raw color/number tuples and `ShellPalette.*`;
-  feature views compose primitives and MUST NOT inline shape + background + selection
-  styling.
+- Establish a **layering contract** as a ratchet: design tokens are the single
+  styling source; only the design-system layer may read raw color/number tuples and
+  `ShellPalette.*`; new and migrated feature views compose primitives and MUST NOT
+  inline shape + background + selection styling. Existing un-migrated surfaces are
+  tracked migration debt (counts MUST NOT increase), so the contract is true the day
+  it lands even before the surfaces are migrated.
 - Separate **style from structure** (SwiftUI-idiomatic): button/field press and
   hover behavior lives in `ButtonStyle`/`ViewModifier`/`*Style` types in the
   design-system layer, not scattered through feature files.

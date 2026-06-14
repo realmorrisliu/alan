@@ -74,6 +74,22 @@ types.
   mismatched with the script-driven Apple test setup. Rejected (YAGNI); the boundary
   is enforced by convention + a measurable lint-style gate instead.
 
+### Decision: The contract is a ratchet, so Phase 0 can sync to `openspec/specs/` honestly
+
+The spec binds *new and migrated* shell code (compose primitives, no raw tokens) and
+forbids *new* violations, while explicitly recording the inline styling and local
+structs still in un-migrated surfaces as tracked migration debt whose counts must not
+increase. This matters because Phase 0 migrates no surface: an absolute "no surface
+inlines styling" contract would be false the moment it was synced to
+`openspec/specs/` (e.g. `ShellSettingsRow`/`TerminalInfoRow` still live in
+`TerminalPaneView.swift`). The ratchet form is true at sync time and tightens
+surface-by-surface as the strangler-fig migrations land.
+
+- **Alternative — defer the spec sync/archive until every surface is migrated:**
+  rejected. The whole point of Phase 0 is to give new code a contract *now*; holding
+  the contract out of `openspec/specs/` until the last migration would let drift
+  continue unconstrained in the meantime.
+
 ### Decision: A single design-system home, absorbing `Controls/`
 
 `Views/Shell/Components/` becomes the home; `ShellFormControls.swift` content moves

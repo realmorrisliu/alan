@@ -29,9 +29,10 @@
 - [ ] 5.1 Run `just apple-shell-focused-tests` and the UI smoke check; confirm pass
 - [ ] 5.2 Capture preview-gallery screenshots (light + dark) for review of the primitive catalog
 - [ ] 5.3 Confirm no feature surface was migrated in this change (Phase 0 is foundation only) and no token *values* changed
+- [ ] 5.4 Record the migration-debt baseline required by the spec: the current shell inline `ShellPalette.*` (~189) and `RoundedRectangle` (~71) counts and the enumerated local row/card/chip structs, so the ratchet ("counts SHALL NOT increase") has a reference point
 
 ## 6. Review, archive readiness, and follow-up sequencing
 
 - [ ] 6.1 Request code review / open PR for the Phase 0 foundation change
-- [ ] 6.2 Sync the `macos-shell-component-system` delta spec into `openspec/specs/` after merge, then archive this change
+- [ ] 6.2 Sync the `macos-shell-component-system` delta spec into `openspec/specs/` after merge, then archive this change — valid because the contract is a ratchet (binds new/migrated code, forbids new violations, records remaining surfaces as tracked debt), so it is true at sync time even though surfaces are not yet migrated
 - [ ] 6.3 Record the strangler-fig migration backlog as separate follow-up changes, one per shell surface (sidebar → space slider → settings panels → terminal-pane SwiftUI chrome), each gated on inline-styling reduction + screenshot parity per the spec; the legacy/mobile console (`Views/Console/`) is explicitly excluded
