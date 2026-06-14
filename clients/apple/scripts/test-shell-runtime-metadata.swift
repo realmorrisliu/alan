@@ -8471,12 +8471,12 @@ private enum ShellRuntimeMetadataTests {
             "boot environment must expose resolved profile state"
         )
         expect(
-            boot.environment["EDITOR"] == "emacs",
-            "boot environment must expose plain emacs as EDITOR"
+            boot.environment["EDITOR"] == nil,
+            "boot environment must not impose an EDITOR"
         )
         expect(
-            boot.environment["VISUAL"] == "emacs",
-            "boot environment must expose plain emacs as VISUAL"
+            boot.environment["VISUAL"] == nil,
+            "boot environment must not impose a VISUAL editor"
         )
         expect(
             boot.workingDirectory == "/Users/alan",

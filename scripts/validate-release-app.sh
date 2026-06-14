@@ -22,7 +22,6 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 APP_BUNDLE="${1:-$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME}"
 MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_CLI_NAME"
-ALAN_EMACS_RESOURCE_DIR="$APP_BUNDLE/Contents/Resources/alan-emacs"
 SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
 fail() {
@@ -115,16 +114,6 @@ fi
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
 require_executable "$APP_EXECUTABLE"
 require_executable "$ALAN_BIN"
-[[ -f "$ALAN_EMACS_RESOURCE_DIR/init.el" ]] ||
-    fail "Alan Emacs resource is missing init.el"
-[[ -f "$ALAN_EMACS_RESOURCE_DIR/early-init.el" ]] ||
-    fail "Alan Emacs resource is missing early-init.el"
-[[ -f "$ALAN_EMACS_RESOURCE_DIR/lisp/alan-core.el" ]] ||
-    fail "Alan Emacs resource is missing lisp/alan-core.el"
-[[ ! -e "$ALAN_EMACS_RESOURCE_DIR/bin/alan-emacs" ]] ||
-    fail "Alan Emacs resource must not include the legacy installer"
-[[ ! -e "$ALAN_EMACS_RESOURCE_DIR/alan-local.el" ]] ||
-    fail "Alan Emacs resource must not include machine-local overrides"
 [[ -d "$SPARKLE_FRAMEWORK" ]] || fail "Sparkle.framework not found in release app"
 
 SPARKLE_VERSION_DIR="$(alan_sparkle_version_dir "$SPARKLE_FRAMEWORK")" ||
@@ -163,8 +152,6 @@ grep -q "\"bundle_identifier\": \"$ALAN_BUNDLE_ID\"" "$MANIFEST" ||
     fail "manifest does not record $ALAN_BUNDLE_ID bundle id"
 grep -q "\"path\": \"Contents/Resources/bin/$ALAN_CLI_NAME\"" "$MANIFEST" ||
     fail "manifest does not record embedded $ALAN_CLI_NAME path"
-grep -q "\"path\": \"Contents/Resources/alan-emacs\"" "$MANIFEST" ||
-    fail "manifest does not record Alan Emacs resource path"
 
 manifest_version="$(manifest_value "version")"
 repo_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
