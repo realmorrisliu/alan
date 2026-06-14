@@ -18,7 +18,7 @@ rather than redefining equivalent presentational structs locally.
 
 #### Scenario: A feature file declares a presentational struct
 
-- **WHEN** a feature surface file (e.g. sidebar, console, settings, workspace) needs
+- **WHEN** a shell feature surface file (e.g. sidebar, settings, workspace) needs
   a row/card/chip/badge/field/button treatment
 - **THEN** it composes the corresponding design-system primitive
 - **AND** it does not declare a new `private struct` that duplicates an existing
@@ -107,7 +107,7 @@ through a single big-bang rewrite of multiple surfaces at once.
 
 #### Scenario: A surface migration change is proposed
 
-- **WHEN** a change migrates a surface (e.g. sidebar, space slider, console, settings
+- **WHEN** a change migrates a shell surface (e.g. sidebar, space slider, settings
   panel, terminal-pane SwiftUI chrome) to the component layer
 - **THEN** it targets a single surface, not several unrelated surfaces in one change
 
@@ -128,3 +128,11 @@ through a single big-bang rewrite of multiple surfaces at once.
 - **AND** the terminal-host bridge behavior remains owned by the terminal-host
   boundary defined in `macos-app-architecture-maintainability` and is not folded into
   presentational primitives
+
+#### Scenario: Legacy/mobile console surfaces are out of scope
+
+- **WHEN** the component layer is adopted or migrated
+- **THEN** the legacy/mobile remote-control console surfaces (`Views/Console/`) are
+  NOT migrated through the shell design-system home
+- **AND** they remain isolated from the primary macOS shell as required by
+  `macos-app-architecture-maintainability`

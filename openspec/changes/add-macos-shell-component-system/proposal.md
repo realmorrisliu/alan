@@ -28,16 +28,19 @@ views to compose shared primitives, so visual drift and duplication grow uncheck
   (default/hover/selected/disabled/dark), and bake accessibility (Dynamic Type,
   VoiceOver labels, reduce-motion) into the primitives.
 - Migrate existing surfaces via a **strangler-fig sequence** — one surface per change
-  (sidebar, space slider, console, settings panels, terminal-pane SwiftUI chrome) —
+  (sidebar, space slider, settings panels, terminal-pane SwiftUI chrome) —
   replacing inline styling with primitives and verifying screenshot parity, rather
   than a single big-bang rewrite.
 - Consolidate the duplicated implementations (five row structs → `ShellRow`; three
   press styles → one shared style; `TerminalInfoCard`/`TerminalPaneChip`/
   `CompactDarkFieldStyle` → canonical primitives).
 
-Scope is the SwiftUI presentation layer only. Ghostty/AppKit terminal-host internals
-(`TerminalHostView`, terminal surface input/attachment) are explicitly out of scope;
-they remain governed by `macos-app-architecture-maintainability`.
+Scope is the primary macOS **shell** SwiftUI presentation layer only. Ghostty/AppKit
+terminal-host internals (`TerminalHostView`, terminal surface input/attachment) and
+the legacy/mobile remote-control console (`Views/Console/`) are explicitly out of
+scope; both remain governed by `macos-app-architecture-maintainability` (the console
+surfaces must stay isolated from the primary shell), so neither is pulled through the
+shell design-system home.
 
 ## Capabilities
 
@@ -58,13 +61,15 @@ they remain governed by `macos-app-architecture-maintainability`.
 - **Code**: New design-system home under `clients/apple/alan-macos/Views/Shell/Components/`
   (absorbs `Views/Shell/Controls/ShellFormControls.swift`). Incremental edits to
   feature surfaces: `ShellSidebarView.swift`, `MacShellRootView.swift`,
-  `ShellWorkspaceView.swift`, the Space slider, `Views/Console/ContentView.swift` /
-  `ConsoleSupportViews.swift`, and the SwiftUI settings/info chrome currently inside
-  `TerminalPaneView.swift`. `Support/ShellDesignTokens.swift` gains semantic-layer
-  clarity but no token-value changes.
+  `ShellWorkspaceView.swift`, the Space slider, and the SwiftUI settings/info chrome
+  currently inside `TerminalPaneView.swift`. `Support/ShellDesignTokens.swift` gains
+  semantic-layer clarity but no token-value changes.
 - **Tests**: `just apple-shell-focused-tests` and `apple-shell-ui-smoke` gate each
   migration phase; visual changes reviewed against screenshots.
 - **Docs**: Apple client README directory section updated to document the
   `Components/` design-system home.
 - **No behavior change for users** is intended; each phase must hold screenshot
-  parity. Out of scope: Rust crates, terminal-host AppKit bridges, non-macOS clients.
+  parity. Out of scope: Rust crates, terminal-host AppKit bridges, non-macOS clients,
+  and the legacy/mobile remote-control console (`Views/Console/`), which
+  `macos-app-architecture-maintainability` requires to stay isolated from the primary
+  macOS shell — it is not pulled through the shell design-system home.

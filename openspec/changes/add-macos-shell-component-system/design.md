@@ -42,6 +42,10 @@ gallery + accessibility baseline, and the migration discipline.
 - No big-bang rewrite of multiple surfaces in a single change.
 - No changes to Ghostty/AppKit terminal-host internals (input, attachment, overlay
   layout) — those stay under the terminal-host boundary.
+- No migration of the legacy/mobile remote-control console (`Views/Console/`). It is
+  classified as legacy/mobile and `macos-app-architecture-maintainability` requires it
+  to stay isolated from the primary macOS shell, so it is not pulled through the shell
+  design-system home.
 - No new Swift build target / module (`AlanDesignSystem` package) at this time.
 - No token *value* changes; this is structure/adoption, not a visual redesign.
 - No changes to Rust crates or non-macOS clients.
@@ -82,7 +86,7 @@ fits the existing screenshot-review workflow.
 ### Decision: Strangler-fig migration order driven by reuse leverage
 
 Build the primitives first (Phase 0), then migrate surfaces highest-leverage-first:
-sidebar (most rows + selection states) → space slider → console → settings panels →
+sidebar (most rows + selection states) → space slider → settings panels →
 terminal-pane SwiftUI chrome. Each surface is its own change/PR so screenshots and
 metrics are reviewable in isolation and the old implementation "dies back" gradually.
 
@@ -118,7 +122,7 @@ metrics are reviewable in isolation and the old implementation "dies back" gradu
    style, `ShellSectionHeader`), add `#Preview` galleries + accessibility baseline,
    update the README. No feature surface is migrated yet.
 2. **Phase 1+ — Per-surface strangler migration (separate changes):** sidebar → space
-   slider → console → settings panels → terminal-pane SwiftUI chrome. Each removes
+   slider → settings panels → terminal-pane SwiftUI chrome. Each removes
    inline styling in its surface, deletes the now-dead local structs/styles, and
    verifies the metric + screenshot gate.
 3. **Rollback:** each phase is an isolated change; reverting one surface's change

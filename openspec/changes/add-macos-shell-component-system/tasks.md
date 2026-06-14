@@ -34,4 +34,4 @@
 
 - [ ] 6.1 Request code review / open PR for the Phase 0 foundation change
 - [ ] 6.2 Sync the `macos-shell-component-system` delta spec into `openspec/specs/` after merge, then archive this change
-- [ ] 6.3 Record the strangler-fig migration backlog as separate follow-up changes, one per surface (sidebar → space slider → console → settings panels → terminal-pane SwiftUI chrome), each gated on inline-styling reduction + screenshot parity per the spec
+- [ ] 6.3 Record the strangler-fig migration backlog as separate follow-up changes, one per shell surface (sidebar → space slider → settings panels → terminal-pane SwiftUI chrome), each gated on inline-styling reduction + screenshot parity per the spec; the legacy/mobile console (`Views/Console/`) is explicitly excluded
