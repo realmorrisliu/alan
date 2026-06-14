@@ -1204,6 +1204,8 @@ struct ShellContentTab: Identifiable, Codable, Equatable {
 enum ShellSpacePresentationIcon {
     static let defaultSystemName = "square.grid.2x2"
 
+    // MARK: - Symbol support
+
     static func resolvedSystemName(_ systemName: String?) -> String {
         guard let systemName,
               isSupportedSystemName(systemName)
@@ -1227,6 +1229,72 @@ enum ShellSpacePresentationIcon {
                 || scalar == "-"
                 || scalar == "_"
         }
+    }
+
+    // MARK: - Monogram derivation
+
+    /// Derives a single-grapheme monogram from a Space title.
+    ///
+    /// - If the first grapheme cluster is a Latin letter, it is returned uppercased.
+    /// - For non-Latin scripts (CJK, emoji, other), the first grapheme is returned as-is.
+    /// - Returns an empty string when `title` is nil or blank (signals caller to use fallback symbol).
+    static func monogram(forTitle title: String?) -> String {
+        guard let title else { return "" }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstChar = trimmed.first else { return "" }
+        // Check whether the character is a Latin letter (ASCII + isLetter).
+        if firstChar.isLetter && firstChar.isASCII {
+            return String(firstChar).uppercased()
+        }
+        // For non-Latin letters (CJK, emoji, extended scripts), return the grapheme cluster as-is.
+        return String(firstChar)
+    }
+
+    // MARK: - Resolution policy
+
+    /// The result of resolving a Space's icon — symbol, monogram, or fallback symbol.
+    enum Resolved: Equatable {
+        /// A supported SF Symbol name (user override).
+        case symbol(String)
+        /// A single-grapheme monogram derived from the Space title (auto-default).
+        case monogram(String)
+        /// The neutral fallback symbol used when no title monogram is available.
+        case fallbackSymbol(String)
+    }
+
+    /// Resolves the display icon for a Space given an optional stored symbol name and title.
+    ///
+    /// Resolution order:
+    /// 1. If `systemName` is present and passes `isSupportedSystemName` → `.symbol`.
+    /// 2. Else if a monogram can be derived from `title` → `.monogram`.
+    /// 3. Else → `.fallbackSymbol(defaultSystemName)`.
+    static func resolve(systemName: String?, title: String?) -> Resolved {
+        if let name = systemName, isSupportedSystemName(name) {
+            return .symbol(name.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let m = monogram(forTitle: title)
+        if !m.isEmpty {
+            return .monogram(m)
+        }
+        return .fallbackSymbol(defaultSystemName)
+    }
+}
+
+/// Derives a human default Space name from a working directory. Pure; the
+/// "Space N" index fallback stays in `creatingSpace` and is used when this
+/// returns "".
+enum ShellSpaceDefaultName {
+    static func derive(fromWorkingDirectory path: String?) -> String {
+        guard let path else { return "" }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        var components = trimmed.split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        if components.last == ".git" {
+            components.removeLast()
+        }
+        return components.last ?? ""
     }
 }
 

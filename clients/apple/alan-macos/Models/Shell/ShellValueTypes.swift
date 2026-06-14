@@ -11,6 +11,19 @@ enum ShellAttentionState: String, Codable, CaseIterable {
     case active
     case awaitingUser = "awaiting_user"
     case notable
+
+    /// Signal-semantics gate (docs/design/design-language.md, "Signal Semantics"):
+    /// only states blocked on the user (input/approval) or a failure needing
+    /// intervention may surface `ShellSignal.action`. `.active` is quiet
+    /// liveness and `.idle` is silence — both must stay inkless in chrome.
+    var requiresUserAction: Bool {
+        switch self {
+        case .awaitingUser, .notable:
+            return true
+        case .idle, .active:
+            return false
+        }
+    }
 }
 
 enum ShellTabKind: String, Codable, CaseIterable {
