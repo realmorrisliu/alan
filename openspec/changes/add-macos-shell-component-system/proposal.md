@@ -3,8 +3,10 @@
 The macOS SwiftUI presentation layer has design tokens (`ShellDesignTokens`) and a
 nascent control library (`ShellFormControls`), but the library is adopted by exactly
 one surface (the Space creation form) while the rest of the UI hand-rolls styling
-inline: ~189 direct `ShellPalette.*` references and ~71 inline `RoundedRectangle`
-shapes across the shell surfaces (excluding the out-of-scope console), and the same
+inline: ~197 direct `ShellPalette.*` references and ~37 inline `RoundedRectangle`
+shapes on the shell surfaces (occurrence counts excluding the out-of-scope console;
+console adds 34 more `RoundedRectangle` uses that are intentionally not counted), and
+the same
 presentational concepts duplicated across giant view files — five ad-hoc "row"
 structs (`ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`,
 `ShellTabSidebarRow`, `ShellSidebarTabControlRow`) plus separate card/chip

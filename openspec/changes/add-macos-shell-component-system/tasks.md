@@ -29,7 +29,7 @@
 - [ ] 5.1 Run `just apple-shell-focused-tests` and the UI smoke check; confirm pass
 - [ ] 5.2 Capture preview-gallery screenshots (light + dark) for review of the primitive catalog
 - [ ] 5.3 Confirm no feature surface was migrated in this change (Phase 0 is foundation only) and no token *values* changed
-- [ ] 5.4 Record the migration-debt baseline required by the spec: the current shell inline `ShellPalette.*` (~189) and `RoundedRectangle` (~71) counts and the enumerated local row/card/chip structs, so the ratchet ("counts SHALL NOT increase") has a reference point
+- [ ] 5.4 Record the migration-debt baseline required by the spec so the ratchet ("counts SHALL NOT increase") has a reproducible reference point. Shell-only occurrence counts (Views/Console excluded): `ShellPalette.*` ≈ 197, `RoundedRectangle` ≈ 37. Measure shell-only as `all − console` to avoid the broken-exclusion-glob trap, e.g. `rg -o 'RoundedRectangle' clients/apple/alan-macos -g '*.swift'` minus `rg -o 'RoundedRectangle' clients/apple/alan-macos/Views/Console -g '*.swift'`. Also enumerate the local row/card/chip structs (`ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`, `TerminalInfoCard`, `TerminalPaneChip`, `ShellSidebarTabControlRow`, `ShellTabSidebarRow`)
 
 ## 6. Review, archive readiness, and follow-up sequencing
 
