@@ -445,6 +445,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published var spaceDraftProfileID: String? = nil
 
     func beginSpaceCreation() {
+        // A second New Space press while the form is open is a no-op so an
+        // in-progress draft (name/icon/profile) is never silently discarded.
+        guard !isPresentingSpaceCreation else { return }
         spaceDraftName = ""
         spaceDraftIcon = nil
         spaceDraftProfileID = nil
@@ -1756,6 +1759,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         target: ShellActionTarget = .currentSelection,
         source: ShellTerminalCommandSource = .keyboardShortcut
     ) -> ShellActionExecutionResult {
+        // The Space creation form is a modal flow over a display-only draft.
+        // Suppress shell actions (new/close tab, split, find, space switching,
+        // etc.) so they cannot mutate the hidden underlying Space while it is
+        // open. Cancel/Create are driven by the form directly, not through here.
+        if isPresentingSpaceCreation {
+            return .failed(reason: "Space creation in progress")
+        }
+
         if id == .findOpen {
             return openTerminalSearch(source: source, target: target)
                 ? .executed
