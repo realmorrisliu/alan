@@ -1190,6 +1190,12 @@ private struct ShellSidebarSpaceSlider: View {
         .onChange(of: resolvedDisplaySpaceID) { _, _ in
             cancelScrubPreview()
         }
+        .onChange(of: creationDraft != nil) { _, creating in
+            // Entering the creation form must cancel any pending scrub and
+            // invalidate the scheduled wheel-commit so it cannot fire and move
+            // the underlying Space behind the draft.
+            if creating { cancelScrubPreview() }
+        }
     }
 
     private var visibleSpaces: [ShellSpace] {
@@ -1509,6 +1515,13 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private func commitScrubSelection() {
+        // Chokepoint for every scrub commit (wheel timer, drag-end, keyboard).
+        // While a draft owns selection, a stale in-flight commit must not move
+        // the underlying Space — drop it and clear any lingering scrub state.
+        guard creationDraft == nil else {
+            cancelScrubPreview()
+            return
+        }
         guard let scrubState,
               visibleSpaces.indices.contains(scrubState.commitIndex)
         else {
