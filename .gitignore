@@ -68,3 +68,6 @@ clients/apple/GhosttyKit.xcframework
 clients/apple/GhosttyKit.xcframework.bak-*/
 clients/apple/ghostty-resources
 clients/apple/ghostty-terminfo
+
+# Local Claude Code settings and session data.
+.claude/
