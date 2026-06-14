@@ -1066,6 +1066,7 @@ private struct ShellSidebarSpaceSlider: View {
     let activityFreshnessNow: Date
     let onForwardVerticalWheel: (ShellSidebarSpaceSliderWheelEvent) -> Bool
     var creationDraft: ShellSpaceSliderDraft? = nil
+    static let draftTargetID = "space-creation-draft"
     @FocusState private var isKeyboardFocused: Bool
     @State private var hoveredSpaceID: String?
     @State private var scrubState: ShellSidebarSpaceSliderScrubState?
@@ -1106,7 +1107,7 @@ private struct ShellSidebarSpaceSlider: View {
                                let draftItem = layout.items.first(where: { $0.index == spaces.count })
                             {
                                 draftControl(for: creationDraft, item: draftItem)
-                                    .id("space-creation-draft")
+                                    .id(Self.draftTargetID)
                             }
                         }
                         .padding(.horizontal, 2)
@@ -1361,7 +1362,10 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private var autoScrollSpaceID: String? {
-        scrubFocusSpaceID ?? resolvedDisplaySpaceID
+        // While creating, keep the trailing draft target on-screen so its live
+        // identity preview stays visible even when the slider is scrollable.
+        if creationDraft != nil { return Self.draftTargetID }
+        return scrubFocusSpaceID ?? resolvedDisplaySpaceID
     }
 
     private var visibleSpaceIDs: [String] {
