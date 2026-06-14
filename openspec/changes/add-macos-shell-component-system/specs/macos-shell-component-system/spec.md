@@ -178,37 +178,46 @@ are ceilings, not floors.
 Existing surfaces SHALL be migrated to the component layer one surface at a time, as
 separate changes, with each migration reducing inline styling in the targeted
 surface and preserving its visual behavior. The component layer SHALL NOT be adopted
-through a single big-bang rewrite of multiple surfaces at once. The migration backlog
-SHALL be defined by the debt itself — *every* shell feature file carrying baseline
-debt — not by a hand-picked list, so no surface is silently left unowned. At the time
-the component layer lands the entire feature-surface debt resides in exactly three
-files, whose counts sum to the baseline:
+through a single big-bang rewrite of multiple surfaces at once — and, because a single
+feature file may host more than one surface, a migration change SHALL target a
+surface, never a whole multi-surface file at once.
 
-- `TerminalPaneView.swift` — `ShellPalette.*` 82, `RoundedRectangle` 14 (terminal-pane
-  SwiftUI chrome and the settings surface).
-- `Views/Shell/ShellSidebarView.swift` — `ShellPalette.*` 49, `RoundedRectangle` 11
-  (sidebar and space slider).
-- `MacShellRootView.swift` — `ShellPalette.*` 5, `RoundedRectangle` 4 (root chrome:
-  collapse/appearance/new-space controls, ghost chrome, window placement).
+The migration backlog units are *surfaces*, but its completeness SHALL be verified
+against the per-file debt the debt itself defines, so no surface is silently left
+unowned. At the time the component layer lands the entire feature-surface debt resides
+in exactly three files (whose counts sum to the baseline), hosting five surfaces:
+
+- `TerminalPaneView.swift` — `ShellPalette.*` 82, `RoundedRectangle` 14 — hosts two
+  surfaces: **terminal-pane SwiftUI chrome** and the **settings surface** (separate
+  migration changes).
+- `Views/Shell/ShellSidebarView.swift` — `ShellPalette.*` 49, `RoundedRectangle` 11 —
+  hosts two surfaces: **sidebar** and **space slider** (separate migration changes).
+- `MacShellRootView.swift` — `ShellPalette.*` 5, `RoundedRectangle` 4 — one surface:
+  **root chrome** (collapse/appearance/new-space controls, ghost chrome, window
+  placement).
 
 (82+49+5 = 136 and 14+11+4 = 29, matching the recorded baseline; this sum is the
-completeness check — if a future enumeration omits a file, the per-file counts will
-not reconcile with the baseline.)
+file-level completeness check. A file's debt is fully retired only once *all* of its
+hosted surfaces are migrated, so the per-file arithmetic catches an omitted file while
+the one-surface-per-change rule keeps each PR's screenshot diff isolated.)
 
 #### Scenario: A surface migration change is proposed
 
-- **WHEN** a change migrates a shell surface (e.g. terminal-pane SwiftUI chrome,
-  settings panel, sidebar, space slider, or root chrome in `MacShellRootView.swift`)
-  to the component layer
-- **THEN** it targets a single surface, not several unrelated surfaces in one change
+- **WHEN** a change migrates a shell surface (terminal-pane SwiftUI chrome, settings
+  surface, sidebar, space slider, or root chrome) to the component layer
+- **THEN** it targets that single surface, not several surfaces — even when two
+  surfaces live in the same feature file (e.g. terminal-pane chrome vs settings in
+  `TerminalPaneView.swift`, or sidebar vs space slider in `ShellSidebarView.swift`)
 
 #### Scenario: The backlog is checked for completeness
 
 - **WHEN** the migration backlog is reviewed or a "counts reach zero" claim is made
-- **THEN** the per-file feature-surface debt counts reconcile with the recorded
-  baseline (their sum equals it)
-- **AND** any shell feature file with non-zero feature-surface debt has an owning
-  migration change, including `MacShellRootView.swift`
+- **THEN** every surface hosted by a shell feature file with non-zero feature-surface
+  debt has its own owning migration change (five at landing: terminal-pane chrome,
+  settings surface, sidebar, space slider, root chrome)
+- **AND** the per-file feature-surface debt counts reconcile with the recorded
+  baseline (their sum equals it), so no file — including `MacShellRootView.swift` — is
+  left unowned
 
 #### Scenario: A surface migration change is verified
 
