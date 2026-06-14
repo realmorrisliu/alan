@@ -36,8 +36,10 @@ visual drift and duplication grow unchecked.
 - Require a **`#Preview` gallery** for every primitive covering all states
   (default/hover/selected/disabled/dark), and bake accessibility (Dynamic Type,
   VoiceOver labels, reduce-motion) into the primitives.
-- Migrate existing surfaces via a **strangler-fig sequence** — one surface per change
-  (sidebar, space slider, settings panels, terminal-pane SwiftUI chrome) —
+- Migrate existing surfaces via a **strangler-fig sequence** — one surface per change,
+  covering every shell feature file that carries baseline debt (at landing: terminal-
+  pane SwiftUI chrome + settings in `TerminalPaneView.swift`, sidebar + space slider
+  in `ShellSidebarView.swift`, and root chrome in `MacShellRootView.swift`) —
   replacing inline styling with primitives and verifying screenshot parity, rather
   than a single big-bang rewrite.
 - Consolidate the duplicated shell implementations (five row structs → `ShellRow`;
