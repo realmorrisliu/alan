@@ -106,16 +106,17 @@ Dynamic Type scaling, a VoiceOver-accessible label, and respect for reduce-motio
 
 ### Requirement: Pre-existing inline styling and local structs are tracked migration debt
 
-Pre-existing inline styling SHALL be tracked migration debt: inline styling and
-local presentational structs already present in shell surfaces when the component
-layer is introduced are treated as tracked debt, not as compliant code or as license
-for new violations. The
-inline `ShellPalette.*` / `RoundedRectangle` occurrence counts on shell *feature*
-surfaces — measured outside the design-system layer, which is permitted to reference
-tokens directly — and the enumerated local row/card/chip structs SHALL NOT increase,
-and each strangler-fig migration SHALL reduce them for its targeted surface until
-they reach zero outside
-the design-system layer.
+Pre-existing inline styling SHALL be tracked migration debt and the ratchet measured
+against two objective invariants. First, the inline `ShellPalette.*` /
+`RoundedRectangle` occurrence counts on shell *feature* surfaces — measured outside
+the design-system layer, which is permitted to reference tokens directly — SHALL NOT
+increase. Second, no shell feature file SHALL introduce a *new* local struct that
+duplicates a design-system primitive's role (row, card, chip, badge, button, field,
+section label, or surface/background modifier); feature-specific composite views that
+do not duplicate a primitive role (e.g. layout, split, title-bar, or find-bar views)
+are unaffected and legitimately stay in feature files. Each strangler-fig migration
+SHALL reduce the counts and fold the known primitive-role duplicates for its targeted
+surface until they reach zero outside the design-system layer.
 
 The baseline at the time the component layer is introduced, against which the
 "SHALL NOT increase" ratchet is measured, is recorded here so future migrations have
@@ -126,33 +127,51 @@ a concrete reference point:
   `Support/ShellDesignTokens.swift` 46 and `ShellFormControls.swift` 15).
 - **Inline `RoundedRectangle` occurrences on shell feature surfaces:** ≈ 29
   (all-files 71, minus console 34, minus the design-system layer `ShellFormControls.swift` 8).
-- **Enumerated local presentational structs (allowed debt, to be consolidated):**
-  `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`,
-  `TerminalInfoCard`, `TerminalPaneChip` (in `TerminalPaneView.swift`),
-  `ShellTabSidebarRow`, `ShellSidebarTabControlRow` (in `ShellSidebarView.swift`).
+- **Known pre-existing primitive-role duplicates (non-exhaustive consolidation
+  backlog, not a closed allow-list):** rows — `ShellSettingsRow`,
+  `ShellSettingsAgentSummaryRow`, `TerminalInfoRow` (`TerminalPaneView.swift`),
+  `ShellTabSidebarRow`, `ShellSidebarTabControlRow` (`ShellSidebarView.swift`);
+  card/surface — `TerminalInfoCard`, the `ShellWorkspacePanelFrame` modifier,
+  `ShellSettingsNavigationRowBackground` (`TerminalPaneView.swift`),
+  `ShellSidebarRowBackground` (`ShellSidebarView.swift`); chip — `TerminalPaneChip`.
+  The compliance test is the *role-based* rule above, not membership in this list, so
+  an incomplete enumeration is not a loophole: any new primitive-role duplicate is a
+  violation whether or not it appears here.
 
 These counts are measured as `all − console − design-system-layer` (the
-exclusion-glob form is unreliable with a path argument). No shell surface outside
-this enumerated set may introduce a new local presentational struct, and the
-occurrence counts above are ceilings, not floors.
+exclusion-glob form is unreliable with a path argument); the occurrence counts above
+are ceilings, not floors.
 
 #### Scenario: Migration debt is enumerated when the component layer lands
 
 - **WHEN** the component layer is introduced (its foundation change)
-- **THEN** the shell surfaces still carrying inline styling or local presentational
-  structs are recorded as the migration backlog (one follow-up change per surface)
+- **THEN** the shell surfaces still carrying inline styling or primitive-role
+  duplicate structs are recorded as the migration backlog (one follow-up change per
+  surface)
 - **AND** the baseline counts (≈ 136 `ShellPalette.*`, ≈ 29 `RoundedRectangle`) and
-  the enumerated local struct list above are captured as the ratchet reference point
+  the known primitive-role duplicate list above are captured as the ratchet reference
+  point
 - **AND** the long-lived spec is true at that point: it requires *new and migrated*
   code to comply and forbids *new* violations, not that all debt is already cleared
 
-#### Scenario: A change would add new inline styling or a duplicate struct
+#### Scenario: A change would add new inline styling or a primitive-role duplicate
 
-- **WHEN** a change adds a new inline `RoundedRectangle`/`ShellPalette.*` use or a new
-  local row/card/chip struct to a shell surface instead of composing a primitive
-- **THEN** it is rejected: the debt counts SHALL NOT increase
+- **WHEN** a change adds a new inline `RoundedRectangle`/`ShellPalette.*` use, or a
+  new local struct that duplicates a primitive's role (a row/card/chip/badge/button/
+  field/label/surface treatment), to a shell feature surface instead of composing a
+  primitive
+- **THEN** it is rejected: the counts SHALL NOT increase and no new primitive-role
+  duplicate is introduced
 - **AND** the developer composes the existing primitive or adds one to the
   design-system home
+
+#### Scenario: A change adds a feature-specific composite view
+
+- **WHEN** a change adds a new private subview that arranges existing primitives or
+  encodes feature-specific layout (e.g. a split, title-bar, or find-bar view) without
+  re-implementing a primitive's role
+- **THEN** it is permitted: such composite views are not migration debt and may live
+  in feature files
 
 ### Requirement: Surfaces adopt the component layer via measurable strangler-fig migration
 
