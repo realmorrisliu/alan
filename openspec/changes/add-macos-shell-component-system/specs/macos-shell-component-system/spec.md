@@ -110,9 +110,11 @@ Pre-existing inline styling SHALL be tracked migration debt: inline styling and
 local presentational structs already present in shell surfaces when the component
 layer is introduced are treated as tracked debt, not as compliant code or as license
 for new violations. The
-inline `ShellPalette.*` / `RoundedRectangle` counts and the enumerated local row/
-card/chip structs in shell surfaces SHALL NOT increase, and each strangler-fig
-migration SHALL reduce them for its targeted surface until they reach zero outside
+inline `ShellPalette.*` / `RoundedRectangle` occurrence counts on shell *feature*
+surfaces — measured outside the design-system layer, which is permitted to reference
+tokens directly — and the enumerated local row/card/chip structs SHALL NOT increase,
+and each strangler-fig migration SHALL reduce them for its targeted surface until
+they reach zero outside
 the design-system layer.
 
 #### Scenario: Migration debt is enumerated when the component layer lands

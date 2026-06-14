@@ -6,11 +6,14 @@ type) and a nascent control library (`Views/Shell/Controls/ShellFormControls.swi
 with `ShellButton`, `ShellTextField`, `ShellSelectField`, `ShellIconTile`,
 `ShellIconPickerPanel`). What is missing is the *contract that ties them together*
 and *adoption*: the control library is referenced by exactly one surface (the Space
-creation form), while the rest of the shell UI hand-rolls styling — ~197 direct
-`ShellPalette.*` references, ~37 inline `RoundedRectangle` shapes (occurrence counts
-on shell surfaces, excluding the out-of-scope console; the console accounts for a
-further 34 `RoundedRectangle` uses and 0 `ShellPalette.*` refs), and duplicated
-presentational concepts living as `private struct`s inside large feature files:
+creation form), while the rest of the shell UI hand-rolls styling — ~136 direct
+`ShellPalette.*` references and ~29 inline `RoundedRectangle` shapes on shell
+*feature* surfaces (occurrence counts excluding both the out-of-scope console and the
+design-system layer the spec permits to reference tokens). The all-files counts are
+197 / 71; subtracting console (0 / 34) and the design-system layer —
+`ShellDesignTokens.swift` and `ShellFormControls.swift` (61 / 8) — leaves the feature
+debt. Duplicated presentational concepts also live as `private struct`s inside large
+feature files:
 
 - Five row implementations: `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`,
   `TerminalInfoRow` (all in `TerminalPaneView.swift`), `ShellTabSidebarRow`, and
