@@ -437,6 +437,58 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
     @Published private(set) var quickTerminalFocusRequestID: UInt64 = 0
+    @Published var isPresentingSpaceCreation = false
+    /// Live draft fields for the in-progress Space creation form. Published so
+    /// the workspace can read the live name while the form is open.
+    @Published var spaceDraftName: String = ""
+    @Published var spaceDraftIcon: String? = nil
+    @Published var spaceDraftProfileID: String? = nil
+
+    func beginSpaceCreation() {
+        // A second New Space press while the form is open is a no-op so an
+        // in-progress draft (name/icon/profile) is never silently discarded.
+        guard !isPresentingSpaceCreation else { return }
+        spaceDraftName = ""
+        spaceDraftIcon = nil
+        spaceDraftProfileID = nil
+        isPresentingSpaceCreation = true
+    }
+
+    func cancelSpaceCreation() {
+        isPresentingSpaceCreation = false
+        spaceDraftName = ""
+        spaceDraftIcon = nil
+        spaceDraftProfileID = nil
+        // The selected terminal host was removed while the modal form was up.
+        // SwiftUI reinserts it after the flag flips, but the reused view (same
+        // pane/content, already "selected") won't re-request focus on its own,
+        // so keyboard input would be lost until the user clicks the terminal.
+        // Restore focus on the next runloop, once the terminal is back.
+        DispatchQueue.main.async { [weak self] in
+            self?.refocusSelectedTerminalPane()
+        }
+    }
+
+    @discardableResult
+    func createSpaceFromForm() -> String? {
+        let name = spaceDraftName
+        let iconSystemName = spaceDraftIcon
+        let profileID = spaceDraftProfileID
+        isPresentingSpaceCreation = false
+        spaceDraftName = ""
+        spaceDraftIcon = nil
+        spaceDraftProfileID = nil
+        let spaceID = createSpace(
+            launchTarget: .shell,
+            title: name,
+            terminalProfileID: profileID,
+            presentationIconSystemName: iconSystemName
+        )
+        if let spaceID {
+            select(spaceID: spaceID)
+        }
+        return spaceID
+    }
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
     private let appIsActiveProvider: @MainActor () -> Bool
@@ -1188,7 +1240,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         launchTarget: ShellLaunchTarget = .shell,
         title: String? = nil,
         workingDirectory: String? = nil,
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
             ?? globalDefaultTerminalProfileIDForPaneCapture()
@@ -1197,6 +1250,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             title: title,
             workingDirectory: workingDirectory,
             terminalProfileID: resolvedTerminalProfileID,
+            presentationIconSystemName: presentationIconSystemName,
             reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
         )
         applyMutationResult(result)
@@ -1207,13 +1261,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func createTerminalSpace(
         title: String? = nil,
         workingDirectory: String? = nil,
-        terminalProfileID: String? = nil
+        terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil
     ) -> String? {
         return createSpace(
             launchTarget: .shell,
             title: title,
             workingDirectory: workingDirectory,
-            terminalProfileID: terminalProfileID
+            terminalProfileID: terminalProfileID,
+            presentationIconSystemName: presentationIconSystemName
         )
     }
 
@@ -1221,6 +1277,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func setTerminalProfile(_ terminalProfileID: String?, forSpaceID spaceID: String) -> Bool {
         guard let nextState = shellState.settingTerminalProfile(
             terminalProfileID,
+            forSpaceID: spaceID
+        ) else {
+            return false
+        }
+        adoptStateFromControlPlane(nextState)
+        return true
+    }
+
+    /// Sets (or clears) the presentation icon for a Space.
+    ///
+    /// Pass a valid SF Symbol name to override, or `nil` to clear back to the monogram default.
+    /// Invalid symbol names are treated as `nil` (clear) — the mutation rejects garbage input.
+    @discardableResult
+    func setPresentationIcon(_ systemName: String?, forSpaceID spaceID: String) -> Bool {
+        guard let nextState = shellState.settingPresentationIcon(
+            systemName,
             forSpaceID: spaceID
         ) else {
             return false
@@ -1695,6 +1767,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         target: ShellActionTarget = .currentSelection,
         source: ShellTerminalCommandSource = .keyboardShortcut
     ) -> ShellActionExecutionResult {
+        // The Space creation form is a modal flow over a display-only draft.
+        // Suppress shell actions (new/close tab, split, find, space switching,
+        // etc.) so they cannot mutate the hidden underlying Space while it is
+        // open. Cancel/Create are driven by the form directly, not through here.
+        if isPresentingSpaceCreation {
+            return .failed(reason: "Space creation in progress")
+        }
+
         if id == .findOpen {
             return openTerminalSearch(source: source, target: target)
                 ? .executed

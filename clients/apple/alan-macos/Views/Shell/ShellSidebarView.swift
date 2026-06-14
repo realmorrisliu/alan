@@ -73,12 +73,39 @@ struct ShellSidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             fixedSpaceSlider
                 .padding(.bottom, ShellSidebarTabListMetrics.itemSpacing)
-            spaceContentPager
-                .padding(.top, -ShellSidebarTabListMetrics.sliderToListLift)
+            if host.isPresentingSpaceCreation {
+                ShellSpaceCreationForm(
+                    profiles: spaceCreationProfileOptions,
+                    draftName: $host.spaceDraftName,
+                    draftIcon: $host.spaceDraftIcon,
+                    draftProfileID: $host.spaceDraftProfileID,
+                    onCreate: {
+                        _ = host.createSpaceFromForm()
+                    },
+                    onCancel: { host.cancelSpaceCreation() }
+                )
+                .transition(.opacity)
+            } else {
+                spaceContentPager
+                    .padding(.top, -ShellSidebarTabListMetrics.sliderToListLift)
+            }
         }
         .padding(.top, chromeMetrics.commandLauncherTopInset)
         .padding(.bottom, ShellSidebarMetrics.edgeInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.18),
+            value: host.isPresentingSpaceCreation
+        )
+    }
+
+    private var spaceCreationProfileOptions: [ShellSpaceCreationForm.ProfileOption] {
+        TerminalProfileStore.defaultStore().load().profiles.map { profile in
+            ShellSpaceCreationForm.ProfileOption(
+                id: profile.id,
+                name: "\(profile.title) · \(profile.launch.kind.rawValue)"
+            )
+        }
     }
 
     private var fixedSpaceSlider: some View {
@@ -87,7 +114,10 @@ struct ShellSidebarView: View {
             displaySpaceID: sourceSpaceID,
             previewedSpaceID: previewedSpaceID,
             activityFreshnessNow: activityFreshnessNow,
-            onForwardVerticalWheel: tabListWheelRouter.forward
+            onForwardVerticalWheel: tabListWheelRouter.forward,
+            creationDraft: host.isPresentingSpaceCreation
+                ? ShellSpaceSliderDraft(name: host.spaceDraftName, iconSystemName: host.spaceDraftIcon)
+                : nil
         )
         .frame(maxWidth: .infinity)
         .frame(height: ShellSidebarSpaceSliderLayout.trackHeight + 4)
@@ -559,6 +589,7 @@ struct ShellSidebarView: View {
             title: projection.title,
             subtitle: projection.secondaryLine,
             isActivitySubtitle: projection.activity != nil,
+            secondaryIsMachineFact: projection.secondaryIsMachineFact,
             progress: projection.progress,
             stateAccessory: projection.stateAccessory,
             attention: strongestAttention(for: tab),
@@ -808,8 +839,8 @@ struct ShellSidebarView: View {
         host.shellState.panes
             .filter { $0.tabID == tab.tabID }
             .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
-            .sorted { attentionRank(for: $0) > attentionRank(for: $1) }
-            .first(where: { $0 != .idle })
+            .filter(\.requiresUserAction)
+            .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
     }
 
     private func showsAlanMarker(for tab: ShellTab, activity: TerminalActivitySnapshot?) -> Bool {
@@ -1019,6 +1050,14 @@ private struct ShellSidebarSpaceSliderScrollOffsetKey: PreferenceKey {
     }
 }
 
+/// Live descriptor for the in-progress Space being created. When present the
+/// slider appends one trailing, selected, display-only target reflecting the
+/// typed name/icon — no real Space exists until Create.
+struct ShellSpaceSliderDraft: Equatable {
+    let name: String
+    let iconSystemName: String?
+}
+
 private struct ShellSidebarSpaceSlider: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
@@ -1026,6 +1065,8 @@ private struct ShellSidebarSpaceSlider: View {
     let previewedSpaceID: String?
     let activityFreshnessNow: Date
     let onForwardVerticalWheel: (ShellSidebarSpaceSliderWheelEvent) -> Bool
+    var creationDraft: ShellSpaceSliderDraft? = nil
+    static let draftTargetID = "space-creation-draft"
     @FocusState private var isKeyboardFocused: Bool
     @State private var hoveredSpaceID: String?
     @State private var scrubState: ShellSidebarSpaceSliderScrubState?
@@ -1061,6 +1102,12 @@ private struct ShellSidebarSpaceSlider: View {
                                     spaceControl(for: space, item: item)
                                         .id(space.spaceID)
                                 }
+                            }
+                            if let creationDraft,
+                               let draftItem = layout.items.first(where: { $0.index == spaces.count })
+                            {
+                                draftControl(for: creationDraft, item: draftItem)
+                                    .id(Self.draftTargetID)
                             }
                         }
                         .padding(.horizontal, 2)
@@ -1143,6 +1190,12 @@ private struct ShellSidebarSpaceSlider: View {
         .onChange(of: resolvedDisplaySpaceID) { _, _ in
             cancelScrubPreview()
         }
+        .onChange(of: creationDraft != nil) { _, creating in
+            // Entering the creation form must cancel any pending scrub and
+            // invalidate the scheduled wheel-commit so it cannot fire and move
+            // the underlying Space behind the draft.
+            if creating { cancelScrubPreview() }
+        }
     }
 
     private var visibleSpaces: [ShellSpace] {
@@ -1150,6 +1203,19 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private func sliderLayout(availableWidth: CGFloat) -> ShellSidebarSpaceSliderLayout {
+        // While creating a Space, append one trailing draft target that is
+        // always the selected one; real-target hover/scrub focus is suppressed.
+        if creationDraft != nil {
+            return ShellSidebarSpaceSliderLayout.make(
+                spaceCount: visibleSpaces.count + 1,
+                selectedIndex: visibleSpaces.count,
+                hoveredIndex: nil,
+                scrubFocusIndex: nil,
+                availableWidth: availableWidth - (ShellSidebarMetrics.edgeInset * 2),
+                reduceMotion: reduceMotion
+            )
+        }
+
         let selectedIndex = visibleSpaces.firstIndex { $0.spaceID == resolvedDisplaySpaceID }
         let hoveredIndex = scrubState == nil
             ? visibleSpaces.firstIndex { $0.spaceID == hoveredSpaceID }
@@ -1167,6 +1233,8 @@ private struct ShellSidebarSpaceSlider: View {
 
     private func spaceControl(for space: ShellSpace, item: ShellSidebarSpaceSliderLayout.Item) -> some View {
         Button {
+            // Selection is frozen on the draft target during Space creation.
+            guard creationDraft == nil else { return }
             guard let targetIndex = ShellSidebarSpaceSliderClickSelection.targetIndex(
                 selectedIndex: selectedSpaceIndex,
                 clickedIndex: item.index,
@@ -1179,7 +1247,10 @@ private struct ShellSidebarSpaceSlider: View {
         } label: {
             ShellSidebarSpaceTrackTarget(
                 title: space.title,
-                systemImage: space.resolvedPresentationIconSystemName,
+                icon: ShellSpacePresentationIcon.resolve(
+                    systemName: space.presentationIconSystemName,
+                    title: space.title
+                ),
                 mode: item.mode,
                 attention: strongestAttention(for: space),
                 isSelected: item.isSelected,
@@ -1199,6 +1270,32 @@ private struct ShellSidebarSpaceSlider: View {
         .onHover { isHovering in
             hoveredSpaceID = isHovering ? space.spaceID : nil
         }
+    }
+
+    /// Display-only trailing target for the in-progress draft Space. Mirrors the
+    /// real `spaceControl` track target but attaches no tap/scrub/context
+    /// affordances — selection cannot move to it and it commits nothing.
+    private func draftControl(
+        for draft: ShellSpaceSliderDraft,
+        item: ShellSidebarSpaceSliderLayout.Item
+    ) -> some View {
+        ShellSidebarSpaceTrackTarget(
+            title: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            icon: ShellSpacePresentationIcon.resolve(
+                systemName: draft.iconSystemName,
+                title: draft.name
+            ),
+            mode: item.mode,
+            attention: .idle,
+            isSelected: item.isSelected,
+            isFocused: item.isFocused,
+            isHovered: false
+        )
+        .frame(width: item.width, height: ShellSidebarSpaceSliderLayout.itemHeight)
+        .contentShape(Rectangle())
+        .allowsHitTesting(false)
+        .accessibilityLabel("New Space draft")
+        .accessibilityAddTraits(.isSelected)
     }
 
     @ViewBuilder
@@ -1225,6 +1322,32 @@ private struct ShellSidebarSpaceSlider: View {
                 }
             }
         }
+
+        Menu("Space Icon") {
+            Button {
+                cancelScrubPreview()
+                _ = host.setPresentationIcon(nil, forSpaceID: space.spaceID)
+            } label: {
+                Label(
+                    "Default (Initial)",
+                    systemImage: space.presentationIconSystemName == nil ? "checkmark" : "textformat"
+                )
+            }
+
+            Divider()
+
+            ForEach(ShellSpaceIconCatalog.curatedSymbols, id: \.self) { symbol in
+                Button {
+                    cancelScrubPreview()
+                    _ = host.setPresentationIcon(symbol, forSpaceID: space.spaceID)
+                } label: {
+                    Label(
+                        iconMenuTitle(symbol),
+                        systemImage: space.presentationIconSystemName == symbol ? "checkmark" : symbol
+                    )
+                }
+            }
+        }
     }
 
     private var resolvedDisplaySpaceID: String? {
@@ -1245,7 +1368,10 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private var autoScrollSpaceID: String? {
-        scrubFocusSpaceID ?? resolvedDisplaySpaceID
+        // While creating, keep the trailing draft target on-screen so its live
+        // identity preview stays visible even when the slider is scrollable.
+        if creationDraft != nil { return Self.draftTargetID }
+        return scrubFocusSpaceID ?? resolvedDisplaySpaceID
     }
 
     private var visibleSpaceIDs: [String] {
@@ -1339,6 +1465,8 @@ private struct ShellSidebarSpaceSlider: View {
     private func scrubStateForUpdating(
         source: ShellSidebarSpaceSliderScrubSource
     ) -> ShellSidebarSpaceSliderScrubState? {
+        // No scrub/keyboard/wheel selection while a draft target owns selection.
+        guard creationDraft == nil else { return nil }
         if let scrubState, scrubState.source == source {
             return scrubState
         }
@@ -1387,6 +1515,13 @@ private struct ShellSidebarSpaceSlider: View {
     }
 
     private func commitScrubSelection() {
+        // Chokepoint for every scrub commit (wheel timer, drag-end, keyboard).
+        // While a draft owns selection, a stale in-flight commit must not move
+        // the underlying Space — drop it and clear any lingering scrub state.
+        guard creationDraft == nil else {
+            cancelScrubPreview()
+            return
+        }
         guard let scrubState,
               visibleSpaces.indices.contains(scrubState.commitIndex)
         else {
@@ -1438,10 +1573,47 @@ private struct ShellSidebarSpaceSlider: View {
         }
     }
 
+    /// Readable label for a curated Space-icon SF Symbol. Falls back to a
+    /// title-cased transform of the raw symbol name for any unmapped symbol.
+    private func iconMenuTitle(_ symbol: String) -> String {
+        switch symbol {
+        case "terminal": return "Terminal"
+        case "chevron.left.forwardslash.chevron.right": return "Code"
+        case "hammer": return "Build"
+        case "wrench.and.screwdriver": return "Tools"
+        case "ant": return "Debug"
+        case "flask": return "Experiment"
+        case "cube.box": return "Package"
+        case "shippingbox": return "Release"
+        case "server.rack": return "Server"
+        case "externaldrive": return "Storage"
+        case "doc.text": return "Document"
+        case "book": return "Docs"
+        case "paintbrush": return "Design"
+        case "paintpalette": return "Palette"
+        case "globe": return "Web"
+        case "network": return "Network"
+        case "lock": return "Secure"
+        case "key": return "Keys"
+        case "leaf": return "Nature"
+        case "bolt": return "Power"
+        case "sparkles": return "Sparkle"
+        case "star": return "Star"
+        case "flag": return "Flag"
+        case "folder": return "Folder"
+        default:
+            return symbol
+                .split(separator: ".")
+                .map(\.capitalized)
+                .joined(separator: " ")
+        }
+    }
+
     private func strongestAttention(for space: ShellSpace) -> ShellAttentionState {
         host.shellState.panes
             .filter { $0.spaceID == space.spaceID }
             .map { shellEffectiveAttention(for: $0, now: activityFreshnessNow) }
+            .filter(\.requiresUserAction)
             .max(by: { attentionRank(for: $0) < attentionRank(for: $1) })
             ?? .idle
     }
@@ -1476,7 +1648,7 @@ private struct ShellSidebarSpaceSlider: View {
 
 private struct ShellSidebarSpaceTrackTarget: View {
     let title: String
-    let systemImage: String
+    let icon: ShellSpacePresentationIcon.Resolved
     let mode: ShellSidebarSpaceSliderLayout.DisplayMode
     let attention: ShellAttentionState
     let isSelected: Bool
@@ -1485,10 +1657,7 @@ private struct ShellSidebarSpaceTrackTarget: View {
 
     var body: some View {
         HStack(spacing: textSpacing) {
-            Image(systemName: systemImage)
-                .font(.system(size: iconSize, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(iconForeground)
+            spaceIcon
                 .frame(width: 15, height: 15)
 
             if mode != .iconOnly {
@@ -1519,6 +1688,25 @@ private struct ShellSidebarSpaceTrackTarget: View {
                 Capsule()
                     .strokeBorder(focusStroke, lineWidth: 0.7)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var spaceIcon: some View {
+        switch icon {
+        case .symbol(let name), .fallbackSymbol(let name):
+            Image(systemName: name)
+                .font(.system(size: iconSize, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(iconForeground)
+                .accessibilityHidden(true)
+        case .monogram(let text):
+            Text(text)
+                .font(ShellType.pro(iconSize, weight: .semibold))
+                .foregroundStyle(iconForeground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .accessibilityHidden(true)
         }
     }
 
@@ -1575,8 +1763,8 @@ private struct ShellSidebarSpaceTrackTarget: View {
     }
 
     private var iconForeground: Color {
-        if attention != .idle {
-            return ShellPalette.attention.opacity(isSelected ? 0.94 : 0.86)
+        if attention.requiresUserAction {
+            return ShellSignal.action.opacity(isSelected ? 0.94 : 0.86)
         }
         if isSelected {
             return ShellPalette.sidebarInk.opacity(0.92)
@@ -1683,7 +1871,6 @@ private struct ShellSidebarRowBackground: View {
 
 private enum ShellSidebarTypography {
     static let titleSize: CGFloat = 14
-    static let secondarySize: CGFloat = 11
     static let markerSize: CGFloat = 9
     static let closeSize: CGFloat = 9.5
 
@@ -1767,6 +1954,7 @@ private struct ShellTabSidebarRow: View {
     let title: String
     let subtitle: String?
     let isActivitySubtitle: Bool
+    let secondaryIsMachineFact: Bool
     let progress: TerminalActivityProgress?
     let stateAccessory: ShellSidebarTabStateAccessory?
     let attention: ShellAttentionState?
@@ -1923,13 +2111,16 @@ private struct ShellTabSidebarRow: View {
     private func subtitleText(_ subtitle: String) -> Text {
         let parts = subtitle.components(separatedBy: " · ")
         guard isActivitySubtitle, !parts.isEmpty else {
+            // Only machine facts (cwd/branch/process context) render in the mono
+            // accent track; human-language status summaries and content-type
+            // hints stay in SF Pro. See docs/design/design-language.md,
+            // principle 4.
+            if secondaryIsMachineFact {
+                return Text(subtitle)
+                    .font(ShellType.mono(ShellType.monoCaption, weight: ShellSidebarTypography.secondaryWeight))
+            }
             return Text(subtitle)
-                .font(
-                    .system(
-                        size: ShellSidebarTypography.secondarySize,
-                        weight: ShellSidebarTypography.secondaryWeight
-                    )
-                )
+                .font(ShellType.pro(ShellType.caption, weight: ShellSidebarTypography.secondaryWeight))
         }
 
         let emphasizedIndex = emphasizedSubtitleIndex(for: parts)
@@ -1941,7 +2132,7 @@ private struct ShellTabSidebarRow: View {
                 ? ShellSidebarTypography.secondaryEmphasisWeight
                 : ShellSidebarTypography.secondaryWeight
             var fragment = AttributedString(prefix + part)
-            fragment.font = .system(size: ShellSidebarTypography.secondarySize, weight: weight)
+            fragment.font = ShellType.pro(ShellType.caption, weight: weight)
             attributedSubtitle += fragment
         }
         return Text(attributedSubtitle)
@@ -2014,7 +2205,7 @@ private struct ShellSidebarActivityProgressRail: View {
     private var fillColor: Color {
         switch progress.kind {
         case .failed:
-            return ShellPalette.attention.opacity(isSelected ? 0.86 : 0.72)
+            return ShellSignal.action.opacity(isSelected ? 0.86 : 0.72)
         case .paused:
             return ShellPalette.sidebarMutedInk.opacity(isSelected ? 0.62 : 0.48)
         case .percent, .indeterminate:
@@ -2067,7 +2258,7 @@ private struct ShellPaneTopologyIndicator: View {
     private var singlePaneIndicator: some View {
         indicatorFrame {
             RoundedRectangle(cornerRadius: ShellRadii.micro, style: .continuous)
-                .fill(primaryPaneFill)
+                .fill(singlePaneFill)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityLabel("Single pane")
@@ -2245,6 +2436,14 @@ private struct ShellPaneTopologyIndicator: View {
 
     private var primaryPaneFill: Color {
         isSelected ? ShellPalette.accent.opacity(0.82) : ShellPalette.sidebarMutedInk.opacity(0.38)
+    }
+
+    /// Single-pane topology has no focus-within-split to mark, so selection is
+    /// conveyed by the row surface — not focus indigo. A neutral ink, a touch
+    /// stronger when selected, keeps the action/focus accents scarce
+    /// (design-language.md principle 3).
+    private var singlePaneFill: Color {
+        ShellPalette.sidebarInk.opacity(isSelected ? 0.55 : 0.38)
     }
 
     private func paneFill(isFocused: Bool) -> Color {

@@ -266,18 +266,18 @@ require_workspace_color_ownership_contract() {
 
     require_pattern \
         "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-        "static let rootBacking = Color\\.shellAdaptive\\(" \
-        "shell root backing must have a dedicated adaptive opaque token"
+        "static let rootBacking = ShellPaper\\.root" \
+        "shell root backing must alias the paper-domain root token"
 
     require_pattern \
         "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-        "light: \\(1\\.0, 1\\.0, 1\\.0\\)" \
-        "shell root backing light color must resolve to rgb(1,1,1)"
+        "static let paperRootLight: \\(Double, Double, Double\\) = \\(1\\.0, 1\\.0, 1\\.0\\)" \
+        "raised paper root light value must stay rgb(1,1,1) (white is elevation)"
 
-    reject_pattern \
+    require_pattern \
         "clients/apple/alan-macos/MacShellRootView.swift" \
-        "ShellMaterialBackgroundView\\(\\.windowBackdrop\\)" \
-        "mac shell root must use the opaque root backing instead of root-window material"
+        "ShellMaterialBackgroundView\\(\\.sidebarGlass\\)" \
+        "mac shell root must paint the unified paper material base"
 
     require_pattern \
         "clients/apple/alan-macos/TerminalPaneView.swift" \

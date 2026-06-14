@@ -233,11 +233,19 @@ extension ShellStateSnapshot {
         title: String?,
         workingDirectory: String?,
         terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
     ) -> ShellStateMutationResult {
         let spaceIndex = spaces.count + 1
+        let resolvedTitle: String = {
+            if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return title
+            }
+            let derived = ShellSpaceDefaultName.derive(fromWorkingDirectory: workingDirectory)
+            return derived.isEmpty ? "Space \(spaceIndex)" : derived
+        }()
         let spaceID = nextID(prefix: "space", existing: spaces.map(\.spaceID))
         let tabID = nextID(prefix: "tab", existing: spaces.flatMap { $0.tabs.map(\.tabID) })
         let paneID = nextID(prefix: "pane", existing: panes.map(\.paneID) + Array(reservedPaneIDs))
@@ -269,11 +277,13 @@ extension ShellStateSnapshot {
         )
         let space = ShellSpace(
             spaceID: spaceID,
-            title: title ?? "Space \(spaceIndex)",
+            title: resolvedTitle,
             attention: .active,
             tabs: [tab],
             selectedTabID: tabID,
-            terminalProfileID: terminalProfileID
+            terminalProfileID: terminalProfileID,
+            presentationIconSystemName: ShellSpacePresentationIcon
+                .isSupportedSystemName(presentationIconSystemName) ? presentationIconSystemName : nil
         )
         let nextPanes = panes + [pane]
         let nextSpaces = rebuildingAttention(in: spaces + [space], panes: nextPanes)
@@ -294,6 +304,7 @@ extension ShellStateSnapshot {
         title: String?,
         workingDirectory: String?,
         terminalProfileID: String? = nil,
+        presentationIconSystemName: String? = nil,
         reservedPaneIDs: Set<String> = [],
         defaultWorkingDirectory: String = defaultShellWorkingDirectory(),
         now: Date = .now
@@ -303,6 +314,7 @@ extension ShellStateSnapshot {
             title: title,
             workingDirectory: workingDirectory,
             terminalProfileID: terminalProfileID,
+            presentationIconSystemName: presentationIconSystemName,
             reservedPaneIDs: reservedPaneIDs,
             defaultWorkingDirectory: defaultWorkingDirectory,
             now: now
@@ -326,6 +338,53 @@ extension ShellStateSnapshot {
                 selectedTabID: space.selectedTabID,
                 terminalProfileID: terminalProfileID,
                 presentationIconSystemName: space.presentationIconSystemName
+            )
+        }
+        return ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: focusedSpaceID,
+            focusedTabID: focusedTabID,
+            focusedPaneID: focusedPaneID,
+            spaces: nextSpaces,
+            panes: panes,
+            paneSlots: paneSlots,
+            contents: contents,
+            quickTerminal: quickTerminal
+        )
+    }
+
+    /// Sets (or clears) the presentation icon system name for a Space.
+    ///
+    /// - `systemName` non-nil and valid (passes `isSupportedSystemName`) → stored trimmed.
+    /// - `systemName` nil → stored as nil (explicit clear; render layer uses monogram).
+    /// - `systemName` non-nil but invalid → stored as nil (reject garbage; clear to monogram).
+    ///
+    /// Returns `nil` when `targetSpaceID` is not found (caller should no-op).
+    func settingPresentationIcon(
+        _ systemName: String?,
+        forSpaceID targetSpaceID: String
+    ) -> ShellStateSnapshot? {
+        guard spaces.contains(where: { $0.spaceID == targetSpaceID }) else {
+            return nil
+        }
+        let resolvedName: String?
+        if let name = systemName,
+           ShellSpacePresentationIcon.isSupportedSystemName(name) {
+            resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            resolvedName = nil
+        }
+        let nextSpaces = spaces.map { space in
+            guard space.spaceID == targetSpaceID else { return space }
+            return ShellSpace(
+                spaceID: space.spaceID,
+                title: space.title,
+                attention: space.attention,
+                tabs: space.tabs,
+                selectedTabID: space.selectedTabID,
+                terminalProfileID: space.terminalProfileID,
+                presentationIconSystemName: resolvedName
             )
         }
         return ShellStateSnapshot(

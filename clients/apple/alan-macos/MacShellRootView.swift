@@ -264,7 +264,7 @@ struct MacShellRootView: View {
         ZStack {
             ShellSpaceKeyboardShortcuts(host: host)
 
-            ShellPalette.rootBacking
+            ShellMaterialBackgroundView(.sidebarGlass)
                 .ignoresSafeArea()
 
             HStack(spacing: 0) {
@@ -446,7 +446,7 @@ struct MacShellRootView: View {
                 Spacer(minLength: ShellSidebarMetrics.titlebarToolSpacing)
 
                 ShellSidebarNewSpaceControl {
-                    _ = host.createTerminalSpace()
+                    host.beginSpaceCreation()
                 }
                 .contentShape(Rectangle())
                 .onHover(perform: handleCollapsedSidebarToolbarHover)

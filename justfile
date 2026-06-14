@@ -32,6 +32,10 @@ guard-daemon-api-contract:
 guard-macos-auto-update:
     ./scripts/check-macos-auto-update-config.sh
 
+# Check macOS shell design-token literals against the recorded baseline
+guard-shell-design-tokens:
+    ./scripts/check-shell-design-tokens.sh
+
 # Run focused macOS auto-update tests and release appcast guards
 apple-auto-update-tests:
     bash clients/apple/scripts/test-macos-auto-update-policy.sh
@@ -102,6 +106,10 @@ apple-shell-ghostty-integration:
 # Run repeatable macOS shell UI smoke against the installed Alan Dev app
 apple-shell-ui-smoke:
     bash clients/apple/scripts/test-shell-ui-smoke.sh
+
+# Capture the macOS shell screenshot state matrix (semi-manual, dev channel)
+apple-shell-screenshot-matrix out_dir="":
+    bash clients/apple/scripts/capture-shell-state-matrix.sh {{out_dir}}
 
 # Check release signing and notarization configuration without building
 release-check:

@@ -7,6 +7,11 @@ struct ShellSidebarTabProjection: Equatable {
     let progress: TerminalActivityProgress?
     let stateAccessory: ShellSidebarTabStateAccessory?
     let accessibilityActivityLabel: String?
+    // True only when `secondaryLine` came from the cwd/branch/process context
+    // source (machine facts). Status summaries and content-type hints are human
+    // language and set this false so they stay in SF Pro. See
+    // docs/design/design-language.md, principle 4.
+    var secondaryIsMachineFact: Bool = false
 }
 
 struct ShellSidebarTabStateAccessory: Equatable {
@@ -1004,19 +1009,24 @@ func shellSidebarTabProjection(
         )
     }
 
-    let fallback = shellSidebarContentLine(for: primaryContent)
+    // Content-type hint ("Document"/"Settings") and status summary ("Exited"/…)
+    // are human language; only the cwd/branch/process context line is a machine
+    // fact and may render in the mono accent track.
+    let humanFallback = shellSidebarContentLine(for: primaryContent)
         ?? meaningfulSidebarFallbackLine(
             primaryPane.flatMap { shellTerminalStatusSummary(for: $0, now: now) },
             title: title
         )
-        ?? meaningfulSidebarContextLine(contextLine, title: title)
+    let machineFallback = meaningfulSidebarContextLine(contextLine, title: title)
+    let fallback = humanFallback ?? machineFallback
     return ShellSidebarTabProjection(
         title: title,
         secondaryLine: fallback,
         activity: nil,
         progress: nil,
         stateAccessory: nil,
-        accessibilityActivityLabel: nil
+        accessibilityActivityLabel: nil,
+        secondaryIsMachineFact: humanFallback == nil && machineFallback != nil
     )
 }
 

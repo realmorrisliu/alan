@@ -29,19 +29,161 @@ private extension Color {
     }
 }
 
-enum ShellPalette {
-    static let rootBacking = Color.shellAdaptive(
-        light: (1.0, 1.0, 1.0),
-        dark: (0.055, 0.061, 0.074)
+/// Raw light/dark RGB values for the core paper and ink surfaces.
+/// Kept as plain tuples so script tests can assert the Paper & Ink
+/// luminance hierarchy (see docs/design/design-language.md).
+enum ShellSurfaceValues {
+    static let paperRootLight: (Double, Double, Double) = (1.0, 1.0, 1.0)
+    static let paperRootDark: (Double, Double, Double) = (0.036, 0.040, 0.050)
+    static let paperCanvasLight: (Double, Double, Double) = (0.94, 0.94, 0.965)
+    static let paperCanvasDark: (Double, Double, Double) = (0.032, 0.036, 0.046)
+    static let paperWindowLight: (Double, Double, Double) = (0.972, 0.973, 0.985)
+    static let paperWindowDark: (Double, Double, Double) = (0.036, 0.040, 0.050)
+    static let paperSidebarLight: (Double, Double, Double) = (0.902, 0.906, 0.940)
+    static let paperSidebarDark: (Double, Double, Double) = (0.042, 0.047, 0.060)
+    static let paperWorkspaceLight: (Double, Double, Double) = (0.979, 0.98, 0.989)
+    static let paperWorkspaceDark: (Double, Double, Double) = (0.038, 0.042, 0.053)
+
+    static let inkSurfaceLight: (Double, Double, Double) = (0.10, 0.12, 0.16)
+    static let inkSurfaceDark: (Double, Double, Double) = (0.105, 0.118, 0.142)
+    static let inkRaisedLight: (Double, Double, Double) = (0.16, 0.18, 0.24)
+    static let inkRaisedDark: (Double, Double, Double) = (0.150, 0.168, 0.200)
+
+    static var lightPaperSurfaces: [(String, (Double, Double, Double))] {
+        [
+            ("paperRoot", paperRootLight),
+            ("paperCanvas", paperCanvasLight),
+            ("paperWindow", paperWindowLight),
+            ("paperSidebar", paperSidebarLight),
+            ("paperWorkspace", paperWorkspaceLight),
+        ]
+    }
+
+    static var darkPaperSurfaces: [(String, (Double, Double, Double))] {
+        [
+            ("paperRoot", paperRootDark),
+            ("paperCanvas", paperCanvasDark),
+            ("paperWindow", paperWindowDark),
+            ("paperSidebar", paperSidebarDark),
+            ("paperWorkspace", paperWorkspaceDark),
+        ]
+    }
+
+    static func luminance(_ rgb: (Double, Double, Double)) -> Double {
+        0.2126 * rgb.0 + 0.7152 * rgb.1 + 0.0722 * rgb.2
+    }
+}
+
+/// Role-based type scale. Two tracks, integer sizes only; weights stay
+/// per-context. See docs/design/design-language.md.
+enum ShellType {
+    static let display: CGFloat = 17
+    static let heading: CGFloat = 13
+    static let row: CGFloat = 12
+    static let caption: CGFloat = 11
+    static let monoLabel: CGFloat = 11
+    static let monoCaption: CGFloat = 10
+
+    static func pro(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+
+    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
+    }
+}
+
+/// Semantic 4pt spacing scale. New layout code uses these names instead of
+/// raw numeric paddings.
+enum ShellSpacing {
+    static let hair: CGFloat = 2
+    static let tight: CGFloat = 4
+    static let control: CGFloat = 8
+    static let row: CGFloat = 12
+    static let section: CGFloat = 16
+    static let panel: CGFloat = 24
+}
+
+/// Paper domain: chrome surfaces. Calm, cool, low-saturation; always recedes
+/// behind the ink surface.
+enum ShellPaper {
+    static let root = Color.shellAdaptive(
+        light: ShellSurfaceValues.paperRootLight,
+        dark: ShellSurfaceValues.paperRootDark
     )
     static let canvas = Color.shellAdaptive(
-        light: (0.94, 0.94, 0.965),
-        dark: (0.045, 0.050, 0.062)
+        light: ShellSurfaceValues.paperCanvasLight,
+        dark: ShellSurfaceValues.paperCanvasDark
     )
     static let window = Color.shellAdaptive(
-        light: (0.972, 0.973, 0.985),
-        dark: (0.055, 0.061, 0.074)
+        light: ShellSurfaceValues.paperWindowLight,
+        dark: ShellSurfaceValues.paperWindowDark
     )
+    static let sidebar = Color.shellAdaptive(
+        light: ShellSurfaceValues.paperSidebarLight,
+        dark: ShellSurfaceValues.paperSidebarDark
+    )
+    static let workspace = Color.shellAdaptive(
+        light: ShellSurfaceValues.paperWorkspaceLight,
+        dark: ShellSurfaceValues.paperWorkspaceDark
+    )
+}
+
+/// Ink domain: the terminal surface family and the well rim.
+enum ShellInk {
+    static let surface = Color.shellAdaptive(
+        light: ShellSurfaceValues.inkSurfaceLight,
+        dark: ShellSurfaceValues.inkSurfaceDark
+    )
+    static let raised = Color.shellAdaptive(
+        light: ShellSurfaceValues.inkRaisedLight,
+        dark: ShellSurfaceValues.inkRaisedDark
+    )
+    /// Top inner edge of the terminal surround ("the well rim").
+    static let rimHighlight = Color.shellAdaptive(
+        light: (1.0, 1.0, 1.0),
+        lightAlpha: 0.18,
+        dark: (1.0, 1.0, 1.0),
+        darkAlpha: 0.07
+    )
+    /// Bottom outer contact line of the terminal surround.
+    static let rimShadowLine = Color.shellAdaptive(
+        light: (0.0, 0.0, 0.0),
+        lightAlpha: 0.14,
+        dark: (0.0, 0.0, 0.0),
+        darkAlpha: 0.32
+    )
+}
+
+/// Signal domain: meaning-bearing color. Governed by the signal semantics
+/// table in docs/design/design-language.md — anything not listed there is
+/// silent.
+enum ShellSignal {
+    /// The only orange: the user must act (input, approval, intervention).
+    static let action = Color.shellAdaptive(
+        light: (0.82, 0.55, 0.24),
+        dark: (0.94, 0.68, 0.34)
+    )
+    /// Keyboard focus and scrub preview only; never a status color.
+    static let focus = Color.shellAdaptive(
+        light: (0.31, 0.39, 0.71),
+        dark: (0.50, 0.60, 0.94)
+    )
+    static let focusSoft = Color.shellAdaptive(
+        light: (0.90, 0.92, 0.98),
+        dark: (0.18, 0.22, 0.34)
+    )
+    /// Reserved phase-2 agent-activity interface: maximum luminance delta a
+    /// breathing surface may add over its resting value.
+    static let breathLuminanceDelta: Double = 0.06
+}
+
+enum ShellPalette {
+    // Deprecated aliases — use ShellPaper / ShellInk / ShellSignal in new
+    // code. Views migrate per-file in follow-up changes.
+    static let rootBacking = ShellPaper.root
+    static let canvas = ShellPaper.canvas
+    static let window = ShellPaper.window
     static let windowBackdropTint = Color.shellAdaptive(
         light: (0.755, 0.765, 0.850),
         lightAlpha: 0.44,
@@ -56,10 +198,7 @@ enum ShellPalette {
         light: (0.430, 0.430, 0.540),
         dark: (0.65, 0.68, 0.76)
     )
-    static let sidebar = Color.shellAdaptive(
-        light: (0.922, 0.924, 0.953),
-        dark: (0.071, 0.079, 0.096)
-    )
+    static let sidebar = ShellPaper.sidebar
     static let sidebarRail = Color.shellAdaptive(
         light: (0.902, 0.907, 0.941),
         dark: (0.083, 0.092, 0.112)
@@ -90,7 +229,7 @@ enum ShellPalette {
     )
     static let sidebarRowSelected = Color.shellAdaptive(
         light: (1.0, 1.0, 1.0),
-        lightAlpha: 0.78,
+        lightAlpha: 0.88,
         dark: (0.215, 0.235, 0.282),
         darkAlpha: 0.78
     )
@@ -142,10 +281,7 @@ enum ShellPalette {
         dark: (0.235, 0.255, 0.310),
         darkAlpha: 0.78
     )
-    static let workspace = Color.shellAdaptive(
-        light: (0.979, 0.98, 0.989),
-        dark: (0.050, 0.056, 0.070)
-    )
+    static let workspace = ShellPaper.workspace
     static let settingsPane = Color.shellAdaptive(
         light: (0.954, 0.957, 0.970),
         dark: (0.054, 0.061, 0.076)
@@ -166,22 +302,10 @@ enum ShellPalette {
         dark: (0.175, 0.192, 0.236),
         darkAlpha: 0.68
     )
-    static let terminal = Color.shellAdaptive(
-        light: (0.10, 0.12, 0.16),
-        dark: (0.050, 0.061, 0.076)
-    )
-    static let terminalSoft = Color.shellAdaptive(
-        light: (0.16, 0.18, 0.24),
-        dark: (0.100, 0.116, 0.145)
-    )
-    static let accent = Color.shellAdaptive(
-        light: (0.31, 0.39, 0.71),
-        dark: (0.50, 0.60, 0.94)
-    )
-    static let accentSoft = Color.shellAdaptive(
-        light: (0.90, 0.92, 0.98),
-        dark: (0.18, 0.22, 0.34)
-    )
+    static let terminal = ShellInk.surface
+    static let terminalSoft = ShellInk.raised
+    static let accent = ShellSignal.focus
+    static let accentSoft = ShellSignal.focusSoft
     static let ink = Color.shellAdaptive(
         light: (0.16, 0.18, 0.24),
         dark: (0.90, 0.92, 0.96)
@@ -239,8 +363,8 @@ enum ShellPalette {
         darkAlpha: 0.34
     )
     static let materialScrim = Color.shellAdaptive(
-        light: (0.760, 0.770, 0.865),
-        lightAlpha: 0.34,
+        light: (0.745, 0.755, 0.845),
+        lightAlpha: 0.50,
         dark: (0.030, 0.037, 0.050),
         darkAlpha: 0.78
     )
@@ -256,10 +380,7 @@ enum ShellPalette {
         dark: (0.012, 0.016, 0.024),
         darkAlpha: 0.34
     )
-    static let attention = Color.shellAdaptive(
-        light: (0.82, 0.55, 0.24),
-        dark: (0.94, 0.68, 0.34)
-    )
+    static let attention = ShellSignal.action
 }
 
 enum ShellRadii {
@@ -913,5 +1034,41 @@ struct ShellLiquidGlassSurface<SurfaceShape: InsettableShape>: View {
                 )
         }
     }
+}
+
+// MARK: - Space icon catalog
+
+/// Curated SF Symbol names available for Space icon overrides.
+/// Source of truth: openspec/changes/add-macos-space-icon-identity/design.md
+enum ShellSpaceIconCatalog {
+    /// The ~24 workspace-relevant SF Symbols a user can assign to a Space.
+    /// Every name must be a valid SF Symbol and pass
+    /// `ShellSpacePresentationIcon.isSupportedSystemName`.
+    static let curatedSymbols: [String] = [
+        "terminal",
+        "chevron.left.forwardslash.chevron.right",
+        "hammer",
+        "wrench.and.screwdriver",
+        "ant",
+        "flask",
+        "cube.box",
+        "shippingbox",
+        "server.rack",
+        "externaldrive",
+        "doc.text",
+        "book",
+        "paintbrush",
+        "paintpalette",
+        "globe",
+        "network",
+        "lock",
+        "key",
+        "leaf",
+        "bolt",
+        "sparkles",
+        "star",
+        "flag",
+        "folder",
+    ]
 }
 #endif

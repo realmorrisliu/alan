@@ -37,10 +37,18 @@ struct TerminalPaneView: View {
 
     private var paneCanvas: some View {
         Group {
-            if let paneTree = displayPaneTree {
+            if host.isPresentingSpaceCreation {
+                ShellEmptyWorkspacePlaceholder(
+                    spaceTitle: creationDraftTitle
+                ) {
+                    // No-op during creation — the form drives the Space creation flow.
+                }
+            } else if let paneTree = displayPaneTree {
                 workspaceContentTree(for: paneTree)
             } else {
-                ShellEmptyWorkspacePlaceholder {
+                ShellEmptyWorkspacePlaceholder(
+                    spaceTitle: displaySpaceTitle
+                ) {
                     _ = host.performShellAutomationCommand(
                         .createTab(
                             ShellAutomationCreateTabRequest(
@@ -55,6 +63,13 @@ struct TerminalPaneView: View {
             }
         }
         .shellWorkspacePanelFrame()
+    }
+
+    /// Title for the workspace placeholder shown while the Space creation form is open.
+    /// Returns the live draft name the user is typing, or "New Space" when blank.
+    private var creationDraftTitle: String {
+        let trimmed = host.spaceDraftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "New Space" : trimmed
     }
 
     @ViewBuilder
@@ -74,6 +89,13 @@ struct TerminalPaneView: View {
 
     private var displaySpaceID: String? {
         spaceID ?? host.selectedSpace?.spaceID
+    }
+
+    private var displaySpaceTitle: String? {
+        if let id = displaySpaceID {
+            return host.spaces.first { $0.spaceID == id }?.title ?? host.selectedSpace?.title
+        }
+        return host.selectedSpace?.title
     }
 
     private var displaySelectedPaneID: String? {
@@ -498,33 +520,60 @@ private struct QuickTerminalContentView: View {
 }
 
 private struct ShellEmptyWorkspacePlaceholder: View {
+    var spaceTitle: String? = nil
     let onCreateTerminalTab: () -> Void
 
+    @State private var isHoveringButton = false
+
+    private var resolvedTitle: String {
+        spaceTitle ?? "Empty Space"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Empty Space")
-                .font(.system(size: 17, weight: .semibold))
+        VStack(spacing: ShellSpacing.section) {
+            // Heading: Space title or fallback
+            Text(resolvedTitle)
+                .font(ShellType.pro(ShellType.display, weight: .semibold))
                 .foregroundStyle(ShellPalette.ink)
+                .accessibilityAddTraits(.isHeader)
+
+            // Secondary line
             Text("Start a terminal in this space.")
-                .font(.system(size: 13, weight: .medium))
+                .font(ShellType.pro(ShellType.row))
                 .foregroundStyle(ShellPalette.mutedInk)
+
+            // Primary action: bordered quiet control
             Button(action: onCreateTerminalTab) {
                 Label("New Tab", systemImage: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 11)
-                    .frame(height: 28)
+                    .font(ShellType.pro(ShellType.row, weight: .semibold))
+                    .padding(.horizontal, ShellSpacing.row)
+                    .padding(.vertical, ShellSpacing.control)
             }
             .buttonStyle(.plain)
             .background {
                 ShellMaterialShape(
-                    role: .controlGlassHover,
-                    shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
+                    role: isHoveringButton ? .controlGlassHover : .controlGlass,
+                    shape: RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous),
+                    showsStroke: true
                 )
             }
+            .onHover { hovering in
+                isHoveringButton = hovering
+            }
             .help("Create a tab in this space")
+
+            // Key hint: mono chord + pro caption
+            HStack(spacing: ShellSpacing.tight) {
+                Text("⌘T")
+                    .font(ShellType.mono(ShellType.monoCaption))
+                    .foregroundStyle(ShellPalette.mutedInk.opacity(0.7))
+                Text("opens a new tab")
+                    .font(ShellType.pro(ShellType.caption))
+                    .foregroundStyle(ShellPalette.mutedInk.opacity(0.7))
+            }
+            .accessibilityElement(children: .combine)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
 
@@ -558,9 +607,9 @@ private struct ShellWorkspacePanelFrame: ViewModifier {
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(colorScheme == .light ? 0.18 : 0.07),
+                            ShellInk.rimHighlight,
                             Color.white.opacity(0.015),
-                            Color.black.opacity(colorScheme == .light ? 0.14 : 0.32),
+                            ShellInk.rimShadowLine,
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -2168,7 +2217,7 @@ private struct ShellContentPaneTitleBarView: View {
     var body: some View {
         HStack(spacing: ShellPaneTitleBarMetrics.itemSpacing) {
             Image(systemName: descriptor.iconName)
-                .font(.system(size: ShellPaneTitleTypography.accessorySize, weight: .medium))
+                .font(ShellType.pro(ShellPaneTitleTypography.accessorySize, weight: .medium))
                 .foregroundStyle(ShellPalette.mutedInk)
                 .frame(width: 14, height: 14)
 
@@ -2542,7 +2591,7 @@ private struct ShellPaneTitleBarView: View {
     private var activityTint: Color {
         switch pane.activity?.priority {
         case .awaitingUser, .notable:
-            return ShellPalette.attention
+            return ShellSignal.action
         case .active:
             return ShellPalette.accent
         case .passive, nil:
@@ -2575,7 +2624,7 @@ private struct ShellPaneTitleBarView: View {
             || pane.context?.surfaceReadiness == "renderer_failed"
             || shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .awaitingUser
         {
-            return ShellPalette.attention
+            return ShellSignal.action
         }
         return Color.white
     }
@@ -2639,6 +2688,13 @@ private struct ShellPaneTitleBarAccessory: Identifiable {
     var isPrimary: Bool {
         id == "activity" || id == "status"
     }
+
+    // Machine facts (paths, branches, process names) render in the mono accent
+    // track; human-language accessories (activity/status/alan) stay in pro.
+    // See docs/design/design-language.md, principle 4.
+    var isMachineFact: Bool {
+        id == "worktree" || id == "cwd" || id == "branch" || id == "process"
+    }
 }
 
 private struct ShellPaneTitleBarAccessoryView: View {
@@ -2650,23 +2706,20 @@ private struct ShellPaneTitleBarAccessoryView: View {
         HStack(spacing: ShellPaneTitleBarMetrics.accessoryInternalSpacing) {
             Image(systemName: accessory.icon)
                 .font(
-                    .system(
-                        size: ShellPaneTitleTypography.accessorySize,
+                    ShellType.pro(
+                        ShellPaneTitleTypography.accessorySize,
                         weight: ShellPaneTitleTypography.iconWeight
                     )
                 )
 
             if mode == .textAndIcon,
                let title = accessory.title {
+                // Only machine-fact accessories (worktree/cwd/branch/process)
+                // render in the mono accent track; human-language accessories
+                // (activity/status/alan) stay in the pro track at the same
+                // size. See docs/design/design-language.md, principle 4.
                 Text(title)
-                    .font(
-                        .system(
-                            size: ShellPaneTitleTypography.accessorySize,
-                            weight: accessory.isEmphasized
-                                ? ShellPaneTitleTypography.emphasizedAccessoryWeight
-                                : ShellPaneTitleTypography.accessoryWeight
-                        )
-                    )
+                    .font(accessoryFont)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .fixedSize(horizontal: true, vertical: false)
@@ -2676,6 +2729,16 @@ private struct ShellPaneTitleBarAccessoryView: View {
         .fixedSize(horizontal: true, vertical: true)
         .help(accessory.help)
         .accessibilityLabel(accessory.help)
+    }
+
+    private var accessoryFont: Font {
+        let weight = accessory.isEmphasized
+            ? ShellPaneTitleTypography.emphasizedAccessoryWeight
+            : ShellPaneTitleTypography.accessoryWeight
+        if accessory.isMachineFact {
+            return ShellType.mono(ShellType.monoCaption, weight: weight)
+        }
+        return ShellType.pro(ShellPaneTitleTypography.accessorySize, weight: weight)
     }
 
     private var accessoryOpacity: Double {

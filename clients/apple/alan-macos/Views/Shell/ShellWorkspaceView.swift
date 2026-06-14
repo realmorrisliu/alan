@@ -26,25 +26,30 @@ struct ShellSpaceKeyboardShortcuts: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Button("") {
-                host.performShellAction(.spaceSelectPrevious)
-            }
-            .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectPrevious))
-
-            Button("") {
-                host.performShellAction(.spaceSelectNext)
-            }
-            .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectNext))
-
-            ForEach(
-                Array(host.spaces.enumerated()),
-                id: \.element.spaceID
-            ) { index, _ in
-                let target = ShellActionTarget.spaceIndex(index)
+            // While the Space creation form is open the slider shows a
+            // display-only draft target; space-switching shortcuts must stay
+            // inert so the draft and the prior selection are preserved.
+            if !host.isPresentingSpaceCreation {
                 Button("") {
-                    host.performShellAction(.spaceSelectByIndex, target: target)
+                    host.performShellAction(.spaceSelectPrevious)
                 }
-                .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectByIndex, target: target))
+                .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectPrevious))
+
+                Button("") {
+                    host.performShellAction(.spaceSelectNext)
+                }
+                .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectNext))
+
+                ForEach(
+                    Array(host.spaces.enumerated()),
+                    id: \.element.spaceID
+                ) { index, _ in
+                    let target = ShellActionTarget.spaceIndex(index)
+                    Button("") {
+                        host.performShellAction(.spaceSelectByIndex, target: target)
+                    }
+                    .shellActionKeyboardShortcut(host.shellActionShortcut(.spaceSelectByIndex, target: target))
+                }
             }
         }
         .labelsHidden()

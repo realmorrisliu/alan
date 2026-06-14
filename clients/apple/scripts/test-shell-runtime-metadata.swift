@@ -108,6 +108,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
+        verifiesQuietAttentionNeverRequiresUserAction()
         verifiesPaneTitleActivityAccessoryLabel()
         verifiesPaneTitleDetailProjectionIncludesContextBranchAndProcess()
         verifiesPaneTitleDetailProjectionPreservesResponsivePriority()
@@ -4867,6 +4868,58 @@ private enum ShellRuntimeMetadataTests {
         expect(
             shellEffectiveAttention(for: rendererFailedPane, now: now.addingTimeInterval(31)) == .notable,
             "stale activity must not suppress persistent renderer attention"
+        )
+    }
+
+    private static func verifiesQuietAttentionNeverRequiresUserAction() {
+        // Signal-semantics scarcity: only awaiting-user/notable may reach
+        // ShellSignal.action in chrome; idle and quiet liveness stay silent.
+        for state in ShellAttentionState.allCases {
+            let expected = state == .awaitingUser || state == .notable
+            expect(
+                state.requiresUserAction == expected,
+                "attention state \(state.rawValue) must \(expected ? "" : "not ")require user action"
+            )
+        }
+
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let quietLivingPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .active,
+            activity: nil
+        )
+        expect(
+            !shellEffectiveAttention(for: quietLivingPane, now: now).requiresUserAction,
+            "a quiet living terminal (creation-default .active, no activity) must not project actionable attention"
+        )
+
+        let runningCommandPane = pane(
+            context: context(
+                processState: "running",
+                rendererHealth: "ready",
+                surfaceReadiness: "ready",
+                lastCommandExitCode: nil
+            ),
+            viewport: nil,
+            attention: .active,
+            activity: activity(
+                status: .running,
+                source: .command,
+                sourceLabel: "Shell",
+                stateLabel: "Running",
+                updatedAt: "2026-05-17T09:00:00Z",
+                staleAt: "2026-05-17T09:00:30Z"
+            )
+        )
+        expect(
+            !shellEffectiveAttention(for: runningCommandPane, now: now.addingTimeInterval(10)).requiresUserAction,
+            "a running command must stay out of the action signal"
         )
     }
 
