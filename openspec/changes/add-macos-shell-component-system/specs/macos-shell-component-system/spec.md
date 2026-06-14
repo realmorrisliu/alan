@@ -117,11 +117,32 @@ and each strangler-fig migration SHALL reduce them for its targeted surface unti
 they reach zero outside
 the design-system layer.
 
+The baseline at the time the component layer is introduced, against which the
+"SHALL NOT increase" ratchet is measured, is recorded here so future migrations have
+a concrete reference point:
+
+- **Inline `ShellPalette.*` occurrences on shell feature surfaces:** ≈ 136
+  (all-files 197, minus console 0, minus the design-system layer
+  `Support/ShellDesignTokens.swift` 46 and `ShellFormControls.swift` 15).
+- **Inline `RoundedRectangle` occurrences on shell feature surfaces:** ≈ 29
+  (all-files 71, minus console 34, minus the design-system layer `ShellFormControls.swift` 8).
+- **Enumerated local presentational structs (allowed debt, to be consolidated):**
+  `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`,
+  `TerminalInfoCard`, `TerminalPaneChip` (in `TerminalPaneView.swift`),
+  `ShellTabSidebarRow`, `ShellSidebarTabControlRow` (in `ShellSidebarView.swift`).
+
+These counts are measured as `all − console − design-system-layer` (the
+exclusion-glob form is unreliable with a path argument). No shell surface outside
+this enumerated set may introduce a new local presentational struct, and the
+occurrence counts above are ceilings, not floors.
+
 #### Scenario: Migration debt is enumerated when the component layer lands
 
 - **WHEN** the component layer is introduced (its foundation change)
 - **THEN** the shell surfaces still carrying inline styling or local presentational
   structs are recorded as the migration backlog (one follow-up change per surface)
+- **AND** the baseline counts (≈ 136 `ShellPalette.*`, ≈ 29 `RoundedRectangle`) and
+  the enumerated local struct list above are captured as the ratchet reference point
 - **AND** the long-lived spec is true at that point: it requires *new and migrated*
   code to comply and forbids *new* violations, not that all debt is already cleared
 
