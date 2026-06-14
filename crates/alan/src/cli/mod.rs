@@ -1,6 +1,5 @@
 pub mod connection;
 pub mod daemon;
-pub mod emacs;
 pub mod init;
 pub mod shell;
 pub mod skill_authoring;
