@@ -459,6 +459,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         spaceDraftName = ""
         spaceDraftIcon = nil
         spaceDraftProfileID = nil
+        // The selected terminal host was removed while the modal form was up.
+        // SwiftUI reinserts it after the flag flips, but the reused view (same
+        // pane/content, already "selected") won't re-request focus on its own,
+        // so keyboard input would be lost until the user clicks the terminal.
+        // Restore focus on the next runloop, once the terminal is back.
+        DispatchQueue.main.async { [weak self] in
+            self?.refocusSelectedTerminalPane()
+        }
     }
 
     @discardableResult
