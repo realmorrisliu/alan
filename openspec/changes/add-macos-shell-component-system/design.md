@@ -42,8 +42,11 @@ gallery + accessibility baseline, and the migration discipline.
 **Goals:**
 - Define a three-layer model — `Tokens → Primitives → Feature compositions` — with a
   single design-system home at `Views/Shell/Components/`.
-- Make tokens the single styling source: feature surfaces stop reading raw color
-  tuples / `ShellPalette.*`.
+- Make tokens the single styling source: feature surfaces stop hard-coding raw
+  literals (`Color(red:`/`Color.red`/`.font(.system(size:`/numeric `.padding(`) and
+  instead reference semantic token namespaces (`ShellPaper`/`ShellInk`/`ShellSignal`/
+  `ShellPalette`/`ShellType`/`ShellSpacing`) or compose primitives. Referencing
+  `ShellPalette.*` is the compliant outcome, not debt.
 - Consolidate duplicated rows, styles, cards, chips, and field types into canonical
   primitives.
 - Ship a `#Preview` gallery and accessibility baseline for every primitive.
