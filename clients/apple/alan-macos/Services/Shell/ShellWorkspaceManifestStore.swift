@@ -12,6 +12,95 @@ enum ShellWorkspaceManifestRecovery: Equatable {
     case quarantinedCorruptFile(URL)
 }
 
+/// Threading seam for shell persistence. The encode + atomic disk writes for both
+/// the workspace manifest and the control-plane shell-state file run on a serial
+/// background executor; callers choose synchronous durability (structural
+/// mutations) or fire-and-forget (debounced terminal-callback churn) so the
+/// terminal callback path never blocks the main thread on disk.
+protocol ShellPersistenceWriting: AnyObject {
+    /// Blocks the caller until the manifest is written (structural mutations).
+    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest)
+    /// Enqueues the manifest write without blocking the caller (debounced content).
+    func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest)
+    /// Blocks the caller until the shell-state file is written (structural).
+    func writeShellStateSync(_ state: ShellStateSnapshot)
+    /// Enqueues the shell-state file write without blocking the caller (debounced).
+    func writeShellStateAsync(_ state: ShellStateSnapshot)
+}
+
+final class ShellPersistenceWriter: ShellPersistenceWriting {
+    private let manifestStore: ShellWorkspaceManifestStore?
+    private let stateStore: ShellStatePersistenceStore
+    private let queue: DispatchQueue
+    private let onError: (String) -> Void
+
+    init(
+        manifestStore: ShellWorkspaceManifestStore?,
+        stateStore: ShellStatePersistenceStore,
+        queue: DispatchQueue = DispatchQueue(label: "app.alan.shell.persistence", qos: .utility),
+        onError: @escaping (String) -> Void = { _ in }
+    ) {
+        self.manifestStore = manifestStore
+        self.stateStore = stateStore
+        self.queue = queue
+        self.onError = onError
+    }
+
+    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) {
+        queue.sync { self.writeManifest(manifest) }
+    }
+
+    func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
+        queue.async { self.writeManifest(manifest) }
+    }
+
+    func writeShellStateSync(_ state: ShellStateSnapshot) {
+        queue.sync { self.stateStore.save(state) }
+    }
+
+    func writeShellStateAsync(_ state: ShellStateSnapshot) {
+        queue.async { self.stateStore.save(state) }
+    }
+
+    private func writeManifest(_ manifest: ShellContentWorkspaceManifest) {
+        guard let manifestStore else { return }
+        do {
+            try manifestStore.save(manifest)
+        } catch {
+            onError("workspace manifest save failed: \(error)")
+        }
+    }
+}
+
+/// Debounce seam for coalescing high-frequency restore-content flush requests.
+/// Injected so tests can fire the pending flush deterministically.
+protocol ManifestFlushScheduling: AnyObject {
+    /// Schedule `work` to run after the debounce window. Implementations run the
+    /// most recently scheduled `work` once per window.
+    func schedule(_ work: @escaping () -> Void)
+}
+
+final class DebouncedManifestFlushScheduler: ManifestFlushScheduling {
+    private let window: DispatchTimeInterval
+    private let queue: DispatchQueue
+    private var pending: DispatchWorkItem?
+
+    init(
+        window: DispatchTimeInterval = .milliseconds(500),
+        queue: DispatchQueue = .main
+    ) {
+        self.window = window
+        self.queue = queue
+    }
+
+    func schedule(_ work: @escaping () -> Void) {
+        pending?.cancel()
+        let item = DispatchWorkItem(block: work)
+        pending = item
+        queue.asyncAfter(deadline: .now() + window, execute: item)
+    }
+}
+
 struct ShellWorkspaceManifestStore {
     let fileManager: FileManager
     let manifestURL: URL

@@ -20,6 +20,9 @@ private enum ShellRuntimeMetadataTests {
     static func run() {
         verifiesBootProfileCacheMemoizesPerLaunchKey()
         verifiesMetadataCallbackReusesCachedBootProfile()
+        verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
+        verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite()
+        verifiesLifecycleFlushPersistsPendingContentSynchronously()
         verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
@@ -7852,6 +7855,7 @@ private enum ShellRuntimeMetadataTests {
         )
 
         controller.updateTerminalMetadata(metadata(title: "Moved", cwd: "/moved"), for: "pane_1")
+        controller.flushWorkspacePersistence()
         guard let updatedManifest = decodeManifest(at: manifestURL),
               let updatedTab = updatedManifest.spaces
                 .flatMap(\.tabs)
@@ -8165,6 +8169,7 @@ private enum ShellRuntimeMetadataTests {
             metadata(title: "npm run dev", cwd: "/repo/app", activeTaskState: .foregroundCommand),
             for: "pane_1"
         )
+        controller.flushWorkspacePersistence()
 
         guard let savedManifest = decodeManifest(at: manifestURL),
               let transcript = terminalPayload(
@@ -10277,6 +10282,145 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let windowID = "manifest_io_test_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer,
+            manifestFlushScheduler: scheduler
+        )
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        // A burst of metadata callbacks, alternating active-task state to exercise
+        // the path that previously wrote the manifest synchronously.
+        let states: [ShellTabActiveTaskState] = [.foregroundCommand, .alanRunning]
+        for index in 0..<8 {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "burst \(index)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(index)),
+                    activeTaskState: states[index % states.count]
+                ),
+                for: pane.paneID
+            )
+        }
+
+        expect(
+            writer.syncWrites == 0,
+            "terminal metadata callbacks must not write the manifest or shell-state file "
+                + "synchronously (got \(writer.syncWrites) synchronous writes)"
+        )
+    }
+
+    private static func makeManifestIOController(
+        writer: SpyPersistenceWriter,
+        scheduler: ManifestFlushScheduling
+    ) -> ShellHostController {
+        let windowID = "manifest_io_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        return makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer,
+            manifestFlushScheduler: scheduler
+        )
+    }
+
+    private static func verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let controller = makeManifestIOController(writer: writer, scheduler: scheduler)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        for index in 0..<10 {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "burst \(index)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(index)),
+                    activeTaskState: .foregroundCommand
+                ),
+                for: pane.paneID
+            )
+        }
+
+        expect(
+            scheduler.scheduleCount == 1,
+            "a burst of terminal callbacks must schedule one debounced flush "
+                + "(scheduled \(scheduler.scheduleCount))"
+        )
+        expect(
+            writer.asyncWrites == 0 && writer.syncWrites == 0,
+            "nothing must be written before the debounce window fires"
+        )
+
+        scheduler.fire()
+
+        expect(
+            writer.manifestWrites == 1 && writer.shellStateWrites == 1,
+            "the coalesced flush must write the manifest and shell-state file exactly once each "
+                + "(manifest \(writer.manifestWrites), shellState \(writer.shellStateWrites))"
+        )
+        expect(
+            writer.syncWrites == 0,
+            "the coalesced flush must write off the main thread, not synchronously"
+        )
+    }
+
+    private static func verifiesLifecycleFlushPersistsPendingContentSynchronously() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let controller = makeManifestIOController(writer: writer, scheduler: scheduler)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        controller.updateTerminalMetadata(
+            TerminalPaneMetadataSnapshot(
+                title: "cargo test",
+                workingDirectory: "/repo/app",
+                summary: "pending output",
+                attention: .active,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 1),
+                activeTaskState: .foregroundCommand
+            ),
+            for: pane.paneID
+        )
+        expect(
+            writer.syncWrites == 0 && writer.asyncWrites == 0,
+            "a terminal callback alone must not write before the debounce fires"
+        )
+
+        controller.flushWorkspacePersistence()
+
+        expect(
+            writer.syncWrites >= 2,
+            "lifecycle flush must synchronously persist the manifest and shell-state file "
+                + "(synchronous writes \(writer.syncWrites))"
+        )
+    }
+
     private static func verifiesMetadataCallbackReusesCachedBootProfile() {
         var computeCount = 0
         let cache = AlanShellBootProfileCache(compute: { pane, state in
@@ -10337,6 +10481,8 @@ private enum ShellRuntimeMetadataTests {
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         bootProfileCache: AlanShellBootProfileCache? = nil,
+        persistenceWriter: ShellPersistenceWriting? = nil,
+        manifestFlushScheduler: ManifestFlushScheduling? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -10348,6 +10494,13 @@ private enum ShellRuntimeMetadataTests {
         )
         let persistenceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(windowID).json")
+        let resolvedWriter =
+            persistenceWriter
+            ?? SynchronousPersistenceWriter(
+                manifestStore: workspaceManifestStore,
+                stateStore: ShellStatePersistenceStore(persistenceURL: persistenceURL)
+            )
+        let resolvedScheduler = manifestFlushScheduler ?? ImmediateManifestFlushScheduler()
         return ShellHostController(
             shellState: shellState ?? .bootstrapDefault(windowID: windowID),
             windowContext: context,
@@ -10355,12 +10508,85 @@ private enum ShellRuntimeMetadataTests {
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
+            persistenceWriter: resolvedWriter,
+            manifestFlushScheduler: resolvedScheduler,
             closeConfirmationPresenter: closeConfirmationPresenter,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
             performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
             bootProfileCache: bootProfileCache,
             appIsActiveProvider: { appIsActive }
         )
+    }
+
+    final class SpyPersistenceWriter: ShellPersistenceWriting {
+        private(set) var syncWrites = 0
+        private(set) var asyncWrites = 0
+        private(set) var manifestWrites = 0
+        private(set) var shellStateWrites = 0
+        private(set) var lastManifest: ShellContentWorkspaceManifest?
+
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) {
+            syncWrites += 1
+            manifestWrites += 1
+            lastManifest = manifest
+        }
+
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
+            asyncWrites += 1
+            manifestWrites += 1
+            lastManifest = manifest
+        }
+
+        func writeShellStateSync(_ state: ShellStateSnapshot) {
+            syncWrites += 1
+            shellStateWrites += 1
+        }
+
+        func writeShellStateAsync(_ state: ShellStateSnapshot) {
+            asyncWrites += 1
+            shellStateWrites += 1
+        }
+    }
+
+    /// Default test writer: persists synchronously to the real stores so the
+    /// majority of tests observe persistence inline. The off-main/debounced
+    /// contract is exercised explicitly by tests that inject the spy + manual
+    /// scheduler instead.
+    final class SynchronousPersistenceWriter: ShellPersistenceWriting {
+        private let manifestStore: ShellWorkspaceManifestStore?
+        private let stateStore: ShellStatePersistenceStore
+
+        init(manifestStore: ShellWorkspaceManifestStore?, stateStore: ShellStatePersistenceStore) {
+            self.manifestStore = manifestStore
+            self.stateStore = stateStore
+        }
+
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
+        func writeShellStateSync(_ state: ShellStateSnapshot) { stateStore.save(state) }
+        func writeShellStateAsync(_ state: ShellStateSnapshot) { stateStore.save(state) }
+    }
+
+    final class ImmediateManifestFlushScheduler: ManifestFlushScheduling {
+        func schedule(_ work: @escaping () -> Void) { work() }
+    }
+
+    final class ManualManifestFlushScheduler: ManifestFlushScheduling {
+        private(set) var scheduleCount = 0
+        private var pending: (() -> Void)?
+
+        func schedule(_ work: @escaping () -> Void) {
+            scheduleCount += 1
+            pending = work
+        }
+
+        @discardableResult
+        func fire() -> Bool {
+            guard let work = pending else { return false }
+            pending = nil
+            work()
+            return true
+        }
     }
 
     private static func fakeSurfaceHandle(

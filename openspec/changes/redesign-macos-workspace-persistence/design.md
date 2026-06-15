@@ -36,6 +36,15 @@ modify the same spec via non-overlapping requirements.
 
 ## Decisions
 
+### Decision 0: Split `publishControlPlaneState` into prompt publish + debounced disk
+`publishControlPlaneState` (called by `updatePaneState` on every pane-state
+change) does three things: write the manifest, write the control-plane shell-state
+file (`persistShellState`), and publish in-memory control-plane state. The
+in-memory publish stays synchronous (IPC/automation need it prompt); the two disk
+writes become debounced + off-main on the hot path and synchronous on structural
+mutations. Both files route through one persistence-writer seam so the test can
+assert the whole callback path performs zero synchronous main-thread disk writes.
+
 ### Decision 1: Serial background `DispatchQueue`, not a Swift `actor`
 Move encode + `Data.write(atomic:)` onto one serial `DispatchQueue`. Structural
 writes call it synchronously (low-frequency user actions — a brief main-thread

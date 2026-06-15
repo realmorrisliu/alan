@@ -27,8 +27,15 @@ serialized manifest to.
 
 ## What Changes
 
-- Move manifest JSON encode + `Data.write(atomic:)` **off the main thread** onto
-  a serial background writer; the `@MainActor` controller must not block on disk.
+> Scope note (found during implementation): the hot path makes **two**
+> synchronous main-thread disk writes per pane-state change, both via
+> `publishControlPlaneState` — the workspace manifest **and** the control-plane
+> shell-state snapshot file (`persistShellState`). This change covers both, and
+> keeps the in-memory control-plane publication (`controlPlane.publish`) prompt.
+
+- Move manifest **and** shell-state-file JSON encode + `Data.write(atomic:)`
+  **off the main thread** onto a serial background writer; the `@MainActor`
+  controller must not block on disk.
 - Replace the single `activeTaskChanged`-triggered synchronous write with a
   cadence split:
   - **Structural mutations** (Tab/Space create/close/reorder/pin/move,
@@ -60,10 +67,13 @@ serialized manifest to.
 
 ## Impact
 
-- **Code**: `ShellHostController.syncWorkspaceManifestFromShellState` (write
-  trigger + threading + cadence), `ShellWorkspaceManifestStore` (off-main serial
-  write; an injectable scheduler/clock for testability), app lifecycle hooks
-  (background/quit flush). No manifest model or `activeTask` field change.
+- **Code**: `ShellHostController.publishControlPlaneState` (splits prompt IPC
+  publish from debounced disk writes), `syncWorkspaceManifestFromShellState` /
+  `persistShellState` (write trigger + threading + cadence),
+  `ShellWorkspaceManifestStore` + `ShellStatePersistenceStore` (off-main serial
+  write behind one persistence-writer seam; an injectable scheduler for
+  testability), app lifecycle hooks (background/quit flush). No manifest model or
+  `activeTask` field change.
 - **Tests**: `clients/apple/scripts/test-shell-runtime-metadata.swift` durability
   assertions that read the manifest synchronously after `updateTerminalMetadata`
   move to the bounded-window/flush contract via the injectable scheduler; relates
