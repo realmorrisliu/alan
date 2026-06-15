@@ -2,22 +2,19 @@
 
 The macOS SwiftUI presentation layer has design tokens (`ShellDesignTokens`) and a
 nascent control library (`ShellFormControls`), but the library is adopted by exactly
-one surface (the Space creation form) while the rest of the UI hand-rolls styling
-inline on shell *feature* surfaces: ~136 direct `ShellPalette.*` references, ~29
-inline `RoundedRectangle` shapes, ~20 raw color literals (e.g. `Color.white`/`.red`),
-and ~37 raw `.font(.system(size:))` typography literals — occurrence counts excluding
-both the out-of-scope console and the design-system layer that the spec permits to
-reference tokens (`ShellDesignTokens.swift` plus the control/`Components` home). For
-context the all-files `ShellPalette`/`RoundedRectangle` counts are 197 and 71; the
-difference is console (0 / 34) and the design-system layer (61 / 8), which are not
-feature debt. The same
-presentational concepts duplicated across giant view files — five ad-hoc "row"
-structs (`ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`,
-`ShellTabSidebarRow`, `ShellSidebarTabControlRow`) plus separate card/chip
-implementations (`TerminalInfoCard`, `TerminalPaneChip`) buried as `private struct`s
-inside 2,500–4,100 line files. There is no contract that makes tokens the single
-styling source or that requires feature views to compose shared primitives, so
-visual drift and duplication grow unchecked.
+one surface (the Space creation form). The project already has a design-token guard
+(`scripts/check-shell-design-tokens.sh`) that ratchets per-file raw-literal counts
+(`system(size:`, `Color(red:`, numeric `.padding(`); its shell-surface baseline is
+`TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16, `MacShellRootView.swift` 1.
+But two gaps remain. First, that guard is only a local `just` recipe — it is **not run
+in CI**, so the ratchet is a manual promise. Second, even where styling does use tokens
+correctly, the same presentational concepts are duplicated across giant view files —
+five ad-hoc "row" structs (`ShellSettingsRow`, `ShellSettingsAgentSummaryRow`,
+`TerminalInfoRow`, `ShellTabSidebarRow`, `ShellSidebarTabControlRow`) plus separate
+card/chip implementations (`TerminalInfoCard`, `TerminalPaneChip`) buried as
+`private struct`s inside 2,500–4,100 line files. There is no contract that defines a
+reusable primitive catalog, requires feature views to compose it, or wires the
+existing raw-literal guard into CI — so duplication grows unchecked.
 
 ## What Changes
 
@@ -26,12 +23,15 @@ visual drift and duplication grow unchecked.
   labels) plus the shared `ButtonStyle`/`ViewModifier` styles they are built from,
   housed in a dedicated design-system home (`Views/Shell/Components/`, absorbing the
   existing `Controls/`).
-- Establish a **layering contract** as a ratchet: design tokens are the single
-  styling source; only the design-system layer may read raw color/number tuples and
-  `ShellPalette.*`; new and migrated feature views compose primitives and MUST NOT
-  inline shape + background + selection styling. Existing un-migrated surfaces are
-  tracked migration debt (counts MUST NOT increase), so the contract is true the day
-  it lands even before the surfaces are migrated.
+- Establish a **layering contract**: semantic tokens (`ShellPaper`/`ShellInk`/
+  `ShellSignal`/`ShellPalette`/`ShellType`/`ShellSpacing`) or primitives are the
+  styling source; **referencing a token namespace, including `ShellPalette.*`, is
+  compliant — the debt is raw literals** (`Color(red:`/`Color.red`/
+  `.font(.system(size:`/numeric `.padding(`). The raw-literal floor is enforced by the
+  **existing** `check-shell-design-tokens.sh` guard rather than a new parallel count;
+  this change **wires that guard into CI** (it is only a local recipe today). New and
+  migrated feature views compose primitives and MUST NOT add new raw literals or new
+  primitive-role duplicates.
 - Separate **style from structure** (SwiftUI-idiomatic): button/field press and
   hover behavior lives in `ButtonStyle`/`ViewModifier`/`*Style` types in the
   design-system layer, not scattered through feature files.
@@ -41,9 +41,10 @@ visual drift and duplication grow unchecked.
 - Migrate existing surfaces via a **strangler-fig sequence** — one surface per change
   (five at landing: terminal-pane SwiftUI chrome and settings surface in
   `TerminalPaneView.swift`; sidebar and space slider in `ShellSidebarView.swift`; root
-  chrome in `MacShellRootView.swift`), with completeness verified against the per-file
-  debt so no surface is left unowned — replacing inline styling with primitives and
-  verifying screenshot parity, rather than a single big-bang rewrite.
+  chrome in `MacShellRootView.swift`), with completeness verified against the
+  design-token guard's per-file baseline (63 / 16 / 1) so no surface is left unowned —
+  replacing raw literals with tokens/primitives and verifying screenshot parity, rather
+  than a single big-bang rewrite.
 - Consolidate the duplicated shell implementations (five row structs → `ShellRow`;
   `TerminalInfoCard`/`TerminalPaneChip` and the `ShellWorkspacePanelFrame` modifier →
   canonical surface/indicator primitives), and route shell controls through the
@@ -79,8 +80,13 @@ shell design-system home.
   `ShellWorkspaceView.swift`, the Space slider, and the SwiftUI settings/info chrome
   currently inside `TerminalPaneView.swift`. `Support/ShellDesignTokens.swift` gains
   semantic-layer clarity but no token-value changes.
-- **Tests**: `just apple-shell-focused-tests` and `apple-shell-ui-smoke` gate each
-  migration phase; visual changes reviewed against screenshots.
+- **CI/tooling**: wire the existing `scripts/check-shell-design-tokens.sh` guard into
+  CI (`.github/workflows/ci.yml`) so the raw-literal ratchet is blocking, not just a
+  local `just guard-shell-design-tokens` recipe. Optionally extend the guard later to
+  cover `RoundedRectangle`-with-literal-radius and raw named hues.
+- **Tests**: `just apple-shell-focused-tests`, `just guard-shell-design-tokens`, and
+  `apple-shell-ui-smoke` gate each migration phase; visual changes reviewed against
+  screenshots.
 - **Docs**: Apple client README directory section updated to document the
   `Components/` design-system home.
 - **No behavior change for users** is intended; each phase must hold screenshot

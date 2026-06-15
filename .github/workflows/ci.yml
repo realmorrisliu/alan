@@ -32,6 +32,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  shell-design-tokens:
+    name: Shell Design Token Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Guard macOS shell raw-literal baseline
+        run: ./scripts/check-shell-design-tokens.sh
+
   clippy:
     name: Clippy Lint
     runs-on: ubuntu-latest

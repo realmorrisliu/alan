@@ -36,37 +36,37 @@ file SHALL introduce a *new* local duplicate of an existing primitive's role.
 ### Requirement: Design tokens are the single styling source
 
 Design tokens SHALL be the single source of styling values for the macOS SwiftUI
-client. Only the design-system layer (primitives and their styles under
-`Views/Shell/Components/`, plus `Support/ShellDesignTokens.swift`) SHALL read raw
-color/number tuples or reference `ShellPalette.*` directly. New and migrated shell
-feature surfaces SHALL consume semantic tokens or primitives instead of raw styling
-values. This includes, beyond `ShellPalette.*`: raw color literals
-(`Color(red:/white:/.sRGB/hex …)` constructors and raw named hues such as
-`Color.red`/`.orange`/`.green`/`.white`/`.black`) and raw typography literals
-(`.font(.system(size:…))`, which SHALL come from the `ShellType` token scale). The
-structural system colors `Color.clear`, `Color.primary`, `Color.secondary`,
-`Color.accentColor` and semantic system fonts (`.headline`, `.body`, …) remain
-permitted. The raw-styling usage remaining in not-yet-migrated surfaces is tracked
-migration debt (see the migration-debt requirement below).
+client. New and migrated shell feature surfaces SHALL obtain colors, typography, and
+spacing from the semantic token namespaces in `Support/ShellDesignTokens.swift`
+(`ShellPaper`, `ShellInk`, `ShellSignal`, `ShellPalette`, `ShellType`, `ShellSpacing`)
+or by composing a primitive, and SHALL NOT hard-code raw styling literals. Referencing
+a semantic token namespace — including `ShellPalette.*` — is the *compliant* outcome,
+not debt; the debt is *raw literals* such as `Color(red:…)`/`NSColor(red:…)`
+constructors, raw named hues (`Color.red`/`.orange`/`.green`/`.white`/`.black`),
+`.font(.system(size:…))` typography, and hard-coded numeric `.padding(…)`. The
+structural system colors `Color.clear`/`.primary`/`.secondary`/`.accentColor` and
+semantic system fonts (`.headline`, `.body`, …) remain permitted.
 
-The migration-debt ratchet counts an explicit, named set of measurable signals
-(`ShellPalette.*`, `RoundedRectangle`, raw color literals, and raw `.font(.system(size:))`
-typography literals). That set is a proxy, not the full extent of the rule: a
-raw-styling form not captured by the counted signals — e.g. a literal `CGFloat` corner
-radius, a hard-coded `LinearGradient`/`RadialGradient`, a literal `.shadow(…)`, or a
-`Capsule`/`Circle`/`Rectangle` carrying a raw fill — is still a violation of this
-requirement and SHALL be rejected in review even though it does not move a counted
-number.
+The raw-literal floor SHALL be enforced by the project's existing design-token guard
+(`scripts/check-shell-design-tokens.sh` with baseline
+`scripts/shell-design-token-baseline.txt`), which this capability adopts rather than
+re-defining a parallel count — the guard already ratchets per-file raw-literal counts
+(`system(size:`, `Color(red:`, `NSColor(red:`, numeric `.padding(`) and SHALL be run
+in CI. Raw-literal forms the guard does not yet match (`RoundedRectangle` with a
+literal radius, raw named hues like `Color.red`) SHALL be caught in review and MAY be
+folded into the guard as an extension; they are not a separate ratchet owned by this
+spec.
 
-#### Scenario: A new or migrated feature surface needs a color or shape metric
+#### Scenario: A new or migrated feature surface needs a color, font, or metric
 
 - **WHEN** new shell code, or a surface being migrated, needs a background color,
-  selection tint, corner radius, spacing, or border treatment
+  selection tint, font size, corner radius, spacing, or border treatment
 - **THEN** it obtains it by composing a design-system primitive or referencing a
-  semantic token exposed for that purpose
-- **AND** it does not read a raw `(Double, Double, Double)` tuple, reach into
-  `ShellPalette.*`, or use a raw color literal (`Color(red:…)`/`Color.red` etc.;
-  `Color.clear`/`.primary`/`.secondary`/`.accentColor` are allowed)
+  semantic token namespace (`ShellPaper`/`ShellInk`/`ShellSignal`/`ShellPalette`/
+  `ShellType`/`ShellSpacing`)
+- **AND** it does not hard-code a raw literal (`Color(red:…)`/`Color.red`/
+  `.font(.system(size:…))`/numeric `.padding(…)`); `Color.clear`/`.primary`/
+  `.secondary`/`.accentColor` and semantic system fonts are allowed
 
 #### Scenario: A new token is needed by a feature
 
@@ -74,6 +74,14 @@ number.
 - **THEN** the new value is added to the design-system token layer with a semantic
   name (e.g. `sidebarSelection`, not `blue500`)
 - **AND** the feature consumes the named token rather than inlining the literal value
+
+#### Scenario: The raw-literal guard runs in CI
+
+- **WHEN** CI runs for a change touching the macOS client
+- **THEN** the design-token guard (`scripts/check-shell-design-tokens.sh`) is executed
+  as a blocking check, not only available as a local `just` recipe
+- **AND** a change that raises a file's raw-literal count above its recorded baseline
+  fails CI
 
 ### Requirement: Style is separated from structure
 
@@ -122,39 +130,26 @@ Dynamic Type scaling, a VoiceOver-accessible label, and respect for reduce-motio
 
 ### Requirement: Pre-existing inline styling and local structs are tracked migration debt
 
-Pre-existing inline styling SHALL be tracked migration debt and the ratchet measured
-against two objective invariants. First, the counted styling-signal occurrences on
-shell *feature* surfaces — `ShellPalette.*`, `RoundedRectangle`, raw color literals
-(`Color(red:/white:/.sRGB/hex …)` plus raw named hues `Color.red`/`.orange`/`.green`/
-`.white`/`.black`; structural `.clear`/`.primary`/`.secondary`/`.accentColor`
-excluded), and raw typography literals (`.font(.system(size:…))`; semantic system
-fonts excluded), all measured outside the design-system layer, which is permitted to
-reference tokens directly — SHALL NOT increase. Second, no shell feature file SHALL
-introduce a *new* local struct that
-duplicates a design-system primitive's role (row, card, chip, badge, button, field,
-section label, or surface/background modifier); feature-specific composite views that
-do not duplicate a primitive role (e.g. layout, split, title-bar, or find-bar views)
-are unaffected and legitimately stay in feature files. Each strangler-fig migration
-SHALL reduce the counts and fold the known primitive-role duplicates for its targeted
-surface until they reach zero outside the design-system layer.
+Pre-existing debt SHALL be tracked against two invariants, neither of which treats
+semantic-token usage as debt. First, the raw-literal floor: the project design-token
+guard (`scripts/check-shell-design-tokens.sh`, baseline
+`scripts/shell-design-token-baseline.txt`) ratchets per-file raw-literal counts and
+SHALL NOT regress — its recorded baseline at the time the component layer lands is
+`MacShellRootView.swift` 1, `TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16
+(and console files 19 / 86, which this capability does not own). Second, no shell
+feature file SHALL introduce a *new* local struct that duplicates a design-system
+primitive's role (row, card, chip, badge, button, field, section label, or
+surface/background modifier); feature-specific composite views that do not duplicate a
+primitive role (e.g. layout, split, title-bar, or find-bar views) are unaffected and
+legitimately stay in feature files.
 
-The baseline at the time the component layer is introduced, against which the
-"SHALL NOT increase" ratchet is measured, is recorded here so future migrations have
-a concrete reference point:
+`ShellPalette.*` (and the other semantic token namespaces) is *not* debt — referencing
+it is the compliant outcome. Each strangler-fig migration SHALL lower the guard's
+per-file raw-literal baseline for its targeted surface (running
+`check-shell-design-tokens.sh --update-baseline` after a reviewed reduction) and fold
+the known primitive-role duplicates, until the surface composes primitives and carries
+no raw literals.
 
-- **Inline `ShellPalette.*` occurrences on shell feature surfaces:** ≈ 136
-  (all-files 197, minus console 0, minus the design-system layer
-  `Support/ShellDesignTokens.swift` 46 and `ShellFormControls.swift` 15).
-- **Inline `RoundedRectangle` occurrences on shell feature surfaces:** ≈ 29
-  (all-files 71, minus console 34, minus the design-system layer `ShellFormControls.swift` 8).
-- **Raw color literals on shell feature surfaces:** ≈ 20 (`TerminalPaneView.swift` 16,
-  `ShellSidebarView.swift` 4, `MacShellRootView.swift` 0), counting raw named hues and
-  `Color(...)` value constructors but excluding `.clear`/`.primary`/`.secondary`/
-  `.accentColor`. No raw `Color(...)` value constructors exist today; the debt is
-  named hues (`.white` 13, `.orange`/`.green` 2 each, `.black` 2, `.red` 1).
-- **Raw `.font(.system(size:))` typography literals on shell feature surfaces:** ≈ 37
-  (`TerminalPaneView.swift` 30, `ShellSidebarView.swift` 6, `MacShellRootView.swift` 1),
-  to be replaced by the `ShellType` token scale; semantic system fonts are excluded.
 - **Known pre-existing primitive-role duplicates (non-exhaustive consolidation
   backlog, not a closed allow-list):** rows — `ShellSettingsRow`,
   `ShellSettingsAgentSummaryRow`, `TerminalInfoRow` (`TerminalPaneView.swift`),
@@ -166,34 +161,28 @@ a concrete reference point:
   an incomplete enumeration is not a loophole: any new primitive-role duplicate is a
   violation whether or not it appears here.
 
-These counts are measured as `all − console − design-system-layer` (the
-exclusion-glob form is unreliable with a path argument); the occurrence counts above
-are ceilings, not floors.
-
 #### Scenario: Migration debt is enumerated when the component layer lands
 
 - **WHEN** the component layer is introduced (its foundation change)
-- **THEN** the shell surfaces still carrying inline styling or primitive-role
-  duplicate structs are recorded as the migration backlog (one follow-up change per
-  surface)
-- **AND** the baseline counts (≈ 136 `ShellPalette.*`, ≈ 29 `RoundedRectangle`,
-  ≈ 20 raw color literals, ≈ 37 raw `.font(.system(size:))` literals) and the known
-  primitive-role duplicate list above are captured as the ratchet reference point
+- **THEN** the shell surfaces still carrying raw-literal debt are exactly those in the
+  design-token guard baseline (`MacShellRootView.swift`, `TerminalPaneView.swift`,
+  `ShellSidebarView.swift`), recorded as the migration backlog (one follow-up change
+  per surface), and the known primitive-role duplicate list above is captured
 - **AND** the long-lived spec is true at that point: it requires *new and migrated*
   code to comply and forbids *new* violations, not that all debt is already cleared
 
-#### Scenario: A change would add new inline styling or a primitive-role duplicate
+#### Scenario: A change would add new raw styling or a primitive-role duplicate
 
 - **WHEN** a change adds, to a shell feature surface instead of composing a primitive,
-  a new inline `RoundedRectangle`/`ShellPalette.*` use, a raw color literal
-  (`Color(red:…)` or a raw named hue like `Color.red`), a raw `.font(.system(size:…))`
-  typography literal, another raw-styling form not captured by the counted signals
-  (e.g. a literal corner radius or gradient), or a new local struct that duplicates a
-  primitive's role (row/card/chip/badge/button/field/label/surface treatment)
-- **THEN** it is rejected: the counted signals SHALL NOT increase, no other raw
-  styling is introduced, and no new primitive-role duplicate is added
-- **AND** the developer composes the existing primitive or adds one to the
-  design-system home
+  a new raw-literal styling value (`Color(red:…)`/`Color.red`/`.font(.system(size:…))`/
+  numeric `.padding(…)`/`RoundedRectangle` with a literal radius) or a new local struct
+  that duplicates a primitive's role (row/card/chip/badge/button/field/label/surface
+  treatment)
+- **THEN** it is rejected: the design-token guard's per-file count SHALL NOT regress
+  (for the forms it matches), the review rejects the forms it does not yet match, and
+  no new primitive-role duplicate is added
+- **AND** the developer composes the existing primitive, references a semantic token,
+  or adds a primitive to the design-system home
 
 #### Scenario: A change adds a feature-specific composite view
 
@@ -213,26 +202,28 @@ feature file may host more than one surface, a migration change SHALL target a
 surface, never a whole multi-surface file at once.
 
 The migration backlog units are *surfaces*, but its completeness SHALL be verified
-against the per-file debt the debt itself defines, so no surface is silently left
-unowned. At the time the component layer lands the entire feature-surface debt resides
-in exactly three files (whose counts sum to the baseline), hosting five surfaces:
+against the design-token guard's per-file raw-literal baseline, so no surface is
+silently left unowned. At the time the component layer lands the shell raw-literal debt
+resides in exactly three files (the guard baseline, console excluded), hosting five
+surfaces:
 
-- `TerminalPaneView.swift` — `ShellPalette.*` 82, `RoundedRectangle` 14 — hosts two
-  surfaces: **terminal-pane SwiftUI chrome** and the **settings surface** (separate
-  migration changes).
-- `Views/Shell/ShellSidebarView.swift` — `ShellPalette.*` 49, `RoundedRectangle` 11 —
-  hosts two surfaces: **sidebar** and **space slider** (separate migration changes).
-- `MacShellRootView.swift` — `ShellPalette.*` 5, `RoundedRectangle` 4 — one surface:
-  **root chrome** — the visual controls only (collapse/appearance/new-space controls,
-  ghost chrome). Window placement (hidden-titlebar, minimum size, traffic-light
-  metrics) is out of scope: it stays in the app/window support component
-  (`Support/ShellWindowPlacement.swift`) under `macos-app-architecture-maintainability`
-  and is not pulled into the component-layer migration.
+- `TerminalPaneView.swift` — guard baseline **63** — hosts two surfaces:
+  **terminal-pane SwiftUI chrome** and the **settings surface** (separate migration
+  changes).
+- `Views/Shell/ShellSidebarView.swift` — guard baseline **16** — hosts two surfaces:
+  **sidebar** and **space slider** (separate migration changes).
+- `MacShellRootView.swift` — guard baseline **1** — one surface: **root chrome** — the
+  visual controls only (collapse/appearance/new-space controls, ghost chrome). Window
+  placement (hidden-titlebar, minimum size, traffic-light metrics) is out of scope: it
+  stays in the app/window support component (`Support/ShellWindowPlacement.swift`)
+  under `macos-app-architecture-maintainability` and is not pulled into the
+  component-layer migration.
 
-(82+49+5 = 136 and 14+11+4 = 29, matching the recorded baseline; this sum is the
-file-level completeness check. A file's debt is fully retired only once *all* of its
-hosted surfaces are migrated, so the per-file arithmetic catches an omitted file while
-the one-surface-per-change rule keeps each PR's screenshot diff isolated.)
+(The completeness check is the design-token guard baseline file itself: every shell
+feature file it lists with a non-zero count must have an owning surface migration, and
+a file's entry reaches 0 only once *all* its hosted surfaces are migrated. The
+one-surface-per-change rule keeps each PR's screenshot diff isolated even when two
+surfaces share a file.)
 
 #### Scenario: A surface migration change is proposed
 
@@ -245,21 +236,21 @@ the one-surface-per-change rule keeps each PR's screenshot diff isolated.)
 #### Scenario: The backlog is checked for completeness
 
 - **WHEN** the migration backlog is reviewed or a "counts reach zero" claim is made
-- **THEN** every surface hosted by a shell feature file with non-zero feature-surface
-  debt has its own owning migration change (five at landing: terminal-pane chrome,
-  settings surface, sidebar, space slider, root chrome)
-- **AND** the per-file feature-surface debt counts reconcile with the recorded
-  baseline (their sum equals it), so no file — including `MacShellRootView.swift` — is
-  left unowned
+- **THEN** every shell feature file with a non-zero design-token guard baseline has an
+  owning surface migration (five surfaces at landing: terminal-pane chrome, settings
+  surface, sidebar, space slider, root chrome)
+- **AND** the guard baseline file is the reconciliation point, so no file — including
+  `MacShellRootView.swift` — is left unowned
 
 #### Scenario: A surface migration change is verified
 
 - **WHEN** a surface migration change is reviewed
-- **THEN** the count of inline `RoundedRectangle` shapes and direct `ShellPalette.*`
-  references in the targeted surface trends toward zero (outside the design-system
-  layer)
+- **THEN** the design-token guard's per-file raw-literal count for the targeted surface
+  is reduced (via `--update-baseline` after a reviewed reduction) and `ShellPalette`/
+  token usage replaces raw literals
 - **AND** screenshot comparison shows no unintended visual regression for that surface
-- **AND** `just apple-shell-focused-tests` and the UI smoke check pass
+- **AND** `just apple-shell-focused-tests`, `just guard-shell-design-tokens`, and the
+  UI smoke check pass
 
 #### Scenario: Terminal-host internals are encountered during migration
 

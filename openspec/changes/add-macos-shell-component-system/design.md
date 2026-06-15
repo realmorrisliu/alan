@@ -6,14 +6,16 @@ type) and a nascent control library (`Views/Shell/Controls/ShellFormControls.swi
 with `ShellButton`, `ShellTextField`, `ShellSelectField`, `ShellIconTile`,
 `ShellIconPickerPanel`). What is missing is the *contract that ties them together*
 and *adoption*: the control library is referenced by exactly one surface (the Space
-creation form), while the rest of the shell UI hand-rolls styling — ~136 direct
-`ShellPalette.*` references and ~29 inline `RoundedRectangle` shapes on shell
-*feature* surfaces (occurrence counts excluding both the out-of-scope console and the
-design-system layer the spec permits to reference tokens). The all-files counts are
-197 / 71; subtracting console (0 / 34) and the design-system layer —
-`ShellDesignTokens.swift` and `ShellFormControls.swift` (61 / 8) — leaves the feature
-debt. Duplicated presentational concepts also live as `private struct`s inside large
-feature files:
+creation form). Raw-literal styling drift is *already* guarded: the project ships
+`scripts/check-shell-design-tokens.sh` + `scripts/shell-design-token-baseline.txt`, a
+per-file ratchet over `system(size:`/`Color(red:`/`NSColor(red:`/numeric `.padding(`
+whose shell baseline is `TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16,
+`MacShellRootView.swift` 1. Two real gaps remain: (1) that guard is only a local `just`
+recipe, not a CI check; (2) it does not address presentational *duplication* — the
+same concepts live as `private struct`s inside large feature files. (An earlier draft
+of this proposal mistakenly treated `ShellPalette.*` references as debt to drive to
+zero; `ShellPalette` is the semantic token namespace, so referencing it is the
+*compliant* outcome, not debt. That framing has been corrected.) The duplication:
 
 - Five row implementations: `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`,
   `TerminalInfoRow` (all in `TerminalPaneView.swift`), `ShellTabSidebarRow`, and
@@ -101,13 +103,21 @@ surface-by-surface as the strangler-fig migrations land.
 split that would itself become drift. The Apple README directory section is updated
 to match (required by `macos-app-architecture-maintainability`).
 
-### Decision: Enforce the token single-source rule with a measurable gate, not a compiler
+### Decision: Reuse the existing design-token guard; do not build a parallel ratchet
 
-The contract bans feature-layer raw `ShellPalette.*` / inline `RoundedRectangle`.
-Since there is no separate module to enforce this at compile time, each migration
-change is gated on a *count trending to zero* for the targeted surface (a grep-based
-metric in review) plus screenshot parity. This is observable without new tooling and
-fits the existing screenshot-review workflow.
+The raw-literal floor is already owned by `scripts/check-shell-design-tokens.sh` (a
+per-file baseline ratchet with `--update-baseline`). This capability **adopts** it
+rather than defining a second count, avoiding a duplicate owner for the same behavior.
+The one concrete tooling change is to **wire that guard into CI** (`ci.yml`), since it
+is only a local `just` recipe today — that converts the ratchet from a manual promise
+into a blocking gate. Forms the guard does not yet match (`RoundedRectangle` with a
+literal radius, raw named hues like `Color.red`) are caught in review and may later be
+folded into the guard as an extension; they are not a new spec-owned count.
+
+- **Alternative — define a fresh four-signal count (ShellPalette/RoundedRectangle/
+  color/font) in this spec:** rejected. It duplicated the existing guard, and worse,
+  it counted `ShellPalette.*` as debt when `ShellPalette` is the semantic token
+  namespace whose use is the desired end state — the metric pointed the wrong way.
 
 ### Decision: Strangler-fig migration order driven by reuse leverage
 
@@ -118,7 +128,8 @@ Each surface is its own change/PR — including the two pairs that share a featu
 (sidebar vs space slider in `ShellSidebarView.swift`; settings vs terminal-pane chrome
 in `TerminalPaneView.swift`) — so screenshots and metrics are reviewable in isolation
 and the old implementation "dies back" gradually. Root chrome carries the least debt
-(5/4) but is still its own owning phase so the per-file counts reconcile to zero.
+(guard baseline 1) but is still its own owning phase so the guard baseline reconciles
+to zero across all shell feature files.
 
 - **Alternative — big-bang refactor (originally requested):** rejected as the
   *implementation* strategy. UI regressions are visual and screenshot-reviewed; a
