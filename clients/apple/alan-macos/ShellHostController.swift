@@ -491,6 +491,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
+    private let bootProfileCache: AlanShellBootProfileCache
     private let appIsActiveProvider: @MainActor () -> Bool
     private var routedActivityNotificationKeys: Set<String> = []
     private var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
@@ -508,9 +509,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
+        bootProfileCache: AlanShellBootProfileCache? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
+        self.bootProfileCache = bootProfileCache ?? AlanShellBootProfileCache()
         let paneProjection = ShellPaneProjectionService(fileManager: fileManager)
         self.paneProjection = paneProjection
         self.terminalContentProjection = TerminalContentProjectionAdapter(
@@ -790,7 +793,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func bootProfile(for pane: ShellPane?) -> AlanShellBootProfile? {
         guard let pane else { return nil }
         seedRestoredTranscriptSnapshotIfNeeded(for: pane)
-        return AlanShellBootProfile.forPane(pane, shellState: shellState)
+        return bootProfileCache.profile(for: pane, shellState: shellState)
     }
 
     func restoredTranscriptSnapshot(for pane: ShellPane?) -> TerminalTranscriptSnapshot? {
@@ -2181,13 +2184,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             }
         }
         if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
-            terminalRuntime = runtime
+            setSelectedTerminalRuntime(runtime)
         }
 
         if let paneID = runtime.paneID,
            let pane = pane(paneID: paneID)
         {
-            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+            let bootProfile = bootProfileCache.profile(for: pane, shellState: shellState)
             let effectProjection = terminalContentProjection.projectRuntime(
                 runtime,
                 for: pane,
@@ -2210,10 +2213,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
             let paneStateStartedAt = performanceDiagnosticsStartTime()
             let didPublishPaneUpdate = updatePaneState(paneID: paneID) { current in
-                let currentBootProfile = AlanShellBootProfile.forPane(
-                    current,
-                    shellState: shellState
-                )
+                let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
                 return terminalContentProjection.projectRuntime(
                     runtime,
                     for: current,
@@ -2318,7 +2318,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
         let metadataStartedAt = performanceDiagnosticsStartTime()
         guard let pane = pane(paneID: paneID) else { return }
-        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let bootProfile = bootProfileCache.profile(for: pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
         defer {
             if let metadataStartedAt {
@@ -2354,10 +2354,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             paneID: pane.paneID,
             tabTitleOverride: metadata.title
         ) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectMetadata(
                 metadata,
                 runtime: runtime,
@@ -2374,10 +2371,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let runtime = runtime(for: pane.paneID)
         updatePaneState(paneID: paneID) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectAlanBinding(
                 binding,
                 runtime: runtime,
@@ -2392,10 +2386,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let runtime = runtime(for: pane.paneID)
 
         updatePaneState(paneID: paneID) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectBootContext(
                 runtime: runtime,
                 for: current,
@@ -2657,7 +2648,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 return pane
             }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
-            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: state)
+            let bootProfile = bootProfileCache.profile(for: pane, shellState: state)
             let projectedContext = paneProjection.projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
@@ -2745,15 +2736,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if let focusedPane = focusedPane {
             selectedSpaceID = focusedPane.spaceID
             selectedTabID = focusedPane.tabID
-            terminalRuntime = runtime(for: focusedPane.paneID)
+            setSelectedTerminalRuntime(runtime(for: focusedPane.paneID))
             synchronizeTerminalRenderPriorities()
             return
         }
 
         selectedSpaceID = shellState.focusedSpaceID ?? selectedSpaceID ?? shellState.spaces.first?.spaceID
         selectedTabID = shellState.focusedTabID ?? selectedSpace?.tabs.first?.tabID
-        terminalRuntime = runtime(for: selectedPane?.paneID)
+        setSelectedTerminalRuntime(runtime(for: selectedPane?.paneID))
         synchronizeTerminalRenderPriorities()
+    }
+
+    /// Assigns the selected-pane runtime snapshot only when it differs from the
+    /// current one in something other than its publish timestamp. The snapshot
+    /// is mirrored into the central `@Published` state, so a redundant write
+    /// would invalidate every view observing the controller at terminal-output
+    /// frequency.
+    private func setSelectedTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        guard !terminalRuntime.equalsIgnoringTimestamp(runtime) else { return }
+        terminalRuntime = runtime
     }
 
     private func synchronizeTerminalRenderPriorities() {

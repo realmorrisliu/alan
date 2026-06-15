@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import Darwin
 import Foundation
@@ -17,6 +18,9 @@ struct ShellRuntimeMetadataTestRunner {
 @MainActor
 private enum ShellRuntimeMetadataTests {
     static func run() {
+        verifiesBootProfileCacheMemoizesPerLaunchKey()
+        verifiesMetadataCallbackReusesCachedBootProfile()
+        verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
         verifiesShellSelectionAndFocusRecordPerformanceDiagnostics()
@@ -10141,6 +10145,188 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesBootProfileCacheMemoizesPerLaunchKey() {
+        var computeCount = 0
+        let cache = AlanShellBootProfileCache(compute: { pane, state in
+            computeCount += 1
+            return AlanShellBootProfile.forPane(pane, shellState: state)
+        })
+        let state = ShellStateSnapshot.bootstrapDefault(windowID: "boot_profile_cache_test")
+        let pane = ShellPane(
+            paneID: "pane_cache",
+            tabID: "tab_cache",
+            spaceID: "space_cache",
+            launchTarget: .shell,
+            cwd: "/tmp",
+            process: nil,
+            attention: .idle,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil,
+            terminalProfileID: nil
+        )
+
+        _ = cache.profile(for: pane, shellState: state)
+        _ = cache.profile(for: pane, shellState: state)
+        expect(
+            computeCount == 1,
+            "boot profile cache must compute once for repeated identical panes (got \(computeCount))"
+        )
+
+        let metadataChurnedPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: pane.cwd,
+            process: pane.process,
+            attention: .awaitingUser,
+            context: pane.context,
+            viewport: ShellViewportSnapshot(
+                title: "busy",
+                summary: "lots of output",
+                visibleExcerpt: nil,
+                lastActivityAt: "2026-06-15T00:00:00Z"
+            ),
+            alanBinding: pane.alanBinding,
+            terminalProfileID: pane.terminalProfileID
+        )
+        _ = cache.profile(for: metadataChurnedPane, shellState: state)
+        expect(
+            computeCount == 1,
+            "metadata churn (attention/viewport) must not recompute boot profile (got \(computeCount))"
+        )
+
+        // A working-directory change (e.g. `cd`) must NOT redo the expensive
+        // resolution — Ghostty discovery and the profile document load are
+        // cwd-independent. The new cwd is applied as a cheap overlay.
+        let relaunchedPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: "/var/data",
+            process: pane.process,
+            attention: pane.attention,
+            context: pane.context,
+            viewport: pane.viewport,
+            alanBinding: pane.alanBinding,
+            terminalProfileID: pane.terminalProfileID
+        )
+        let relaunchedProfile = cache.profile(for: relaunchedPane, shellState: state)
+        expect(
+            computeCount == 1,
+            "a cwd change must not recompute the boot profile (got \(computeCount))"
+        )
+        expect(
+            relaunchedProfile.workingDirectory == "/var/data",
+            "a cwd change must be reflected in the boot profile working directory "
+                + "(got \(relaunchedProfile.workingDirectory))"
+        )
+    }
+
+    private static func verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        func snapshot(at timestamp: TimeInterval) -> TerminalHostRuntimeSnapshot {
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: pane.terminalContentID,
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                renderPriority: .foregroundInteractive,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "build running",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 5)
+                ),
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: timestamp)
+            )
+        }
+
+        var changeCount = 0
+        let cancellable = controller.objectWillChange.sink { _ in changeCount += 1 }
+        defer { cancellable.cancel() }
+
+        controller.updateTerminalRuntime(snapshot(at: 1))
+        let afterFirst = changeCount
+        expect(afterFirst > 0, "first runtime publish must notify shell observers")
+
+        // Identical snapshot except for the outer publish timestamp: this is the
+        // per-refresh churn that must not invalidate the whole observing tree.
+        controller.updateTerminalRuntime(snapshot(at: 2))
+        expect(
+            changeCount == afterFirst,
+            "runtime snapshot identical except for its timestamp must not re-notify "
+                + "shell observers (delta \(changeCount - afterFirst))"
+        )
+    }
+
+    private static func verifiesMetadataCallbackReusesCachedBootProfile() {
+        var computeCount = 0
+        let cache = AlanShellBootProfileCache(compute: { pane, state in
+            computeCount += 1
+            return AlanShellBootProfile.forPane(pane, shellState: state)
+        })
+        let controller = makeController(bootProfileCache: cache)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        func deliverMetadata(burst: Int) {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "output burst \(burst)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(burst))
+                ),
+                for: pane.paneID
+            )
+        }
+
+        // The first callbacks settle the pane's launch-relevant fields (e.g.
+        // cwd from the reported working directory), which legitimately compute
+        // the boot profile. Those settle within the warm-up window.
+        for burst in 0..<3 {
+            deliverMetadata(burst: burst)
+        }
+        let warmComputeCount = computeCount
+        expect(
+            warmComputeCount >= 1,
+            "metadata callbacks must route boot-profile resolution through the cache"
+        )
+
+        // Steady state: a high-output burst of identical callbacks must not
+        // recompute the boot profile (no Ghostty discovery / profile disk read).
+        for burst in 3..<20 {
+            deliverMetadata(burst: burst)
+        }
+        expect(
+            computeCount == warmComputeCount,
+            "steady-state metadata callbacks must reuse the cached boot profile "
+                + "(recomputed \(computeCount - warmComputeCount) extra times across 17 callbacks)"
+        )
+    }
+
     private static func makeController(
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
@@ -10150,6 +10336,7 @@ private enum ShellRuntimeMetadataTests {
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
+        bootProfileCache: AlanShellBootProfileCache? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -10171,6 +10358,7 @@ private enum ShellRuntimeMetadataTests {
             closeConfirmationPresenter: closeConfirmationPresenter,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
             performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
+            bootProfileCache: bootProfileCache,
             appIsActiveProvider: { appIsActive }
         )
     }
