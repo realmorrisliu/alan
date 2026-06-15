@@ -247,7 +247,12 @@ surfaces share a file.)
 - **WHEN** a surface migration change is reviewed
 - **THEN** the design-token guard's per-file raw-literal count for the targeted surface
   is reduced (via `--update-baseline` after a reviewed reduction) and `ShellPalette`/
-  token usage replaces raw literals
+  token usage replaces raw literals — the guard count covers raw fonts
+  (`system(size:`, matched per line regardless of multiline `.font( … )` splitting),
+  `Color(red:`/`NSColor(red:`, and numeric `.padding(`
+- **AND** raw forms the guard does not yet match — raw named hues (`Color.white`/
+  `.orange`/`.red`) and `RoundedRectangle` with a literal radius — are also removed for
+  the targeted surface, checked in review until folded into the guard
 - **AND** screenshot comparison shows no unintended visual regression for that surface
 - **AND** `just apple-shell-focused-tests`, `just guard-shell-design-tokens`, and the
   UI smoke check pass
