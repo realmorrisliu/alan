@@ -111,10 +111,14 @@ fits the existing screenshot-review workflow.
 
 ### Decision: Strangler-fig migration order driven by reuse leverage
 
-Build the primitives first (Phase 0), then migrate surfaces highest-leverage-first:
-sidebar (most rows + selection states) → space slider → settings panels →
-terminal-pane SwiftUI chrome. Each surface is its own change/PR so screenshots and
-metrics are reviewable in isolation and the old implementation "dies back" gradually.
+Build the primitives first (Phase 0), then migrate the five debt-carrying surfaces
+highest-leverage-first: sidebar (most rows + selection states) → space slider →
+settings surface → terminal-pane SwiftUI chrome → root chrome (`MacShellRootView.swift`).
+Each surface is its own change/PR — including the two pairs that share a feature file
+(sidebar vs space slider in `ShellSidebarView.swift`; settings vs terminal-pane chrome
+in `TerminalPaneView.swift`) — so screenshots and metrics are reviewable in isolation
+and the old implementation "dies back" gradually. Root chrome carries the least debt
+(5/4) but is still its own owning phase so the per-file counts reconcile to zero.
 
 - **Alternative — big-bang refactor (originally requested):** rejected as the
   *implementation* strategy. UI regressions are visual and screenshot-reviewed; a
@@ -147,8 +151,9 @@ metrics are reviewable in isolation and the old implementation "dies back" gradu
    `ShellBadge`/`ShellChip`, card/panel surface modifiers, the unified press/hover
    style, `ShellSectionHeader`), add `#Preview` galleries + accessibility baseline,
    update the README. No feature surface is migrated yet.
-2. **Phase 1+ — Per-surface strangler migration (separate changes):** sidebar → space
-   slider → settings panels → terminal-pane SwiftUI chrome. Each removes
+2. **Phase 1+ — Per-surface strangler migration (separate changes):** the five
+   debt-carrying surfaces — sidebar → space slider → settings surface → terminal-pane
+   SwiftUI chrome → root chrome (`MacShellRootView.swift`). Each removes
    inline styling in its surface, deletes the now-dead local structs/styles, and
    verifies the metric + screenshot gate.
 3. **Rollback:** each phase is an isolated change; reverting one surface's change

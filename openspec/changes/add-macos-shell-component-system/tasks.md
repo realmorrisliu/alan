@@ -10,11 +10,17 @@
 - [ ] 2.2 Add any missing semantic tokens identified by the audit (no token *value* changes; semantic naming only)
 - [ ] 2.3 Document the rule (design-system layer only may read raw tuples / `ShellPalette.*`) in a short header comment in the `Components/` home
 
-## 3. Build canonical primitives (consolidating duplicates)
+## 3. Build canonical primitives (Phase 0 builds only — no feature-file edits)
 
-- [ ] 3.1 Implement `ShellRow` (icon + title + subtitle + accessory, with hover/selected/disabled states) to replace the shell row structs `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`, `ShellTabSidebarRow`, and `ShellSidebarTabControlRow` (console's `TimelineRow` is out of scope)
-- [ ] 3.2 Implement card/panel surface modifiers (`shellCardSurface`, `shellPanelSurface`) consolidating `TerminalInfoCard` and the `ShellWorkspacePanelFrame` modifier
-- [ ] 3.3 Implement `ShellBadge`/`ShellChip` consolidating `TerminalPaneChip`
+> Phase 0 only *creates* the primitives in the design-system home and records which
+> existing structs each one is designed to supersede. The actual replacement/deletion
+> in `TerminalPaneView.swift` / `ShellSidebarView.swift` / `MacShellRootView.swift`
+> happens in the per-surface migration changes (see 6.3), never here — task 5.3 keeps
+> Phase 0 free of feature-surface migration.
+
+- [ ] 3.1 Implement `ShellRow` (icon + title + subtitle + accessory, with hover/selected/disabled states) in the design-system home, designed to supersede the shell row structs `ShellSettingsRow`, `ShellSettingsAgentSummaryRow`, `TerminalInfoRow`, `ShellTabSidebarRow`, and `ShellSidebarTabControlRow` during their surface migrations (do not edit those files in Phase 0; console's `TimelineRow` is out of scope)
+- [ ] 3.2 Implement card/panel surface modifiers (`shellCardSurface`, `shellPanelSurface`) in the design-system home, designed to supersede `TerminalInfoCard` and the `ShellWorkspacePanelFrame` modifier later (build only)
+- [ ] 3.3 Implement `ShellBadge`/`ShellChip` in the design-system home, designed to supersede `TerminalPaneChip` later (build only)
 - [ ] 3.4 Confirm the existing `ShellButtonPressStyle` is the single canonical press/hover style for shell controls and expose it from the design-system home (no console styles in scope: `SidebarActionButtonStyle`/`InlineActionButtonStyle` are console-only)
 - [ ] 3.5 Confirm the canonical field primitive `ShellTextField` is the shell field treatment (console's `CompactDarkFieldStyle` is out of scope and not touched)
 - [ ] 3.6 Add `ShellSectionHeader` and confirm `ShellFormSectionLabel` coverage
