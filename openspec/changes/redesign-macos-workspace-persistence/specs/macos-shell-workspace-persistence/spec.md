@@ -1,0 +1,42 @@
+## ADDED Requirements
+
+### Requirement: Workspace manifest persistence does not block the main thread
+The macOS shell SHALL perform workspace manifest JSON encoding and disk writes
+off the main thread, and SHALL NOT perform a synchronous main-thread manifest
+disk write on the terminal metadata or runtime callback path.
+
+#### Scenario: High-output terminal does not stall the UI
+- **WHEN** one or more terminals produce sustained high-frequency output
+- **THEN** alan does not perform a synchronous main-thread manifest disk write on the terminal metadata or runtime callback path
+
+#### Scenario: Encode and write run off the main thread
+- **WHEN** alan persists the workspace manifest
+- **THEN** the JSON encode and atomic file write run on a background executor rather than blocking the main actor
+
+### Requirement: Workspace persistence cadence is separated by durability class
+The macOS shell SHALL persist workspace state on cadences matched to each class
+of state rather than rewriting the whole manifest on every runtime event:
+- **Structural state** (Spaces, Tabs, order, pin state, pin snapshots, selected
+  Space/Tab) SHALL be persisted when its mutation is accepted.
+- **Restore content** (per-Tab terminal transcript snapshots) SHALL be persisted
+  on a bounded debounced cadence and SHALL be force-flushed on app
+  background/resign-active and on quit.
+- A change to transient runtime state (such as a Tab's active-task state) SHALL
+  NOT by itself trigger a manifest write.
+
+#### Scenario: Structural mutation persists promptly
+- **WHEN** the user creates, closes, reorders, pins, unpins, or moves a Tab or Space
+- **THEN** alan persists the structural change for that mutation
+
+#### Scenario: Active-task change is not a write trigger
+- **WHEN** a Tab's terminal-aware active-task state changes
+- **THEN** alan does not write the workspace manifest solely because of that change
+
+#### Scenario: Transcript is flushed on background and quit
+- **WHEN** Alan for macOS resigns active, is backgrounded, or is asked to quit
+- **THEN** alan force-flushes pending transcript snapshots to disk before completing the transition
+
+#### Scenario: Recent transcript persists within the bounded window
+- **WHEN** a terminal's transcript changes and the app keeps running
+- **THEN** alan persists the latest transcript snapshot within the configured debounce window
+- **AND** a hard crash may lose at most that window of the most recent scrollback
