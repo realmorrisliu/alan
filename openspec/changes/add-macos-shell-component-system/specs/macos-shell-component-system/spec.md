@@ -40,19 +40,23 @@ client. Only the design-system layer (primitives and their styles under
 `Views/Shell/Components/`, plus `Support/ShellDesignTokens.swift`) SHALL read raw
 color/number tuples or reference `ShellPalette.*` directly. New and migrated shell
 feature surfaces SHALL consume semantic tokens or primitives instead of raw styling
-values — this includes raw color literals (`Color(red:/white:/.sRGB/hex …)`
-constructors and raw named hues such as `Color.red`/`.orange`/`.green`/`.white`/
-`.black`), not only `ShellPalette.*`. The structural system colors `Color.clear`,
-`Color.primary`, `Color.secondary`, and `Color.accentColor` remain permitted. The
-raw-styling usage remaining in not-yet-migrated surfaces is tracked migration debt
-(see the migration-debt requirement below).
+values. This includes, beyond `ShellPalette.*`: raw color literals
+(`Color(red:/white:/.sRGB/hex …)` constructors and raw named hues such as
+`Color.red`/`.orange`/`.green`/`.white`/`.black`) and raw typography literals
+(`.font(.system(size:…))`, which SHALL come from the `ShellType` token scale). The
+structural system colors `Color.clear`, `Color.primary`, `Color.secondary`,
+`Color.accentColor` and semantic system fonts (`.headline`, `.body`, …) remain
+permitted. The raw-styling usage remaining in not-yet-migrated surfaces is tracked
+migration debt (see the migration-debt requirement below).
 
 The migration-debt ratchet counts an explicit, named set of measurable signals
-(`ShellPalette.*`, `RoundedRectangle`, and the raw color literals above). That set is
-a proxy, not the full extent of the rule: a raw-styling form not captured by the
-counted signals (e.g. a literal `CGFloat` corner radius or a hard-coded gradient) is
-still a violation of this requirement and SHALL be rejected in review even though it
-does not move a counted number.
+(`ShellPalette.*`, `RoundedRectangle`, raw color literals, and raw `.font(.system(size:))`
+typography literals). That set is a proxy, not the full extent of the rule: a
+raw-styling form not captured by the counted signals — e.g. a literal `CGFloat` corner
+radius, a hard-coded `LinearGradient`/`RadialGradient`, a literal `.shadow(…)`, or a
+`Capsule`/`Circle`/`Rectangle` carrying a raw fill — is still a violation of this
+requirement and SHALL be rejected in review even though it does not move a counted
+number.
 
 #### Scenario: A new or migrated feature surface needs a color or shape metric
 
@@ -120,12 +124,13 @@ Dynamic Type scaling, a VoiceOver-accessible label, and respect for reduce-motio
 
 Pre-existing inline styling SHALL be tracked migration debt and the ratchet measured
 against two objective invariants. First, the counted styling-signal occurrences on
-shell *feature* surfaces — `ShellPalette.*`, `RoundedRectangle`, and raw color
-literals (`Color(red:/white:/.sRGB/hex …)` plus raw named hues `Color.red`/`.orange`/
-`.green`/`.white`/`.black`; the structural `.clear`/`.primary`/`.secondary`/
-`.accentColor` are excluded), all measured outside the design-system layer, which is
-permitted to reference tokens directly — SHALL NOT increase. Second, no shell feature
-file SHALL introduce a *new* local struct that
+shell *feature* surfaces — `ShellPalette.*`, `RoundedRectangle`, raw color literals
+(`Color(red:/white:/.sRGB/hex …)` plus raw named hues `Color.red`/`.orange`/`.green`/
+`.white`/`.black`; structural `.clear`/`.primary`/`.secondary`/`.accentColor`
+excluded), and raw typography literals (`.font(.system(size:…))`; semantic system
+fonts excluded), all measured outside the design-system layer, which is permitted to
+reference tokens directly — SHALL NOT increase. Second, no shell feature file SHALL
+introduce a *new* local struct that
 duplicates a design-system primitive's role (row, card, chip, badge, button, field,
 section label, or surface/background modifier); feature-specific composite views that
 do not duplicate a primitive role (e.g. layout, split, title-bar, or find-bar views)
@@ -147,6 +152,9 @@ a concrete reference point:
   `Color(...)` value constructors but excluding `.clear`/`.primary`/`.secondary`/
   `.accentColor`. No raw `Color(...)` value constructors exist today; the debt is
   named hues (`.white` 13, `.orange`/`.green` 2 each, `.black` 2, `.red` 1).
+- **Raw `.font(.system(size:))` typography literals on shell feature surfaces:** ≈ 37
+  (`TerminalPaneView.swift` 30, `ShellSidebarView.swift` 6, `MacShellRootView.swift` 1),
+  to be replaced by the `ShellType` token scale; semantic system fonts are excluded.
 - **Known pre-existing primitive-role duplicates (non-exhaustive consolidation
   backlog, not a closed allow-list):** rows — `ShellSettingsRow`,
   `ShellSettingsAgentSummaryRow`, `TerminalInfoRow` (`TerminalPaneView.swift`),
@@ -169,8 +177,8 @@ are ceilings, not floors.
   duplicate structs are recorded as the migration backlog (one follow-up change per
   surface)
 - **AND** the baseline counts (≈ 136 `ShellPalette.*`, ≈ 29 `RoundedRectangle`,
-  ≈ 20 raw color literals) and the known primitive-role duplicate list above are
-  captured as the ratchet reference point
+  ≈ 20 raw color literals, ≈ 37 raw `.font(.system(size:))` literals) and the known
+  primitive-role duplicate list above are captured as the ratchet reference point
 - **AND** the long-lived spec is true at that point: it requires *new and migrated*
   code to comply and forbids *new* violations, not that all debt is already cleared
 
@@ -178,10 +186,10 @@ are ceilings, not floors.
 
 - **WHEN** a change adds, to a shell feature surface instead of composing a primitive,
   a new inline `RoundedRectangle`/`ShellPalette.*` use, a raw color literal
-  (`Color(red:…)` or a raw named hue like `Color.red`), another raw-styling form not
-  captured by the counted signals (e.g. a literal corner radius), or a new local
-  struct that duplicates a primitive's role (row/card/chip/badge/button/field/label/
-  surface treatment)
+  (`Color(red:…)` or a raw named hue like `Color.red`), a raw `.font(.system(size:…))`
+  typography literal, another raw-styling form not captured by the counted signals
+  (e.g. a literal corner radius or gradient), or a new local struct that duplicates a
+  primitive's role (row/card/chip/badge/button/field/label/surface treatment)
 - **THEN** it is rejected: the counted signals SHALL NOT increase, no other raw
   styling is introduced, and no new primitive-role duplicate is added
 - **AND** the developer composes the existing primitive or adds one to the
