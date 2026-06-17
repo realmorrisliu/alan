@@ -24,6 +24,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite()
         verifiesLifecycleFlushPersistsPendingContentSynchronously()
         verifiesFailedStructuralManifestSaveIsReported()
+        verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics()
         verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
@@ -10384,6 +10385,37 @@ private enum ShellRuntimeMetadataTests {
         expect(
             writer.syncWrites == 0,
             "the coalesced flush must write off the main thread, not synchronously"
+        )
+    }
+
+    private static func verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics() {
+        let windowID = "manifest_async_fail_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-state.json")
+        // Inject the real persistence writer and verify the controller wires its
+        // async error sink to control-plane diagnostics. (This exercises the
+        // wiring/routing closure; the param-vs-resolved-writer selection itself
+        // is only observable with the internal default writer, which is verified
+        // by inspection.)
+        let writer = ShellPersistenceWriter(
+            manifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            stateStore: ShellStatePersistenceStore(persistenceURL: stateURL)
+        )
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer
+        )
+
+        writer.onError("workspace manifest async save failed")
+
+        expect(
+            controller.controlPlaneDiagnostics.contains {
+                $0.contains("workspace manifest async save failed")
+            },
+            "async persistence-write failures must be routed to control-plane diagnostics"
         )
     }
 

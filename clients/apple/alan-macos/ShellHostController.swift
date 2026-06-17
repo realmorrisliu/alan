@@ -555,9 +555,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         // Route async persistence-write failures (debounced restore content) to the
         // control-plane diagnostics surface, mirroring the synchronous paths.
-        if let writer = persistenceWriter as? ShellPersistenceWriter {
+        if let writer = self.persistenceWriter as? ShellPersistenceWriter {
             writer.onError = { [weak self] message in
-                DispatchQueue.main.async { self?.recordControlPlaneDiagnostic(message) }
+                if Thread.isMainThread {
+                    self?.recordControlPlaneDiagnostic(message)
+                } else {
+                    DispatchQueue.main.async { self?.recordControlPlaneDiagnostic(message) }
+                }
             }
         }
 
