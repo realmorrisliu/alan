@@ -18,5 +18,11 @@ final class AlanMacAppDelegate: NSObject, NSApplicationDelegate {
         }
         return shellHost.requestTerminateApp() ? .terminateNow : .terminateCancel
     }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        // Force pending debounced restore content to disk when the app loses
+        // focus, so backgrounding is a durable persistence point.
+        shellHost?.flushWorkspacePersistence()
+    }
 }
 #endif

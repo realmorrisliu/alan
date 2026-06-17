@@ -382,6 +382,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let persistenceURL: URL
     private let persistenceStore: ShellStatePersistenceStore
     private let workspaceManifestStore: ShellWorkspaceManifestStore?
+    private let persistenceWriter: ShellPersistenceWriting
+    private let manifestFlushScheduler: ManifestFlushScheduling
+    private var pendingContentFlushScheduled = false
     private var workspaceManifest: ShellContentWorkspaceManifest?
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     private var terminalContentIDsSuppressingAutoClose: Set<String> = []
@@ -491,6 +494,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
+    private let bootProfileCache: AlanShellBootProfileCache
     private let appIsActiveProvider: @MainActor () -> Bool
     private var routedActivityNotificationKeys: Set<String> = []
     private var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
@@ -505,12 +509,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
+        persistenceWriter: ShellPersistenceWriting? = nil,
+        manifestFlushScheduler: ManifestFlushScheduling? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
+        bootProfileCache: AlanShellBootProfileCache? = nil,
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
+        self.bootProfileCache = bootProfileCache ?? AlanShellBootProfileCache()
         let paneProjection = ShellPaneProjectionService(fileManager: fileManager)
         self.paneProjection = paneProjection
         self.terminalContentProjection = TerminalContentProjectionAdapter(
@@ -524,6 +532,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             persistenceURL: self.persistenceURL
         )
         self.workspaceManifestStore = workspaceManifestStore
+        self.persistenceWriter =
+            persistenceWriter
+            ?? ShellPersistenceWriter(
+                manifestStore: workspaceManifestStore,
+                stateStore: self.persistenceStore
+            )
+        self.manifestFlushScheduler = manifestFlushScheduler ?? DebouncedManifestFlushScheduler()
         self.workspaceManifest = workspaceManifest
         self.clipboardWriter = ShellClipboardWriter()
         self.closeConfirmationPresenter =
@@ -537,6 +552,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ?? resolvedContext.terminalRuntimeRegistry
         self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
         self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
+
+        // Route async persistence-write failures (debounced restore content) to the
+        // control-plane diagnostics surface, mirroring the synchronous paths.
+        if let writer = self.persistenceWriter as? ShellPersistenceWriter {
+            writer.onError = { [weak self] message in
+                if Thread.isMainThread {
+                    self?.recordControlPlaneDiagnostic(message)
+                } else {
+                    DispatchQueue.main.async { self?.recordControlPlaneDiagnostic(message) }
+                }
+            }
+        }
 
         if shellState.panes.isEmpty {
             publishControlPlaneState()
@@ -790,7 +817,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func bootProfile(for pane: ShellPane?) -> AlanShellBootProfile? {
         guard let pane else { return nil }
         seedRestoredTranscriptSnapshotIfNeeded(for: pane)
-        return AlanShellBootProfile.forPane(pane, shellState: shellState)
+        return bootProfileCache.profile(for: pane, shellState: shellState)
     }
 
     func restoredTranscriptSnapshot(for pane: ShellPane?) -> TerminalTranscriptSnapshot? {
@@ -1195,10 +1222,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func requestCloseShellSurface(scope: ShellCloseGuardScope) -> Bool {
+        // Flush any debounced restore content before tearing down so a clean exit
+        // never loses the most recent transcript.
+        flushWorkspacePersistence()
         if let impact = closeGuardImpact(for: scope) {
             return confirmAndApplyClose(impact)
         }
-        syncWorkspaceManifestFromShellState()
         shutdownTerminalRuntimes()
         return true
     }
@@ -2181,13 +2210,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             }
         }
         if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
-            terminalRuntime = runtime
+            setSelectedTerminalRuntime(runtime)
         }
 
         if let paneID = runtime.paneID,
            let pane = pane(paneID: paneID)
         {
-            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+            let bootProfile = bootProfileCache.profile(for: pane, shellState: shellState)
             let effectProjection = terminalContentProjection.projectRuntime(
                 runtime,
                 for: pane,
@@ -2210,10 +2239,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
             let paneStateStartedAt = performanceDiagnosticsStartTime()
             let didPublishPaneUpdate = updatePaneState(paneID: paneID) { current in
-                let currentBootProfile = AlanShellBootProfile.forPane(
-                    current,
-                    shellState: shellState
-                )
+                let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
                 return terminalContentProjection.projectRuntime(
                     runtime,
                     for: current,
@@ -2227,8 +2253,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     runtime: runtime
                 )
             }
-            if activeTaskChanged && !didPublishPaneUpdate {
-                syncWorkspaceManifestFromShellState()
+            if didPublishPaneUpdate || activeTaskChanged {
+                scheduleContentFlush()
             }
         }
     }
@@ -2318,7 +2344,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
         let metadataStartedAt = performanceDiagnosticsStartTime()
         guard let pane = pane(paneID: paneID) else { return }
-        let bootProfile = AlanShellBootProfile.forPane(pane, shellState: shellState)
+        let bootProfile = bootProfileCache.profile(for: pane, shellState: shellState)
         let runtime = runtime(for: pane.paneID)
         defer {
             if let metadataStartedAt {
@@ -2354,10 +2380,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             paneID: pane.paneID,
             tabTitleOverride: metadata.title
         ) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectMetadata(
                 metadata,
                 runtime: runtime,
@@ -2365,8 +2388,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 bootProfile: currentBootProfile
             ).pane
         }
-        if activeTaskChanged && !didPublishPaneUpdate {
-            syncWorkspaceManifestFromShellState()
+        if didPublishPaneUpdate || activeTaskChanged {
+            scheduleContentFlush()
         }
     }
 
@@ -2374,10 +2397,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let pane = pane(paneID: paneID) else { return }
         let runtime = runtime(for: pane.paneID)
         updatePaneState(paneID: paneID) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectAlanBinding(
                 binding,
                 runtime: runtime,
@@ -2392,10 +2412,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let runtime = runtime(for: pane.paneID)
 
         updatePaneState(paneID: paneID) { current in
-            let currentBootProfile = AlanShellBootProfile.forPane(
-                current,
-                shellState: shellState
-            )
+            let currentBootProfile = bootProfileCache.profile(for: current, shellState: shellState)
             return terminalContentProjection.projectBootContext(
                 runtime: runtime,
                 for: current,
@@ -2447,7 +2464,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         synchronizeSelection()
         routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
-        publishControlPlaneState()
+        publishControlPlaneState(coalesced: true)
         return true
     }
 
@@ -2657,7 +2674,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 return pane
             }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
-            let bootProfile = AlanShellBootProfile.forPane(pane, shellState: state)
+            let bootProfile = bootProfileCache.profile(for: pane, shellState: state)
             let projectedContext = paneProjection.projectedContext(
                 for: pane,
                 bootProfile: bootProfile,
@@ -2745,15 +2762,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if let focusedPane = focusedPane {
             selectedSpaceID = focusedPane.spaceID
             selectedTabID = focusedPane.tabID
-            terminalRuntime = runtime(for: focusedPane.paneID)
+            setSelectedTerminalRuntime(runtime(for: focusedPane.paneID))
             synchronizeTerminalRenderPriorities()
             return
         }
 
         selectedSpaceID = shellState.focusedSpaceID ?? selectedSpaceID ?? shellState.spaces.first?.spaceID
         selectedTabID = shellState.focusedTabID ?? selectedSpace?.tabs.first?.tabID
-        terminalRuntime = runtime(for: selectedPane?.paneID)
+        setSelectedTerminalRuntime(runtime(for: selectedPane?.paneID))
         synchronizeTerminalRenderPriorities()
+    }
+
+    /// Assigns the selected-pane runtime snapshot only when it differs from the
+    /// current one in something other than its publish timestamp. The snapshot
+    /// is mirrored into the central `@Published` state, so a redundant write
+    /// would invalidate every view observing the controller at terminal-output
+    /// frequency.
+    private func setSelectedTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
+        guard !terminalRuntime.equalsIgnoringTimestamp(runtime) else { return }
+        terminalRuntime = runtime
     }
 
     private func synchronizeTerminalRenderPriorities() {
@@ -2861,16 +2888,55 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
-    private func persistShellState() {
-        persistenceStore.save(shellState)
+    private func persistShellState(coalesced: Bool = false) {
+        if coalesced {
+            persistenceWriter.writeShellStateAsync(shellState)
+        } else {
+            persistenceWriter.writeShellStateSync(shellState)
+        }
+    }
+
+    /// Marks restore content dirty and schedules a single debounced flush. The
+    /// terminal callback path calls this instead of writing synchronously, so a
+    /// burst of output coalesces into one off-main write per debounce window.
+    private func scheduleContentFlush() {
+        guard !pendingContentFlushScheduled else { return }
+        pendingContentFlushScheduled = true
+        manifestFlushScheduler.schedule { [weak self] in
+            self?.flushPendingPersistence()
+        }
+    }
+
+    private func flushPendingPersistence() {
+        pendingContentFlushScheduled = false
+        syncWorkspaceManifestFromShellState(coalesced: true)
+        persistShellState(coalesced: true)
+        // Deferred control-plane persistence at the debounce cadence: records
+        // coalesced change events and mirrors state.json (encode + write off-main).
+        // The in-memory state was already merged promptly on the callback path.
+        controlPlane.persistPublished()
+    }
+
+    /// Forces pending debounced persistence to disk synchronously. Wired to app
+    /// background/resign-active and quit so a clean exit never loses pending
+    /// restore content; also a deterministic flush point for tests.
+    func flushWorkspacePersistence() {
+        pendingContentFlushScheduled = false
+        syncWorkspaceManifestFromShellState()
+        persistShellState()
+        // Record any pending change events and force the state.json mirror current
+        // before a clean exit / background transition.
+        controlPlane.publish(state: shellState)
+        controlPlane.flushStateFile()
     }
 
     private func syncWorkspaceManifestFromShellState(
         now: Date = .now,
         pinSnapshotTabIDs: Set<String> = [],
-        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:],
+        coalesced: Bool = false
     ) {
-        guard let workspaceManifestStore else { return }
+        guard workspaceManifestStore != nil else { return }
 
         let nextManifest = makeWorkspaceManifestFromShellState(
             now: now,
@@ -2880,31 +2946,34 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if !pinSnapshotTabIDs.isEmpty {
             applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
         }
-        do {
-            try workspaceManifestStore.save(manifestToSave)
+        if coalesced {
+            // Debounced restore content: advance the intended last-saved manifest
+            // optimistically (a failed write self-heals on the next flush, which
+            // rebuilds from current state). The writer surfaces async failures.
             workspaceManifest = manifestToSave
-        } catch {
-            recordControlPlaneDiagnostic("workspace manifest save failed: \(error)")
+            persistenceWriter.writeManifestAsync(manifestToSave)
+        } else if persistenceWriter.writeManifestSync(manifestToSave) {
+            workspaceManifest = manifestToSave
+        } else {
+            recordControlPlaneDiagnostic("workspace manifest save failed")
         }
     }
 
     private func clearRestoredTranscriptSnapshotFromWorkspaceManifest(
         forTerminalContentID contentID: String
     ) -> Bool {
-        guard let workspaceManifestStore, let workspaceManifest else { return false }
+        guard workspaceManifestStore != nil, let workspaceManifest else { return false }
 
         let result = workspaceManifest.clearingRestoredTranscriptSnapshot(
             forTerminalContentID: contentID
         )
         guard result.removed else { return false }
-        do {
-            try workspaceManifestStore.save(result.manifest)
-            self.workspaceManifest = result.manifest
-            return true
-        } catch {
-            recordControlPlaneDiagnostic("workspace manifest clear transcript save failed: \(error)")
+        guard persistenceWriter.writeManifestSync(result.manifest) else {
+            recordControlPlaneDiagnostic("workspace manifest clear transcript save failed")
             return false
         }
+        self.workspaceManifest = result.manifest
+        return true
     }
 
     private func applyPinSnapshotOverrides(
@@ -2932,7 +3001,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         diagnostic: (String) -> String
     ) -> Bool {
         guard let tab = shellState.tab(tabID: tabID),
-              let workspaceManifestStore
+              workspaceManifestStore != nil
         else {
             return false
         }
@@ -2952,16 +3021,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         guard didUpdate else { return false }
 
-        do {
-            try workspaceManifestStore.save(manifest)
-            workspaceManifest = manifest
-            objectWillChange.send()
-            recordControlPlaneDiagnostic(diagnostic(tabID))
-            return true
-        } catch {
-            recordControlPlaneDiagnostic("workspace manifest save failed: \(error)")
+        guard persistenceWriter.writeManifestSync(manifest) else {
+            recordControlPlaneDiagnostic("workspace manifest save failed")
             return false
         }
+        workspaceManifest = manifest
+        objectWillChange.send()
+        recordControlPlaneDiagnostic(diagnostic(tabID))
+        return true
     }
 
     private func makeWorkspaceManifestFromShellState(now: Date) -> ShellContentWorkspaceManifest {
@@ -3830,10 +3897,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ?? .idle
     }
 
-    private func publishControlPlaneState(pinSnapshotTabIDs: Set<String> = []) {
-        syncWorkspaceManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
-        persistShellState()
-        controlPlane.publish(state: shellState)
+    private func publishControlPlaneState(
+        pinSnapshotTabIDs: Set<String> = [],
+        coalesced: Bool = false
+    ) {
+        // The high-frequency terminal callback path keeps the in-memory
+        // control-plane state fresh (so IPC clients never read stale pane state)
+        // but defers all disk work — manifest + shell-state file + control-plane
+        // event log + state.json mirror — to a debounced flush. Nothing on this
+        // path touches disk. Structural mutations persist synchronously for prompt
+        // durability.
+        if coalesced {
+            controlPlane.publishInMemory(state: shellState)
+            scheduleContentFlush()
+        } else {
+            syncWorkspaceManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
+            persistShellState()
+            controlPlane.publish(state: shellState)
+        }
     }
 
     static func attentionRank(for attention: ShellAttentionState) -> Int {
