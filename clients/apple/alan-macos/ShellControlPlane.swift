@@ -217,26 +217,36 @@ final class AlanShellControlPlane {
         pendingStateFileWrite = nil
         guard let mergedState = latestMergedState else { return }
         let url = stateFileURL
-        stateFileQueue.sync { Self.writeStateFile(mergedState, to: url) }
+        let succeeded = stateFileQueue.sync { Self.writeStateFile(mergedState, to: url) }
+        if !succeeded {
+            diagnostics.record("Failed to persist shell state to \(url.lastPathComponent)")
+        }
     }
 
     private func scheduleStateFilePersist() {
         pendingStateFileWrite?.cancel()
         guard let mergedState = latestMergedState else { return }
         let url = stateFileURL
-        let item = DispatchWorkItem { Self.writeStateFile(mergedState, to: url) }
+        let item = DispatchWorkItem { [weak self] in
+            guard Self.writeStateFile(mergedState, to: url) == false else { return }
+            DispatchQueue.main.async {
+                self?.diagnostics.record("Failed to persist shell state to \(url.lastPathComponent)")
+            }
+        }
         pendingStateFileWrite = item
         stateFileQueue.asyncAfter(deadline: .now() + .milliseconds(150), execute: item)
     }
 
-    private static func writeStateFile(_ state: ShellStateSnapshot, to url: URL) {
+    @discardableResult
+    private static func writeStateFile(_ state: ShellStateSnapshot, to url: URL) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
             let data = try encoder.encode(state)
             try data.write(to: url, options: .atomic)
+            return true
         } catch {
-            NSLog("alan: failed to persist control-plane state.json: %@", String(describing: error))
+            return false
         }
     }
 
