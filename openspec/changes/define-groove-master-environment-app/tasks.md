@@ -11,52 +11,70 @@
 ## 2. V1 Daily Practice Loop
 
 - [ ] 2.1 Define the Today Plan surface with phase, focus, session length,
-  selected drum loop, and challenge.
-- [ ] 2.2 Define Live Session behavior with drum loop playback, timer,
-  room-capture recording, marker command, optional micro-prompts, and no
-  scoring UI.
+  practice blocks, selected metronome or drum loop source, inspiration
+  reference, and challenge.
+- [ ] 2.2 Define Live Session behavior with metronome/drum-loop playback,
+  timer, room-capture recording, marker command, optional micro-prompts, and
+  no scoring UI.
 - [ ] 2.3 Define End Reflection and Groove Entry creation.
 - [ ] 2.4 Define Groove Stream as selected moments first, full takes available
   behind entries.
 
 ## 3. Practice, Audio, And Loop Models
 
-- [ ] 3.1 Define the fixed learning spine: Groove, Pocket, Jam, Language, and
-  Vocabulary.
+- [ ] 3.1 Define the fixed learning route: Feel Time, Pocket, Groove
+  Construction, Bass Language, and Musical Conversation.
 - [ ] 3.2 Define adaptive micro-adjustment inputs for V1 without requiring
   automatic timing or pitch analysis.
 - [ ] 3.3 Define progressive capture modes with V1 room capture and future
   clean bass or multitrack support.
 - [ ] 3.4 Define built-in drum loop pack plus imported local loop folder model.
-- [ ] 3.5 Define recording, marker, clip, loop reference, reflection, and
-  producer note persistence expectations.
+- [ ] 3.5 Define metronome, drum loop, inspiration reference, and silence as V1
+  practice block sources.
+- [ ] 3.6 Define weekly cadence archetypes: Metronome, Drum Loop, Steal Groove,
+  Free Jam, Recording, Deep Listening, and Listening Only.
+- [ ] 3.7 Define recording, marker, clip, loop reference, reflection, pocket
+  tracker, and producer note persistence expectations.
 
-## 4. Producer Agent
+## 4. Inspiration And Pocket Tracking
 
-- [ ] 4.1 Define producer planning behavior from fixed spine and recent history.
-- [ ] 4.2 Define producer reflection after a session using metadata, markers,
+- [ ] 4.1 Define Inspiration Cards as references for taste and exploration, not
+  forced song-learning tasks.
+- [ ] 4.2 Define Pocket Tracker around continuous play time, space usage,
+  consistency, flow breaks, and selected-moment duration.
+- [ ] 4.3 Explicitly keep Pocket Tracker copy reflective rather than evaluative.
+- [ ] 4.4 Define product presentation as instrument-first, dark, indigo,
+  midnight-purple, acid-green, industrial-minimal, and Future UNIX rather than
+  bright education or gamified trainer UI.
+- [ ] 4.5 Record future Free/Pro posture while keeping commerce, subscriptions,
+  marketplace, and community features out of V1.
+
+## 5. Producer Agent
+
+- [ ] 5.1 Define producer planning behavior from fixed route and recent history.
+- [ ] 5.2 Define producer reflection after a session using metadata, markers,
   and user reflection.
-- [ ] 4.3 Define producer curation for titles, tags, and selected moments.
-- [ ] 4.4 Explicitly exclude grading, ranks, accuracy percentages, real-time
+- [ ] 5.3 Define producer curation for titles, tags, and selected moments.
+- [ ] 5.4 Explicitly exclude grading, ranks, accuracy percentages, real-time
   correction, and school-like lecturing.
 
-## 5. Follow-Up Slice Decomposition
+## 6. Follow-Up Slice Decomposition
 
-- [ ] 5.1 Identify the first implementation slice as one daily-use loop:
-  plan, loop, room recording, markers, reflection, journal, and basic producer
-  note.
-- [ ] 5.2 Defer clean bass capture, multitrack capture, deep audio analysis,
+- [ ] 6.1 Identify the first implementation slice as one daily-use loop:
+  plan, metronome/loop source, room recording, markers, reflection, journal,
+  pocket tracker snapshot, and basic producer note.
+- [ ] 6.2 Defer clean bass capture, multitrack capture, deep audio analysis,
   iOS/iPadOS capture, advanced loop management, modal grammar, export, and
   cross-device sync to later focused changes.
-- [ ] 5.3 Keep the first macOS/Alan surface adapter-based so the Groove Master
+- [ ] 6.3 Keep the first macOS/Alan surface adapter-based so the Groove Master
   domain core remains portable.
 
-## 6. Verification
+## 7. Verification
 
-- [ ] 6.1 Run `openspec validate define-groove-master-environment-app --strict`.
-- [ ] 6.2 Run `git diff --check -- openspec/changes/define-groove-master-environment-app`.
-- [ ] 6.3 Review proposal, design, spec, and tasks for placeholders,
+- [ ] 7.1 Run `openspec validate define-groove-master-environment-app --strict`.
+- [ ] 7.2 Run `git diff --check -- openspec/changes/define-groove-master-environment-app`.
+- [ ] 7.3 Review proposal, design, spec, and tasks for placeholders,
   contradictions, overbroad V1 scope, and unclear Alan/Groove Master
   boundaries.
-- [ ] 6.4 Confirm the change does not modify current Alan runtime, daemon,
+- [ ] 7.4 Confirm the change does not modify current Alan runtime, daemon,
   terminal, macOS shell, or programmable-environment constitution behavior.

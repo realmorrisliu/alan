@@ -21,10 +21,17 @@ reflect, and save the session into a Groove Journal.
   Alan programmable environment while remaining portable beyond macOS.
 - Define the V1 daily practice loop: today plan, live session, drum loop,
   room-capture recording, markers, end reflection, and Groove Journal entry.
-- Define the practice model as fixed spine plus adaptive micro-adjustment.
+- Define the practice model as a concrete 12-month route with fixed spine,
+  weekly cadence, daily practice blocks, and adaptive micro-adjustment.
+- Define metronome, drum loop, and inspiration reference as distinct session
+  sources.
 - Define a progressive audio model that starts with room capture and keeps the
   journal schema open for clean input and multitrack capture later.
 - Define drum loops as built-in pack plus imported local loop folders.
+- Define Inspiration Cards as musical references for exploration rather than
+  forced repertoire.
+- Define Pocket Tracker as non-graded reflection over continuous play time,
+  space, and consistency.
 - Define the producer agent as a low-presence planner, reflector, and curator
   rather than a teacher, grader, or real-time correction engine.
 - Define how Groove Master maps into Alan environment abstractions without

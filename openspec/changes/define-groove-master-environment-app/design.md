@@ -34,11 +34,19 @@ first implementation slice small enough to become a daily-use tool.
   reflection, and journal.
 - Define V1 as one complete daily practice loop rather than a broad music
   platform.
-- Define the practice plan as fixed spine plus adaptive micro-adjustment.
+- Define the practice plan as a concrete 12-month route with daily practice
+  blocks, weekly cadence, and adaptive micro-adjustment.
+- Support metronome, drum loop, and inspiration references as separate session
+  sources.
 - Start audio with low-friction room capture while preserving a schema path for
   clean bass capture and multitrack sessions later.
 - Treat recordings as memory, reflection, and creative material rather than
   grading evidence.
+- Define Inspiration Cards as exploration prompts, not song assignments.
+- Define Pocket Tracker as non-graded reflection over continuous play time,
+  space, and consistency.
+- Preserve the distinctive visual direction: dark, indigo, midnight purple,
+  acid green accent, industrial minimalism, and Future UNIX energy.
 - Define a low-presence producer agent that plans, reflects, and curates.
 - Keep the domain core portable so iOS and iPadOS remain viable later.
 
@@ -47,10 +55,14 @@ first implementation slice small enough to become a daily-use tool.
 - Real-time timing correction or automatic scoring.
 - Accuracy percentages, ranks, combo systems, XP, or gamified streak pressure.
 - Song tutorials or forced repertoire.
+- Treating inspiration songs as required repertoire, score targets, or bundled
+  song-tutorial/backing-track curriculum.
 - Full music theory, scales, chords, or modes in the first slice.
 - Multitrack editing in V1.
 - A professional DAW, loop marketplace, collaboration platform, or cloud sync
   system.
+- Commerce, subscriptions, paid loop packs, or community challenges in V1.
+- Redesigning the current Alan shell around Groove Master's visual identity.
 - A macOS-only domain model that cannot later support iPhone or iPad capture.
 - A demo whose primary purpose is to prove Alan.
 
@@ -66,8 +78,9 @@ The app maps naturally onto the environment abstractions:
 ```text
 Objects:   PracticePlan, GrooveSession, RecordingTake, Marker, Clip,
            GrooveEntry, DrumLoop, Reflection, ProducerNote
-Commands:  start session, mark moment, end session, replay take,
-           import loops, generate tomorrow plan
+Commands:  start session, start metronome block, start loop block,
+           mark moment, end session, replay take, import loops,
+           generate tomorrow plan
 Buffers:   active session, recording review, groove journal entry,
            loop library
 Views:     today view, session view, groove stream, recording detail,
@@ -93,30 +106,72 @@ Today Plan
   -> Groove Entry
 ```
 
-The Today Plan shows the current phase, focus, session length, selected drum
-loop, and one challenge. The Live Session starts playback, timer, room capture,
-and optional micro-prompts. During practice, the main action is a marker command
-for moments worth revisiting. The session ends with a short reflection and a
-saved Groove Entry.
+The Today Plan shows the current phase, focus, session length, session blocks,
+selected loop or metronome setting, inspiration reference when present, and one
+challenge. The Live Session starts playback, timer, room capture, and optional
+micro-prompts. During practice, the main action is a marker command for moments
+worth revisiting. The session ends with a short reflection and a saved Groove
+Entry.
 
 This gives the user something they can follow every day without requiring a
 large loop editor, lesson catalog, or audio-analysis stack.
 
-### Use Fixed Spine Plus Adaptive Micro-Adjustment
+### Use A Concrete 12-Month Route Plus Adaptive Micro-Adjustment
 
-The practice plan needs enough structure to feel trustworthy:
+The practice plan needs enough structure to feel trustworthy without becoming
+school-like. The user-facing route should be concrete:
+
+```text
+Feel Time -> Pocket -> Groove Construction -> Bass Language
+  -> Musical Conversation
+```
+
+Each phase has a clear intention and deliberately delays theory-heavy work:
+
+- Feel Time, Weeks 1-4: pulse, breathing, one note, silence, stable sound.
+- Pocket, Weeks 5-8: E, B, high E, root/rest, root/octave, restraint.
+- Groove Construction, Weeks 9-12: loop building, repetition, variation,
+  stealing rhythmic feel without learning songs.
+- Bass Language, Months 3-6: root, fifth, octave, ghost note, passing tone;
+  name what the user already feels.
+- Musical Conversation, Months 6-12: play with drums, understand references,
+  build original basslines, expand vocabulary.
+
+The route maps back to the product philosophy:
 
 ```text
 Groove -> Pocket -> Jam -> Language -> Vocabulary
 ```
 
-Each phase has a clear intention:
+Daily plans should be composed from practice blocks:
 
-- Groove: one note, pulse, repetition, breathing.
-- Pocket: silence, space, root/rest, root/octave.
-- Jam: longer playing, loop expansion/reduction, flow.
-- Language: name what the user already feels.
-- Vocabulary: harmony, chords, scales, modes, song analysis.
+```text
+PracticeBlock
+  duration
+  source: metronome | drum_loop | inspiration_reference | silence
+  allowed_notes
+  focus
+  challenge
+  recording_policy
+  success_reflection
+```
+
+For example, early Feel Time can prescribe 5 minutes of metronome at 80 BPM on
+open E, 5 minutes of E plus silence, and 10 minutes following a reference feel
+with one note. Pocket can restrict the note palette to E, B, and high E. Groove
+Construction can start daily one-minute selected recordings.
+
+The weekly cadence should stay simple:
+
+```text
+Monday: Metronome
+Tuesday: Drum Loop
+Wednesday: Steal Groove
+Thursday: Free Jam
+Friday: Recording
+Saturday: Deep Listening
+Sunday: Listening Only
+```
 
 The adaptive layer should modify daily details, not replace the spine. It can
 choose loop, session length, micro-prompt, review target, continuation from a
@@ -127,6 +182,68 @@ reflection tags, selected loop style, skipped days, and producer notes.
 Alternative considered: a fully adaptive plan. That is attractive later, but it
 would overfit before the app has enough personal history and would make the
 learning path feel less grounded.
+
+### Treat Inspiration As Exploration, Not Repertoire
+
+Groove Master should reference inspiring music without forcing users to learn
+songs. Inspiration Cards can name a source such as Good Times, Dean Town, Time
+Left, or ZUTOMAYO, but the task remains conceptual:
+
+```text
+Inspired by: Good Times
+Challenge: Leave more space.
+```
+
+The product should make it clear that the user is not being asked to learn the
+song. The song is a direction for feel, sound, and taste. In early stages, a
+practice block may ask the user to play one note along with a reference track or
+playlist item, but Groove Master is not packaging that reference as tablature,
+licensed backing-track curriculum, or a required song lesson. The session still
+teaches pocket, repetition, space, relaxation, or variation.
+
+### Make Pocket Tracker Reflective, Not Evaluative
+
+Pocket Tracker is a product feature, not an assessment score. It should track
+habits that help the user feel growth:
+
+- continuous play time;
+- space usage;
+- consistency;
+- session completion without breaking flow;
+- whether marked moments became longer or more relaxed over time.
+
+The copy should stay reflective:
+
+```text
+You left more room today.
+Your timing is becoming more stable.
+17m without stopping.
+```
+
+The tracker must not become a disguised grade. It should never surface
+accuracy, rank, or pass/fail language.
+
+### Preserve The Product's Visual And Commercial Posture
+
+Groove Master should not look like a bright education app, cartoon trainer, or
+music-school portal. Its product direction is closer to ZUTOMAYO, Teenage
+Engineering, Ghostty, Apple Fitness, Loopy Pro, and Future UNIX: dark, indigo,
+midnight purple, acid green accents, industrial minimalism, and instrument-first
+focus. If hosted inside Alan, that identity should appear inside the Groove
+Master surface without forcing the whole Alan shell to adopt it.
+
+The commercial model should remain future-facing in this spec. The product
+posture can be:
+
+```text
+Free: Daily Groove, Journal, basic drum loops
+Pro: Groove packs, advanced drum grooves, recording analysis,
+     community challenges
+```
+
+V1 should not implement payment, subscriptions, marketplace, or community
+features. The business direction is recorded to avoid building a product that
+cannot later support those lines.
 
 ### Start With Room Capture But Keep Audio Progressive
 
@@ -225,11 +342,12 @@ The first implementation proposal should target one daily-use loop:
 
 1. Groove Master domain models and local journal layout.
 2. Built-in loop metadata plus local loop import.
-3. Today Plan and Live Session macOS surface.
-4. Room capture recording with marker timestamps.
-5. End reflection and Groove Entry persistence.
-6. Basic Groove Stream playback of marked moments and full takes.
-7. Producer note generation from metadata and reflection only.
+3. Metronome source and inspiration-card metadata.
+4. Today Plan and Live Session macOS surface.
+5. Room capture recording with marker timestamps.
+6. End reflection, Pocket Tracker snapshot, and Groove Entry persistence.
+7. Basic Groove Stream playback of marked moments and full takes.
+8. Producer note generation from metadata and reflection only.
 
 Later slices can add clean bass capture, multitrack capture, deeper audio
 analysis, iOS/iPadOS capture, richer loop management, modal grammar, advanced

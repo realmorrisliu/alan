@@ -26,7 +26,8 @@ journal entry.
 #### Scenario: User starts daily practice
 - **WHEN** the user opens Groove Master for daily practice
 - **THEN** the app presents today's practice plan with phase, focus, session
-  length, selected drum loop, and one challenge
+  length, session blocks, selected metronome or loop source, inspiration
+  reference when present, and one challenge
 
 #### Scenario: User practices live
 - **WHEN** the user starts the session
@@ -43,15 +44,28 @@ journal entry.
 - **AND** it saves a Groove Entry with the recording take, markers, loop
   metadata, phase, challenge, reflection, and producer note when available
 
-### Requirement: Practice Plan Uses Fixed Spine And Adaptive Micro-Adjustment
-Groove Master's practice plan SHALL use a fixed learning spine with adaptive
+### Requirement: Practice Plan Uses Fixed Route And Adaptive Micro-Adjustment
+Groove Master's practice plan SHALL use a concrete learning route with adaptive
 daily details.
 
 #### Scenario: Plan spine is inspected
 - **WHEN** the user or agent inspects the practice model
-- **THEN** the model includes phases for Groove, Pocket, Jam, Language, and
-  Vocabulary
+- **THEN** the model includes phases for Feel Time, Pocket, Groove Construction,
+  Bass Language, and Musical Conversation
 - **AND** theory-heavy concepts appear after groove and pocket foundations
+
+#### Scenario: Twelve-month route is inspected
+- **WHEN** the user or agent inspects the long-term journey
+- **THEN** Weeks 1-4 focus on one note, pulse, silence, breathing, and stable
+  sound
+- **AND** Weeks 5-8 focus on pocket with E, B, high E, root/rest, and
+  root/octave patterns
+- **AND** Weeks 9-12 focus on loop construction, repetition, variation, and
+  rhythmic imitation without forced song learning
+- **AND** Months 3-6 introduce bass language such as root, fifth, octave,
+  ghost note, and passing tone
+- **AND** Months 6-12 focus on musical conversation, original basslines, and
+  deeper listening
 
 #### Scenario: Daily plan adapts
 - **WHEN** the app prepares today's practice
@@ -61,6 +75,30 @@ daily details.
   uninterrupted play time, markers, reflection tags, loop style, skipped days,
   and producer notes
 - **AND** it does not require automatic timing or pitch analysis for V1
+
+### Requirement: Session Plans Are Built From Practice Blocks
+Groove Master SHALL model each daily session as a small sequence of practice
+blocks rather than as one undifferentiated timer.
+
+#### Scenario: Practice block is represented
+- **WHEN** a day plan is generated
+- **THEN** each practice block can specify duration, source, allowed notes,
+  focus, challenge, recording policy, and success reflection
+- **AND** supported V1 sources include metronome, drum loop, inspiration
+  reference, and silence
+
+#### Scenario: Early feel-time plan is generated
+- **WHEN** the user is in early Feel Time
+- **THEN** the app can generate metronome blocks such as 80 BPM open E,
+  silence blocks such as E plus rest, and simple reference-following blocks
+- **AND** the plan does not introduce theory, scales, chord names, or song
+  transcription
+
+#### Scenario: Weekly cadence is generated
+- **WHEN** the app schedules a week
+- **THEN** it can use archetypes such as Metronome, Drum Loop, Steal Groove,
+  Free Jam, Recording, Deep Listening, and Listening Only
+- **AND** Listening Only days are allowed as valid practice days
 
 ### Requirement: Audio Model Starts With Room Capture And Stays Progressive
 Groove Master SHALL default V1 recording to room capture while preserving an
@@ -110,6 +148,71 @@ local loop folders.
 - **AND** it does not require cloud upload or a hidden proprietary loop library
   for V1
 
+### Requirement: Inspiration Cards Reference Songs Without Forced Repertoire
+Groove Master SHALL use Inspiration Cards to provide musical taste and direction
+without requiring the user to learn specific songs.
+
+#### Scenario: Inspiration card is shown
+- **WHEN** today's plan includes an inspiration card
+- **THEN** the card may name an artist, song, groove, or reference
+- **AND** it pairs that reference with a conceptual challenge such as using
+  fewer notes, leaving more space, staying relaxed, or repeating longer
+
+#### Scenario: User follows inspiration
+- **WHEN** the user starts a session with an inspiration reference
+- **THEN** the task remains about feel, rhythm, space, or groove concept
+- **AND** the app does not present the reference as required repertoire,
+  tablature, score, or song tutorial
+- **AND** early practice may use a reference track or playlist item for
+  one-note feel-following without turning it into bundled song curriculum
+
+### Requirement: Pocket Tracker Provides Non-Graded Reflection
+Groove Master SHALL track groove habits as reflection rather than evaluation.
+
+#### Scenario: Pocket tracker is updated
+- **WHEN** a session completes
+- **THEN** the app may record continuous play time, space usage, consistency,
+  flow breaks, and selected-moment duration
+- **AND** these values are stored as reflective practice signals rather than
+  grades
+
+#### Scenario: Pocket tracker is displayed
+- **WHEN** the user reviews progress
+- **THEN** the app may show reflective copy such as "17m without stopping",
+  "You left more room today", or "Your timing is becoming more stable"
+- **AND** it does not display accuracy percentages, rank, combo, pass/fail
+  language, or school-like scores
+
+### Requirement: Product Presentation Avoids Education Gamification
+Groove Master SHALL use an instrument-first creative environment presentation
+rather than a bright education, music-school, or gamified trainer presentation.
+
+#### Scenario: Groove Master surface is designed
+- **WHEN** a user-facing Groove Master surface is designed
+- **THEN** it follows the visual direction of dark, indigo, midnight purple,
+  acid green accent, industrial minimalism, and Future UNIX
+- **AND** it avoids cartoon gamification, bright education UI, dense dashboards,
+  and traditional music-school aesthetics
+
+#### Scenario: Groove Master is hosted in Alan
+- **WHEN** Groove Master appears inside an Alan environment surface
+- **THEN** its distinctive visual identity remains scoped to the Groove Master
+  app surface
+- **AND** it does not require the current Alan shell or other environment apps
+  to adopt Groove Master's palette or interaction style
+
+### Requirement: Commercial Features Are Deferred From V1
+Groove Master's V1 SHALL preserve a future business posture without
+implementing commerce.
+
+#### Scenario: V1 scope is proposed
+- **WHEN** a V1 implementation scope is proposed
+- **THEN** it may reserve product space for future Pro capabilities such as
+  groove packs, advanced drum grooves, recording analysis, and community
+  challenges
+- **AND** it does not require payment, subscriptions, marketplace, or community
+  features for the first daily-use loop
+
 ### Requirement: Producer Agent Is Low Presence
 The Groove Master producer agent SHALL plan, reflect, and curate without
 grading, lecturing, or interrupting musical flow.
@@ -138,7 +241,8 @@ adapter, and macOS surface boundaries.
 #### Scenario: Implementation architecture is proposed
 - **WHEN** a future implementation change is proposed
 - **THEN** it identifies the domain core boundary for practice phases, plan
-  generation, loop metadata, session lifecycle, and journal schema
+  generation, practice blocks, inspiration cards, pocket tracking, loop
+  metadata, session lifecycle, and journal schema
 - **AND** it identifies the audio runtime boundary for capture, playback,
   markers, export, and future capture modes
 - **AND** it identifies the Alan adapter boundary for objects, commands,
