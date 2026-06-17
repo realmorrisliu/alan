@@ -717,6 +717,18 @@ struct AlanShellBootProfile: Equatable {
         environment.keys.sorted().map { ($0, environment[$0] ?? "") }
     }
 
+    /// Returns a copy with a different working directory. The expensive boot
+    /// inputs (command resolution, Ghostty discovery, environment) are
+    /// cwd-independent, so a `cd` only needs to overlay this one field.
+    func withWorkingDirectory(_ workingDirectory: String) -> AlanShellBootProfile {
+        AlanShellBootProfile(
+            command: command,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            ghostty: ghostty
+        )
+    }
+
     static func forPane(
         _ pane: ShellPane,
         shellState: ShellStateSnapshot,
@@ -820,6 +832,66 @@ struct AlanShellBootProfile: Equatable {
         guard !value.isEmpty else { return "''" }
         let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
+    }
+}
+
+/// Memoizes `AlanShellBootProfile.forPane` results so the hot terminal
+/// callbacks (metadata and runtime projection) do not repeatedly hit the
+/// filesystem: Ghostty discovery (`stat` of every candidate path), the
+/// terminal-profile document load (disk read + JSON decode), and command
+/// resolution (PATH/repo lookup).
+///
+/// A pane's boot profile is its static launch configuration. It only changes
+/// when launch-relevant pane inputs change, so the cache keys on exactly those
+/// inputs and ignores high-frequency metadata churn (attention, viewport,
+/// activity, process binding, alan binding).
+final class AlanShellBootProfileCache {
+    struct Key: Hashable {
+        let paneID: String
+        let tabID: String
+        let spaceID: String
+        let launchTarget: String
+        let terminalProfileID: String?
+        let windowID: String
+
+        // `cwd` is deliberately excluded: the expensive resolution (Ghostty
+        // discovery, terminal-profile document load, command resolution) does
+        // not depend on it. The working directory is applied as a cheap overlay
+        // so a `cd` never busts the cache or repeats disk work.
+        init(pane: ShellPane, windowID: String) {
+            paneID = pane.paneID
+            tabID = pane.tabID
+            spaceID = pane.spaceID
+            launchTarget = pane.resolvedLaunchTarget.rawValue
+            terminalProfileID = pane.terminalProfileID
+            self.windowID = windowID
+        }
+    }
+
+    private let compute: (ShellPane, ShellStateSnapshot) -> AlanShellBootProfile
+    private var storage: [Key: AlanShellBootProfile] = [:]
+
+    init(
+        compute: @escaping (ShellPane, ShellStateSnapshot) -> AlanShellBootProfile = {
+            AlanShellBootProfile.forPane($0, shellState: $1)
+        }
+    ) {
+        self.compute = compute
+    }
+
+    func profile(for pane: ShellPane, shellState: ShellStateSnapshot) -> AlanShellBootProfile {
+        let key = Key(pane: pane, windowID: shellState.windowID)
+        let base: AlanShellBootProfile
+        if let cached = storage[key] {
+            base = cached
+        } else {
+            base = compute(pane, shellState)
+            storage[key] = base
+        }
+        guard let cwd = pane.cwd, cwd != base.workingDirectory else {
+            return base
+        }
+        return base.withWorkingDirectory(cwd)
     }
 }
 
@@ -1355,6 +1427,27 @@ struct TerminalHostRuntimeSnapshot: Equatable {
 
     var stageLabel: String {
         stage.rawValue.replacingOccurrences(of: "_", with: " ")
+    }
+
+    /// Equality that ignores the volatile publish timestamps. Two snapshots that
+    /// only differ in `lastUpdatedAt` represent the same observable shell state,
+    /// so callers can suppress redundant `@Published` mutations (and the
+    /// tree-wide SwiftUI invalidation they trigger).
+    func equalsIgnoringTimestamp(_ other: TerminalHostRuntimeSnapshot) -> Bool {
+        stage == other.stage
+            && contentID == other.contentID
+            && paneID == other.paneID
+            && tabID == other.tabID
+            && renderPriority == other.renderPriority
+            && logicalSize == other.logicalSize
+            && backingSize == other.backingSize
+            && displayName == other.displayName
+            && displayID == other.displayID
+            && attachedWindowTitle == other.attachedWindowTitle
+            && isFocused == other.isFocused
+            && renderer == other.renderer
+            && paneMetadata == other.paneMetadata
+            && surfaceState.equalsIgnoringTimestamp(other.surfaceState)
     }
 
     static let placeholder = TerminalHostRuntimeSnapshot(

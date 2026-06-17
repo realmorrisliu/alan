@@ -91,6 +91,13 @@ final class AlanShellControlPlane {
     private let eventStore: AlanShellEventStore
     private var filePoller: AlanShellControlFilePoller?
     private var trackedPaneIDs: Set<String> = []
+    private let stateFileQueue = DispatchQueue(
+        label: "app.alan.shell.control-plane-state",
+        qos: .utility
+    )
+    private var pendingStateFileWrite: DispatchWorkItem?
+    private var latestMergedState: ShellStateSnapshot?
+    private var lastPersistedState: ShellStateSnapshot?
 
     init(
         windowID: String,
@@ -190,17 +197,77 @@ final class AlanShellControlPlane {
         eventStore.latestEventID
     }
 
+    /// Full publish: prompt in-memory merge plus deferred disk/event persistence.
+    /// Used by structural mutations and the debounced flush.
     func publish(state: ShellStateSnapshot) {
-        ensureDirectories()
+        publishInMemory(state: state)
+        persistPublished()
+    }
+
+    /// Prompt path: updates the published-state cache that shell IPC clients read
+    /// (`.state` / `.pane.list` / `.pane.snapshot`) and ensures pane support
+    /// directories + binding-file poller tracking exist for the current panes.
+    /// The pane-directory work only touches disk for newly-appeared panes, so it
+    /// is cheap on the steady terminal-output path while keeping boot/structural
+    /// pane setup prompt (a restored pane's child needs its binding directory
+    /// before it can write `alan-binding.json`).
+    @discardableResult
+    func publishInMemory(state: ShellStateSnapshot) -> ShellStateSnapshot {
         let mergeResult = socketServer.mergePublishedState(state)
-        let mergedState = mergeResult.merged
-        synchronizePaneSupportDirectories(for: mergedState)
-        eventStore.recordChanges(from: mergeResult.previous, to: mergedState)
+        latestMergedState = mergeResult.merged
+        synchronizePaneSupportDirectories(for: mergeResult.merged)
+        return mergeResult.merged
+    }
+
+    /// Deferred persistence for the latest in-memory state: the change-event log
+    /// (coalesced since the last persist) and the `state.json` mirror (encode +
+    /// write off the main thread). Run from the debounced flush, not the
+    /// per-callback path.
+    func persistPublished() {
+        guard let mergedState = latestMergedState else { return }
+        ensureDirectories()
+        eventStore.recordChanges(from: lastPersistedState, to: mergedState)
+        lastPersistedState = mergedState
+        scheduleStateFilePersist()
+    }
+
+    /// Forces the latest published state to `state.json` synchronously. Call on
+    /// app background/quit so the on-disk mirror is current before exit.
+    func flushStateFile() {
+        pendingStateFileWrite?.cancel()
+        pendingStateFileWrite = nil
+        guard let mergedState = latestMergedState else { return }
+        let url = stateFileURL
+        let succeeded = stateFileQueue.sync { Self.writeStateFile(mergedState, to: url) }
+        if !succeeded {
+            diagnostics.record("Failed to persist shell state to \(url.lastPathComponent)")
+        }
+    }
+
+    private func scheduleStateFilePersist() {
+        pendingStateFileWrite?.cancel()
+        guard let mergedState = latestMergedState else { return }
+        let url = stateFileURL
+        let item = DispatchWorkItem { [weak self] in
+            guard Self.writeStateFile(mergedState, to: url) == false else { return }
+            DispatchQueue.main.async {
+                self?.diagnostics.record("Failed to persist shell state to \(url.lastPathComponent)")
+            }
+        }
+        pendingStateFileWrite = item
+        stateFileQueue.asyncAfter(deadline: .now() + .milliseconds(150), execute: item)
+    }
+
+    @discardableResult
+    private static func writeStateFile(_ state: ShellStateSnapshot, to url: URL) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
-            let data = try encoder.encode(mergedState)
-            try data.write(to: stateFileURL, options: .atomic)
+            let data = try encoder.encode(state)
+            try data.write(to: url, options: .atomic)
+            return true
         } catch {
-            diagnostics.record("Failed to persist shell state: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -366,7 +433,7 @@ final class AlanShellControlPlane {
         trackedPaneIDs = paneIDs
         filePoller?.updateTrackedPaneIDs(paneIDs)
 
-        for paneID in paneIDs {
+        for paneID in paneIDs.subtracting(previousPaneIDs) {
             let paneURL = alanShellPaneSupportDirectoryURL(
                 windowID: windowID,
                 paneID: paneID,

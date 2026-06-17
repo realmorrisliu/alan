@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import Darwin
 import Foundation
@@ -17,6 +18,15 @@ struct ShellRuntimeMetadataTestRunner {
 @MainActor
 private enum ShellRuntimeMetadataTests {
     static func run() {
+        verifiesBootProfileCacheMemoizesPerLaunchKey()
+        verifiesMetadataCallbackReusesCachedBootProfile()
+        verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
+        verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite()
+        verifiesLifecycleFlushPersistsPendingContentSynchronously()
+        verifiesFailedStructuralManifestSaveIsReported()
+        verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics()
+        verifiesPaneSupportDirectoryIsCreatedPromptlyAtBoot()
+        verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
         verifiesShellSelectionAndFocusRecordPerformanceDiagnostics()
@@ -7848,6 +7858,7 @@ private enum ShellRuntimeMetadataTests {
         )
 
         controller.updateTerminalMetadata(metadata(title: "Moved", cwd: "/moved"), for: "pane_1")
+        controller.flushWorkspacePersistence()
         guard let updatedManifest = decodeManifest(at: manifestURL),
               let updatedTab = updatedManifest.spaces
                 .flatMap(\.tabs)
@@ -8161,6 +8172,7 @@ private enum ShellRuntimeMetadataTests {
             metadata(title: "npm run dev", cwd: "/repo/app", activeTaskState: .foregroundCommand),
             for: "pane_1"
         )
+        controller.flushWorkspacePersistence()
 
         guard let savedManifest = decodeManifest(at: manifestURL),
               let transcript = terminalPayload(
@@ -10141,6 +10153,400 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesBootProfileCacheMemoizesPerLaunchKey() {
+        var computeCount = 0
+        let cache = AlanShellBootProfileCache(compute: { pane, state in
+            computeCount += 1
+            return AlanShellBootProfile.forPane(pane, shellState: state)
+        })
+        let state = ShellStateSnapshot.bootstrapDefault(windowID: "boot_profile_cache_test")
+        let pane = ShellPane(
+            paneID: "pane_cache",
+            tabID: "tab_cache",
+            spaceID: "space_cache",
+            launchTarget: .shell,
+            cwd: "/tmp",
+            process: nil,
+            attention: .idle,
+            context: nil,
+            viewport: nil,
+            alanBinding: nil,
+            terminalProfileID: nil
+        )
+
+        _ = cache.profile(for: pane, shellState: state)
+        _ = cache.profile(for: pane, shellState: state)
+        expect(
+            computeCount == 1,
+            "boot profile cache must compute once for repeated identical panes (got \(computeCount))"
+        )
+
+        let metadataChurnedPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: pane.cwd,
+            process: pane.process,
+            attention: .awaitingUser,
+            context: pane.context,
+            viewport: ShellViewportSnapshot(
+                title: "busy",
+                summary: "lots of output",
+                visibleExcerpt: nil,
+                lastActivityAt: "2026-06-15T00:00:00Z"
+            ),
+            alanBinding: pane.alanBinding,
+            terminalProfileID: pane.terminalProfileID
+        )
+        _ = cache.profile(for: metadataChurnedPane, shellState: state)
+        expect(
+            computeCount == 1,
+            "metadata churn (attention/viewport) must not recompute boot profile (got \(computeCount))"
+        )
+
+        // A working-directory change (e.g. `cd`) must NOT redo the expensive
+        // resolution — Ghostty discovery and the profile document load are
+        // cwd-independent. The new cwd is applied as a cheap overlay.
+        let relaunchedPane = ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: "/var/data",
+            process: pane.process,
+            attention: pane.attention,
+            context: pane.context,
+            viewport: pane.viewport,
+            alanBinding: pane.alanBinding,
+            terminalProfileID: pane.terminalProfileID
+        )
+        let relaunchedProfile = cache.profile(for: relaunchedPane, shellState: state)
+        expect(
+            computeCount == 1,
+            "a cwd change must not recompute the boot profile (got \(computeCount))"
+        )
+        expect(
+            relaunchedProfile.workingDirectory == "/var/data",
+            "a cwd change must be reflected in the boot profile working directory "
+                + "(got \(relaunchedProfile.workingDirectory))"
+        )
+    }
+
+    private static func verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges() {
+        let controller = makeController()
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        func snapshot(at timestamp: TimeInterval) -> TerminalHostRuntimeSnapshot {
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: pane.terminalContentID,
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                renderPriority: .foregroundInteractive,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: "Studio Display",
+                displayID: "display_1",
+                attachedWindowTitle: "alan",
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "build running",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: 5)
+                ),
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: timestamp)
+            )
+        }
+
+        var changeCount = 0
+        let cancellable = controller.objectWillChange.sink { _ in changeCount += 1 }
+        defer { cancellable.cancel() }
+
+        controller.updateTerminalRuntime(snapshot(at: 1))
+        let afterFirst = changeCount
+        expect(afterFirst > 0, "first runtime publish must notify shell observers")
+
+        // Identical snapshot except for the outer publish timestamp: this is the
+        // per-refresh churn that must not invalidate the whole observing tree.
+        controller.updateTerminalRuntime(snapshot(at: 2))
+        expect(
+            changeCount == afterFirst,
+            "runtime snapshot identical except for its timestamp must not re-notify "
+                + "shell observers (delta \(changeCount - afterFirst))"
+        )
+    }
+
+    private static func verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let windowID = "manifest_io_test_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer,
+            manifestFlushScheduler: scheduler
+        )
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        // A burst of metadata callbacks, alternating active-task state to exercise
+        // the path that previously wrote the manifest synchronously.
+        let states: [ShellTabActiveTaskState] = [.foregroundCommand, .alanRunning]
+        for index in 0..<8 {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "burst \(index)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(index)),
+                    activeTaskState: states[index % states.count]
+                ),
+                for: pane.paneID
+            )
+        }
+
+        expect(
+            writer.syncWrites == 0,
+            "terminal metadata callbacks must not write the manifest or shell-state file "
+                + "synchronously (got \(writer.syncWrites) synchronous writes)"
+        )
+    }
+
+    private static func makeManifestIOController(
+        writer: SpyPersistenceWriter,
+        scheduler: ManifestFlushScheduling
+    ) -> ShellHostController {
+        let windowID = "manifest_io_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        return makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer,
+            manifestFlushScheduler: scheduler
+        )
+    }
+
+    private static func verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let controller = makeManifestIOController(writer: writer, scheduler: scheduler)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        for index in 0..<10 {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "burst \(index)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(index)),
+                    activeTaskState: .foregroundCommand
+                ),
+                for: pane.paneID
+            )
+        }
+
+        expect(
+            scheduler.scheduleCount == 1,
+            "a burst of terminal callbacks must schedule one debounced flush "
+                + "(scheduled \(scheduler.scheduleCount))"
+        )
+        expect(
+            writer.asyncWrites == 0 && writer.syncWrites == 0,
+            "nothing must be written before the debounce window fires"
+        )
+
+        scheduler.fire()
+
+        expect(
+            writer.manifestWrites == 1 && writer.shellStateWrites == 1,
+            "the coalesced flush must write the manifest and shell-state file exactly once each "
+                + "(manifest \(writer.manifestWrites), shellState \(writer.shellStateWrites))"
+        )
+        expect(
+            writer.syncWrites == 0,
+            "the coalesced flush must write off the main thread, not synchronously"
+        )
+    }
+
+    private static func verifiesPaneSupportDirectoryIsCreatedPromptlyAtBoot() {
+        let windowID = "pane_dir_boot_\(UUID().uuidString)"
+        // Manual scheduler: the debounced/deferred persistence never fires, so any
+        // boot-critical pane setup must happen on the prompt (in-memory) path.
+        let controller = makeController(
+            windowID: windowID,
+            manifestFlushScheduler: ManualManifestFlushScheduler()
+        )
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+        let paneURL = alanShellPaneSupportDirectoryURL(windowID: windowID, paneID: pane.paneID)
+        defer { try? FileManager.default.removeItem(at: alanShellControlPlaneRootURL(windowID: windowID)) }
+
+        expect(
+            FileManager.default.fileExists(atPath: paneURL.path),
+            "a pane's support directory must be created promptly at boot, before the debounced flush, "
+                + "so a fast shell integration can write its binding file"
+        )
+    }
+
+    private static func verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics() {
+        let windowID = "manifest_async_fail_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let stateURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-state.json")
+        // Inject the real persistence writer and verify the controller wires its
+        // async error sink to control-plane diagnostics. (This exercises the
+        // wiring/routing closure; the param-vs-resolved-writer selection itself
+        // is only observable with the internal default writer, which is verified
+        // by inspection.)
+        let writer = ShellPersistenceWriter(
+            manifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            stateStore: ShellStatePersistenceStore(persistenceURL: stateURL)
+        )
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: writer
+        )
+
+        writer.onError("workspace manifest async save failed")
+
+        expect(
+            controller.controlPlaneDiagnostics.contains {
+                $0.contains("workspace manifest async save failed")
+            },
+            "async persistence-write failures must be routed to control-plane diagnostics"
+        )
+    }
+
+    private static func verifiesFailedStructuralManifestSaveIsReported() {
+        let windowID = "manifest_fail_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: FailingPersistenceWriter(),
+            manifestFlushScheduler: ImmediateManifestFlushScheduler()
+        )
+
+        // A structural mutation persists synchronously; when the write fails the
+        // controller must surface it rather than silently appear to succeed.
+        _ = controller.splitPane(paneID: "pane_1", placement: .down)
+
+        expect(
+            controller.controlPlaneDiagnostics.contains { $0.contains("workspace manifest save failed") },
+            "a failed structural manifest save must record a control-plane diagnostic"
+        )
+    }
+
+    private static func verifiesLifecycleFlushPersistsPendingContentSynchronously() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let controller = makeManifestIOController(writer: writer, scheduler: scheduler)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        controller.updateTerminalMetadata(
+            TerminalPaneMetadataSnapshot(
+                title: "cargo test",
+                workingDirectory: "/repo/app",
+                summary: "pending output",
+                attention: .active,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 1),
+                activeTaskState: .foregroundCommand
+            ),
+            for: pane.paneID
+        )
+        expect(
+            writer.syncWrites == 0 && writer.asyncWrites == 0,
+            "a terminal callback alone must not write before the debounce fires"
+        )
+
+        controller.flushWorkspacePersistence()
+
+        expect(
+            writer.syncWrites >= 2,
+            "lifecycle flush must synchronously persist the manifest and shell-state file "
+                + "(synchronous writes \(writer.syncWrites))"
+        )
+    }
+
+    private static func verifiesMetadataCallbackReusesCachedBootProfile() {
+        var computeCount = 0
+        let cache = AlanShellBootProfileCache(compute: { pane, state in
+            computeCount += 1
+            return AlanShellBootProfile.forPane(pane, shellState: state)
+        })
+        let controller = makeController(bootProfileCache: cache)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        func deliverMetadata(burst: Int) {
+            controller.updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: "cargo test",
+                    workingDirectory: "/repo/app",
+                    summary: "output burst \(burst)",
+                    attention: .active,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: Double(burst))
+                ),
+                for: pane.paneID
+            )
+        }
+
+        // The first callbacks settle the pane's launch-relevant fields (e.g.
+        // cwd from the reported working directory), which legitimately compute
+        // the boot profile. Those settle within the warm-up window.
+        for burst in 0..<3 {
+            deliverMetadata(burst: burst)
+        }
+        let warmComputeCount = computeCount
+        expect(
+            warmComputeCount >= 1,
+            "metadata callbacks must route boot-profile resolution through the cache"
+        )
+
+        // Steady state: a high-output burst of identical callbacks must not
+        // recompute the boot profile (no Ghostty discovery / profile disk read).
+        for burst in 3..<20 {
+            deliverMetadata(burst: burst)
+        }
+        expect(
+            computeCount == warmComputeCount,
+            "steady-state metadata callbacks must reuse the cached boot profile "
+                + "(recomputed \(computeCount - warmComputeCount) extra times across 17 callbacks)"
+        )
+    }
+
     private static func makeController(
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
@@ -10150,6 +10556,9 @@ private enum ShellRuntimeMetadataTests {
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
+        bootProfileCache: AlanShellBootProfileCache? = nil,
+        persistenceWriter: ShellPersistenceWriting? = nil,
+        manifestFlushScheduler: ManifestFlushScheduling? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -10161,6 +10570,13 @@ private enum ShellRuntimeMetadataTests {
         )
         let persistenceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(windowID).json")
+        let resolvedWriter =
+            persistenceWriter
+            ?? SynchronousPersistenceWriter(
+                manifestStore: workspaceManifestStore,
+                stateStore: ShellStatePersistenceStore(persistenceURL: persistenceURL)
+            )
+        let resolvedScheduler = manifestFlushScheduler ?? ImmediateManifestFlushScheduler()
         return ShellHostController(
             shellState: shellState ?? .bootstrapDefault(windowID: windowID),
             windowContext: context,
@@ -10168,11 +10584,104 @@ private enum ShellRuntimeMetadataTests {
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
+            persistenceWriter: resolvedWriter,
+            manifestFlushScheduler: resolvedScheduler,
             closeConfirmationPresenter: closeConfirmationPresenter,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
             performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
+            bootProfileCache: bootProfileCache,
             appIsActiveProvider: { appIsActive }
         )
+    }
+
+    final class SpyPersistenceWriter: ShellPersistenceWriting {
+        private(set) var syncWrites = 0
+        private(set) var asyncWrites = 0
+        private(set) var manifestWrites = 0
+        private(set) var shellStateWrites = 0
+        private(set) var lastManifest: ShellContentWorkspaceManifest?
+
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
+            syncWrites += 1
+            manifestWrites += 1
+            lastManifest = manifest
+            return true
+        }
+
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
+            asyncWrites += 1
+            manifestWrites += 1
+            lastManifest = manifest
+        }
+
+        func writeShellStateSync(_ state: ShellStateSnapshot) {
+            syncWrites += 1
+            shellStateWrites += 1
+        }
+
+        func writeShellStateAsync(_ state: ShellStateSnapshot) {
+            asyncWrites += 1
+            shellStateWrites += 1
+        }
+    }
+
+    /// Default test writer: persists synchronously to the real stores so the
+    /// majority of tests observe persistence inline. The off-main/debounced
+    /// contract is exercised explicitly by tests that inject the spy + manual
+    /// scheduler instead.
+    final class SynchronousPersistenceWriter: ShellPersistenceWriting {
+        private let manifestStore: ShellWorkspaceManifestStore?
+        private let stateStore: ShellStatePersistenceStore
+
+        init(manifestStore: ShellWorkspaceManifestStore?, stateStore: ShellStatePersistenceStore) {
+            self.manifestStore = manifestStore
+            self.stateStore = stateStore
+        }
+
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
+            do {
+                try manifestStore?.save(manifest)
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
+        func writeShellStateSync(_ state: ShellStateSnapshot) { stateStore.save(state) }
+        func writeShellStateAsync(_ state: ShellStateSnapshot) { stateStore.save(state) }
+    }
+
+    final class ImmediateManifestFlushScheduler: ManifestFlushScheduling {
+        func schedule(_ work: @escaping () -> Void) { work() }
+    }
+
+    final class FailingPersistenceWriter: ShellPersistenceWriting {
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool { false }
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {}
+        func writeShellStateSync(_ state: ShellStateSnapshot) {}
+        func writeShellStateAsync(_ state: ShellStateSnapshot) {}
+    }
+
+    final class ManualManifestFlushScheduler: ManifestFlushScheduling {
+        private(set) var scheduleCount = 0
+        private var pending: (() -> Void)?
+
+        func schedule(_ work: @escaping () -> Void) {
+            scheduleCount += 1
+            pending = work
+        }
+
+        @discardableResult
+        func fire() -> Bool {
+            guard let work = pending else { return false }
+            pending = nil
+            work()
+            return true
+        }
     }
 
     private static func fakeSurfaceHandle(
