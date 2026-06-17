@@ -19,8 +19,12 @@ enum ShellWorkspaceManifestRecovery: Equatable {
 /// terminal callback path never blocks the main thread on disk.
 protocol ShellPersistenceWriting: AnyObject {
     /// Blocks the caller until the manifest is written (structural mutations).
-    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest)
+    /// Returns `true` when the write succeeded so callers can advance their
+    /// last-saved state and surface failures.
+    @discardableResult
+    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool
     /// Enqueues the manifest write without blocking the caller (debounced content).
+    /// Failures are reported through the writer's error sink, not the caller.
     func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest)
     /// Blocks the caller until the shell-state file is written (structural).
     func writeShellStateSync(_ state: ShellStateSnapshot)
@@ -38,7 +42,7 @@ final class ShellPersistenceWriter: ShellPersistenceWriting {
         manifestStore: ShellWorkspaceManifestStore?,
         stateStore: ShellStatePersistenceStore,
         queue: DispatchQueue = DispatchQueue(label: "app.alan.shell.persistence", qos: .utility),
-        onError: @escaping (String) -> Void = { _ in }
+        onError: @escaping (String) -> Void = { NSLog("%@", $0) }
     ) {
         self.manifestStore = manifestStore
         self.stateStore = stateStore
@@ -46,12 +50,17 @@ final class ShellPersistenceWriter: ShellPersistenceWriting {
         self.onError = onError
     }
 
-    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) {
-        queue.sync { self.writeManifest(manifest) }
+    @discardableResult
+    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
+        queue.sync { self.trySaveManifest(manifest) }
     }
 
     func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
-        queue.async { self.writeManifest(manifest) }
+        queue.async {
+            if !self.trySaveManifest(manifest) {
+                self.onError("workspace manifest async save failed")
+            }
+        }
     }
 
     func writeShellStateSync(_ state: ShellStateSnapshot) {
@@ -62,12 +71,14 @@ final class ShellPersistenceWriter: ShellPersistenceWriting {
         queue.async { self.stateStore.save(state) }
     }
 
-    private func writeManifest(_ manifest: ShellContentWorkspaceManifest) {
-        guard let manifestStore else { return }
+    /// Returns `true` on success (or when there is no manifest store to write to).
+    private func trySaveManifest(_ manifest: ShellContentWorkspaceManifest) -> Bool {
+        guard let manifestStore else { return true }
         do {
             try manifestStore.save(manifest)
+            return true
         } catch {
-            onError("workspace manifest save failed: \(error)")
+            return false
         }
     }
 }

@@ -23,6 +23,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
         verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite()
         verifiesLifecycleFlushPersistsPendingContentSynchronously()
+        verifiesFailedStructuralManifestSaveIsReported()
         verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
@@ -10386,6 +10387,27 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesFailedStructuralManifestSaveIsReported() {
+        let windowID = "manifest_fail_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            persistenceWriter: FailingPersistenceWriter(),
+            manifestFlushScheduler: ImmediateManifestFlushScheduler()
+        )
+
+        // A structural mutation persists synchronously; when the write fails the
+        // controller must surface it rather than silently appear to succeed.
+        _ = controller.splitPane(paneID: "pane_1", placement: .down)
+
+        expect(
+            controller.controlPlaneDiagnostics.contains { $0.contains("workspace manifest save failed") },
+            "a failed structural manifest save must record a control-plane diagnostic"
+        )
+    }
+
     private static func verifiesLifecycleFlushPersistsPendingContentSynchronously() {
         let writer = SpyPersistenceWriter()
         let scheduler = ManualManifestFlushScheduler()
@@ -10525,10 +10547,12 @@ private enum ShellRuntimeMetadataTests {
         private(set) var shellStateWrites = 0
         private(set) var lastManifest: ShellContentWorkspaceManifest?
 
-        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) {
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
             syncWrites += 1
             manifestWrites += 1
             lastManifest = manifest
+            return true
         }
 
         func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
@@ -10561,7 +10585,16 @@ private enum ShellRuntimeMetadataTests {
             self.stateStore = stateStore
         }
 
-        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
+            do {
+                try manifestStore?.save(manifest)
+                return true
+            } catch {
+                return false
+            }
+        }
+
         func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
         func writeShellStateSync(_ state: ShellStateSnapshot) { stateStore.save(state) }
         func writeShellStateAsync(_ state: ShellStateSnapshot) { stateStore.save(state) }
@@ -10569,6 +10602,14 @@ private enum ShellRuntimeMetadataTests {
 
     final class ImmediateManifestFlushScheduler: ManifestFlushScheduling {
         func schedule(_ work: @escaping () -> Void) { work() }
+    }
+
+    final class FailingPersistenceWriter: ShellPersistenceWriting {
+        @discardableResult
+        func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool { false }
+        func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {}
+        func writeShellStateSync(_ state: ShellStateSnapshot) {}
+        func writeShellStateAsync(_ state: ShellStateSnapshot) {}
     }
 
     final class ManualManifestFlushScheduler: ManifestFlushScheduling {

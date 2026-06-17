@@ -2926,13 +2926,16 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if !pinSnapshotTabIDs.isEmpty {
             applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
         }
-        // Track the intended last-saved manifest on the main actor for timestamp
-        // continuity; the disk write itself runs on the background writer.
-        workspaceManifest = manifestToSave
         if coalesced {
+            // Debounced restore content: advance the intended last-saved manifest
+            // optimistically (a failed write self-heals on the next flush, which
+            // rebuilds from current state). The writer surfaces async failures.
+            workspaceManifest = manifestToSave
             persistenceWriter.writeManifestAsync(manifestToSave)
+        } else if persistenceWriter.writeManifestSync(manifestToSave) {
+            workspaceManifest = manifestToSave
         } else {
-            persistenceWriter.writeManifestSync(manifestToSave)
+            recordControlPlaneDiagnostic("workspace manifest save failed")
         }
     }
 
@@ -2945,8 +2948,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             forTerminalContentID: contentID
         )
         guard result.removed else { return false }
+        guard persistenceWriter.writeManifestSync(result.manifest) else {
+            recordControlPlaneDiagnostic("workspace manifest clear transcript save failed")
+            return false
+        }
         self.workspaceManifest = result.manifest
-        persistenceWriter.writeManifestSync(result.manifest)
         return true
     }
 
@@ -2995,8 +3001,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         guard didUpdate else { return false }
 
+        guard persistenceWriter.writeManifestSync(manifest) else {
+            recordControlPlaneDiagnostic("workspace manifest save failed")
+            return false
+        }
         workspaceManifest = manifest
-        persistenceWriter.writeManifestSync(manifest)
         objectWillChange.send()
         recordControlPlaneDiagnostic(diagnostic(tabID))
         return true
