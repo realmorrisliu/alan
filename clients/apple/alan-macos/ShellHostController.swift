@@ -2908,6 +2908,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         pendingContentFlushScheduled = false
         syncWorkspaceManifestFromShellState()
         persistShellState()
+        controlPlane.flushStateFile()
     }
 
     private func syncWorkspaceManifestFromShellState(

@@ -1,14 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Shell persistence does not block the main thread
-The macOS shell SHALL perform JSON encoding and atomic disk writes for both the
-workspace manifest and the control-plane shell-state snapshot file off the main
-thread, and SHALL NOT perform a synchronous main-thread disk write for either on
-the terminal metadata or runtime callback path.
+The macOS shell SHALL perform JSON encoding and atomic disk writes for every
+state file it persists on the terminal callback path — the workspace manifest,
+the shell-state snapshot, and the control-plane `state.json` mirror — off the
+main thread, and SHALL NOT perform a synchronous main-thread disk write for any of
+them on the terminal metadata or runtime callback path.
 
 #### Scenario: High-output terminal does not stall the UI
 - **WHEN** one or more terminals produce sustained high-frequency output
-- **THEN** alan does not perform a synchronous main-thread disk write of the workspace manifest or the control-plane shell-state file on the terminal metadata or runtime callback path
+- **THEN** alan does not perform a synchronous main-thread disk write of the workspace manifest, the shell-state snapshot, or the control-plane state file on the terminal metadata or runtime callback path
 
 #### Scenario: Encode and write run off the main thread
 - **WHEN** alan persists the workspace manifest or the control-plane shell-state file

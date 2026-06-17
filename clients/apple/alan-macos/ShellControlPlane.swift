@@ -91,6 +91,12 @@ final class AlanShellControlPlane {
     private let eventStore: AlanShellEventStore
     private var filePoller: AlanShellControlFilePoller?
     private var trackedPaneIDs: Set<String> = []
+    private let stateFileQueue = DispatchQueue(
+        label: "app.alan.shell.control-plane-state",
+        qos: .utility
+    )
+    private var pendingStateFileWrite: DispatchWorkItem?
+    private var latestMergedState: ShellStateSnapshot?
 
     init(
         windowID: String,
@@ -196,11 +202,41 @@ final class AlanShellControlPlane {
         let mergedState = mergeResult.merged
         synchronizePaneSupportDirectories(for: mergedState)
         eventStore.recordChanges(from: mergeResult.previous, to: mergedState)
+        // The in-memory merge + event recording above keep IPC consumers prompt.
+        // The state.json file is a live mirror; coalesce its encode + atomic
+        // write off the main thread so high-frequency terminal callbacks do not
+        // block on disk.
+        latestMergedState = mergedState
+        scheduleStateFilePersist()
+    }
+
+    /// Forces the latest published state to `state.json` synchronously. Call on
+    /// app background/quit so the on-disk mirror is current before exit.
+    func flushStateFile() {
+        pendingStateFileWrite?.cancel()
+        pendingStateFileWrite = nil
+        guard let mergedState = latestMergedState else { return }
+        let url = stateFileURL
+        stateFileQueue.sync { Self.writeStateFile(mergedState, to: url) }
+    }
+
+    private func scheduleStateFilePersist() {
+        pendingStateFileWrite?.cancel()
+        guard let mergedState = latestMergedState else { return }
+        let url = stateFileURL
+        let item = DispatchWorkItem { Self.writeStateFile(mergedState, to: url) }
+        pendingStateFileWrite = item
+        stateFileQueue.asyncAfter(deadline: .now() + .milliseconds(150), execute: item)
+    }
+
+    private static func writeStateFile(_ state: ShellStateSnapshot, to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
-            let data = try encoder.encode(mergedState)
-            try data.write(to: stateFileURL, options: .atomic)
+            let data = try encoder.encode(state)
+            try data.write(to: url, options: .atomic)
         } catch {
-            diagnostics.record("Failed to persist shell state: \(error.localizedDescription)")
+            NSLog("alan: failed to persist control-plane state.json: %@", String(describing: error))
         }
     }
 
