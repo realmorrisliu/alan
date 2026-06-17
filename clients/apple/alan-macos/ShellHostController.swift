@@ -553,6 +553,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
         self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
 
+        // Route async persistence-write failures (debounced restore content) to the
+        // control-plane diagnostics surface, mirroring the synchronous paths.
+        if let writer = persistenceWriter as? ShellPersistenceWriter {
+            writer.onError = { [weak self] message in
+                DispatchQueue.main.async { self?.recordControlPlaneDiagnostic(message) }
+            }
+        }
+
         if shellState.panes.isEmpty {
             publishControlPlaneState()
         } else {

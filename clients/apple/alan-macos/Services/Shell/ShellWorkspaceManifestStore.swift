@@ -36,7 +36,9 @@ final class ShellPersistenceWriter: ShellPersistenceWriting {
     private let manifestStore: ShellWorkspaceManifestStore?
     private let stateStore: ShellStatePersistenceStore
     private let queue: DispatchQueue
-    private let onError: (String) -> Void
+    /// Reports async-write failures. Set once after construction (before any write
+    /// is enqueued) so the owner can route failures to its diagnostics surface.
+    var onError: (String) -> Void
 
     init(
         manifestStore: ShellWorkspaceManifestStore?,
