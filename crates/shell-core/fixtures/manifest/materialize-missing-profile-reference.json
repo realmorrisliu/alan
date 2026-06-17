@@ -1,0 +1,138 @@
+{
+  "description" : "Materialization preserves missing Terminal Profile references without applying fallback cwd.",
+  "expected" : {
+    "state" : {
+      "contents" : [
+        {
+          "capabilities" : [
+            "terminal_input",
+            "terminal_search",
+            "terminal_paste",
+            "terminal_runtime_metadata"
+          ],
+          "content_id" : "content_pane_tab_profile",
+          "icon_name" : null,
+          "kind" : "terminal",
+          "lifecycle" : "active",
+          "payload" : {
+            "terminal" : {
+              "launch_target" : "shell",
+              "terminal_profile_id" : "profile-missing",
+              "title" : "Profile Shell"
+            }
+          },
+          "terminal_metadata" : {
+            "active_task_state" : "inactive",
+            "activity" : null,
+            "cwd" : null,
+            "title" : "Profile Shell"
+          },
+          "title" : "Profile Shell"
+        }
+      ],
+      "contract_version" : "0.2",
+      "focused_pane_id" : "pane_tab_profile",
+      "focused_space_id" : "space_main",
+      "focused_tab_id" : "tab_profile",
+      "pane_slots" : [
+        {
+          "attention" : "active",
+          "content_id" : "content_pane_tab_profile",
+          "pane_slot_id" : "pane_tab_profile",
+          "space_id" : "space_main",
+          "tab_id" : "tab_profile"
+        }
+      ],
+      "spaces" : [
+        {
+          "attention" : "active",
+          "presentation_icon" : null,
+          "selected_tab_id" : "tab_profile",
+          "space_id" : "space_main",
+          "tabs" : [
+            {
+              "is_pinned" : false,
+              "is_title_user_locked" : false,
+              "kind" : "terminal",
+              "pane_tree" : {
+                "kind" : "pane",
+                "node_id" : "node_pane_tab_profile",
+                "pane_id" : "pane_tab_profile"
+              },
+              "tab_id" : "tab_profile",
+              "title" : "Profile Shell"
+            }
+          ],
+          "terminal_profile_id" : "profile-missing",
+          "title" : "Main"
+        }
+      ],
+      "window_id" : "window_main"
+    },
+    "status" : "ok"
+  },
+  "id" : "manifest\/materialize-missing-profile-reference",
+  "input" : {
+    "content_contract_version" : "0.2",
+    "schema_version" : 1,
+    "selected_space_id" : "space_main",
+    "selected_tab_id" : "tab_profile",
+    "spaces" : [
+      {
+        "created_at" : "2027-01-15T08:00:00Z",
+        "order" : 0,
+        "space_id" : "space_main",
+        "tabs" : [
+          {
+            "active_task" : "inactive",
+            "created_at" : "2027-01-15T08:00:00Z",
+            "is_pinned" : false,
+            "kind" : "terminal",
+            "last_activated_at" : "2027-01-15T08:00:00Z",
+            "last_activity_at" : "2027-01-15T08:00:00Z",
+            "live_snapshot" : {
+              "contents" : [
+                {
+                  "content_id" : "content_pane_tab_profile",
+                  "kind" : "terminal",
+                  "payload" : {
+                    "terminal" : {
+                      "launch_target" : "shell",
+                      "terminal_profile_id" : "profile-missing",
+                      "title" : "Profile Shell"
+                    }
+                  },
+                  "title" : "Profile Shell"
+                }
+              ],
+              "pane_slots" : [
+                {
+                  "content_id" : "content_pane_tab_profile",
+                  "pane_slot_id" : "pane_tab_profile"
+                }
+              ],
+              "pane_tree" : {
+                "kind" : "pane",
+                "node_id" : "node_pane_tab_profile",
+                "pane_slot_id" : "pane_tab_profile"
+              }
+            },
+            "tab_id" : "tab_profile",
+            "title" : "Profile Shell"
+          }
+        ],
+        "terminal_profile_id" : "profile-missing",
+        "title" : "Main",
+        "updated_at" : "2027-01-15T08:00:00Z"
+      }
+    ],
+    "window_id" : "window_main"
+  },
+  "kind" : "manifest",
+  "operation" : {
+    "default_working_directory" : "\/fallback",
+    "now" : "2027-01-15T08:00:00Z",
+    "type" : "materialize"
+  },
+  "source" : "swift"
+}

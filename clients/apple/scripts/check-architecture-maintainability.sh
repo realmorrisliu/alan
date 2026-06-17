@@ -92,7 +92,80 @@ printf 'Source root: clients/apple/alan-macos\n\n'
 
 if [[ ! -f "$ARCH_DOC" ]]; then
     fail "clients/apple/ARCHITECTURE.md must record the architecture inventory and target layout"
+else
+    if ! grep -q "## Shell Core Boundary" "$ARCH_DOC"; then
+        fail "clients/apple/ARCHITECTURE.md must document the Shell Core Boundary"
+    fi
+    if ! grep -q "new reusable domain behavior belongs in" "$ARCH_DOC"; then
+        fail "clients/apple/ARCHITECTURE.md must keep the Rust shell-core ownership rule"
+    fi
 fi
+
+require_rust_reducer_adapter() {
+    local file="$1"
+    shift
+    local forbidden
+
+    if [[ ! -f "$file" ]]; then
+        return
+    fi
+    for forbidden in "$@"; do
+        if grep -Fq "$forbidden" "$file"; then
+            fail "${file#$SOURCE_ROOT/} must route ${forbidden#shellState.} through the Rust shell-core adapter"
+        fi
+    done
+}
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "shellState.resizingSplit(" \
+    "shellState.equalizingSplits(" \
+    "shellState.focusingAdjacentPane(" \
+    "shellState.movingPaneWithinTab("
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "state.creatingSpace(" \
+    "state.settingTerminalProfile(" \
+    "state.openingTerminalTab(" \
+    "state.closingTab(" \
+    "state.pinningTab(" \
+    "state.unpinningTab(" \
+    "state.organizingTab(" \
+    "state.movingTabToSpace(" \
+    "state.splittingPane(" \
+    "state.closingPane(" \
+    "state.movingPaneToNewTab(" \
+    "state.movingPane(" \
+    "state.focusingPane(" \
+    "state.settingAttention(" \
+    "try \$0.hidingQuickTerminal(" \
+    "\$0.showingQuickTerminal(" \
+    "try \$0.closingQuickTerminal(" \
+    "try \$0.promotingQuickTerminal("
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/ShellHostController.swift" \
+    "shellState.creatingSpace(" \
+    "shellState.settingTerminalProfile(" \
+    "shellState.settingPresentationIcon(" \
+    "shellState.deletingSpace(" \
+    "shellState.showingQuickTerminal(" \
+    "shellState.hidingQuickTerminal(" \
+    "shellState.closingQuickTerminal(" \
+    "shellState.promotingQuickTerminal(" \
+    "shellState.organizingTab(" \
+    "shellState.clearingInactiveTemporaryTabs(" \
+    "shellState.closingPane(" \
+    "shellState.closingTab(" \
+    "shellState.duplicatingTab(" \
+    "shellState.resizingSplit(" \
+    "shellState.equalizingSplits(" \
+    "shellState.movingPane(" \
+    "shellState.movingPaneToNewTab(" \
+    "shellState.movingPaneWithinTab(" \
+    "shellState.openingContentTab(" \
+    "shellState.splittingPane("
 
 printf 'Current Swift inventory:\n'
 while IFS= read -r file; do

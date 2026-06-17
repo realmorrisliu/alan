@@ -1,0 +1,14 @@
+[package]
+name = "alan-shell-core-ffi"
+description = "Hand-written C ABI byte-envelope facade for alan-shell-core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alan-shell-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

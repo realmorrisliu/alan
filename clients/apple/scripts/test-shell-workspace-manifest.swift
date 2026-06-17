@@ -1,9 +1,12 @@
 import Foundation
 
+struct TerminalRenderCoordinatorMetrics: Codable, Equatable {}
+
 @main
 struct ShellWorkspaceManifestTestRunner {
     static func main() throws {
         try ShellWorkspaceManifestTests.run()
+        try ShellWorkspaceManifestFixtureExporter.exportIfRequested()
     }
 }
 
@@ -21,6 +24,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMaterializerPreservesEmptySelectedSpace()
         try verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs()
         try verifiesMaterializerPreservesInactiveSpaceSelection()
+        try verifiesShellCoreFFIMaterializerPreservesPayloadProfileAndTranscript()
         try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
@@ -264,6 +268,113 @@ private enum ShellWorkspaceManifestTests {
         expect(
             state.spaces.first?.terminalProfileID == "alan",
             "Space icon metadata must not rewrite the Terminal Profile reference"
+        )
+    }
+
+    private static func verifiesShellCoreFFIMaterializerPreservesPayloadProfileAndTranscript() throws {
+        let paneSlotID = "pane_profile"
+        let contentID = "content_\(paneSlotID)"
+        let transcript = TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: nil,
+            title: "Profile Shell",
+            dimensions: nil,
+            viewport: nil,
+            transcriptLines: ["restored output"],
+            processSummary: nil,
+            capturedAt: referenceDate,
+            alternateScreen: false
+        )
+        let snapshot = ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(paneSlotID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: paneSlotID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlotID,
+                    contentID: contentID
+                ),
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: contentID,
+                    kind: .terminal,
+                    title: "Profile Shell",
+                    payload: .terminal(
+                        ShellTerminalContentPayload(
+                            launchTarget: .shell,
+                            cwd: nil,
+                            title: "Profile Shell",
+                            transcriptSnapshot: transcript,
+                            terminalProfileID: "profile-missing"
+                        )
+                    )
+                ),
+            ]
+        )
+        let manifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_profile",
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_profile",
+                    tabs: [
+                        ShellContentWorkspaceTabRecord(
+                            tabID: "tab_profile",
+                            title: "Profile Shell",
+                            kind: .terminal,
+                            createdAt: referenceDate,
+                            lastActivatedAt: referenceDate,
+                            lastActivityAt: referenceDate,
+                            isPinned: false,
+                            liveSnapshot: snapshot,
+                            activeTask: .inactive
+                        ),
+                    ],
+                    terminalProfileID: "profile-missing"
+                ),
+            ]
+        )
+
+        let state = try ShellCoreFFIAdapter().materializeContentWorkspaceManifest(
+            manifest: manifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+        let restoredContent = state.contents?.first { $0.contentID == contentID }
+        let terminalPayload = restoredContent?.payload.terminal
+        expect(
+            terminalPayload?.terminalProfileID == "profile-missing",
+            "Rust-backed materialize must preserve terminal profile id"
+        )
+        expect(
+            terminalPayload?.cwd == nil,
+            "Rust-backed materialize must not apply fallback cwd when terminal profile is pinned"
+        )
+        expect(
+            terminalPayload?.transcriptSnapshot?.transcriptLines == ["restored output"],
+            "Rust-backed materialize must preserve restored transcript payload"
+        )
+        let restoredPane = state.panes.first { $0.paneID == paneSlotID }
+        expect(
+            restoredPane?.terminalProfileID == "profile-missing",
+            "Rust-backed materialize must project terminal profile id into compatibility pane"
+        )
+        expect(
+            restoredPane?.cwd == nil,
+            "Rust-backed materialize compatibility pane must not receive fallback cwd for pinned profile"
         )
     }
 
@@ -1118,6 +1229,891 @@ private enum ShellWorkspaceManifestTests {
             fputs("error: \(message)\n", stderr)
             exit(1)
         }
+    }
+}
+
+private enum ShellWorkspaceManifestFixtureExporter {
+    private static let referenceDate = Date(timeIntervalSince1970: 1_800_000_000)
+    private static let referenceDateString = "2027-01-15T08:00:00Z"
+    private static let twelveHours: TimeInterval = 12 * 60 * 60
+
+    static func exportIfRequested() throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["ALAN_SHELL_MANIFEST_FIXTURE_DIR"],
+              !rootPath.isEmpty
+        else {
+            return
+        }
+
+        let rootURL = URL(fileURLWithPath: rootPath)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        for fixture in try fixtures() {
+            let fixtureURL = rootURL
+                .appendingPathComponent(fixture.id)
+                .appendingPathExtension("json")
+            try FileManager.default.createDirectory(
+                at: fixtureURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try encoder.encode(fixture).write(to: fixtureURL, options: .atomic)
+        }
+        print("Shell workspace manifest fixtures exported to \(rootPath).")
+    }
+
+    private static func fixtures() throws -> [ShellCoreFixtureCase] {
+        let defaultManifest = ShellContentWorkspaceManifest.defaultManifest(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/repo/app",
+            now: referenceDate
+        )
+        let defaultState = ShellWorkspaceMaterializer.materialize(
+            manifest: defaultManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+
+        let emptySelectedManifest = ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_empty",
+            selectedTabID: nil,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_empty",
+                    title: "Empty",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    tabs: []
+                ),
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_other",
+                    title: "Other",
+                    order: 1,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_other",
+                    tabs: [
+                        makeContentTab(
+                            tabID: "tab_other",
+                            title: "Other",
+                            cwd: "/other"
+                        ),
+                    ],
+                    presentationIconSystemName: "rectangle.stack.fill"
+                ),
+            ]
+        )
+        let emptySelectedState = ShellWorkspaceMaterializer.materialize(
+            manifest: emptySelectedManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+
+        let expiredAt = referenceDate.addingTimeInterval(-(twelveHours + 60))
+        let recentAt = referenceDate.addingTimeInterval(-60)
+        let pruneInput = makeContentManifest(
+            selectedTabID: "tab_expired",
+            tabs: [
+                makeContentTab(
+                    tabID: "tab_expired",
+                    title: "Expired",
+                    cwd: "/expired",
+                    lastActivatedAt: expiredAt,
+                    lastActivityAt: expiredAt,
+                    activeTask: .inactive
+                ),
+                makeContentTab(
+                    tabID: "tab_active",
+                    title: "Active",
+                    cwd: "/active",
+                    lastActivatedAt: expiredAt,
+                    lastActivityAt: expiredAt,
+                    activeTask: .foregroundCommand
+                ),
+                makeContentTab(
+                    tabID: "tab_recent",
+                    title: "Recent",
+                    cwd: "/recent",
+                    lastActivatedAt: recentAt,
+                    lastActivityAt: recentAt,
+                    activeTask: .inactive
+                ),
+            ]
+        )
+        let pruned = pruneInput.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
+        let pinnedManifest = makeContentManifest(
+            selectedTabID: "tab_pinned",
+            tabs: [
+                makeContentTab(
+                    tabID: "tab_pinned",
+                    title: "Pinned",
+                    cwd: "/live/project",
+                    isPinned: true,
+                    pinCwd: "/pinned/project"
+                ),
+            ]
+        )
+        let pinnedState = ShellWorkspaceMaterializer.materialize(
+            manifest: pinnedManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+        let legacyTerminalManifest = makeLegacyTerminalManifest()
+        let migratedLegacyManifest =
+            legacyTerminalManifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        var quickTerminalManifest = makeContentManifest(
+            selectedTabID: "tab_main",
+            tabs: [
+                makeContentTab(
+                    tabID: "tab_main",
+                    title: "Main",
+                    cwd: "/main"
+                ),
+            ]
+        )
+        quickTerminalManifest.quickTerminal = ShellQuickTerminalRestoreRecord(
+            paneID: ShellQuickTerminalSlot.globalPaneID,
+            presentation: .visible,
+            lastWorkingDirectory: nil,
+            liveSnapshot: makeContentSnapshot(
+                paneSlotID: ShellQuickTerminalSlot.globalPaneID,
+                title: "python server",
+                cwd: "/repo/quick"
+            ),
+            activeTask: .foregroundCommand
+        )
+        let quickTerminalState = ShellWorkspaceMaterializer.materialize(
+            manifest: quickTerminalManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+        let missingProfileManifest = makeContentManifest(
+            selectedTabID: "tab_profile",
+            terminalProfileID: "profile-missing",
+            tabs: [
+                makeContentTab(
+                    tabID: "tab_profile",
+                    title: "Profile Shell",
+                    cwd: nil,
+                    terminalProfileID: "profile-missing"
+                ),
+            ]
+        )
+        let missingProfileState = ShellWorkspaceMaterializer.materialize(
+            manifest: missingProfileManifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+        let corruptInput = "{ this is not valid json"
+        let malformedManifestInput = """
+        {
+          "schema_version": 1,
+          "content_contract_version": "0.2",
+          "window_id": "window_main",
+          "selected_space_id": "space_main",
+          "spaces": [
+            {
+              "space_id": "space_main",
+              "title": "Main",
+              "order": "not-an-integer",
+              "created_at": "2027-01-15T08:00:00Z",
+              "updated_at": "2027-01-15T08:00:00Z",
+              "tabs": []
+            }
+          ]
+        }
+        """
+
+        return [
+            ShellCoreFixtureCase(
+                id: "manifest/default-manifest-materialize",
+                kind: "manifest",
+                description: "Default content manifest materializes one selected terminal workspace.",
+                input: EmptyFixtureInput(),
+                operation: DefaultManifestOperation(
+                    windowID: "window_main",
+                    defaultWorkingDirectory: "/repo/app",
+                    now: referenceDateString,
+                    materializeDefaultWorkingDirectory: "/fallback"
+                ),
+                expected: ManifestAndStateExpectation(
+                    manifest: defaultManifest,
+                    state: PortableWorkspaceState(defaultState)
+                )
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/materialize-empty-selected-space",
+                kind: "manifest",
+                description: "Materialization preserves an empty selected Space while restoring inactive Space tabs.",
+                input: emptySelectedManifest,
+                operation: MaterializeManifestOperation(
+                    defaultWorkingDirectory: "/fallback",
+                    now: referenceDateString
+                ),
+                expected: StateExpectation(state: PortableWorkspaceState(emptySelectedState))
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/pruning-expired-tabs",
+                kind: "manifest",
+                description: "TTL pruning removes expired inactive tabs while retaining active and recent tabs.",
+                input: pruneInput,
+                operation: PruneExpiredTabsOperation(
+                    now: referenceDateString,
+                    ttlSeconds: Int(twelveHours)
+                ),
+                expected: ManifestExpectation(manifest: pruned)
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/materialize-pinned-snapshot",
+                kind: "manifest",
+                description: "Pinned tabs restore from pin snapshot instead of newer live snapshot.",
+                input: pinnedManifest,
+                operation: MaterializeManifestOperation(
+                    defaultWorkingDirectory: "/fallback",
+                    now: referenceDateString
+                ),
+                expected: StateExpectation(state: PortableWorkspaceState(pinnedState))
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/migrate-legacy-terminal-manifest",
+                kind: "manifest",
+                description: "Legacy terminal-only manifest migrates into content-container snapshot shape.",
+                input: legacyTerminalManifest,
+                operation: MigrateLegacyManifestOperation(),
+                expected: ManifestExpectation(manifest: migratedLegacyManifest)
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/materialize-quick-terminal",
+                kind: "manifest",
+                description: "Quick terminal restore materializes hidden runtime metadata outside normal tabs.",
+                input: quickTerminalManifest,
+                operation: MaterializeManifestOperation(
+                    defaultWorkingDirectory: "/fallback",
+                    now: referenceDateString
+                ),
+                expected: StateExpectation(state: PortableWorkspaceState(quickTerminalState))
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/materialize-missing-profile-reference",
+                kind: "manifest",
+                description: "Materialization preserves missing Terminal Profile references without applying fallback cwd.",
+                input: missingProfileManifest,
+                operation: MaterializeManifestOperation(
+                    defaultWorkingDirectory: "/fallback",
+                    now: referenceDateString
+                ),
+                expected: StateExpectation(state: PortableWorkspaceState(missingProfileState))
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/decode-corrupt-input",
+                kind: "manifest",
+                description: "Corrupt manifest JSON maps to a stable decode error.",
+                input: corruptInput,
+                operation: DecodeManifestJSONOperation(),
+                expected: DecodeManifestExpectation(rawJSONString: corruptInput)
+            ),
+            ShellCoreFixtureCase(
+                id: "manifest/decode-malformed-content-manifest",
+                kind: "manifest",
+                description: "Malformed content manifest JSON maps to a stable decode error.",
+                input: malformedManifestInput,
+                operation: DecodeManifestJSONOperation(),
+                expected: DecodeManifestExpectation(rawJSONString: malformedManifestInput)
+            ),
+        ]
+    }
+
+    private static func makeLegacyTerminalManifest() -> ShellWorkspaceManifest {
+        ShellWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: "tab_legacy",
+            spaces: [
+                ShellWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    selectedTabID: "tab_legacy",
+                    tabs: [
+                        ShellWorkspaceTabRecord(
+                            tabID: "tab_legacy",
+                            title: "Legacy",
+                            kind: .terminal,
+                            createdAt: referenceDate,
+                            lastActivatedAt: referenceDate,
+                            lastActivityAt: referenceDate,
+                            isPinned: true,
+                            isTitleUserLocked: true,
+                            pinSnapshot: makeLegacySnapshot(
+                                paneID: "pane_legacy",
+                                title: "Legacy",
+                                cwd: "/legacy/pinned",
+                                terminalProfileID: "profile-main"
+                            ),
+                            liveSnapshot: nil,
+                            activeTask: .inactive
+                        ),
+                    ],
+                    terminalProfileID: "profile-main",
+                    presentationIconSystemName: "rectangle.stack.fill"
+                ),
+            ]
+        )
+    }
+
+    private static func makeContentManifest(
+        selectedTabID: String?,
+        terminalProfileID: String? = nil,
+        tabs: [ShellContentWorkspaceTabRecord]
+    ) -> ShellContentWorkspaceManifest {
+        ShellContentWorkspaceManifest(
+            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
+            windowID: "window_main",
+            selectedSpaceID: "space_main",
+            selectedTabID: selectedTabID,
+            spaces: [
+                ShellContentWorkspaceSpaceRecord(
+                    spaceID: "space_main",
+                    title: "Main",
+                    order: 0,
+                    createdAt: referenceDate,
+                    updatedAt: referenceDate,
+                    tabs: tabs,
+                    terminalProfileID: terminalProfileID
+                ),
+            ]
+        )
+    }
+
+    private static func makeContentTab(
+        tabID: String,
+        title: String,
+        cwd: String?,
+        isPinned: Bool = false,
+        pinCwd: String? = nil,
+        lastActivatedAt: Date? = nil,
+        lastActivityAt: Date? = nil,
+        activeTask: ShellTabActiveTaskState = .inactive,
+        terminalProfileID: String? = nil
+    ) -> ShellContentWorkspaceTabRecord {
+        ShellContentWorkspaceTabRecord(
+            tabID: tabID,
+            title: title,
+            kind: .terminal,
+            createdAt: referenceDate,
+            lastActivatedAt: lastActivatedAt ?? referenceDate,
+            lastActivityAt: lastActivityAt ?? referenceDate,
+            isPinned: isPinned,
+            pinSnapshot: pinCwd.map {
+                makeContentSnapshot(
+                    tabID: tabID,
+                    title: title,
+                    cwd: $0,
+                    terminalProfileID: terminalProfileID
+                )
+            },
+            liveSnapshot: makeContentSnapshot(
+                tabID: tabID,
+                title: title,
+                cwd: cwd,
+                terminalProfileID: terminalProfileID
+            ),
+            activeTask: activeTask
+        )
+    }
+
+    private static func makeContentSnapshot(
+        tabID: String,
+        title: String,
+        cwd: String?,
+        terminalProfileID: String? = nil
+    ) -> ShellContentTabRestoreSnapshot {
+        let paneSlotID = "pane_\(tabID)"
+        let contentID = "content_\(paneSlotID)"
+        return makeContentSnapshot(
+            paneSlotID: paneSlotID,
+            title: title,
+            cwd: cwd,
+            contentID: contentID,
+            terminalProfileID: terminalProfileID
+        )
+    }
+
+    private static func makeContentSnapshot(
+        paneSlotID: String,
+        title: String,
+        cwd: String?,
+        contentID: String? = nil,
+        terminalProfileID: String? = nil
+    ) -> ShellContentTabRestoreSnapshot {
+        let contentID = contentID ?? "content_\(paneSlotID)"
+        return ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(paneSlotID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: paneSlotID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: paneSlotID,
+                    contentID: contentID
+                ),
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: contentID,
+                    kind: .terminal,
+                    title: title,
+                    payload: .terminal(
+                        ShellTerminalContentPayload(
+                            launchTarget: .shell,
+                            cwd: cwd,
+                            title: title,
+                            terminalProfileID: terminalProfileID
+                        )
+                    )
+                ),
+            ]
+        )
+    }
+
+    private static func makeLegacySnapshot(
+        paneID: String,
+        title: String,
+        cwd: String,
+        terminalProfileID: String?
+    ) -> ShellTabRestoreSnapshot {
+        ShellTabRestoreSnapshot(
+            paneTree: ShellPaneTreeNode(
+                nodeID: "node_\(paneID)",
+                kind: .pane,
+                direction: nil,
+                paneID: paneID,
+                children: nil
+            ),
+            panes: [
+                ShellPaneRestoreRecord(
+                    paneID: paneID,
+                    launchTarget: .shell,
+                    cwd: cwd,
+                    title: title,
+                    terminalProfileID: terminalProfileID
+                ),
+            ]
+        )
+    }
+}
+
+private struct ShellCoreFixtureCase: Encodable {
+    let id: String
+    let kind: String
+    let source = "swift"
+    let description: String
+    let input: AnyEncodable
+    let operation: AnyEncodable
+    let expected: AnyEncodable
+
+    init<Input: Encodable, Operation: Encodable, Expected: Encodable>(
+        id: String,
+        kind: String,
+        description: String,
+        input: Input,
+        operation: Operation,
+        expected: Expected
+    ) {
+        self.id = id
+        self.kind = kind
+        self.description = description
+        self.input = AnyEncodable(input)
+        self.operation = AnyEncodable(operation)
+        self.expected = AnyEncodable(expected)
+    }
+}
+
+private struct AnyEncodable: Encodable {
+    private let encodeValue: (Encoder) throws -> Void
+
+    init<Value: Encodable>(_ value: Value) {
+        encodeValue = value.encode(to:)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try encodeValue(encoder)
+    }
+}
+
+private struct EmptyFixtureInput: Encodable {}
+
+private struct DefaultManifestOperation: Encodable {
+    let type = "default_manifest"
+    let windowID: String
+    let defaultWorkingDirectory: String
+    let now: String
+    let materializeDefaultWorkingDirectory: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case windowID = "window_id"
+        case defaultWorkingDirectory = "default_working_directory"
+        case now
+        case materializeDefaultWorkingDirectory = "materialize_default_working_directory"
+    }
+}
+
+private struct MaterializeManifestOperation: Encodable {
+    let type = "materialize"
+    let defaultWorkingDirectory: String
+    let now: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case defaultWorkingDirectory = "default_working_directory"
+        case now
+    }
+}
+
+private struct PruneExpiredTabsOperation: Encodable {
+    let type = "pruning_expired_tabs"
+    let now: String
+    let ttlSeconds: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case now
+        case ttlSeconds = "ttl_seconds"
+    }
+}
+
+private struct MigrateLegacyManifestOperation: Encodable {
+    let type = "migrate_legacy_terminal_manifest"
+}
+
+private struct DecodeManifestJSONOperation: Encodable {
+    let type = "decode_content_manifest_json"
+}
+
+private struct ManifestAndStateExpectation: Encodable {
+    let status = "ok"
+    let manifest: ShellContentWorkspaceManifest
+    let state: PortableWorkspaceState
+}
+
+private struct StateExpectation: Encodable {
+    let status = "ok"
+    let state: PortableWorkspaceState
+}
+
+private struct ManifestExpectation: Encodable {
+    let status = "ok"
+    let manifest: ShellContentWorkspaceManifest
+}
+
+private struct DecodeManifestExpectation: Encodable {
+    let status: String
+    let manifest: ShellContentWorkspaceManifest?
+    let errorCode: String?
+
+    init(rawJSONString: String) {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let manifest = try? decoder.decode(
+            ShellContentWorkspaceManifest.self,
+            from: Data(rawJSONString.utf8)
+        ) {
+            status = "ok"
+            self.manifest = manifest
+            errorCode = nil
+        } else {
+            status = "error"
+            manifest = nil
+            errorCode = "decode_error"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case manifest
+        case errorCode = "error_code"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(manifest, forKey: .manifest)
+        try container.encodeIfPresent(errorCode, forKey: .errorCode)
+    }
+}
+
+private struct PortableWorkspaceState: Encodable {
+    let contractVersion: String
+    let windowID: String
+    let focusedSpaceID: String?
+    let focusedTabID: String?
+    let focusedPaneID: String?
+    let spaces: [PortableSpace]
+    let paneSlots: [ShellPaneSlot]
+    let contents: [PortableContentInstance]
+    let quickTerminal: PortableQuickTerminalState?
+
+    init(_ state: ShellStateSnapshot) {
+        let contentState = state.contentStateProjection()
+        contractVersion = contentState.contractVersion
+        windowID = contentState.windowID
+        focusedSpaceID = state.focusedSpaceID
+        focusedTabID = state.focusedTabID
+        focusedPaneID = state.focusedPaneID
+        spaces = contentState.spaces.map(PortableSpace.init)
+        paneSlots = contentState.paneSlots
+        contents = contentState.contents.map(PortableContentInstance.init)
+        quickTerminal = PortableQuickTerminalState(state)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case windowID = "window_id"
+        case focusedSpaceID = "focused_space_id"
+        case focusedTabID = "focused_tab_id"
+        case focusedPaneID = "focused_pane_id"
+        case spaces
+        case paneSlots = "pane_slots"
+        case contents
+        case quickTerminal = "quick_terminal"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(contractVersion, forKey: .contractVersion)
+        try container.encode(windowID, forKey: .windowID)
+        try container.encode(focusedSpaceID, forKey: .focusedSpaceID)
+        try container.encode(focusedTabID, forKey: .focusedTabID)
+        try container.encode(focusedPaneID, forKey: .focusedPaneID)
+        try container.encode(spaces, forKey: .spaces)
+        try container.encode(paneSlots, forKey: .paneSlots)
+        try container.encode(contents, forKey: .contents)
+        try container.encodeIfPresent(quickTerminal, forKey: .quickTerminal)
+    }
+}
+
+private struct PortableQuickTerminalState: Encodable {
+    let paneID: String
+    let presentation: ShellQuickTerminalPresentation
+    let lastWorkingDirectory: String?
+    let contentID: String
+    let terminalMetadata: PortableTerminalRuntimeMetadata?
+    let attention: ShellAttentionState
+
+    init?(_ state: ShellStateSnapshot) {
+        guard let slot = state.quickTerminal,
+              let pane = state.pane(paneID: slot.paneID)
+        else {
+            return nil
+        }
+
+        let contentID = ShellContentInstance.terminalContentID(forPaneID: slot.paneID)
+        let content = state.contents?.first { $0.contentID == contentID }
+        paneID = slot.paneID
+        presentation = slot.presentation
+        lastWorkingDirectory = slot.lastWorkingDirectory
+        self.contentID = contentID
+        terminalMetadata = content?.payload.terminal.map(PortableTerminalRuntimeMetadata.init)
+            ?? PortableTerminalRuntimeMetadata(title: pane.viewport?.title, cwd: pane.cwd)
+        attention = pane.attention
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case paneID = "pane_id"
+        case presentation
+        case lastWorkingDirectory = "last_working_directory"
+        case contentID = "content_id"
+        case terminalMetadata = "terminal_metadata"
+        case attention
+    }
+}
+
+private struct PortableSpace: Encodable {
+    let spaceID: String
+    let title: String
+    let attention: ShellAttentionState
+    let tabs: [PortableTab]
+    let selectedTabID: String?
+    let terminalProfileID: String?
+    let presentationIcon: String?
+
+    init(_ space: ShellContentSpace) {
+        spaceID = space.spaceID
+        title = space.title
+        attention = space.attention
+        tabs = space.tabs.map(PortableTab.init)
+        selectedTabID = space.selectedTabID
+        terminalProfileID = space.terminalProfileID
+        presentationIcon = space.presentationIconSystemName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case spaceID = "space_id"
+        case title
+        case attention
+        case tabs
+        case selectedTabID = "selected_tab_id"
+        case terminalProfileID = "terminal_profile_id"
+        case presentationIcon = "presentation_icon"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(spaceID, forKey: .spaceID)
+        try container.encode(title, forKey: .title)
+        try container.encode(attention, forKey: .attention)
+        try container.encode(tabs, forKey: .tabs)
+        try container.encode(selectedTabID, forKey: .selectedTabID)
+        try container.encode(terminalProfileID, forKey: .terminalProfileID)
+        try container.encode(presentationIcon, forKey: .presentationIcon)
+    }
+}
+
+private struct PortableTab: Encodable {
+    let tabID: String
+    let kind: ShellTabKind
+    let title: String?
+    let paneTree: PortablePaneTreeNode
+    let isPinned: Bool
+    let isTitleUserLocked: Bool
+
+    init(_ tab: ShellContentTab) {
+        tabID = tab.tabID
+        kind = tab.kind
+        title = tab.title
+        paneTree = PortablePaneTreeNode(tab.paneTree)
+        isPinned = tab.isPinned
+        isTitleUserLocked = tab.isTitleUserLocked
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case tabID = "tab_id"
+        case kind
+        case title
+        case paneTree = "pane_tree"
+        case isPinned = "is_pinned"
+        case isTitleUserLocked = "is_title_user_locked"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(tabID, forKey: .tabID)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(title, forKey: .title)
+        try container.encode(paneTree, forKey: .paneTree)
+        try container.encode(isPinned, forKey: .isPinned)
+        try container.encode(isTitleUserLocked, forKey: .isTitleUserLocked)
+    }
+}
+
+private struct PortablePaneTreeNode: Encodable {
+    let nodeID: String
+    let kind: ShellPaneTreeKind
+    let direction: ShellSplitDirection?
+    let ratio: Double?
+    let paneID: String?
+    let children: [PortablePaneTreeNode]?
+
+    init(_ node: ShellPaneSlotTreeNode) {
+        nodeID = node.nodeID
+        kind = node.kind
+        direction = node.direction
+        ratio = node.ratio
+        paneID = node.paneSlotID
+        children = node.children?.map(PortablePaneTreeNode.init)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case nodeID = "node_id"
+        case kind
+        case direction
+        case ratio
+        case paneID = "pane_id"
+        case children
+    }
+}
+
+private struct PortableContentInstance: Encodable {
+    let contentID: String
+    let kind: ShellContentKind
+    let title: String
+    let iconName: String?
+    let capabilities: [ShellContentCapability]
+    let terminalMetadata: PortableTerminalRuntimeMetadata?
+    let lifecycle: ShellContentLifecycleState
+
+    init(_ content: ShellContentInstance) {
+        contentID = content.contentID
+        kind = content.kind
+        title = content.title
+        iconName = content.iconName
+        capabilities = content.capabilities
+        terminalMetadata = content.payload.terminal.map(PortableTerminalRuntimeMetadata.init)
+        lifecycle = content.lifecycle
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contentID = "content_id"
+        case kind
+        case title
+        case iconName = "icon_name"
+        case capabilities
+        case terminalMetadata = "terminal_metadata"
+        case lifecycle
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(contentID, forKey: .contentID)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(title, forKey: .title)
+        try container.encode(iconName, forKey: .iconName)
+        try container.encode(capabilities, forKey: .capabilities)
+        try container.encode(terminalMetadata, forKey: .terminalMetadata)
+        try container.encode(lifecycle, forKey: .lifecycle)
+    }
+}
+
+private struct PortableTerminalRuntimeMetadata: Encodable {
+    let title: String?
+    let cwd: String?
+    let activeTaskState: ShellTabActiveTaskState = .inactive
+    let activity: TerminalActivitySnapshot? = nil
+
+    init(_ payload: ShellTerminalContentPayload) {
+        title = payload.title
+        cwd = payload.cwd
+    }
+
+    init(title: String?, cwd: String?) {
+        self.title = title
+        self.cwd = cwd
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case cwd
+        case activeTaskState = "active_task_state"
+        case activity
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(title, forKey: .title)
+        try container.encode(cwd, forKey: .cwd)
+        try container.encode(activeTaskState, forKey: .activeTaskState)
+        try container.encode(activity, forKey: .activity)
     }
 }
 

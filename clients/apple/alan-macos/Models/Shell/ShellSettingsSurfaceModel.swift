@@ -414,6 +414,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func terminalProfileRows(
         _ summary: TerminalProfileSettingsSummary
     ) -> [ShellSettingsRowModel] {
+        if let rows = try? ShellCoreFFIAdapter.shared.terminalProfileRows(summary) {
+            return rows
+        }
+
         var rows: [ShellSettingsRowModel] = [
             ShellSettingsRowModel(
                 id: "terminalProfilesDefault",
@@ -654,6 +658,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func capabilityRows(
         _ summary: ShellSettingsCapabilitiesSummary
     ) -> [ShellSettingsRowModel] {
+        if let rows = try? ShellCoreFFIAdapter.shared.capabilityRows(summary) {
+            return rows
+        }
+
         if summary.compactUnavailableReason != nil {
             return [
                 unavailableRow(
@@ -681,7 +689,11 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         _ local: ShellSettingsLocalSummary,
         diagnostics: ShellSettingsDiagnosticsSummary
     ) -> [ShellSettingsRowModel] {
-        [
+        if let rows = try? ShellCoreFFIAdapter.shared.localRows(local, diagnostics: diagnostics) {
+            return rows
+        }
+
+        return [
             ShellSettingsRowModel(
                 id: "appIdentity",
                 systemName: "app",

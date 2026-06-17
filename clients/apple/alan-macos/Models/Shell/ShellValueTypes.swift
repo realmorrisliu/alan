@@ -131,7 +131,7 @@ enum ShellSpatialFocusDirection: String, Codable, CaseIterable {
     }
 }
 
-enum ShellWorkspaceCommand: String, CaseIterable, Identifiable {
+enum ShellWorkspaceCommand: String, Codable, CaseIterable, Identifiable {
     case newTerminalTab
     case splitLeft
     case splitRight

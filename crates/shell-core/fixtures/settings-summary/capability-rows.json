@@ -1,0 +1,39 @@
+{
+  "description" : "Capability settings rows use compact enabled skill counts.",
+  "expected" : {
+    "rows" : [
+      {
+        "id" : "capabilitiesAvailable",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "puzzlepiece.extension",
+        "title" : "Skill catalog",
+        "value" : "1 of 2"
+      }
+    ]
+  },
+  "id" : "settings-summary\/capability-rows",
+  "input" : {
+    "skills" : [
+      {
+        "allow_implicit_invocation" : false,
+        "available" : true,
+        "enabled" : true,
+        "id" : "memory",
+        "name" : "Memory"
+      },
+      {
+        "allow_implicit_invocation" : false,
+        "available" : true,
+        "enabled" : false,
+        "id" : "plan",
+        "name" : "Plan"
+      }
+    ]
+  },
+  "kind" : "settings_summary",
+  "operation" : {
+    "type" : "capability_rows"
+  },
+  "source" : "swift"
+}

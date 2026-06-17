@@ -155,6 +155,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-shell-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "alan-shell-core-ffi"
+version = "0.1.0"
+dependencies = [
+ "alan-shell-core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "alan-swebench-tooling"
 version = "0.1.0"
 dependencies = [

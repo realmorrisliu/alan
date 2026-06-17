@@ -1392,7 +1392,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
+            )
             guard let updatedSplit = result.state.tab(tabID: targetTab.tabID)?
                 .paneTree
                 .node(nodeID: splitNodeID)
@@ -1464,7 +1467,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.equalizingSplits(in: tabID)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .equalizeSplits(tabID: tabID)
+            )
             guard let updatedTab = result.state.tab(tabID: tabID) else {
                 return response(
                     requestID: command.requestID,
@@ -1660,7 +1666,10 @@ extension ShellHostController {
         let previousFocusedPaneID = shellState.focusedPaneID
         let previousPane = previousFocusedPaneID.flatMap { pane(paneID: $0) }
         do {
-            let result = try shellState.focusingAdjacentPane(direction)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .focusAdjacentPane(direction: direction)
+            )
             applyMutationResult(result)
             controlPlane.recordSpatialFocus(
                 requestID: command.requestID,
@@ -1748,7 +1757,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.movingPaneWithinTab(paneID, placement: placement)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
+            )
             applyMutationResult(result)
             controlPlane.recordPaneMovedInTab(
                 requestID: command.requestID,

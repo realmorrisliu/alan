@@ -1,9 +1,9 @@
 ## MODIFIED Requirements
 
 ### Requirement: Root shell backing uses a unified paper base
-(Renamed and modified from "Root shell backing uses an opaque native base" in
-the pending `polish-macos-workspace-colors` change, which this change
-supersedes for the light-appearance scenario.)
+This requirement SHALL supersede the pending `polish-macos-workspace-colors`
+"Root shell backing uses an opaque native base" requirement for the
+light-appearance scenario.
 
 The default macOS shell SHALL paint its primary root backing as one
 continuous paper material surface shared by the sidebar column and the

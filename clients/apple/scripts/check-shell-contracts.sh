@@ -1139,7 +1139,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
-    "enum ShellWorkspaceCommand: String, CaseIterable, Identifiable" \
+    "enum ShellWorkspaceCommand: String, (Codable, )?CaseIterable, Identifiable" \
     "shell workspace commands must remain a centralized shared vocabulary"
 
 require_pattern \
@@ -1299,8 +1299,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "ShellActionRegistry\\.standard\\.keyboardAction" \
-    "terminal keyboard shortcuts must map through the shared shell action registry"
+    "ShellCoreFFIAdapter\\.shared\\.keyboardAction" \
+    "terminal keyboard shortcuts must map through the Rust-backed shared shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \

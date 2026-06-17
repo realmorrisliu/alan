@@ -16,6 +16,17 @@ enum AlanShellLocalCommandExecutor {
         command: AlanShellControlCommand,
         state: ShellStateSnapshot
     ) -> AlanShellLocalCommandResult? {
+        if command.command.isShellCoreLocalCommandSupported {
+            let shellCoreCommand = command.resolvingShellCoreDefaults(in: state)
+            guard let result = try? ShellCoreFFIAdapter.shared.handleControlCommand(
+                shellCoreCommand,
+                state: state
+            ) else {
+                return nil
+            }
+            return AlanShellLocalCommandResult(shellCoreResult: result)
+        }
+
         switch command.command {
         case .state:
             let contentState = state.contentStateProjection()
@@ -52,12 +63,19 @@ enum AlanShellLocalCommandExecutor {
         case .spaceCreate:
             let resolvedTerminalProfileID = command.terminalProfileID
                 ?? terminalProfileIDForGlobalDefaultPaneCapture()
-            let result = state.creatingSpace(
-                launchTarget: .shell,
-                title: command.title,
-                workingDirectory: command.cwd,
-                terminalProfileID: resolvedTerminalProfileID
-            )
+            guard let result = try? ShellCoreFFIAdapter.shared.applyReducer(
+                state: state,
+                operation: .createTerminalSpace(
+                    title: command.title,
+                    tabTitle: nil,
+                    workingDirectory: command.cwd,
+                    terminalProfileID: resolvedTerminalProfileID,
+                    presentationIcon: nil,
+                    reservedPaneSlotIDs: []
+                )
+            ) else {
+                return nil
+            }
             return AlanShellLocalCommandResult(
                 response: response(
                     for: command,
@@ -85,10 +103,7 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             }
-            guard let nextState = state.settingTerminalProfile(
-                command.terminalProfileID,
-                forSpaceID: spaceID
-            ) else {
+            guard state.space(spaceID: spaceID) != nil else {
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -102,17 +117,26 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             }
+            guard let result = try? ShellCoreFFIAdapter.shared.applyReducer(
+                state: state,
+                operation: .setTerminalProfile(
+                    spaceID: spaceID,
+                    terminalProfileID: command.terminalProfileID
+                )
+            ) else {
+                return nil
+            }
             return AlanShellLocalCommandResult(
                 response: response(
                     for: command,
-                    state: nextState,
+                    state: result.state,
                     applied: true,
-                    snapshot: nextState,
+                    snapshot: result.state,
                     spaceID: spaceID,
-                    tabID: nextState.focusedTabID,
-                    paneID: nextState.focusedPaneID
+                    tabID: result.state.focusedTabID,
+                    paneID: result.state.focusedPaneID
                 ),
-                updatedState: nextState,
+                updatedState: result.state,
                 sideEffect: nil
             )
 
@@ -137,11 +161,15 @@ enum AlanShellLocalCommandExecutor {
                     explicit: command.terminalProfileID
                 )
                     ?? terminalProfileIDForGlobalDefaultPaneCapture()
-                let result = try state.openingTerminalTab(
-                    in: command.spaceID,
-                    title: command.title,
-                    workingDirectory: command.cwd,
-                    terminalProfileID: resolvedTerminalProfileID
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .openTerminalTab(
+                        spaceID: command.spaceID,
+                        title: command.title,
+                        workingDirectory: command.cwd,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        reservedPaneSlotIDs: []
+                    )
                 )
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -182,7 +210,10 @@ enum AlanShellLocalCommandExecutor {
             }
 
             do {
-                let result = try state.closingTab(tabID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .closeTab(tabID: tabID)
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -220,7 +251,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.pinningTab(tabID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .pinTab(tabID: tabID)
+                )
                 let location = result.state.tabOrganizationLocation(tabID: tabID)
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -261,7 +295,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.unpinningTab(tabID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .unpinTab(tabID: tabID)
+                )
                 let location = result.state.tabOrganizationLocation(tabID: tabID)
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -306,11 +343,14 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.organizingTab(
-                    tabID: tabID,
-                    targetSpaceID: command.spaceID,
-                    section: section,
-                    index: index
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .organizeTab(
+                        tabID: tabID,
+                        targetSpaceID: command.spaceID,
+                        section: section,
+                        index: index
+                    )
                 )
                 let location = result.state.tabOrganizationLocation(tabID: tabID)
                 return AlanShellLocalCommandResult(
@@ -355,7 +395,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.movingTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .moveTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
+                )
                 let location = result.state.tabOrganizationLocation(tabID: tabID)
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -461,10 +504,18 @@ enum AlanShellLocalCommandExecutor {
                     explicit: command.terminalProfileID
                 )
                     ?? terminalProfileIDForGlobalDefaultPaneCapture()
-                let result = try state.splittingPane(
-                    paneID,
-                    direction: direction,
-                    terminalProfileID: resolvedTerminalProfileID
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .splitPane(
+                        paneSlotID: paneID,
+                        placement: .defaultPlacement(for: direction),
+                        title: nil,
+                        workingDirectory: resolvedTerminalProfileID == nil
+                            ? state.pane(paneID: paneID)?.cwd
+                            : nil,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        reservedPaneSlotIDs: []
+                    )
                 )
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -505,7 +556,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.closingPane(paneID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .closePane(paneSlotID: paneID)
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -543,7 +597,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.movingPaneToNewTab(paneID, title: command.title)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .movePaneToNewTab(paneSlotID: paneID, title: command.title)
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -585,10 +642,13 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.movingPane(
-                    paneID,
-                    toTab: targetTabID,
-                    direction: command.direction ?? .vertical
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .movePaneToTab(
+                        paneSlotID: paneID,
+                        targetTabID: targetTabID,
+                        direction: command.direction ?? .vertical
+                    )
                 )
                 return AlanShellLocalCommandResult(
                     response: response(
@@ -627,7 +687,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.focusingPane(paneID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .focusPane(paneSlotID: paneID)
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -756,7 +819,10 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try state.settingAttention(attention, for: paneID)
+                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: state,
+                    operation: .setAttention(paneSlotID: paneID, attention: attention)
+                )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -796,14 +862,25 @@ enum AlanShellLocalCommandExecutor {
                 return quickTerminalResult(
                     command: command,
                     state: state,
-                    mutate: { try $0.hidingQuickTerminal() }
+                    mutate: {
+                        try ShellCoreFFIAdapter.shared.applyReducer(
+                            state: $0,
+                            operation: .hideQuickTerminal
+                        )
+                    }
                 )
             }
             return quickTerminalResult(
                 command: command,
                 state: state,
                 mutate: {
-                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                    try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: $0,
+                        operation: .showQuickTerminal(
+                            workingDirectory: command.cwd,
+                            defaultWorkingDirectory: defaultShellWorkingDirectory()
+                        )
+                    )
                 }
             )
 
@@ -812,7 +889,13 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                    try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: $0,
+                        operation: .showQuickTerminal(
+                            workingDirectory: command.cwd,
+                            defaultWorkingDirectory: defaultShellWorkingDirectory()
+                        )
+                    )
                 }
             )
 
@@ -820,14 +903,24 @@ enum AlanShellLocalCommandExecutor {
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.hidingQuickTerminal() }
+                mutate: {
+                    try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: $0,
+                        operation: .hideQuickTerminal
+                    )
+                }
             )
 
         case .quickTerminalClose:
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.closingQuickTerminal() }
+                mutate: {
+                    try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: $0,
+                        operation: .closeQuickTerminal
+                    )
+                }
             )
 
         case .quickTerminalPromote:
@@ -847,7 +940,12 @@ enum AlanShellLocalCommandExecutor {
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.promotingQuickTerminal(to: targetSpaceID) }
+                mutate: {
+                    try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: $0,
+                        operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
+                    )
+                }
             )
 
         case .terminalSendKey, .performanceDiagnosticsSetEnabled,
@@ -1077,6 +1175,146 @@ enum AlanShellLocalCommandExecutor {
     }
 }
 
+private extension AlanShellLocalCommandResult {
+    init(shellCoreResult: ShellCoreControlCommandResult) {
+        self.init(
+            response: shellCoreResult.response,
+            updatedState: shellCoreResult.updatedState,
+            sideEffect: shellCoreResult.sideEffect.map(AlanShellLocalCommandSideEffect.init)
+        )
+    }
+}
+
+private extension AlanShellLocalCommandSideEffect {
+    init(_ sideEffect: ShellCoreControlSideEffect) {
+        switch sideEffect {
+        case .sendText(let paneID, let text):
+            self = .sendText(paneID: paneID, text: text)
+        }
+    }
+}
+
+private extension AlanShellControlCommand {
+    func resolvingShellCoreDefaults(in state: ShellStateSnapshot) -> AlanShellControlCommand {
+        switch command {
+        case .spaceCreate:
+            let resolvedTerminalProfileID = terminalProfileID
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            return withTerminalProfileID(resolvedTerminalProfileID)
+
+        case .tabOpen:
+            let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
+                in: spaceID,
+                explicit: terminalProfileID
+            )
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            return withTerminalProfileID(resolvedTerminalProfileID)
+
+        case .paneSplit:
+            let resolvedTerminalProfileID = paneID.flatMap {
+                state.terminalProfileIDForNewSplit(from: $0, explicit: terminalProfileID)
+            }
+                ?? terminalProfileID
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            return withTerminalProfileID(resolvedTerminalProfileID)
+
+        default:
+            return self
+        }
+    }
+
+    func withTerminalProfileID(_ terminalProfileID: String?) -> AlanShellControlCommand {
+        AlanShellControlCommand(
+            requestID: requestID,
+            command: command,
+            spaceID: spaceID,
+            targetSpaceID: targetSpaceID,
+            tabID: tabID,
+            paneID: paneID,
+            paneSlotID: paneSlotID,
+            contentID: contentID,
+            splitNodeID: splitNodeID,
+            ratio: ratio,
+            section: section,
+            index: index,
+            direction: direction,
+            spatialDirection: spatialDirection,
+            placement: placement,
+            title: title,
+            cwd: cwd,
+            text: text,
+            key: key,
+            attention: attention,
+            agentKind: agentKind,
+            agentStatus: agentStatus,
+            sessionLabel: sessionLabel,
+            projectLabel: projectLabel,
+            workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID,
+            detail: detail,
+            updatedAt: updatedAt,
+            afterEventID: afterEventID,
+            limit: limit,
+            enabled: enabled,
+            exportDirectory: exportDirectory,
+            childProcessRole: childProcessRole,
+            childCPUPercent: childCPUPercent,
+            childMemoryBytes: childMemoryBytes,
+            childThreadCount: childThreadCount
+        )
+    }
+}
+
+private extension AlanShellControlCommandKind {
+    var isShellCoreLocalCommandSupported: Bool {
+        switch self {
+        case .state,
+             .spaceList,
+             .spaceCreate,
+             .tabList,
+             .tabOpen,
+             .tabClose,
+             .tabReorder,
+             .tabPin,
+             .tabUnpin,
+             .tabMoveToSpace,
+             .paneList,
+             .paneSplit,
+             .paneClose,
+             .paneLift,
+             .paneMove,
+             .paneMoveWithinTab,
+             .paneFocus,
+             .paneSpatialFocus,
+             .paneResizeSplit,
+             .paneEqualizeSplits,
+             .paneZoom,
+             .paneUnzoom,
+             .terminalSendText,
+             .terminalSendKey,
+             .attentionSet:
+            return true
+        case .spaceSetTerminalProfile,
+             .paneSnapshot,
+             .terminalRenderMetrics,
+             .agentActivity,
+             .attentionInbox,
+             .routingCandidates,
+             .eventsRead,
+             .performanceDiagnosticsSetEnabled,
+             .performanceDiagnosticsExportRecent,
+             .performanceDiagnosticsRecordChildPressure,
+             .quickTerminalToggle,
+             .quickTerminalShow,
+             .quickTerminalHide,
+             .quickTerminalFocus,
+             .quickTerminalClose,
+             .quickTerminalPromote:
+            return false
+        }
+    }
+}
+
 private func attentionInboxItems(from state: ShellStateSnapshot) -> [AlanShellAttentionInboxItem] {
     let now = Date()
     return state.panes
@@ -1178,6 +1416,10 @@ private func attentionRank(for attention: ShellAttentionState) -> Int {
     case .awaitingUser:
         return 3
     }
+}
+
+private func defaultShellWorkingDirectory() -> String {
+    FileManager.default.homeDirectoryForCurrentUser.path
 }
 
 #endif

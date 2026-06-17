@@ -1,0 +1,52 @@
+{
+  "description" : "Resize clamps ratios below the minimum usable divider ratio.",
+  "expected" : {
+    "outcome" : "changed",
+    "tree" : {
+      "children" : [
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_1",
+          "pane_id" : "pane_1"
+        },
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_2",
+          "pane_id" : "pane_2"
+        }
+      ],
+      "direction" : "vertical",
+      "kind" : "split",
+      "node_id" : "node_split",
+      "ratio" : 0.15
+    }
+  },
+  "id" : "split-tree\/resize-clamps-to-minimum",
+  "input" : {
+    "tree" : {
+      "children" : [
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_1",
+          "pane_id" : "pane_1"
+        },
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_2",
+          "pane_id" : "pane_2"
+        }
+      ],
+      "direction" : "vertical",
+      "kind" : "split",
+      "node_id" : "node_split",
+      "ratio" : 0.5
+    }
+  },
+  "kind" : "split_tree",
+  "operation" : {
+    "ratio" : 0.01,
+    "split_node_id" : "node_split",
+    "type" : "resize_split"
+  },
+  "source" : "swift"
+}

@@ -45,7 +45,7 @@ struct ShellWorkspaceManifestStore {
         now: Date
     ) throws -> ShellWorkspaceManifestLoadResult {
         if !fileManager.fileExists(atPath: manifestURL.path) {
-            let manifest = ShellContentWorkspaceManifest.defaultManifest(
+            let manifest = try ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now
@@ -79,7 +79,9 @@ struct ShellWorkspaceManifestStore {
                     )
                 )
             }
-            let migratedManifest = legacyManifest.migratingTerminalRestoreSnapshotsToContentContainers()
+            let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
+                legacyManifest
+            )
             try save(migratedManifest)
             return ShellWorkspaceManifestLoadResult(
                 manifest: migratedManifest,
@@ -92,7 +94,7 @@ struct ShellWorkspaceManifestStore {
             }
             try fileManager.moveItem(at: manifestURL, to: corruptURL)
 
-            let manifest = ShellContentWorkspaceManifest.defaultManifest(
+            let manifest = try ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now

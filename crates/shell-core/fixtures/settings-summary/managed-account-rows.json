@@ -1,0 +1,77 @@
+{
+  "description" : "Managed terminal account settings rows summarize plan status without exposing privileged commands.",
+  "expected" : {
+    "rows" : [
+      {
+        "detail" : "alan_smoke terminal entry plan is ready for explicit confirmation.",
+        "id" : "terminalAccount.alan_smoke",
+        "mutability" : "action_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "person.crop.circle.badge.plus",
+        "title" : "Managed terminal account",
+        "value" : "Preview"
+      }
+    ]
+  },
+  "id" : "settings-summary\/managed-account-rows",
+  "input" : {
+    "plans" : [
+      {
+        "request" : {
+          "account_name" : "alan_smoke",
+          "bind_current_space_after_success" : true,
+          "full_name" : "Alan Smoke",
+          "gui_user_name" : "morris",
+          "hide_from_login_window" : true,
+          "home_directory" : "\/Users\/alan_smoke",
+          "shell" : "\/bin\/zsh"
+        },
+        "status" : {
+          "type" : "ready_to_apply"
+        },
+        "steps" : [
+          {
+            "kind" : "create_standard_account",
+            "requires_privilege" : true,
+            "summary" : "Create standard local terminal account"
+          },
+          {
+            "kind" : "hide_account",
+            "requires_privilege" : true,
+            "summary" : "Hide terminal account from login window lists"
+          },
+          {
+            "kind" : "write_sudoers_drop_in",
+            "requires_privilege" : true,
+            "summary" : "Write Alan-owned sudoers drop-in"
+          },
+          {
+            "kind" : "validate_sudoers",
+            "requires_privilege" : true,
+            "summary" : "Validate sudoers syntax"
+          },
+          {
+            "kind" : "verify_terminal_entry",
+            "requires_privilege" : false,
+            "summary" : "Verify passwordless terminal entry"
+          },
+          {
+            "kind" : "create_or_update_terminal_profile",
+            "requires_privilege" : false,
+            "summary" : "Create matching Terminal Profile"
+          },
+          {
+            "kind" : "bind_current_space",
+            "requires_privilege" : false,
+            "summary" : "Bind current Space after confirmation"
+          }
+        ]
+      }
+    ]
+  },
+  "kind" : "settings_summary",
+  "operation" : {
+    "type" : "managed_terminal_account_rows"
+  },
+  "source" : "swift"
+}

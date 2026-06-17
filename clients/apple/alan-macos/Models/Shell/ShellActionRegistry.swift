@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShellActionID: String, CaseIterable, Identifiable, Hashable {
+enum ShellActionID: String, Codable, CaseIterable, Identifiable, Hashable {
     case quickTerminalToggle = "shell.quick_terminal.toggle"
     case quickTerminalShow = "shell.quick_terminal.show"
     case quickTerminalHide = "shell.quick_terminal.hide"
@@ -177,7 +177,7 @@ enum ShellCommandTargetResolver {
     }
 }
 
-enum ShellActionModifier: String, CaseIterable, Hashable, Comparable {
+enum ShellActionModifier: String, Codable, CaseIterable, Hashable, Comparable {
     case command
     case option
     case shift
@@ -188,7 +188,7 @@ enum ShellActionModifier: String, CaseIterable, Hashable, Comparable {
     }
 }
 
-enum ShellActionShortcutContext: String, Hashable {
+enum ShellActionShortcutContext: String, Codable, Hashable {
     case shell
     case terminalFind = "terminal_find"
 }

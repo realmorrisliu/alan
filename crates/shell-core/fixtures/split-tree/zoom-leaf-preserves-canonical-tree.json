@@ -1,0 +1,55 @@
+{
+  "description" : "Zoom projection returns the requested leaf without mutating the canonical tree.",
+  "expected" : {
+    "canonical_tree" : {
+      "children" : [
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_1",
+          "pane_id" : "pane_1"
+        },
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_2",
+          "pane_id" : "pane_2"
+        }
+      ],
+      "direction" : "vertical",
+      "kind" : "split",
+      "node_id" : "node_split",
+      "ratio" : 0.5
+    },
+    "tree" : {
+      "kind" : "pane",
+      "node_id" : "node_pane_2",
+      "pane_id" : "pane_2"
+    }
+  },
+  "id" : "split-tree\/zoom-leaf-preserves-canonical-tree",
+  "input" : {
+    "tree" : {
+      "children" : [
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_1",
+          "pane_id" : "pane_1"
+        },
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_2",
+          "pane_id" : "pane_2"
+        }
+      ],
+      "direction" : "vertical",
+      "kind" : "split",
+      "node_id" : "node_split",
+      "ratio" : 0.5
+    }
+  },
+  "kind" : "split_tree",
+  "operation" : {
+    "pane_id" : "pane_2",
+    "type" : "zoom_leaf"
+  },
+  "source" : "swift"
+}

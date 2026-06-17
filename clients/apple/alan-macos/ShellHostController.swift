@@ -623,15 +623,26 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 now: now
             )
             let loadedManifest = loadResult?.manifest
+                ?? (try? ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
+                    windowID: resolvedWindowContext.windowID,
+                    defaultWorkingDirectory: workingDirectory,
+                    now: now
+                ))
                 ?? ShellContentWorkspaceManifest.defaultManifest(
                     windowID: resolvedWindowContext.windowID,
                     defaultWorkingDirectory: workingDirectory,
                     now: now
                 )
-            let retainedManifest = loadedManifest.pruningExpiredTabs(
-                now: now,
-                ttl: Self.unpinnedTabRetentionTTL
-            )
+            let retainedManifest =
+                (try? ShellCoreFFIAdapter.shared.pruningExpiredTabs(
+                    manifest: loadedManifest,
+                    now: now,
+                    ttl: Self.unpinnedTabRetentionTTL
+                ))
+                ?? loadedManifest.pruningExpiredTabs(
+                    now: now,
+                    ttl: Self.unpinnedTabRetentionTTL
+                )
             retiredTabCount = max(
                 loadedManifest.spaces.reduce(0) { $0 + $1.tabs.count }
                     - retainedManifest.spaces.reduce(0) { $0 + $1.tabs.count },
@@ -640,11 +651,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             if retainedManifest != loadedManifest {
                 try? store.save(retainedManifest)
             }
-            shellState = ShellWorkspaceMaterializer.materialize(
-                manifest: retainedManifest,
-                defaultWorkingDirectory: workingDirectory,
-                now: now
-            )
+            shellState =
+                (try? ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest(
+                    manifest: retainedManifest,
+                    defaultWorkingDirectory: workingDirectory,
+                    now: now
+                ))
+                ?? ShellWorkspaceMaterializer.materialize(
+                    manifest: retainedManifest,
+                    defaultWorkingDirectory: workingDirectory,
+                    now: now
+                )
             manifestStore = store
             manifest = retainedManifest
             manifestRecovery = loadResult?.recovery
@@ -1063,7 +1080,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func focus(paneID: String, requestTerminalFocus: Bool) {
         let focusStartedAt = performanceDiagnosticsStartTime()
-        guard let result = try? shellState.focusingPane(paneID) else { return }
+        let result: ShellStateMutationResult
+        if pane(paneID: paneID)?.isQuickTerminalPane == true {
+            guard let swiftResult = try? shellState.focusingPane(paneID) else { return }
+            result = swiftResult
+        } else {
+            guard let rustResult = try? ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .focusPane(paneSlotID: paneID)
+            ) else { return }
+            // Rust owns workspace focus. Swift keeps this narrow post-pass for
+            // platform terminal activity acknowledgement until activity signals
+            // are fully domain-owned by shell-core.
+            result = (try? rustResult.state.focusingPane(paneID)) ?? rustResult
+        }
         applyMutationResult(result)
         if let focusStartedAt {
             let focusedPane = pane(paneID: paneID)
@@ -1140,17 +1170,37 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func showQuickTerminal() -> String? {
-        let result = shellState.showingQuickTerminal(
-            workingDirectory: focusedPaneWorkingDirectory()
-        )
-        applyMutationResult(result)
-        return result.paneID
+        let paneID = shellState.quickTerminal?.paneID ?? ShellQuickTerminalSlot.globalPaneID
+        let hadQuickPane = pane(paneID: paneID) != nil
+        do {
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .showQuickTerminal(
+                    workingDirectory: focusedPaneWorkingDirectory(),
+                    defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                )
+            )
+            let annotatedResult = hadQuickPane
+                ? result
+                : annotatingPaneViewport(
+                    result,
+                    paneID: paneID,
+                    fallbackSummary: "quick terminal scaffolded"
+            )
+            applyMutationResult(annotatedResult)
+            return paneID
+        } catch {
+            return nil
+        }
     }
 
     @discardableResult
     func hideQuickTerminal() -> Bool {
         do {
-            let result = try shellState.hidingQuickTerminal()
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .hideQuickTerminal
+            )
             applyMutationResult(result)
             return true
         } catch {
@@ -1206,7 +1256,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     private func applyCloseQuickTerminalMutation() -> Bool {
         do {
-            let result = try shellState.closingQuickTerminal()
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .closeQuickTerminal
+            )
             applyMutationResult(result)
             return true
         } catch {
@@ -1222,9 +1275,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func promoteQuickTerminal(to targetSpaceID: String) -> Bool {
         do {
-            let result = try shellState.promotingQuickTerminal(to: targetSpaceID)
-            applyMutationResult(result)
-            terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
+            )
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: result.paneID ?? ShellQuickTerminalSlot.globalPaneID,
+                fallbackSummary: "quick terminal opened in space"
+            )
+            applyMutationResult(annotatedResult)
+            terminalRuntimeRegistry.requestFocus(
+                for: annotatedResult.paneID ?? ShellQuickTerminalSlot.globalPaneID
+            )
             return true
         } catch {
             return false
@@ -1245,14 +1308,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
             ?? globalDefaultTerminalProfileIDForPaneCapture()
-        let result = shellState.creatingSpace(
-            launchTarget: launchTarget,
-            title: title,
-            workingDirectory: workingDirectory,
-            terminalProfileID: resolvedTerminalProfileID,
-            presentationIconSystemName: presentationIconSystemName,
-            reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-        )
+        let result: ShellStateMutationResult
+        do {
+            switch launchTarget {
+            case .shell:
+                result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .createTerminalSpace(
+                        title: title,
+                        tabTitle: nil,
+                        workingDirectory: workingDirectory,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        presentationIcon: presentationIconSystemName,
+                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                    )
+                )
+            }
+        } catch {
+            return nil
+        }
         applyMutationResult(result)
         return result.spaceID
     }
@@ -1275,13 +1349,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func setTerminalProfile(_ terminalProfileID: String?, forSpaceID spaceID: String) -> Bool {
-        guard let nextState = shellState.settingTerminalProfile(
-            terminalProfileID,
-            forSpaceID: spaceID
-        ) else {
+        let result: ShellStateMutationResult
+        do {
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .setTerminalProfile(
+                    spaceID: spaceID,
+                    terminalProfileID: terminalProfileID
+                )
+            )
+        } catch {
             return false
         }
-        adoptStateFromControlPlane(nextState)
+        applyMutationResult(result)
         return true
     }
 
@@ -1291,13 +1371,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     /// Invalid symbol names are treated as `nil` (clear) — the mutation rejects garbage input.
     @discardableResult
     func setPresentationIcon(_ systemName: String?, forSpaceID spaceID: String) -> Bool {
-        guard let nextState = shellState.settingPresentationIcon(
-            systemName,
-            forSpaceID: spaceID
-        ) else {
+        let result: ShellStateMutationResult
+        do {
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .setPresentationIcon(
+                    spaceID: spaceID,
+                    presentationIcon: systemName
+                )
+            )
+        } catch {
             return false
         }
-        adoptStateFromControlPlane(nextState)
+        applyMutationResult(result)
         return true
     }
 
@@ -1305,7 +1391,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func deleteSpace(spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.deletingSpace(spaceID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .deleteSpace(
+                    spaceID: spaceID,
+                    defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                )
+            )
         } catch {
             return false
         }
@@ -1333,7 +1425,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         let result: ShellStateMutationResult
         do {
-            result = try shellState.pinningTab(targetTabID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .pinTab(tabID: targetTabID)
+            )
         } catch {
             return false
         }
@@ -1345,9 +1440,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func unpinTab(tabID: String? = nil) -> Bool {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
+        guard isTabPinned(tabID: targetTabID) else { return true }
         let result: ShellStateMutationResult
         do {
-            result = try shellState.unpinningTab(targetTabID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .unpinTab(tabID: targetTabID)
+            )
         } catch {
             return false
         }
@@ -1378,11 +1477,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let wasPinned = isTabPinned(tabID: tabID)
         let result: ShellStateMutationResult
         do {
-            result = try shellState.organizingTab(
-                tabID: tabID,
-                targetSpaceID: targetSpaceID,
-                section: section,
-                index: index
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .organizeTab(
+                    tabID: tabID,
+                    targetSpaceID: targetSpaceID,
+                    section: section,
+                    index: index
+                )
             )
         } catch {
             return false
@@ -1397,7 +1499,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let targetTabID = tabID ?? selectedTabID else { return false }
         let result: ShellStateMutationResult
         do {
-            result = try shellState.movingTab(targetTabID, sectionOffset: offset)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .moveTab(tabID: targetTabID, sectionOffset: offset)
+            )
         } catch {
             return false
         }
@@ -1409,9 +1514,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func moveTabToSpace(tabID: String, targetSpaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.movingTabToSpace(
-                tabID: tabID,
-                targetSpaceID: targetSpaceID
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .moveTabToSpace(
+                    tabID: tabID,
+                    targetSpaceID: targetSpaceID
+                )
             )
         } catch {
             return false
@@ -1424,7 +1532,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func renameTab(tabID: String, title: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.renamingTab(tabID, title: title)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .renameTab(
+                    tabID: tabID,
+                    title: title
+                )
+            )
         } catch {
             return false
         }
@@ -1436,7 +1550,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func duplicateTab(tabID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.duplicatingTab(tabID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .duplicateTab(
+                    tabID: tabID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
         } catch {
             return false
         }
@@ -1458,7 +1578,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         select(tabID: tabID)
         let result: ShellStateMutationResult
         do {
-            result = try shellState.splittingPane(paneID, placement: .right)
+            let sourcePane = pane(paneID: paneID)
+            let terminalProfileID = sourcePane?.terminalProfileID
+                ?? selectedSpace?.terminalProfileID
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .splitPane(
+                    paneSlotID: paneID,
+                    placement: .right,
+                    title: nil,
+                    workingDirectory: terminalProfileID == nil ? sourcePane?.cwd : nil,
+                    terminalProfileID: terminalProfileID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
         } catch {
             return false
         }
@@ -1478,9 +1611,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func clearInactiveTemporaryTabs(in spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.clearingInactiveTemporaryTabs(
-                in: spaceID,
-                activeTaskByTabID: activeTaskByTabID()
+            let protectedTabIDs = activeTaskByTabID().compactMap { tabID, activeTask in
+                activeTask.protectsFromPruning ? tabID : nil
+            }
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .clearInactiveTemporaryTabs(
+                    spaceID: spaceID,
+                    protectedTabIDs: protectedTabIDs
+                )
             )
         } catch {
             return false
@@ -1501,12 +1640,56 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> String? {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.openingContentTab(
-                contentIntent,
-                in: spaceID,
-                terminalProfileID: terminalProfileID,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
+            let reservedPaneSlotIDs = terminalRuntimeRegistry.registeredPaneIDs.sorted()
+            switch contentIntent {
+            case .terminal(let launchTarget, let title, let workingDirectory):
+                switch launchTarget {
+                case .shell:
+                    let resolvedTerminalProfileID = targetTerminalProfileID(
+                        in: spaceID,
+                        explicit: terminalProfileID
+                    )
+                    let resolvedWorkingDirectory =
+                        workingDirectory
+                        ?? (resolvedTerminalProfileID == nil
+                            ? focusedPaneWorkingDirectory()
+                            : nil)
+                    result = try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: shellState,
+                        operation: .openTerminalTab(
+                            spaceID: spaceID,
+                            title: title,
+                            workingDirectory: resolvedWorkingDirectory,
+                            terminalProfileID: resolvedTerminalProfileID,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                }
+            case .markdown(let fileURL, let title):
+                let content = markdownContentDescriptor(fileURL: fileURL, title: title)
+                result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .openContentTab(
+                        spaceID: spaceID,
+                        kind: .markdown,
+                        title: content.title,
+                        payload: content.payload,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            case .settings(let title):
+                let content = settingsContentDescriptor(title: title)
+                result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .openContentTab(
+                        spaceID: spaceID,
+                        kind: .settings,
+                        title: content.title,
+                        payload: content.payload,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            }
         } catch {
             return nil
         }
@@ -1522,15 +1705,26 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        openContentTab(
-            .terminal(
-                launchTarget: launchTarget,
-                title: title,
-                workingDirectory: workingDirectory
-            ),
-            in: spaceID,
-            terminalProfileID: terminalProfileID
-        )
+        let result: ShellStateMutationResult
+        do {
+            switch launchTarget {
+            case .shell:
+                result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .openTerminalTab(
+                        spaceID: spaceID,
+                        title: title,
+                        workingDirectory: workingDirectory,
+                        terminalProfileID: terminalProfileID,
+                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                    )
+                )
+            }
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.tabID
     }
 
     @discardableResult
@@ -1637,13 +1831,69 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         let result: ShellStateMutationResult
         do {
-            result = try shellState.splittingPane(
-                paneID,
-                placement: placement,
-                contentIntent: contentIntent,
-                terminalProfileID: resolvedTerminalProfileID,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
+            let reservedPaneSlotIDs = terminalRuntimeRegistry.registeredPaneIDs.sorted()
+            if let contentIntent {
+                switch contentIntent {
+                case .terminal(let launchTarget, let title, let workingDirectory):
+                    switch launchTarget {
+                    case .shell:
+                        result = try ShellCoreFFIAdapter.shared.applyReducer(
+                            state: shellState,
+                            operation: .splitPane(
+                                paneSlotID: paneID,
+                                placement: placement,
+                                title: title,
+                                workingDirectory: workingDirectory
+                                    ?? (resolvedTerminalProfileID == nil
+                                        ? pane(paneID: paneID)?.cwd
+                                        : nil),
+                                terminalProfileID: resolvedTerminalProfileID,
+                                reservedPaneSlotIDs: reservedPaneSlotIDs
+                            )
+                        )
+                    }
+                case .markdown(let fileURL, let title):
+                    let content = markdownContentDescriptor(fileURL: fileURL, title: title)
+                    result = try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: shellState,
+                        operation: .splitContentPane(
+                            paneSlotID: paneID,
+                            placement: placement,
+                            kind: .markdown,
+                            title: content.title,
+                            payload: content.payload,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                case .settings(let title):
+                    let content = settingsContentDescriptor(title: title)
+                    result = try ShellCoreFFIAdapter.shared.applyReducer(
+                        state: shellState,
+                        operation: .splitContentPane(
+                            paneSlotID: paneID,
+                            placement: placement,
+                            kind: .settings,
+                            title: content.title,
+                            payload: content.payload,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                }
+            } else {
+                result = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .splitPane(
+                        paneSlotID: paneID,
+                        placement: placement,
+                        title: nil,
+                        workingDirectory: resolvedTerminalProfileID == nil
+                            ? pane(paneID: paneID)?.cwd
+                            : nil,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            }
         } catch {
             return nil
         }
@@ -1651,12 +1901,70 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return result.paneID
     }
 
+    private func markdownContentDescriptor(
+        fileURL: URL,
+        title: String?
+    ) -> (title: String, payload: ShellContentPayload) {
+        let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
+        let resolvedTitle = Self.markdownContentTitle(for: resolvedURL, explicitTitle: title)
+        return (
+            title: resolvedTitle,
+            payload: .markdown(
+                ShellMarkdownContentPayload(
+                    fileURL: resolvedURL.absoluteString,
+                    title: resolvedTitle
+                )
+            )
+        )
+    }
+
+    private func settingsContentDescriptor(
+        title: String?
+    ) -> (title: String, payload: ShellContentPayload) {
+        let resolvedTitle = Self.settingsContentTitle(explicitTitle: title)
+        return (
+            title: resolvedTitle,
+            payload: .settings(
+                ShellSettingsContentPayload(
+                    surfaceID: ShellContentInstance.settingsSurfaceID,
+                    title: resolvedTitle
+                )
+            )
+        )
+    }
+
+    private static func markdownContentTitle(for fileURL: URL, explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        let lastPathComponent = fileURL.lastPathComponent.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return lastPathComponent.isEmpty ? "Markdown" : lastPathComponent
+    }
+
+    private static func settingsContentTitle(explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        return "Settings"
+    }
+
     @discardableResult
     func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
         let previousPaneID = shellState.focusedPaneID
         let result: ShellStateMutationResult
         do {
-            result = try shellState.focusingAdjacentPane(direction)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .focusAdjacentPane(direction: direction)
+            )
         } catch {
             return false
         }
@@ -1744,21 +2052,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func shellActionTitle(_ id: ShellActionID) -> String {
-        ShellActionRegistry.standard.action(for: id)?.title ?? "Unavailable"
+        (try? ShellCoreFFIAdapter.shared.actionTitle(for: id)) ?? "Unavailable"
     }
 
     func shellActionAvailability(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionAvailability {
-        ShellActionRegistry.standard.resolve(id, target: target, state: shellState).availability
+        (try? ShellCoreFFIAdapter.shared.actionAvailability(
+            id,
+            target: target,
+            state: shellState
+        )) ?? .unavailable(reason: "Action is unavailable")
     }
 
     func shellActionShortcut(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionShortcut? {
-        ShellActionRegistry.standard.defaultShortcut(for: id, target: target)
+        try? ShellCoreFFIAdapter.shared.defaultActionShortcut(for: id, target: target)
     }
 
     @discardableResult
@@ -1781,13 +2093,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 : .failed(reason: "Terminal search target is unavailable")
         }
 
-        return ShellActionRegistry.standard.execute(
+        return (try? ShellCoreFFIAdapter.shared.executeAction(
             id,
             target: target,
             state: shellState
         ) { [weak self] effect in
             self?.performShellActionEffect(effect) ?? false
-        }
+        }) ?? .failed(reason: "Action dispatch failed")
     }
 
     private func performShellActionEffect(_ effect: ShellActionEffect) -> Bool {
@@ -1866,7 +2178,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
+            )
         } catch {
             return false
         }
@@ -1879,7 +2194,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let previousTab = selectedTab
         let result: ShellStateMutationResult
         do {
-            result = try shellState.equalizingSplits(in: selectedTabID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .equalizeSplits(tabID: selectedTabID)
+            )
         } catch {
             return false
         }
@@ -1955,7 +2273,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func setAttention(_ attention: ShellAttentionState, for paneID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.settingAttention(attention, for: paneID)
+            result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .setAttention(paneSlotID: paneID, attention: attention)
+            )
         } catch {
             return false
         }
@@ -3346,7 +3667,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyCloseTabMutation(tabID: String) -> ShellTabCloseResult {
         do {
-            let result = try shellState.closingTab(tabID)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .closeTab(tabID: tabID)
+            )
             applyMutationResult(result)
             return .closed
         } catch ShellStateMutationError.lastTab {
@@ -3379,7 +3703,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyClosePaneMutation(paneID: String) -> ShellPaneCloseResult {
         do {
-            let result = try shellState.closingPane(paneID)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .closePane(paneSlotID: paneID)
+            )
             applyMutationResult(result)
             return .closed
         } catch ShellStateMutationError.lastTab {
@@ -3745,13 +4072,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         toTab targetTabID: String,
         direction: ShellSplitDirection
     ) -> Bool {
+        let targetTabTitle = shellState.tab(tabID: targetTabID)?.title ?? targetTabID
         do {
-            let result = try shellState.movingPane(
-                paneID,
-                toTab: targetTabID,
-                direction: direction
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .movePaneToTab(
+                    paneSlotID: paneID,
+                    targetTabID: targetTabID,
+                    direction: direction
+                )
             )
-            applyMutationResult(result)
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: paneID,
+                fallbackSummary: "pane moved to \(targetTabTitle)"
+            )
+            applyMutationResult(annotatedResult)
             return true
         } catch {
             return false
@@ -3781,9 +4117,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
 
         do {
-            let result = try shellState.movingPaneWithinTab(
-                paneID,
-                placement: placement
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
             )
             applyMutationResult(result)
             if let tabID = result.tabID {
@@ -3803,9 +4139,21 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func liftPaneToTab(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
+        let resolvedTitle = title ?? shellState.pane(paneID: paneID)?.viewport?.title ?? "Lifted Pane"
         do {
-            let result = try shellState.movingPaneToNewTab(paneID, title: title)
-            applyMutationResult(result)
+            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .movePaneToNewTab(
+                    paneSlotID: paneID,
+                    title: resolvedTitle
+                )
+            )
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: paneID,
+                fallbackSummary: "pane moved to its own tab"
+            )
+            applyMutationResult(annotatedResult)
             return .lifted
         } catch ShellStateMutationError.lastPane {
             return .lastPane
@@ -3814,6 +4162,57 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    private func annotatingPaneViewport(
+        _ result: ShellStateMutationResult,
+        paneID: String,
+        fallbackSummary: String,
+        now: Date = .now
+    ) -> ShellStateMutationResult {
+        let formatter = ISO8601DateFormatter()
+        let timestamp = formatter.string(from: now)
+        let nextPanes = result.state.panes.map { pane in
+            guard pane.paneID == paneID else { return pane }
+            let viewport = ShellViewportSnapshot(
+                title: pane.viewport?.title,
+                summary: pane.viewport?.summary ?? fallbackSummary,
+                visibleExcerpt: pane.viewport?.visibleExcerpt,
+                lastActivityAt: timestamp
+            )
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                launchTarget: pane.launchTarget,
+                cwd: pane.cwd,
+                process: pane.process,
+                attention: pane.attention,
+                context: pane.context,
+                viewport: viewport,
+                activity: pane.activity,
+                alanBinding: pane.alanBinding,
+                terminalProfileID: pane.terminalProfileID
+            )
+        }
+        let nextState = ShellStateSnapshot(
+            contractVersion: result.state.contractVersion,
+            windowID: result.state.windowID,
+            focusedSpaceID: result.state.focusedSpaceID,
+            focusedTabID: result.state.focusedTabID,
+            focusedPaneID: result.state.focusedPaneID,
+            spaces: result.state.spaces,
+            panes: nextPanes,
+            paneSlots: result.state.paneSlots,
+            contents: result.state.contents,
+            quickTerminal: result.state.quickTerminal
+        )
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: result.spaceID,
+            tabID: result.tabID,
+            paneID: result.paneID
+        )
     }
 
     private var totalTabCount: Int {
