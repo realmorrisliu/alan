@@ -204,24 +204,28 @@ final class AlanShellControlPlane {
         persistPublished()
     }
 
-    /// Prompt, in-memory only: updates the published-state cache that shell IPC
-    /// clients read (`.state` / `.pane.list` / `.pane.snapshot`). Safe to call on
-    /// the high-frequency terminal callback path — it does no disk I/O.
+    /// Prompt path: updates the published-state cache that shell IPC clients read
+    /// (`.state` / `.pane.list` / `.pane.snapshot`) and ensures pane support
+    /// directories + binding-file poller tracking exist for the current panes.
+    /// The pane-directory work only touches disk for newly-appeared panes, so it
+    /// is cheap on the steady terminal-output path while keeping boot/structural
+    /// pane setup prompt (a restored pane's child needs its binding directory
+    /// before it can write `alan-binding.json`).
     @discardableResult
     func publishInMemory(state: ShellStateSnapshot) -> ShellStateSnapshot {
         let mergeResult = socketServer.mergePublishedState(state)
         latestMergedState = mergeResult.merged
+        synchronizePaneSupportDirectories(for: mergeResult.merged)
         return mergeResult.merged
     }
 
-    /// Deferred persistence for the latest in-memory state: pane support
-    /// directories, the change-event log (coalesced since the last persist), and
-    /// the `state.json` mirror (encode + write off the main thread). Run from the
-    /// debounced flush, not the per-callback path.
+    /// Deferred persistence for the latest in-memory state: the change-event log
+    /// (coalesced since the last persist) and the `state.json` mirror (encode +
+    /// write off the main thread). Run from the debounced flush, not the
+    /// per-callback path.
     func persistPublished() {
         guard let mergedState = latestMergedState else { return }
         ensureDirectories()
-        synchronizePaneSupportDirectories(for: mergedState)
         eventStore.recordChanges(from: lastPersistedState, to: mergedState)
         lastPersistedState = mergedState
         scheduleStateFilePersist()
@@ -429,7 +433,7 @@ final class AlanShellControlPlane {
         trackedPaneIDs = paneIDs
         filePoller?.updateTrackedPaneIDs(paneIDs)
 
-        for paneID in paneIDs {
+        for paneID in paneIDs.subtracting(previousPaneIDs) {
             let paneURL = alanShellPaneSupportDirectoryURL(
                 windowID: windowID,
                 paneID: paneID,

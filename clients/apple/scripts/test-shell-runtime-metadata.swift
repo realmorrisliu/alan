@@ -25,6 +25,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesLifecycleFlushPersistsPendingContentSynchronously()
         verifiesFailedStructuralManifestSaveIsReported()
         verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics()
+        verifiesPaneSupportDirectoryIsCreatedPromptlyAtBoot()
         verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
@@ -10385,6 +10386,27 @@ private enum ShellRuntimeMetadataTests {
         expect(
             writer.syncWrites == 0,
             "the coalesced flush must write off the main thread, not synchronously"
+        )
+    }
+
+    private static func verifiesPaneSupportDirectoryIsCreatedPromptlyAtBoot() {
+        let windowID = "pane_dir_boot_\(UUID().uuidString)"
+        // Manual scheduler: the debounced/deferred persistence never fires, so any
+        // boot-critical pane setup must happen on the prompt (in-memory) path.
+        let controller = makeController(
+            windowID: windowID,
+            manifestFlushScheduler: ManualManifestFlushScheduler()
+        )
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+        let paneURL = alanShellPaneSupportDirectoryURL(windowID: windowID, paneID: pane.paneID)
+        defer { try? FileManager.default.removeItem(at: alanShellControlPlaneRootURL(windowID: windowID)) }
+
+        expect(
+            FileManager.default.fileExists(atPath: paneURL.path),
+            "a pane's support directory must be created promptly at boot, before the debounced flush, "
+                + "so a fast shell integration can write its binding file"
         )
     }
 
