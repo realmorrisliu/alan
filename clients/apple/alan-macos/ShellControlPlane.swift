@@ -97,6 +97,7 @@ final class AlanShellControlPlane {
     )
     private var pendingStateFileWrite: DispatchWorkItem?
     private var latestMergedState: ShellStateSnapshot?
+    private var lastPersistedState: ShellStateSnapshot?
 
     init(
         windowID: String,
@@ -196,17 +197,33 @@ final class AlanShellControlPlane {
         eventStore.latestEventID
     }
 
+    /// Full publish: prompt in-memory merge plus deferred disk/event persistence.
+    /// Used by structural mutations and the debounced flush.
     func publish(state: ShellStateSnapshot) {
-        ensureDirectories()
+        publishInMemory(state: state)
+        persistPublished()
+    }
+
+    /// Prompt, in-memory only: updates the published-state cache that shell IPC
+    /// clients read (`.state` / `.pane.list` / `.pane.snapshot`). Safe to call on
+    /// the high-frequency terminal callback path — it does no disk I/O.
+    @discardableResult
+    func publishInMemory(state: ShellStateSnapshot) -> ShellStateSnapshot {
         let mergeResult = socketServer.mergePublishedState(state)
-        let mergedState = mergeResult.merged
+        latestMergedState = mergeResult.merged
+        return mergeResult.merged
+    }
+
+    /// Deferred persistence for the latest in-memory state: pane support
+    /// directories, the change-event log (coalesced since the last persist), and
+    /// the `state.json` mirror (encode + write off the main thread). Run from the
+    /// debounced flush, not the per-callback path.
+    func persistPublished() {
+        guard let mergedState = latestMergedState else { return }
+        ensureDirectories()
         synchronizePaneSupportDirectories(for: mergedState)
-        eventStore.recordChanges(from: mergeResult.previous, to: mergedState)
-        // The in-memory merge + event recording above keep IPC consumers prompt.
-        // The state.json file is a live mirror; coalesce its encode + atomic
-        // write off the main thread so high-frequency terminal callbacks do not
-        // block on disk.
-        latestMergedState = mergedState
+        eventStore.recordChanges(from: lastPersistedState, to: mergedState)
+        lastPersistedState = mergedState
         scheduleStateFilePersist()
     }
 

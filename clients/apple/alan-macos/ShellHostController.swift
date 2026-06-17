@@ -2899,9 +2899,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         pendingContentFlushScheduled = false
         syncWorkspaceManifestFromShellState(coalesced: true)
         persistShellState(coalesced: true)
-        // Full control-plane publish at the debounce cadence: records coalesced
-        // change events and mirrors state.json (encode + write run off-main).
-        controlPlane.publish(state: shellState)
+        // Deferred control-plane persistence at the debounce cadence: records
+        // coalesced change events and mirrors state.json (encode + write off-main).
+        // The in-memory state was already merged promptly on the callback path.
+        controlPlane.persistPublished()
     }
 
     /// Forces pending debounced persistence to disk synchronously. Wired to app
@@ -3888,12 +3889,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         pinSnapshotTabIDs: Set<String> = [],
         coalesced: Bool = false
     ) {
-        // The high-frequency terminal callback path defers ALL persistence to a
-        // debounced flush — manifest + shell-state file + the full control-plane
-        // publish (which records change events and mirrors state.json). Nothing on
-        // this path touches disk. Structural mutations persist synchronously for
-        // prompt durability.
+        // The high-frequency terminal callback path keeps the in-memory
+        // control-plane state fresh (so IPC clients never read stale pane state)
+        // but defers all disk work — manifest + shell-state file + control-plane
+        // event log + state.json mirror — to a debounced flush. Nothing on this
+        // path touches disk. Structural mutations persist synchronously for prompt
+        // durability.
         if coalesced {
+            controlPlane.publishInMemory(state: shellState)
             scheduleContentFlush()
         } else {
             syncWorkspaceManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
