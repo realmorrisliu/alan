@@ -50,6 +50,8 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterReducerFocus()
             try testProductionAdapterActions()
             try testProductionAdapterControlCommands()
+            try testProductionAdapterUnscopedPaneListSpansAllTabs()
+            try testProductionAdapterTabReorderReportsSectionAndIndex()
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
@@ -960,6 +962,76 @@ private func testProductionAdapterControlCommands() throws {
     try expect(
         listResult.response.panes?.contains { $0.paneID == targetPaneID } == true,
         "pane.list panes must include the split pane"
+    )
+}
+
+private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {
+    let adapter = try ShellCoreFFIAdapter()
+    let state = ShellStateSnapshot.bootstrapDefault(
+        windowID: "window_main",
+        workingDirectory: "/repo/app"
+    )
+    let secondTab = try state.openingTerminalTab(
+        in: "space_main",
+        title: "Second",
+        workingDirectory: "/repo/second"
+    )
+    guard let secondPaneID = secondTab.paneID else {
+        throw TestFailure.message("second tab fixture must create a pane")
+    }
+
+    // Focus is now on the second tab. shell-core defaults `pane.list`'s tab_id to the focused
+    // tab, but an unscoped list must still report every tab's panes (matching the pane slots).
+    let listResult = try adapter.handleControlCommand(
+        try controlCommand("pane.list", fields: [:]),
+        state: secondTab.state
+    )
+    let paneIDs = Set(listResult.response.panes?.map(\.paneID) ?? [])
+    try expect(
+        paneIDs.contains("pane_1"),
+        "unscoped pane.list must include panes from non-focused tabs"
+    )
+    try expect(
+        paneIDs.contains(secondPaneID),
+        "unscoped pane.list must include the focused tab's pane"
+    )
+    try expect(
+        listResult.response.panes?.count == listResult.response.paneSlots?.count,
+        "pane.list legacy panes must match the pane slot projection scope exactly"
+    )
+}
+
+private func testProductionAdapterTabReorderReportsSectionAndIndex() throws {
+    // Full Swift -> Rust -> Swift round-trip: a tab organization mutation must surface the
+    // resulting section/index in the control response (decoded from the portable response).
+    let adapter = try ShellCoreFFIAdapter()
+    let state = ShellStateSnapshot.bootstrapDefault(
+        windowID: "window_main",
+        workingDirectory: "/repo/app"
+    )
+    let twoTabs = try state.openingTerminalTab(
+        in: "space_main",
+        title: "Second",
+        workingDirectory: "/repo/second"
+    ).state
+    guard let firstTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
+        throw TestFailure.message("fixture must expose a tab to reorder")
+    }
+
+    let result = try adapter.handleControlCommand(
+        try controlCommand(
+            "tab.reorder",
+            fields: ["tab_id": firstTabID, "section": "pinned", "index": 0]
+        ),
+        state: twoTabs
+    )
+    try expect(
+        result.response.section == .pinned,
+        "tab.reorder response must surface the resulting pinned section"
+    )
+    try expect(
+        result.response.index == 0,
+        "tab.reorder response must surface the resulting section index"
     )
 }
 

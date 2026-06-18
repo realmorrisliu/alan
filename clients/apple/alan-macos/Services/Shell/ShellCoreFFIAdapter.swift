@@ -940,6 +940,8 @@ private struct ShellCoreControlResponse: Decodable {
     let previousFocusedPaneSlotID: String?
     let currentFocusedPaneSlotID: String?
     let placement: ShellPaneSplitDirection?
+    let section: ShellTabOrganizationSection?
+    let index: Int?
     let errorCode: String?
     let errorMessage: String?
 
@@ -967,6 +969,8 @@ private struct ShellCoreControlResponse: Decodable {
         case previousFocusedPaneSlotID = "previous_focused_pane_slot_id"
         case currentFocusedPaneSlotID = "current_focused_pane_slot_id"
         case placement
+        case section
+        case index
         case errorCode = "error_code"
         case errorMessage = "error_message"
     }
@@ -996,9 +1000,11 @@ private struct ShellCoreControlResponse: Decodable {
             tabs: tabs?.map(\.shellTab),
             // The legacy `panes` list is dropped by shell-core's portable projection, but the
             // `pane.list` response (pane_slots present, no full state snapshot) still backs the
-            // CLI's `alan shell pane list`, which requires `panes`. Re-project it from the tab.
-            panes: (state == nil && paneSlots != nil)
-                ? projectionState.panes(in: tabID)
+            // CLI's `alan shell pane list`, which requires `panes`. Re-project it from the
+            // response `paneSlots` so the scope matches exactly — an unscoped `pane.list` returns
+            // every tab's panes even though shell-core defaults `tab_id` to the focused tab.
+            panes: state == nil
+                ? paneSlots?.compactMap { projectionState.pane(paneID: $0.paneSlotID) }
                 : nil,
             paneSlots: paneSlots,
             contents: contents?.map(\.contentInstance),
@@ -1018,8 +1024,8 @@ private struct ShellCoreControlResponse: Decodable {
             contentKind: contentKind ?? contentProjection.kind,
             contentTitle: contentProjection.title,
             contentCapabilities: contentProjection.capabilities,
-            section: nil,
-            index: nil,
+            section: section,
+            index: index,
             acceptedBytes: nil,
             deliveryCode: nil,
             runtimePhase: nil,

@@ -234,6 +234,12 @@ pub struct ShellControlResponse {
     /// Placement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<SplitPlacement>,
+    /// Resulting pinned/unpinned section after a tab organization mutation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<TabOrganizationSection>,
+    /// Resulting index within the target section after a tab organization mutation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<usize>,
     /// Stable error code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
@@ -832,6 +838,8 @@ impl ShellControlReducer {
             previous_focused_pane_slot_id: None,
             current_focused_pane_slot_id: None,
             placement: None,
+            section: None,
+            index: None,
             error_code: None,
             error_message: None,
         }
@@ -910,6 +918,12 @@ fn project_success_response(
                 .find(|space| space.tabs.iter().any(|tab| &tab.tab_id == tab_id))
             {
                 response.space_id = Some(space.space_id.clone());
+            }
+            // Report where the tab landed so automation can confirm an accepted organization
+            // mutation (pin/unpin/reorder/move) without a follow-up state read.
+            if let Some((section, index)) = tab_section_and_index(state, tab_id) {
+                response.section = Some(section);
+                response.index = Some(index);
             }
         }
         ResponseProjection::ResizeSplit => {
@@ -1004,6 +1018,33 @@ fn tabs_in_space(state: &WorkspaceState, space_id: Option<&str>) -> Vec<Tab> {
             .flat_map(|space| space.tabs.clone())
             .collect(),
     }
+}
+
+/// Resolves a tab's pinned/unpinned section and its index within that section.
+fn tab_section_and_index(
+    state: &WorkspaceState,
+    tab_id: &str,
+) -> Option<(TabOrganizationSection, usize)> {
+    for space in &state.spaces {
+        if let Some(tab) = space
+            .tabs
+            .iter()
+            .find(|candidate| candidate.tab_id == tab_id)
+        {
+            let section = if tab.is_pinned {
+                TabOrganizationSection::Pinned
+            } else {
+                TabOrganizationSection::Unpinned
+            };
+            let index = space
+                .tabs
+                .iter()
+                .filter(|candidate| candidate.is_pinned == tab.is_pinned)
+                .position(|candidate| candidate.tab_id == tab_id)?;
+            return Some((section, index));
+        }
+    }
+    None
 }
 
 fn pane_slots_in_tab(state: &WorkspaceState, tab_id: Option<&str>) -> Vec<PaneSlot> {

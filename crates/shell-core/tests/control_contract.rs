@@ -206,9 +206,36 @@ fn tab_reorder_moves_tab_into_requested_section() {
         reordered.is_pinned,
         "tab.reorder must honor the requested pinned section"
     );
-    // The response subject must be the reordered tab, not the focused one.
+    // The response subject must be the reordered tab, not the focused one, and report where it
+    // landed so automation can confirm the organization without a follow-up state read.
     assert_eq!(result.response.tab_id.as_deref(), Some("tab_unpinned"));
     assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(
+        result.response.section,
+        Some(TabOrganizationSection::Pinned)
+    );
+    assert_eq!(result.response.index, Some(0));
+}
+
+#[test]
+fn tab_unpin_reports_resulting_section_and_index() {
+    let state = pinned_and_unpinned_state();
+    let mut request = command("req-unpin", ShellControlCommandKind::TabUnpin);
+    request.tab_id = Some("tab_pinned".to_string());
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_pinned"));
+    assert_eq!(
+        result.response.section,
+        Some(TabOrganizationSection::Unpinned),
+        "tab.unpin must report the resulting unpinned section, not nil"
+    );
+    assert!(
+        result.response.index.is_some(),
+        "tab.unpin must report the resulting index within the section"
+    );
 }
 
 #[test]
