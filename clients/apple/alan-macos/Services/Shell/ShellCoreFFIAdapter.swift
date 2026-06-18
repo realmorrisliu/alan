@@ -2128,8 +2128,28 @@ private struct ShellCorePortableContentInstance: Codable {
             capabilities: capabilities,
             payload: payload,
             lifecycle: lifecycle,
-            rendererState: .placeholder
+            rendererState: Self.materializedRendererState(kind: kind, payload: payload)
         )
+    }
+
+    /// shell-core's portable contents do not carry the Swift-only `rendererState`. Terminal
+    /// renderer state is recomputed from live pane context during content projection, but
+    /// markdown/settings contents have no runtime to repopulate it, so reconstruct the same
+    /// "ready" state the native mount path assigns instead of leaving them at `.placeholder`
+    /// (which would otherwise report non-terminal panes as not ready in the event stream).
+    private static func materializedRendererState(
+        kind: ShellContentKind,
+        payload: ShellContentPayload
+    ) -> ShellContentRendererState {
+        switch kind {
+        case .terminal:
+            return .placeholder
+        case .markdown:
+            let detail = payload.markdown.flatMap { URL(string: $0.fileURL)?.path }
+            return ShellContentRendererState(phase: "ready", detail: detail)
+        case .settings:
+            return ShellContentRendererState(phase: "ready", detail: payload.settings?.surfaceID)
+        }
     }
 }
 

@@ -51,6 +51,7 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterActions()
             try testProductionAdapterControlCommands()
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
+            try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
             print("Shell core FFI adapter tests passed.")
         } catch {
@@ -1032,6 +1033,81 @@ private extension ShellStateSnapshot {
             quickTerminal: quickTerminal
         )
     }
+}
+
+private func testProductionAdapterContentTabRendererState() throws {
+    let adapter = try ShellCoreFFIAdapter()
+    let state = ShellStateSnapshot.bootstrapDefault(
+        windowID: "window_main",
+        workingDirectory: "/repo/app"
+    )
+
+    // shell-core does not carry the Swift-only content `rendererState`. Markdown/settings panes
+    // have no runtime to repopulate it, so the materialized content must report the same "ready"
+    // state the native mount path assigns rather than `.placeholder`.
+    let markdownResult = try adapter.applyReducer(
+        state: state,
+        operation: .openContentTab(
+            spaceID: nil,
+            kind: .markdown,
+            title: "Doc",
+            payload: .markdown(
+                ShellMarkdownContentPayload(fileURL: "file:///repo/app/README.md", title: "Doc")
+            ),
+            reservedPaneSlotIDs: []
+        )
+    )
+    let markdownContent = markdownResult.state.contents?.first { $0.kind == .markdown }
+    try expect(
+        markdownContent?.rendererState.phase == "ready",
+        "production adapter must materialize markdown content as ready, not placeholder"
+    )
+    try expect(
+        markdownContent?.rendererState.detail == "/repo/app/README.md",
+        "production adapter must recover markdown renderer detail from the payload file path"
+    )
+
+    let settingsResult = try adapter.applyReducer(
+        state: markdownResult.state,
+        operation: .openContentTab(
+            spaceID: nil,
+            kind: .settings,
+            title: "Settings",
+            payload: .settings(
+                ShellSettingsContentPayload(
+                    surfaceID: ShellContentInstance.settingsSurfaceID,
+                    title: "Settings"
+                )
+            ),
+            reservedPaneSlotIDs: []
+        )
+    )
+    let settingsContent = settingsResult.state.contents?.first { $0.kind == .settings }
+    try expect(
+        settingsContent?.rendererState.phase == "ready",
+        "production adapter must materialize settings content as ready, not placeholder"
+    )
+
+    // An unrelated mutation must not regress the existing markdown pane back to placeholder.
+    guard let splitTargetPaneID = settingsResult.state.panes.first?.paneID else {
+        throw TestFailure.message("content fixture must expose a pane to split")
+    }
+    let unrelatedMutation = try adapter.applyReducer(
+        state: settingsResult.state,
+        operation: .splitPane(
+            paneSlotID: splitTargetPaneID,
+            placement: .right,
+            title: nil,
+            workingDirectory: nil,
+            terminalProfileID: nil,
+            reservedPaneSlotIDs: []
+        )
+    )
+    let survivingMarkdown = unrelatedMutation.state.contents?.first { $0.kind == .markdown }
+    try expect(
+        survivingMarkdown?.rendererState.phase == "ready",
+        "unrelated mutation must not reset existing markdown content to placeholder"
+    )
 }
 
 private func testProductionAdapterTerminalProfiles() throws {
