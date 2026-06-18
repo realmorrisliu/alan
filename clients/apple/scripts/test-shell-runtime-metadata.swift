@@ -51,6 +51,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesShellHostControllerRoutesSharedAutomationCommands()
         verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
+        verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -2203,6 +2204,47 @@ private enum ShellRuntimeMetadataTests {
         expect(
             missing.code == .missingTarget && !missing.applied,
             "shared command handler must report missing targets with stable semantics"
+        )
+    }
+
+    private static func verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields() {
+        let controller = makeController(
+            windowID: "host_split_launch",
+            shellState: .bootstrapDefault(
+                windowID: "host_split_launch",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+
+        // Canonical `pane_slot_id` targeting plus explicit launch fields must both survive the
+        // host-routed pane.split path.
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "host-split-launch-1",
+                  "command": "pane.split",
+                  "pane_slot_id": "pane_1",
+                  "direction": "horizontal",
+                  "cwd": "/Users/morris/explicit",
+                  "title": "Build Watcher"
+                }
+                """
+            )
+        )
+        guard response.applied == true, let newPaneID = response.paneID else {
+            fail("host pane.split must accept pane_slot_id and apply")
+        }
+        expect(
+            controller.shellState.pane(paneID: newPaneID)?.cwd == "/Users/morris/explicit",
+            "host pane.split must honor the explicit cwd instead of inheriting the source pane"
+        )
+        expect(
+            controller.shellState
+                .contentStateProjection()
+                .contentMounted(in: newPaneID)?
+                .title == "Build Watcher",
+            "host pane.split must honor the explicit title instead of the generic one"
         )
     }
 

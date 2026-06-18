@@ -4186,9 +4186,20 @@ extension ShellHostController: ShellAutomationCommandHandling {
             guard pane(paneID: request.paneID) != nil else {
                 return shellAutomationMissingPaneResult(request.paneID)
             }
+            // Carry explicit launch fields through a terminal content intent so a requested cwd
+            // or title is honored instead of falling back to the source/default launch settings.
+            let contentIntent: ShellContentIntent? =
+                (request.title != nil || request.workingDirectory != nil)
+                ? .terminal(
+                    launchTarget: .shell,
+                    title: request.title,
+                    workingDirectory: request.workingDirectory
+                )
+                : nil
             guard let paneID = splitPane(
                 paneID: request.paneID,
                 placement: request.placement,
+                contentIntent: contentIntent,
                 terminalProfileID: request.terminalProfileID
             ) else {
                 return shellAutomationMissingPaneResult(request.paneID)

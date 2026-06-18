@@ -599,7 +599,7 @@ extension ShellHostController {
             )
 
         case .paneSplit:
-            guard let paneID = command.paneID else {
+            guard let paneID = command.paneSlotID ?? command.paneID else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
@@ -621,6 +621,8 @@ extension ShellHostController {
                     ShellAutomationPaneSplitRequest(
                         paneID: paneID,
                         placement: .defaultPlacement(for: direction),
+                        title: command.title,
+                        workingDirectory: command.cwd,
                         terminalProfileID: command.terminalProfileID
                     )
                 )
