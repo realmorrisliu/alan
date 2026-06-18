@@ -491,6 +491,7 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/scripts/build-shell-core-ffi-dylib.sh",
 			);
 			name = "Build Shell Core FFI";
 			outputFileListPaths = (
@@ -500,7 +501,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\nif [ \"${PLATFORM_NAME:-}\" != \"macosx\" ]; then\n  exit 0\nfi\nREPO_ROOT=\"$(cd \"$SRCROOT/../..\" && pwd)\"\nCARGO_ARGS=\"\"\nPROFILE_DIR=\"debug\"\nif [ \"${CONFIGURATION:-Debug}\" = \"Release\" ]; then\n  CARGO_ARGS=\"--release\"\n  PROFILE_DIR=\"release\"\nfi\ncd \"$REPO_ROOT\"\ncargo build -p alan-shell-core-ffi $CARGO_ARGS\nDYLIB=\"$REPO_ROOT/target/$PROFILE_DIR/libalan_shell_core_ffi.dylib\"\ninstall_name_tool -id \"@rpath/libalan_shell_core_ffi.dylib\" \"$DYLIB\" || true\nmkdir -p \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\ncp \"$DYLIB\" \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libalan_shell_core_ffi.dylib\"\n";
+			shellScript = "set -eu\n\"$SRCROOT/scripts/build-shell-core-ffi-dylib.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

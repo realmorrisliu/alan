@@ -2378,14 +2378,44 @@ require_pattern \
     "release assembly must build the embedded CLI for the explicit Apple Silicon target"
 
 require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ALAN_SHELL_CORE_FFI_CARGO_TARGET" \
+    "shell-core FFI Xcode build must allow the release target to pin Cargo's target triple"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "aarch64-apple-darwin" \
+    "shell-core FFI Xcode build must map arm64 to the Apple Silicon Rust target"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "CARGO_BUILD_ARGS=.*--target \"\\\$CARGO_BUILD_TARGET\"" \
+    "shell-core FFI Xcode build must pass Cargo an explicit target triple"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "\\$\\(SRCROOT\\)/scripts/build-shell-core-ffi-dylib\\.sh" \
+    "Xcode shell-core FFI build must declare the external script as a sandbox input"
+
+require_pattern \
     "scripts/assemble-release-app.sh" \
     "CARGO_RELEASE_BIN" \
     "release assembly must copy the target-specific Cargo release binary"
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "ALAN_SHELL_CORE_FFI_CARGO_TARGET=\"\\\$CARGO_BUILD_TARGET\"" \
+    "release assembly must pin the shell-core FFI dylib to the Apple Silicon Rust target"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "thin_macho_to_arm64 \"\\\$EMBEDDED_BIN_DIR/\\\$ALAN_CLI_NAME\"" \
     "release assembly must verify the embedded CLI is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release assembly must verify the shell-core FFI dylib is arm64-only before signing"
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
@@ -2406,6 +2436,16 @@ require_pattern \
     "scripts/assemble-release-app.sh" \
     "Signing Sparkle framework and helper" \
     "release assembly must sign Sparkle nested code before the final app bundle"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "sign_path \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release assembly must sign the shell-core FFI dylib before the final app bundle"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "/usr/bin/codesign" \
+    "Xcode shell-core FFI build must sign the copied dylib when Xcode signing is enabled"
 
 require_pattern \
     "scripts/app-bundle-paths.sh" \
@@ -2431,6 +2471,16 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "require_arm64_macho \"\\\$ALAN_BIN\"" \
     "release app validation must reject non-arm64 embedded CLI binaries"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_arm64_macho \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release app validation must reject non-arm64 shell-core FFI dylibs"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_developer_id_signature \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release app validation must verify the shell-core FFI dylib signature"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \
