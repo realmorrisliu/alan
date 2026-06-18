@@ -42,6 +42,7 @@ private enum ShellCoreFFIAdapterTestRunner {
     static func main() {
         do {
             try testSharedAdapterReportsLibraryLoadFailures()
+            try testShellCoreUnavailableErrorClassification()
             try testDescribeAndABIVersion()
             try testSchemaMismatchAndUnknownOperationErrors()
             try testProductionAdapterFacadeErrorsWithNullPayloads()
@@ -67,6 +68,37 @@ private enum ShellCoreFFIAdapterTestRunner {
 private struct EmptyShellCoreRequest: Encodable {}
 
 private struct EmptyShellCoreResponse: Decodable {}
+
+private func testShellCoreUnavailableErrorClassification() throws {
+    // Infrastructure failures (shell-core itself unavailable) must let callers fall through to a
+    // host/Swift fallback; structured command errors from a working shell-core must not.
+    let unavailable: [ShellCoreFFIAdapterError] = [
+        .libraryLoadFailed("/missing.dylib", "dlopen failed"),
+        .symbolMissing("alan_shell_core_ffi_handle_request_out", "symbol not found"),
+        .abiVersionMismatch(expected: 1, actual: 2),
+        .requestFailed,
+        .nullResponseBuffer,
+    ]
+    for error in unavailable {
+        try expect(
+            error.indicatesShellCoreUnavailable,
+            "infrastructure failure must indicate shell-core unavailable: \(error)"
+        )
+    }
+
+    let commandErrors: [ShellCoreFFIAdapterError] = [
+        .facadeError(ShellCoreErrorPayload(code: "invalid_payload", message: "bad")),
+        .missingPayload("state"),
+        .materializationFailed("could not project"),
+        .reducerError(code: "pane_not_found", message: "missing pane"),
+    ]
+    for error in commandErrors {
+        try expect(
+            !error.indicatesShellCoreUnavailable,
+            "structured command error must not be treated as shell-core unavailable: \(error)"
+        )
+    }
+}
 
 private func testSharedAdapterReportsLibraryLoadFailures() throws {
     let environmentKey = "ALAN_SHELL_CORE_FFI_LIBRARY"

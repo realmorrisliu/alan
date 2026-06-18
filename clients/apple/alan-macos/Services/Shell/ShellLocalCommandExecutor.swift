@@ -27,6 +27,16 @@ enum AlanShellLocalCommandExecutor {
                 )
                 return AlanShellLocalCommandResult(shellCoreResult: result)
             } catch {
+                // When shell-core itself is unavailable (missing/mismatched dylib, etc.), fall
+                // through by returning nil so the socket-local path defers to the host handler,
+                // which answers host-answerable commands (state/space.list/tab.list/pane.list)
+                // from Swift state. Only a structured command error from a working shell-core
+                // surfaces as a failure response.
+                if let coreError = error as? ShellCoreFFIAdapterError,
+                   coreError.indicatesShellCoreUnavailable
+                {
+                    return nil
+                }
                 return shellCoreFailureResult(command: command, state: state, error: error)
             }
         }

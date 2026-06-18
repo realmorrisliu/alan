@@ -87,6 +87,20 @@ enum ShellCoreFFIAdapterError: Error, CustomStringConvertible {
             return "shell core FFI reducer \(code): \(message)"
         }
     }
+
+    /// Whether shell-core itself is unavailable (missing/mismatched dylib, missing symbols, or a
+    /// malformed FFI response) rather than a structured command error from a working shell-core.
+    /// Callers that have a host/Swift fallback should defer to it for these instead of surfacing a
+    /// failure, so host-answerable commands keep working in packaging-failure environments.
+    var indicatesShellCoreUnavailable: Bool {
+        switch self {
+        case .libraryLoadFailed, .symbolMissing, .abiVersionMismatch, .requestFailed,
+             .nullResponseBuffer:
+            return true
+        case .facadeError, .missingPayload, .materializationFailed, .reducerError:
+            return false
+        }
+    }
 }
 
 struct ShellCoreResponseEnvelope: Decodable {
