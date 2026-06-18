@@ -28,6 +28,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
+        try verifiesSwiftLegacyMigrationFallbackMatchesShellCore()
         try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
         try verifiesContentContainerMigrationPreservesWorkspaceMetadata()
         try verifiesContentContainerMigrationPreservesNilRestoreCwd()
@@ -733,6 +734,51 @@ private enum ShellWorkspaceManifestTests {
         expect(
             state.pane(paneID: "pane_tab_split_right")?.cwd == "/pinned/right",
             "pinned split restore must keep right pane cwd"
+        )
+    }
+
+    private static func verifiesSwiftLegacyMigrationFallbackMatchesShellCore() throws {
+        // `loadOrCreateDefault` falls back to the pure-Swift legacy migration when the shell-core
+        // FFI is unavailable. That fallback must be a faithful substitute, so it has to produce the
+        // same content manifest the FFI path would, recovering the user's saved workspace rather
+        // than dropping it to a default.
+        var pinnedTab = makeTab(
+            tabID: "tab_split",
+            title: "Pinned Split",
+            isPinned: true,
+            pinCwd: nil,
+            liveCwd: "/live/single",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        pinnedTab.pinSnapshot = makeSplitSnapshot(tabID: pinnedTab.tabID)
+        let liveTab = makeTab(
+            tabID: "tab_live",
+            title: "Live",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/live/work",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .foregroundCommand
+        )
+        let manifest = makeManifest(selectedTabID: pinnedTab.tabID, tabs: [pinnedTab, liveTab])
+
+        let swiftMigrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let shellCoreMigrated = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(manifest)
+
+        expect(
+            swiftMigrated == shellCoreMigrated,
+            "Swift legacy migration fallback must match the shell-core FFI migration"
+        )
+        expect(
+            swiftMigrated != ShellContentWorkspaceManifest.defaultManifest(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/fallback",
+                now: referenceDate
+            ),
+            "migration fallback must preserve the saved workspace, not produce a default"
         )
     }
 

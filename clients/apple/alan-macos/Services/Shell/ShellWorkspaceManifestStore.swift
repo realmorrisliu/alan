@@ -122,11 +122,14 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        // Decoded a valid legacy manifest; migration failures here are infrastructure errors and
-        // propagate without quarantining the original file.
-        let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
-            legacyManifest
-        )
+        // Decoded a valid legacy manifest. Prefer the shell-core FFI migration, but fall back to
+        // the equivalent pure-Swift migration when the FFI dylib is unavailable or mismatched, so
+        // a packaging failure still recovers the user's saved workspace instead of dropping it (a
+        // bare `throw` would surface as `nil` at the caller and open a fresh default workspace that
+        // later persistence would write over the valid file).
+        let migratedManifest =
+            (try? ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(legacyManifest))
+            ?? legacyManifest.migratingTerminalRestoreSnapshotsToContentContainers()
         try save(migratedManifest)
         return ShellWorkspaceManifestLoadResult(
             manifest: migratedManifest,
