@@ -1216,14 +1216,21 @@ private extension AlanShellControlCommand {
             }
                 ?? terminalProfileID
                 ?? terminalProfileIDForGlobalDefaultPaneCapture()
-            return withTerminalProfileID(resolvedTerminalProfileID)
+            let resolvedCwd = cwd
+                ?? (resolvedTerminalProfileID == nil
+                    ? paneID.flatMap { state.pane(paneID: $0)?.cwd }
+                    : nil)
+            return withTerminalProfileID(resolvedTerminalProfileID, cwd: resolvedCwd)
 
         default:
             return self
         }
     }
 
-    func withTerminalProfileID(_ terminalProfileID: String?) -> AlanShellControlCommand {
+    func withTerminalProfileID(
+        _ terminalProfileID: String?,
+        cwd resolvedCwd: String? = nil
+    ) -> AlanShellControlCommand {
         AlanShellControlCommand(
             requestID: requestID,
             command: command,
@@ -1241,7 +1248,7 @@ private extension AlanShellControlCommand {
             spatialDirection: spatialDirection,
             placement: placement,
             title: title,
-            cwd: cwd,
+            cwd: resolvedCwd ?? cwd,
             text: text,
             key: key,
             attention: attention,

@@ -75,6 +75,7 @@
 		00000000000000000000004D /* Support/ShellSidebarSpaceSliderWheelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */; };
 		00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */; };
 		00000000000000000000004F /* Services/Shell/ShellCoreFFIAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000159 /* Services/Shell/ShellCoreFFIAdapter.swift */; };
+		00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -171,6 +172,7 @@
 		000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceSliderWheelMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellLocalFolderOpener.swift; sourceTree = "<group>"; };
 		000000000000000000000159 /* Services/Shell/ShellCoreFFIAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIAdapter.swift; sourceTree = "<group>"; };
+		00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPersistenceWriter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -347,6 +349,7 @@
 				000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */,
 				000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */,
 				000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */,
+				00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */,
 				00000000000000000000012C /* Services/Shell/ShellPublishedStateMerger.swift */,
 				00000000000000000000012B /* Services/Shell/ShellSocketServer.swift */,
 				000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */,
@@ -579,6 +582,7 @@
 				00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */,
 				00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */,
 				00000000000000000000004F /* Services/Shell/ShellCoreFFIAdapter.swift in Sources */,
+				00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);

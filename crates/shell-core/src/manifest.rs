@@ -778,8 +778,8 @@ fn strongest_attention(pane_slots: &[PaneSlot], space_id: &str) -> ShellAttentio
         .max_by_key(|attention| match attention {
             ShellAttentionState::Idle => 0,
             ShellAttentionState::Active => 1,
-            ShellAttentionState::AwaitingUser => 2,
-            ShellAttentionState::Notable => 3,
+            ShellAttentionState::Notable => 2,
+            ShellAttentionState::AwaitingUser => 3,
         })
         .unwrap_or(ShellAttentionState::Idle)
 }
@@ -788,6 +788,43 @@ fn parse_manifest_time(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
         .unwrap_or_else(|_| Utc::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_space_attention_keeps_awaiting_user_above_notable() {
+        let pane_slots = vec![
+            pane_slot(
+                "pane_awaiting",
+                "space_main",
+                ShellAttentionState::AwaitingUser,
+            ),
+            pane_slot("pane_notable", "space_main", ShellAttentionState::Notable),
+            pane_slot("pane_other", "space_other", ShellAttentionState::Notable),
+        ];
+
+        assert_eq!(
+            strongest_attention(&pane_slots, "space_main"),
+            ShellAttentionState::AwaitingUser
+        );
+        assert_eq!(
+            strongest_attention(&pane_slots, "space_other"),
+            ShellAttentionState::Notable
+        );
+    }
+
+    fn pane_slot(pane_slot_id: &str, space_id: &str, attention: ShellAttentionState) -> PaneSlot {
+        PaneSlot {
+            pane_slot_id: pane_slot_id.to_string(),
+            tab_id: "tab_main".to_string(),
+            space_id: space_id.to_string(),
+            content_id: format!("content_{pane_slot_id}"),
+            attention,
+        }
+    }
 }
 
 mod manifest_pane_tree {

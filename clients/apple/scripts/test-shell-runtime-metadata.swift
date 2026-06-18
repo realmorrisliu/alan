@@ -9139,6 +9139,37 @@ private enum ShellRuntimeMetadataTests {
                 "ALAN_INSTALL_CHANNEL": "stable",
             ]
         )
+        let inheritedCwdLocalSplitResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-split-inherit-source-cwd",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "horizontal"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_split_inherit_source_cwd",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        let inheritedCwdPane = inheritedCwdLocalSplitResult?.updatedState?.pane(
+            paneID: inheritedCwdLocalSplitResult?.response.paneID ?? ""
+        )
+        expect(
+            inheritedCwdLocalSplitResult?.response.applied == true,
+            "local pane.split without a captured profile must apply"
+        )
+        expect(
+            inheritedCwdPane?.terminalProfileID == nil,
+            "local pane.split without a captured profile must leave profile unset"
+        )
+        expect(
+            inheritedCwdPane?.cwd == "/Users/morris/project",
+            "local pane.split without a captured profile must inherit source pane cwd"
+        )
         do {
             try store.save(terminalProfiles)
         } catch {
