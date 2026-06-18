@@ -780,6 +780,17 @@ extension ShellPaneTreeNode {
         return (children ?? []).lazy.compactMap { $0.node(nodeID: targetNodeID) }.first
     }
 
+    func leafNode(containingPaneID targetPaneID: String) -> ShellPaneTreeNode? {
+        switch kind {
+        case .pane:
+            return paneID == targetPaneID ? self : nil
+        case .split:
+            return (children ?? []).lazy.compactMap {
+                $0.leafNode(containingPaneID: targetPaneID)
+            }.first
+        }
+    }
+
     func adjacentPaneID(
         from targetPaneID: String,
         direction: ShellSpatialFocusDirection

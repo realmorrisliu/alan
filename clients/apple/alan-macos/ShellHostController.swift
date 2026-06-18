@@ -1039,34 +1039,29 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func focus(paneID: String, requestTerminalFocus: Bool) {
         let focusStartedAt = performanceDiagnosticsStartTime()
         let result: ShellStateMutationResult
-        if pane(paneID: paneID)?.isQuickTerminalPane == true {
-            guard let swiftResult = try? shellState.focusingPane(paneID) else { return }
-            result = swiftResult
-        } else {
-            do {
-                let rustResult = try reducerCoordinator.apply(
-                    state: shellState,
-                    operation: .focusPane(paneSlotID: paneID)
+        do {
+            let rustResult = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .focusPane(paneSlotID: paneID)
+            )
+            // Rust owns workspace focus. Swift keeps this narrow post-pass
+            // for platform terminal activity acknowledgement until activity
+            // signals are fully domain-owned by shell-core.
+            let acknowledgedState = rustResult.tabID.map { tabID in
+                rustResult.state.acknowledgingCommandFailureActivities(
+                    in: tabID,
+                    focusedPaneID: paneID
                 )
-                // Rust owns workspace focus. Swift keeps this narrow post-pass
-                // for platform terminal activity acknowledgement until activity
-                // signals are fully domain-owned by shell-core.
-                let acknowledgedState = rustResult.tabID.map { tabID in
-                    rustResult.state.acknowledgingCommandFailureActivities(
-                        in: tabID,
-                        focusedPaneID: paneID
-                    )
-                } ?? rustResult.state
-                result = ShellStateMutationResult(
-                    state: acknowledgedState,
-                    spaceID: rustResult.spaceID,
-                    tabID: rustResult.tabID,
-                    paneID: rustResult.paneID
-                )
-            } catch {
-                recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
-                return
-            }
+            } ?? rustResult.state
+            result = ShellStateMutationResult(
+                state: acknowledgedState,
+                spaceID: rustResult.spaceID,
+                tabID: rustResult.tabID,
+                paneID: rustResult.paneID
+            )
+        } catch {
+            recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
+            return
         }
         applyMutationResult(result)
         if let focusStartedAt {
@@ -4424,6 +4419,6 @@ extension ShellHostController: ShellAutomationCommandHandling {
 }
 
 extension ShellHostController {
-    static let spikePreview = ShellHostController(shellState: .spikePreview)
+    static let spikePreview = ShellHostController(shellState: .bootstrapDefault())
 }
 #endif

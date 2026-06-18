@@ -70,8 +70,8 @@ private struct EmptyShellCoreRequest: Encodable {}
 private struct EmptyShellCoreResponse: Decodable {}
 
 private func testShellCoreUnavailableErrorClassification() throws {
-    // Infrastructure failures (shell-core itself unavailable) must let callers fall through to a
-    // host/Swift fallback; structured command errors from a working shell-core must not.
+    // Infrastructure failures identify unavailable shell-core. Structured command errors from a
+    // working shell-core must remain domain failures.
     let unavailable: [ShellCoreFFIAdapterError] = [
         .libraryLoadFailed("/missing.dylib", "dlopen failed"),
         .symbolMissing("alan_shell_core_ffi_handle_request_out", "symbol not found"),
@@ -86,16 +86,16 @@ private func testShellCoreUnavailableErrorClassification() throws {
         )
     }
 
-    let commandErrors: [ShellCoreFFIAdapterError] = [
+    let domainErrors: [ShellCoreFFIAdapterError] = [
         .facadeError(ShellCoreErrorPayload(code: "invalid_payload", message: "bad")),
         .missingPayload("state"),
         .materializationFailed("could not project"),
         .reducerError(code: "pane_not_found", message: "missing pane"),
     ]
-    for error in commandErrors {
+    for error in domainErrors {
         try expect(
             !error.indicatesShellCoreUnavailable,
-            "structured command error must not be treated as shell-core unavailable: \(error)"
+            "structured domain error must not indicate shell-core unavailable: \(error)"
         )
     }
 }
@@ -357,6 +357,30 @@ private func testProductionAdapterReducerFocus() throws {
     try expect(
         focusResult.state.focusedTabID == splitResult.state.focusedTabID,
         "focus reducer must preserve selected tab"
+    )
+
+    let quickFocusShown = try adapter.applyReducer(
+        state: state,
+        operation: .showQuickTerminal(
+            workingDirectory: "/repo/quick",
+            defaultWorkingDirectory: "/repo/app"
+        )
+    ).state
+    let quickFocused = try adapter.applyReducer(
+        state: quickFocusShown,
+        operation: .focusPane(paneSlotID: ShellQuickTerminalSlot.globalPaneID)
+    )
+    try expect(
+        quickFocused.state.focusedPaneID == ShellQuickTerminalSlot.globalPaneID,
+        "focus reducer must focus the detached quick terminal through Rust"
+    )
+    try expect(
+        quickFocused.state.focusedSpaceID == quickFocusShown.focusedSpaceID,
+        "quick terminal focus must not move workspace space focus"
+    )
+    try expect(
+        quickFocused.state.focusedTabID == quickFocusShown.focusedTabID,
+        "quick terminal focus must not move workspace tab focus"
     )
 
     let adjacentResult = try adapter.applyReducer(
@@ -1349,6 +1373,29 @@ private func testProductionAdapterTerminalProfiles() throws {
     try expect(
         editorResult.definition?.managedTerminalAccountID == "account-main",
         "profile editor adapter must normalize managed account id through Rust"
+    )
+
+    let upsertResult = try adapter.upsertTerminalProfileDraft(
+        TerminalProfileEditorDraft(
+            id: " custom ",
+            title: " Custom ",
+            launchKind: .customCommand,
+            customCommand: "  echo hi  ",
+            defaultWorkingDirectory: " /repo/custom "
+        ),
+        into: TerminalProfileDocument(defaultProfileID: "", profiles: [])
+    )
+    try expect(
+        upsertResult.document?.defaultProfileID == "custom",
+        "profile upsert adapter must ask Rust to set the default profile id"
+    )
+    try expect(
+        upsertResult.document?.profiles.first?.id == "custom",
+        "profile upsert adapter must decode the Rust-upserted profile"
+    )
+    try expect(
+        upsertResult.document?.profiles.first?.defaultWorkingDirectory == "/repo/custom",
+        "profile upsert adapter must decode Rust-normalized working directories"
     )
 
     let launchIntent = try adapter.resolveTerminalLaunchIntent(

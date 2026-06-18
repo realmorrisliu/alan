@@ -27,12 +27,10 @@ enum AlanShellLocalCommandExecutor {
                 )
                 return AlanShellLocalCommandResult(shellCoreResult: result)
             } catch {
-                // When shell-core itself is unavailable (missing/mismatched dylib, etc.), fall
-                // through by returning nil so the socket-local path defers to the host handler,
-                // which answers host-answerable commands (state/space.list/tab.list/pane.list)
-                // from Swift state. Only a structured command error from a working shell-core
-                // surfaces as a failure response.
-                if let coreError = error as? ShellCoreFFIAdapterError,
+                // Only host-readable snapshots can fall through when shell-core infrastructure is
+                // unavailable. Mutations remain Rust-core-owned and fail closed.
+                if command.command.canFallThroughToHostWhenShellCoreUnavailable,
+                   let coreError = error as? ShellCoreFFIAdapterError,
                    coreError.indicatesShellCoreUnavailable
                 {
                     return nil
@@ -747,6 +745,56 @@ private extension AlanShellControlCommandKind {
              .terminalSendKey,
              .terminalRenderMetrics,
              .agentActivity,
+             .attentionInbox,
+             .routingCandidates,
+             .eventsRead,
+             .performanceDiagnosticsSetEnabled,
+             .performanceDiagnosticsExportRecent,
+             .performanceDiagnosticsRecordChildPressure,
+             .quickTerminalToggle,
+             .quickTerminalShow,
+             .quickTerminalHide,
+             .quickTerminalFocus,
+             .quickTerminalClose,
+             .quickTerminalPromote:
+            return false
+        }
+    }
+}
+
+extension AlanShellControlCommandKind {
+    var canFallThroughToHostWhenShellCoreUnavailable: Bool {
+        switch self {
+        case .state,
+             .spaceList,
+             .tabList,
+             .paneList:
+            return true
+        case .spaceCreate,
+             .spaceSetTerminalProfile,
+             .tabOpen,
+             .tabClose,
+             .tabReorder,
+             .tabPin,
+             .tabUnpin,
+             .tabMoveToSpace,
+             .paneSplit,
+             .paneSnapshot,
+             .paneClose,
+             .paneLift,
+             .paneMove,
+             .paneMoveWithinTab,
+             .paneFocus,
+             .paneSpatialFocus,
+             .paneResizeSplit,
+             .paneEqualizeSplits,
+             .paneZoom,
+             .paneUnzoom,
+             .terminalSendText,
+             .terminalSendKey,
+             .terminalRenderMetrics,
+             .agentActivity,
+             .attentionSet,
              .attentionInbox,
              .routingCandidates,
              .eventsRead,

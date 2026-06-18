@@ -1,15 +1,4 @@
 extension ShellPaneTreeNode {
-    func leafNode(containingPaneID targetPaneID: String) -> ShellPaneTreeNode? {
-        switch kind {
-        case .pane:
-            return paneID == targetPaneID ? self : nil
-        case .split:
-            return (children ?? []).lazy.compactMap {
-                $0.leafNode(containingPaneID: targetPaneID)
-            }.first
-        }
-    }
-
     func resizingSplit(
         _ targetNodeID: String,
         ratio targetRatio: Double

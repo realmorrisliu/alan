@@ -580,6 +580,27 @@ fn quick_terminal_reducers_preserve_detached_state_and_promote_into_workspace() 
     assert_eq!(quick.content_id, "content_quick_terminal_pane");
     assert_eq!(shown.state.focused_pane_id.as_deref(), Some("pane_1"));
 
+    let focused_quick = shown
+        .state
+        .clone()
+        .reduce(ReducerOperation::FocusPane {
+            pane_slot_id: "quick_terminal_pane".to_string(),
+        })
+        .expect("focus quick terminal succeeds through reducer");
+    assert_eq!(
+        focused_quick.state.focused_pane_id.as_deref(),
+        Some("quick_terminal_pane"),
+        "quick terminal focus is reducer-owned even though it is not a workspace pane slot"
+    );
+    assert_eq!(
+        focused_quick.state.focused_space_id, shown.state.focused_space_id,
+        "focusing the detached quick terminal must not move workspace space focus"
+    );
+    assert_eq!(
+        focused_quick.state.focused_tab_id, shown.state.focused_tab_id,
+        "focusing the detached quick terminal must not move workspace tab focus"
+    );
+
     let hidden = shown
         .state
         .reduce(ReducerOperation::HideQuickTerminal)

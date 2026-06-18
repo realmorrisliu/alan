@@ -800,6 +800,18 @@ impl WorkspaceReducer {
     }
 
     fn focus_pane(&mut self, pane_slot_id: &str) -> Result<(), ReducerError> {
+        if self
+            .state
+            .quick_terminal
+            .as_ref()
+            .is_some_and(|quick_terminal| quick_terminal.pane_id == pane_slot_id)
+        {
+            self.repair_focus(Some(pane_slot_id.to_string()));
+            self.domain_events.push(DomainEvent::FocusChanged {
+                pane_slot_id: self.state.focused_pane_id.clone(),
+            });
+            return Ok(());
+        }
         self.require_pane_slot(pane_slot_id)?;
         self.repair_focus(Some(pane_slot_id.to_string()));
         self.domain_events.push(DomainEvent::FocusChanged {

@@ -10,12 +10,20 @@ TEST_BINARY="${BUILD_DIR}/shell-action-registry-tests"
 mkdir -p "$MODULE_CACHE_DIR"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTreeMutations.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/ShellTreeMutationParitySupport.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/ShellStateMutationParitySupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
     "$REPO_ROOT/clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIEnvelope.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFILoader.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFITerminalProfileAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellModel.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-action-registry.swift" \
     -o "$TEST_BINARY"

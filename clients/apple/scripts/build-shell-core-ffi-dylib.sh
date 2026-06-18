@@ -94,6 +94,18 @@ codesign_dylib_if_needed() {
     fi
 }
 
+rewrite_dylib_install_name_if_supported() {
+    local dylib="$1"
+
+    if [[ "${ENABLE_USER_SCRIPT_SANDBOXING:-NO}" == "YES" ]]; then
+        printf 'Skipping install_name_tool for %s because Xcode user script sandboxing is enabled.\n' \
+            "$dylib"
+        return
+    fi
+
+    /usr/bin/install_name_tool -id "@rpath/$DYLIB_NAME" "$dylib"
+}
+
 if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then
     PROFILE_DIR="release"
 fi
@@ -113,5 +125,5 @@ DYLIB="$CARGO_TARGET_ROOT/$CARGO_BUILD_TARGET/$PROFILE_DIR/$DYLIB_NAME"
 BUNDLED_DYLIB="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$DYLIB_NAME"
 mkdir -p "$(dirname "$BUNDLED_DYLIB")"
 install -m 755 "$DYLIB" "$BUNDLED_DYLIB"
-install_name_tool -id "@rpath/$DYLIB_NAME" "$BUNDLED_DYLIB" || true
+rewrite_dylib_install_name_if_supported "$BUNDLED_DYLIB"
 codesign_dylib_if_needed "$BUNDLED_DYLIB"

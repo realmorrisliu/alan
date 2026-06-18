@@ -2134,6 +2134,11 @@ private struct TerminalProfileValidationErrorFixture: Encodable {
             id = nil
             self.profileID = profileID
             self.path = path
+        case .coreUnavailable:
+            type = "core_unavailable"
+            id = nil
+            profileID = nil
+            path = nil
         }
     }
 

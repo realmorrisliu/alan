@@ -101,6 +101,18 @@ else
     fi
 fi
 
+if grep -Fq "ShellStateMutations.swift in Sources" "$PROJECT_FILE" \
+    || grep -Fq "ShellTreeMutations.swift in Sources" "$PROJECT_FILE" \
+    || grep -Fq "ShellStateMutationParitySupport.swift" "$PROJECT_FILE" \
+    || grep -Fq "ShellTreeMutationParitySupport.swift" "$PROJECT_FILE"
+then
+    fail "Swift reducer parity support must stay out of the alan-macos Xcode target"
+fi
+
+if ! grep -Fq "ShellStateRuntimeSupport.swift in Sources" "$PROJECT_FILE"; then
+    fail "alan-macos target must keep the narrow runtime shell-state support owner"
+fi
+
 require_rust_reducer_adapter() {
     local file="$1"
     shift
@@ -129,6 +141,63 @@ require_single_owner_pattern() {
             fail "$description must stay in $owner; found in $rel"
         fi
     done < <(grep -RIl --include='*.swift' -F "$pattern" "$SOURCE_ROOT" || true)
+}
+
+shell_core_ffi_shared_callsite_owner_allowlist=(
+    "Models/Shell/ShellSettingsSurfaceModel.swift"
+    "Models/Shell/ShellValueTypes.swift"
+    "Services/Shell/ShellActionCoordinator.swift"
+    "Services/Shell/ShellLocalCommandExecutor.swift"
+    "Services/Shell/ShellReducerCommandCoordinator.swift"
+    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift"
+    "Services/Shell/ShellWorkspaceManifestStore.swift"
+    "Services/Shell/TerminalProfileStore.swift"
+    "TerminalHostRuntime.swift"
+    "TerminalSurfaceController.swift"
+)
+
+shell_core_ffi_direct_init_owner_allowlist=(
+    "Services/Shell/ShellCoreFFILoader.swift"
+)
+
+shell_core_ffi_raw_symbol_owner_allowlist=(
+    "Services/Shell/ShellCoreFFILoader.swift"
+)
+
+require_shell_core_ffi_shared_callsite_owners() {
+    local file
+    local rel
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if ! contains_line "$rel" "${shell_core_ffi_shared_callsite_owner_allowlist[@]}"; then
+            fail "shell-core FFI shared calls must stay in documented owner files; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "ShellCoreFFIAdapter.shared" "$SOURCE_ROOT" || true)
+}
+
+require_shell_core_ffi_direct_init_owners() {
+    local file
+    local rel
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if ! contains_line "$rel" "${shell_core_ffi_direct_init_owner_allowlist[@]}"; then
+            fail "direct shell-core FFI adapter construction must stay in the loader owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "ShellCoreFFIAdapter(" "$SOURCE_ROOT" || true)
+}
+
+require_shell_core_ffi_raw_symbol_owners() {
+    local file
+    local rel
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if ! contains_line "$rel" "${shell_core_ffi_raw_symbol_owner_allowlist[@]}"; then
+            fail "raw shell-core FFI symbols must stay in the loader owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "alan_shell_core_ffi_" "$SOURCE_ROOT" || true)
 }
 
 require_rust_reducer_adapter \
@@ -176,6 +245,7 @@ require_rust_reducer_adapter \
     "shellState.duplicatingTab(" \
     "shellState.resizingSplit(" \
     "shellState.equalizingSplits(" \
+    "shellState.focusingPane(" \
     "shellState.movingPane(" \
     "shellState.movingPaneToNewTab(" \
     "shellState.movingPaneWithinTab(" \
@@ -206,6 +276,95 @@ require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.executeAction" \
     "Services/Shell/ShellActionCoordinator.swift" \
     "shell-core action execution"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.keyboardAction" \
+    "TerminalSurfaceController.swift" \
+    "shell-core keyboard action lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.handleControlCommand" \
+    "Services/Shell/ShellLocalCommandExecutor.swift" \
+    "shell-core local control command handling"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest" \
+    "Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "shell-core workspace manifest defaulting"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest" \
+    "Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "shell-core legacy terminal manifest migration"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.pruningExpiredTabs" \
+    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "shell-core workspace manifest pruning"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest" \
+    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "shell-core workspace manifest materialization"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.validateTerminalProfileDocument" \
+    "Services/Shell/TerminalProfileStore.swift" \
+    "shell-core Terminal Profile validation"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.makeTerminalProfileDefinition" \
+    "Services/Shell/TerminalProfileStore.swift" \
+    "shell-core Terminal Profile editor semantics"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.upsertTerminalProfileDraft" \
+    "Services/Shell/TerminalProfileStore.swift" \
+    "shell-core Terminal Profile document editor semantics"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.shouldCaptureGlobalDefaultTerminalProfile" \
+    "Services/Shell/TerminalProfileStore.swift" \
+    "shell-core global default Terminal Profile capture policy"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent" \
+    "TerminalHostRuntime.swift" \
+    "shell-core Terminal Profile launch intent resolution"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.terminalProfileRows" \
+    "Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "shell-core Terminal Profile settings row projection"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.managedTerminalAccountRows" \
+    "Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "shell-core managed terminal account settings row projection"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.capabilityRows" \
+    "Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "shell-core capability settings row projection"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.localRows" \
+    "Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "shell-core local settings row projection"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.validateManagedTerminalAccountRequest" \
+    "Models/Shell/ShellValueTypes.swift" \
+    "shell-core managed terminal account validation"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.managedTerminalAccountPlan" \
+    "Models/Shell/ShellValueTypes.swift" \
+    "shell-core managed terminal account provisioning planner"
+
+require_shell_core_ffi_shared_callsite_owners
+require_shell_core_ffi_direct_init_owners
+require_shell_core_ffi_raw_symbol_owners
 
 printf 'Current Swift inventory:\n'
 while IFS= read -r file; do
@@ -289,6 +448,10 @@ while IFS= read -r ref; do
         fail "Xcode project references missing Swift file $name"
     fi
 done < <(grep -E 'path = .*\.swift;' "$PROJECT_FILE" || true)
+
+if [[ -f "$ARCH_DOC" ]] && ! grep -Eq "^${warnings} known large-file / bridge-boundary warning" "$ARCH_DOC"; then
+    fail "clients/apple/ARCHITECTURE.md must record the current report-mode warning count ($warnings)"
+fi
 
 if (( failures > 0 )); then
     printf '\nArchitecture maintainability check failed with %d error(s) and %d warning(s).\n' "$failures" "$warnings" >&2

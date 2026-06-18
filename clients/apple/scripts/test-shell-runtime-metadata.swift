@@ -93,6 +93,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs()
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
+        verifiesShellCoreUnavailableFallbackIsReadOnly()
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
@@ -2553,6 +2554,10 @@ private enum ShellRuntimeMetadataTests {
 
         controller.focus(paneID: quickPaneID)
         expect(
+            controller.shellState.focusedPaneID == quickPaneID,
+            "controller quick terminal focus must update the model through shell-core"
+        )
+        expect(
             controller.focusedContentSupportsTerminalCommands,
             "command palette terminal gating must use the actual focused quick terminal pane"
         )
@@ -3743,6 +3748,49 @@ private enum ShellRuntimeMetadataTests {
             controller.selectedTabZoomedPaneID == "pane_2",
             "unknown unzoom pane must not fall back to and mutate the selected tab"
         )
+    }
+
+    private static func verifiesShellCoreUnavailableFallbackIsReadOnly() {
+        let readOnlyFallbackCommands: Set<AlanShellControlCommandKind> = [
+            .state,
+            .spaceList,
+            .tabList,
+            .paneList,
+        ]
+        let mutationCommands: [AlanShellControlCommandKind] = [
+            .spaceCreate,
+            .tabOpen,
+            .tabClose,
+            .tabReorder,
+            .tabPin,
+            .tabUnpin,
+            .tabMoveToSpace,
+            .paneSplit,
+            .paneClose,
+            .paneLift,
+            .paneMove,
+            .paneMoveWithinTab,
+            .paneFocus,
+            .paneSpatialFocus,
+            .paneResizeSplit,
+            .paneEqualizeSplits,
+            .paneZoom,
+            .paneUnzoom,
+            .attentionSet,
+        ]
+
+        for command in readOnlyFallbackCommands {
+            expect(
+                command.canFallThroughToHostWhenShellCoreUnavailable,
+                "\(command.rawValue) must fall through only for host-readable snapshots"
+            )
+        }
+        for command in mutationCommands {
+            expect(
+                !command.canFallThroughToHostWhenShellCoreUnavailable,
+                "\(command.rawValue) must fail closed instead of falling through to host mutation"
+            )
+        }
     }
 
     private static func verifiesPaneMoveSocketRequestsRequireHostMetadataHandler() {
@@ -11643,6 +11691,20 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !(resolution.surfaceCommand?.contains("exit 78") ?? false),
             "default-terminal fallback must launch a login shell, not an immediately-exiting command"
+        )
+
+        let explicitProfileResolution = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "profile-admin",
+            terminalProfiles: nil
+        )
+        expect(
+            explicitProfileResolution.summary == "Terminal Profile unavailable",
+            "explicit Terminal Profile resolution must fail closed when shell-core is unavailable"
+        )
+        expect(
+            explicitProfileResolution.surfaceCommand?.contains("exit 78") == true,
+            "explicit Terminal Profile fallback must keep the shell-core failure command"
         )
     }
 
