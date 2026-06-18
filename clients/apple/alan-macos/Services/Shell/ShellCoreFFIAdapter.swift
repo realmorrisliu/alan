@@ -994,7 +994,12 @@ private struct ShellCoreControlResponse: Decodable {
                 ) ?? projectionState.spaces
             },
             tabs: tabs?.map(\.shellTab),
-            panes: nil,
+            // The legacy `panes` list is dropped by shell-core's portable projection, but the
+            // `pane.list` response (pane_slots present, no full state snapshot) still backs the
+            // CLI's `alan shell pane list`, which requires `panes`. Re-project it from the tab.
+            panes: (state == nil && paneSlots != nil)
+                ? projectionState.panes(in: tabID)
+                : nil,
             paneSlots: paneSlots,
             contents: contents?.map(\.contentInstance),
             pane: nil,

@@ -1,8 +1,8 @@
 use alan_shell_core::{
     ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeNode,
     ShellAttentionState, ShellContentPayload, ShellControlCommand, ShellControlCommandKind,
-    ShellControlRuntimeIntent, ShellLaunchTarget, Space, Tab, TabKind, TerminalControlKey,
-    WorkspaceState,
+    ShellControlRuntimeIntent, ShellLaunchTarget, Space, Tab, TabKind, TabOrganizationSection,
+    TerminalControlKey, WorkspaceState,
 };
 
 #[test]
@@ -182,6 +182,49 @@ fn terminal_send_key_accepts_return_and_defers_to_runtime() {
     ));
 }
 
+#[test]
+fn tab_reorder_moves_tab_into_requested_section() {
+    let state = pinned_and_unpinned_state();
+    let mut request = command("req-reorder", ShellControlCommandKind::TabReorder);
+    request.tab_id = Some("tab_unpinned".to_string());
+    request.section = Some(TabOrganizationSection::Pinned);
+    request.index = Some(0);
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    let updated = result
+        .updated_state
+        .as_ref()
+        .expect("reorder updates state");
+    let reordered = updated.spaces[0]
+        .tabs
+        .iter()
+        .find(|tab| tab.tab_id == "tab_unpinned")
+        .expect("reordered tab survives");
+    assert!(
+        reordered.is_pinned,
+        "tab.reorder must honor the requested pinned section"
+    );
+}
+
+#[test]
+fn tab_reorder_requires_section() {
+    let state = pinned_and_unpinned_state();
+    let mut request = command("req-reorder", ShellControlCommandKind::TabReorder);
+    request.tab_id = Some("tab_unpinned".to_string());
+    request.index = Some(0);
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(false));
+    assert_eq!(
+        result.response.error_code.as_deref(),
+        Some("tab_reorder_target_required")
+    );
+    assert!(result.updated_state.is_none());
+}
+
 fn command(request_id: &str, kind: ShellControlCommandKind) -> ShellControlCommand {
     ShellControlCommand {
         request_id: request_id.to_string(),
@@ -195,6 +238,7 @@ fn command(request_id: &str, kind: ShellControlCommandKind) -> ShellControlComma
         split_node_id: None,
         ratio: None,
         index: None,
+        section: None,
         direction: None,
         spatial_direction: None,
         placement: None,
@@ -248,6 +292,67 @@ fn base_state() -> WorkspaceState {
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
         }],
+        quick_terminal: None,
+    }
+}
+
+fn pinned_and_unpinned_state() -> WorkspaceState {
+    fn tab(id: &str, node: &str, pane: &str, is_pinned: bool) -> Tab {
+        Tab {
+            tab_id: id.to_string(),
+            kind: TabKind::Terminal,
+            title: Some(id.to_string()),
+            pane_tree: PaneTreeNode::pane(node, pane),
+            zoomed_pane_id: None,
+            is_pinned,
+            is_title_user_locked: false,
+        }
+    }
+    fn pane_slot(pane: &str, content: &str, tab: &str) -> PaneSlot {
+        PaneSlot {
+            pane_slot_id: pane.to_string(),
+            tab_id: tab.to_string(),
+            space_id: "space_main".to_string(),
+            content_id: content.to_string(),
+            attention: ShellAttentionState::Active,
+        }
+    }
+    fn content(id: &str) -> ContentInstance {
+        ContentInstance {
+            content_id: id.to_string(),
+            kind: ContentKind::Terminal,
+            title: "Shell".to_string(),
+            icon_name: None,
+            capabilities: ContentKind::Terminal.default_capabilities(),
+            payload: ShellContentPayload::terminal(ShellLaunchTarget::Shell, None, Some("Shell")),
+            terminal_metadata: None,
+            lifecycle: ContentLifecycleState::Active,
+        }
+    }
+
+    WorkspaceState {
+        contract_version: "0.2".to_string(),
+        window_id: "window_main".to_string(),
+        focused_space_id: Some("space_main".to_string()),
+        focused_tab_id: Some("tab_unpinned".to_string()),
+        focused_pane_id: Some("pane_unpinned".to_string()),
+        spaces: vec![Space {
+            space_id: "space_main".to_string(),
+            title: "Main".to_string(),
+            attention: ShellAttentionState::Active,
+            tabs: vec![
+                tab("tab_pinned", "node_pinned", "pane_pinned", true),
+                tab("tab_unpinned", "node_unpinned", "pane_unpinned", false),
+            ],
+            selected_tab_id: Some("tab_unpinned".to_string()),
+            terminal_profile_id: Some("profile-main".to_string()),
+            presentation_icon: None,
+        }],
+        pane_slots: vec![
+            pane_slot("pane_pinned", "content_pinned", "tab_pinned"),
+            pane_slot("pane_unpinned", "content_unpinned", "tab_unpinned"),
+        ],
+        contents: vec![content("content_pinned"), content("content_unpinned")],
         quick_terminal: None,
     }
 }

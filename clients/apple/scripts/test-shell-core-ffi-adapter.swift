@@ -946,6 +946,21 @@ private func testProductionAdapterControlCommands() throws {
         sendResult.response.contentID == ShellContentInstance.terminalContentID(forPaneID: "pane_1"),
         "control adapter must project terminal content id"
     )
+
+    // `pane.list` is served locally through shell-core, but the CLI's `alan shell pane list`
+    // still requires the legacy `panes` projection, which the portable round-trip drops.
+    let listResult = try adapter.handleControlCommand(
+        try controlCommand("pane.list", fields: [:]),
+        state: splitResult.state
+    )
+    try expect(
+        (listResult.response.panes?.isEmpty == false),
+        "control adapter must project legacy panes for pane.list responses"
+    )
+    try expect(
+        listResult.response.panes?.contains { $0.paneID == targetPaneID } == true,
+        "pane.list panes must include the split pane"
+    )
 }
 
 private func testProductionAdapterControlCommandsPreservePlatformPaneFields() throws {

@@ -1,7 +1,7 @@
 use crate::{
     ContentInstance, ContentKind, PaneSlot, ReducerError, ReducerErrorCode, ReducerOperation,
     RuntimeIntent, ShellAttentionState, Space, SpatialFocusDirection, SplitDirection,
-    SplitPlacement, Tab, WorkspaceState,
+    SplitPlacement, Tab, TabOrganizationSection, WorkspaceState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -119,6 +119,9 @@ pub struct ShellControlCommand {
     /// Reorder index.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
+    /// Target pinned/unpinned section for tab organization (e.g. `tab.reorder`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<TabOrganizationSection>,
     /// Split direction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<SplitDirection>,
@@ -522,35 +525,25 @@ impl ShellControlReducer {
     }
 
     fn tab_reorder(&self, command: ShellControlCommand) -> ShellControlResult {
-        let Some(tab_id) = command.tab_id.clone() else {
+        let (Some(tab_id), Some(section), Some(index)) =
+            (command.tab_id.clone(), command.section, command.index)
+        else {
             return self.validation_error(
                 command,
                 "tab_reorder_target_required",
                 "tab_id, section, and index are required.",
             );
         };
-        let Some(index) = command.index else {
-            return self.validation_error(
-                command,
-                "tab_reorder_target_required",
-                "tab_id, section, and index are required.",
-            );
-        };
-        let Some(current) = tab_index_in_section(&self.state, &tab_id) else {
-            return self.reducer_error(
-                command,
-                ReducerError {
-                    code: ReducerErrorCode::TabNotFound,
-                    message: "tab not found".to_string(),
-                },
-            );
-        };
-        let section_offset = index as isize - current as isize;
+        // Honor the requested target section so a tab can move between the pinned and unpinned
+        // sections, not only within its current one. `OrganizeTab` treats `index` as the
+        // absolute position inside the target section.
         self.apply_reducer(
             command,
-            ReducerOperation::MoveTab {
+            ReducerOperation::OrganizeTab {
                 tab_id,
-                section_offset,
+                target_space_id: None,
+                section,
+                index: Some(index),
             },
             ResponseProjection::Current,
         )
@@ -999,19 +992,6 @@ fn contents_in_tab(state: &WorkspaceState, tab_id: Option<&str>) -> Vec<ContentI
         .filter(|content| content_ids.contains(&content.content_id))
         .cloned()
         .collect()
-}
-
-fn tab_index_in_section(state: &WorkspaceState, tab_id: &str) -> Option<usize> {
-    for space in &state.spaces {
-        if let Some(tab) = space.tabs.iter().find(|tab| tab.tab_id == tab_id) {
-            return space
-                .tabs
-                .iter()
-                .filter(|candidate| candidate.is_pinned == tab.is_pinned)
-                .position(|candidate| candidate.tab_id == tab_id);
-        }
-    }
-    None
 }
 
 fn placement_for_split_direction(direction: SplitDirection) -> SplitPlacement {
