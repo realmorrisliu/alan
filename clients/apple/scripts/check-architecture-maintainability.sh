@@ -116,6 +116,21 @@ require_rust_reducer_adapter() {
     done
 }
 
+require_single_owner_pattern() {
+    local pattern="$1"
+    local owner="$2"
+    local description="$3"
+    local file
+    local rel
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if [[ "$rel" != "$owner" ]]; then
+            fail "$description must stay in $owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "$pattern" "$SOURCE_ROOT" || true)
+}
+
 require_rust_reducer_adapter \
     "$SOURCE_ROOT/Controllers/Shell/ShellHostControlCommandHandling.swift" \
     "shellState.resizingSplit(" \
@@ -166,6 +181,31 @@ require_rust_reducer_adapter \
     "shellState.movingPaneWithinTab(" \
     "shellState.openingContentTab(" \
     "shellState.splittingPane("
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.applyReducer" \
+    "Services/Shell/ShellReducerCommandCoordinator.swift" \
+    "shell-core reducer invocation"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.actionTitle" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action title lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.actionAvailability" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action availability lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action shortcut lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.executeAction" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action execution"
 
 printf 'Current Swift inventory:\n'
 while IFS= read -r file; do

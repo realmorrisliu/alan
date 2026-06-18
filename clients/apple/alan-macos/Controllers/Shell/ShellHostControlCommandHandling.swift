@@ -1392,7 +1392,7 @@ extension ShellHostController {
         }
 
         do {
-            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+            let result = try reducerCoordinator.apply(
                 state: shellState,
                 operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
             )
@@ -1467,7 +1467,7 @@ extension ShellHostController {
         }
 
         do {
-            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+            let result = try reducerCoordinator.apply(
                 state: shellState,
                 operation: .equalizeSplits(tabID: tabID)
             )
@@ -1666,7 +1666,7 @@ extension ShellHostController {
         let previousFocusedPaneID = shellState.focusedPaneID
         let previousPane = previousFocusedPaneID.flatMap { pane(paneID: $0) }
         do {
-            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+            let result = try reducerCoordinator.apply(
                 state: shellState,
                 operation: .focusAdjacentPane(direction: direction)
             )
@@ -1757,7 +1757,7 @@ extension ShellHostController {
         }
 
         do {
-            let result = try ShellCoreFFIAdapter.shared.applyReducer(
+            let result = try reducerCoordinator.apply(
                 state: shellState,
                 operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
             )

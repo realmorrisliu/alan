@@ -191,6 +191,19 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   preserves platform-only pane fields such as runtime metadata, renderer state,
   display identity, and terminal activity while avoiding independent domain
   decisions.
+- Host startup/persistence extracted from the observable controller:
+  `ShellWorkspaceManifestStartupCoordinator` owns workspace manifest load,
+  Rust-core pruning, Rust-core materialization, and startup diagnostics, while
+  `ShellWorkspacePersistenceCoordinator` owns manifest writer construction,
+  manifest save debounce, shell-state file writes, and control-plane flush
+  cadence. `ShellHostController` now supplies UI/runtime projection closures
+  instead of owning those persistence rules directly.
+- Host action/reducer/metadata routing extracted from the observable
+  controller: `ShellActionCoordinator` is the only Swift owner that calls the
+  Rust action registry FFI, `ShellReducerCommandCoordinator` is the only Swift
+  owner that calls the Rust reducer FFI, and
+  `ShellPlatformMetadataPreserver` owns post-adoption preservation of live
+  macOS-only pane context and runtime metadata.
 - Platform recovery/effect to keep in Swift: manifest file IO, corrupt-file
   quarantine, diagnostics, Ghostty/runtime recovery, terminal input delivery,
   pasteboard/keyboard handling, windowing, SwiftUI/AppKit presentation, and
@@ -273,8 +286,10 @@ The report-mode warning classes before the first cleanup slice were:
 - 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
   while still outside a narrow bridge owner.
 
-After moving manifest/action parity support out of production Apple sources and
-splitting the shell-core FFI facade, the warning classes are:
+After moving manifest/action parity support out of production Apple sources,
+splitting the shell-core FFI facade, and extracting manifest startup,
+persistence, action, reducer, and platform metadata coordinators from
+`ShellHostController.swift`, the warning classes are:
 
 - 14 large Swift files over the report threshold.
 - 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
@@ -287,8 +302,8 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: manifest default/prune/materialize/migration parity implementations now live in `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`; production keeps DTOs, repair, transcript cleanup, and projection helpers. |
 | `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture now live in `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`; production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, and Terminal Profile operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
-| `ShellHostController.swift` | 4,637 | Extract manifest startup, persistence, reducer/action routing, and metadata preservation collaborators without restoring Swift domain algorithms. |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,803 | Extract shell-core-backed response adoption and host routing details after controller split. |
+| `ShellHostController.swift` | 4,418 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, reducer invocation, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,803 | Partially cleaned: reusable reducer invocations now route through `ShellReducerCommandCoordinator`. Remaining cleanup target: shell-core-backed response adoption and host routing details after controller split. |
 
 The first implementation batch targeted the production Swift legacy surface, not
 a line-count threshold. Manifest parity helpers and the Swift standard action
@@ -299,7 +314,8 @@ absence of production-compiled Rust-owned Swift implementations and by
 
 The current architecture gate remains non-blocking for future documented
 warnings while failing narrower regressions such as new root-level Swift files,
-project membership drift, or reintroduced control-plane ownership in the wrong
-file.
+project membership drift, reintroduced control-plane ownership in the wrong
+file, direct reducer FFI calls outside `ShellReducerCommandCoordinator`, or
+direct action registry FFI calls outside `ShellActionCoordinator`.
 The `macos-app-architecture-maintainability` spec requires this debt record to
 stay current whenever warnings are introduced, broadened, or resolved.

@@ -53,22 +53,22 @@
 
 ## 4. Narrow ShellHostController
 
-- [ ] 4.1 Extract workspace-manifest startup, shell-core materialization,
+- [x] 4.1 Extract workspace-manifest startup, shell-core materialization,
   pruning, diagnostics, and persistence-writer construction from
   `ShellHostController.swift` into a manifest/startup coordinator.
-- [ ] 4.2 Extract manifest write scheduling, persisted shell-state publication,
+- [x] 4.2 Extract manifest write scheduling, persisted shell-state publication,
   and control-plane state flushing into a persistence coordinator that preserves
   the existing debounce semantics.
-- [ ] 4.3 Extract shell action dispatch and effect execution routing into a
+- [x] 4.3 Extract shell action dispatch and effect execution routing into a
   shell action coordinator while keeping Swift-owned UI and terminal effects
   explicit.
-- [ ] 4.4 Extract reducer-backed command routing and shell-core failure
+- [x] 4.4 Extract reducer-backed command routing and shell-core failure
   diagnostics into a reducer command coordinator without reintroducing Swift
   domain fallback behavior.
-- [ ] 4.5 Extract platform pane-field and runtime metadata preservation into a
+- [x] 4.5 Extract platform pane-field and runtime metadata preservation into a
   named adapter/service so reducer and control results preserve live macOS-only
   data consistently.
-- [ ] 4.6 Run affected focused checks:
+- [x] 4.6 Run affected focused checks:
   `clients/apple/scripts/test-shell-workspace-manifest.sh`,
   `clients/apple/scripts/test-shell-runtime-metadata.sh`,
   `clients/apple/scripts/test-shell-action-registry.sh`,
@@ -77,7 +77,7 @@
 
 ## 5. Tighten Architecture Gates
 
-- [ ] 5.1 Update `clients/apple/scripts/check-architecture-maintainability.sh`
+- [x] 5.1 Update `clients/apple/scripts/check-architecture-maintainability.sh`
   so resolved shell adapter/controller or legacy-production-source warnings
   cannot silently reappear.
 - [x] 5.2 Update `clients/apple/ARCHITECTURE.md` after each legacy cleanup or
@@ -88,23 +88,23 @@
 
 ## 6. Final Verification
 
-- [ ] 6.1 Run `git diff --check`.
-- [ ] 6.2 Run `bash clients/apple/scripts/check-architecture-maintainability.sh`
+- [x] 6.1 Run `git diff --check`.
+- [x] 6.2 Run `bash clients/apple/scripts/check-architecture-maintainability.sh`
   and confirm the report has no new warnings and records any remaining debt by
   owner boundary.
-- [ ] 6.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
-- [ ] 6.4 Run the focused Swift scripts touched by the final owner moves.
-- [ ] 6.5 Run affected Rust checks, at minimum `cargo test -p alan-shell-core`
+- [x] 6.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
+- [x] 6.4 Run the focused Swift scripts touched by the final owner moves.
+- [x] 6.5 Run affected Rust checks, at minimum `cargo test -p alan-shell-core`
   and `cargo test -p alan-shell-core-ffi` when adapter-facing behavior moves.
-- [ ] 6.6 Run `openspec validate slim-macos-shell-adapters-after-core-authority --type change --strict --json`.
-- [ ] 6.7 Run `openspec validate --all --strict --json`.
+- [x] 6.6 Run `openspec validate slim-macos-shell-adapters-after-core-authority --type change --strict --json`.
+- [x] 6.7 Run `openspec validate --all --strict --json`.
 
 ## 7. Review And Archive Readiness
 
-- [ ] 7.1 Review the final diff for behavior drift in shell startup, manifest
+- [x] 7.1 Review the final diff for behavior drift in shell startup, manifest
   persistence, action dispatch, control responses, Terminal Profile launch, and
   terminal runtime metadata preservation.
-- [ ] 7.2 Ensure the PR summary lists the Swift legacy implementations removed
+- [x] 7.2 Ensure the PR summary lists the Swift legacy implementations removed
   from production sources, the warning count before and after, and any remaining
   adapter/controller debt that intentionally stays out of scope.
 - [ ] 7.3 After implementation is merged, sync accepted delta specs into

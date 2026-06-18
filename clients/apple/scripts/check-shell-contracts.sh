@@ -933,17 +933,17 @@ require_pattern \
     "shell host startup must have a workspace-manifest restore path"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
     "ShellCoreFFIAdapter\\.shared\\.pruningExpiredTabs" \
     "workspace-manifest startup pruning must use shell-core authority"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
     "ShellCoreFFIAdapter\\.shared\\.materializeContentWorkspaceManifest" \
     "workspace-manifest startup must materialize shell state through shell-core authority"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
     "Disable manifest persistence for this recovery controller" \
     "workspace-manifest shell-core failure recovery must not overwrite the saved manifest"
 
@@ -953,7 +953,17 @@ reject_pattern \
     "workspace-manifest startup must not make shell-core manifest authority optional"
 
 reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \
+    "workspace-manifest startup must not make shell-core manifest authority optional"
+
+reject_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
+    "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
+    "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
     "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
     "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
 

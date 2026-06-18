@@ -12,6 +12,8 @@ struct AlanShellLocalCommandResult {
 }
 
 enum AlanShellLocalCommandExecutor {
+    private static let reducerCoordinator = ShellReducerCommandCoordinator()
+
     static func execute(
         command: AlanShellControlCommand,
         state: ShellStateSnapshot
@@ -84,7 +86,7 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
+                let result = try reducerCoordinator.apply(
                     state: state,
                     operation: .setTerminalProfile(
                         spaceID: spaceID,
@@ -237,7 +239,7 @@ enum AlanShellLocalCommandExecutor {
                     command: command,
                     state: state,
                     mutate: {
-                        try ShellCoreFFIAdapter.shared.applyReducer(
+                        try reducerCoordinator.apply(
                             state: $0,
                             operation: .hideQuickTerminal
                         )
@@ -248,7 +250,7 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    try ShellCoreFFIAdapter.shared.applyReducer(
+                    try reducerCoordinator.apply(
                         state: $0,
                         operation: .showQuickTerminal(
                             workingDirectory: command.cwd,
@@ -263,7 +265,7 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    try ShellCoreFFIAdapter.shared.applyReducer(
+                    try reducerCoordinator.apply(
                         state: $0,
                         operation: .showQuickTerminal(
                             workingDirectory: command.cwd,
@@ -278,7 +280,7 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    try ShellCoreFFIAdapter.shared.applyReducer(
+                    try reducerCoordinator.apply(
                         state: $0,
                         operation: .hideQuickTerminal
                     )
@@ -290,7 +292,7 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    try ShellCoreFFIAdapter.shared.applyReducer(
+                    try reducerCoordinator.apply(
                         state: $0,
                         operation: .closeQuickTerminal
                     )
@@ -315,7 +317,7 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    try ShellCoreFFIAdapter.shared.applyReducer(
+                    try reducerCoordinator.apply(
                         state: $0,
                         operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
                     )
