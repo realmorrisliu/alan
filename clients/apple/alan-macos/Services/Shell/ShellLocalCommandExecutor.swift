@@ -1290,12 +1290,12 @@ private extension AlanShellControlCommandKind {
              .paneEqualizeSplits,
              .paneZoom,
              .paneUnzoom,
-             .terminalSendText,
-             .terminalSendKey,
              .attentionSet:
             return true
         case .spaceSetTerminalProfile,
              .paneSnapshot,
+             .terminalSendText,
+             .terminalSendKey,
              .terminalRenderMetrics,
              .agentActivity,
              .attentionInbox,

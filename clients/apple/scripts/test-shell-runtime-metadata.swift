@@ -90,6 +90,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
+        verifiesTerminalSendTextSocketRequestsRequireHostHandler()
+        verifiesTerminalSendKeySocketRequestsRequireHostHandler()
         verifiesQuickTerminalFocusSocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
@@ -3722,6 +3724,74 @@ private enum ShellRuntimeMetadataTests {
         )
 
         expect(localResponse == nil, "pane.move socket requests must be routed to the host handler")
+    }
+
+    private static func verifiesTerminalSendTextSocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("terminal-send-text-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("terminal.send_text must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("terminal.send_text must not use socket-local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-send-text-host-routing-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "pane_1",
+                  "text": "echo host-routing"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "terminal.send_text socket requests must be routed to the host handler"
+        )
+    }
+
+    private static func verifiesTerminalSendKeySocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("terminal-send-key-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("terminal.send_key must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("terminal.send_key must not use socket-local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-send-key-host-routing-1",
+                  "command": "terminal.send_key",
+                  "pane_slot_id": "pane_1",
+                  "key": "return"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "terminal.send_key socket requests must be routed to the host handler"
+        )
     }
 
     private static func verifiesQuickTerminalFocusSocketRequestsRequireHostHandler() {
