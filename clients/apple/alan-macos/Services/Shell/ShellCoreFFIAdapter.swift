@@ -2,7 +2,11 @@ import Darwin
 import Foundation
 
 struct ShellCoreFFIAdapter {
-    static let shared = try! ShellCoreFFIAdapter()
+    static var shared: ShellCoreFFIAdapter {
+        get throws {
+            try sharedStorage.adapter()
+        }
+    }
 
     private let libraryHandle: UnsafeMutableRawPointer
     private let abiVersionFunction: ShellCoreABIVersionFunction
@@ -378,6 +382,23 @@ struct ShellCoreFFIAdapter {
 
     private static let expectedABIVersion: UInt32 = 1
     private static let iso8601Formatter = ISO8601DateFormatter()
+    private static let sharedStorage = ShellCoreFFIAdapterSharedStorage()
+}
+
+private final class ShellCoreFFIAdapterSharedStorage: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cachedAdapter: ShellCoreFFIAdapter?
+
+    func adapter() throws -> ShellCoreFFIAdapter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedAdapter {
+            return cachedAdapter
+        }
+        let adapter = try ShellCoreFFIAdapter()
+        cachedAdapter = adapter
+        return adapter
+    }
 }
 
 enum ShellCoreReducerOperation: Encodable {

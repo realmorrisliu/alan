@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct TerminalRenderCoordinatorMetrics: Codable, Equatable {}
@@ -40,6 +41,7 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) thr
 private enum ShellCoreFFIAdapterTestRunner {
     static func main() {
         do {
+            try testSharedAdapterReportsLibraryLoadFailures()
             try testDescribeAndABIVersion()
             try testSchemaMismatchAndUnknownOperationErrors()
             try testCapabilityRows()
@@ -53,6 +55,35 @@ private enum ShellCoreFFIAdapterTestRunner {
             fputs("Shell core FFI adapter tests failed: \(error)\n", stderr)
             exit(1)
         }
+    }
+}
+
+private func testSharedAdapterReportsLibraryLoadFailures() throws {
+    let environmentKey = "ALAN_SHELL_CORE_FFI_LIBRARY"
+    let originalPath = ProcessInfo.processInfo.environment[environmentKey]
+    let missingPath = "/tmp/alan-shell-core-ffi-missing-\(UUID().uuidString.lowercased()).dylib"
+    setenv(environmentKey, missingPath, 1)
+    defer {
+        if let originalPath {
+            setenv(environmentKey, originalPath, 1)
+        } else {
+            unsetenv(environmentKey)
+        }
+    }
+
+    do {
+        _ = try ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
+            windowID: "window_missing_ffi",
+            defaultWorkingDirectory: "/repo/app",
+            now: Date(timeIntervalSince1970: 0)
+        )
+        throw TestFailure.message("shared adapter must throw when the FFI library is unavailable")
+    } catch {
+        let description = String(describing: error)
+        try expect(
+            description.contains("failed to load shell core FFI library at \(missingPath)"),
+            "shared adapter must surface library load failures without terminating"
+        )
     }
 }
 
