@@ -9,12 +9,12 @@ large during the migration.
 
 The current local baseline after the authority work is:
 
-- PR-scale diff bucket: `crates/shell-core` about +23,886 lines, Apple Swift
-  production about +3,743/-1,232 lines, Apple scripts/tests about +6,349 lines.
+- PR-scale diff bucket: `crates/shell-core` about +23,954 lines, Apple Swift
+  production about +3,749/-1,232 lines, Apple scripts/tests about +6,421 lines.
 - Architecture report: 17 non-blocking large-file / bridge-boundary warnings.
 - Largest shell-core-adjacent Swift files:
   - `ShellHostController.swift`: 4,637 lines
-  - `ShellCoreFFIAdapter.swift`: 2,416 lines
+  - `ShellCoreFFIAdapter.swift`: 2,422 lines
   - `ShellStateMutations.swift`: 2,368 lines
   - `ShellHostControlCommandHandling.swift`: 1,803 lines
   - `TerminalHostRuntime.swift`: 1,399 lines
@@ -22,16 +22,21 @@ The current local baseline after the authority work is:
   - `ShellWorkspaceManifest.swift`: 1,236 lines
   - `ShellActionRegistry.swift`: 1,175 lines
 
-This change treats those numbers as architecture debt to burn down after the
-core authority boundary is accepted. It must not re-open the authority question
-or preserve duplicate Swift domain logic just to make moves easier.
+This change treats the remaining Swift implementations of Rust-owned behavior
+as authority debt to remove after the core boundary is accepted. File size and
+warning counts are useful evidence, but they are not the design goal. It must
+not re-open the authority question or preserve duplicate Swift domain logic just
+to make moves easier.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Reduce the architecture warning count through behavior-preserving slices, not
-  by relaxing the checker.
+- Remove or move Swift legacy implementations for Rust-owned manifest,
+  reducer/control, action registry, Terminal Profile, and settings behavior from
+  production Apple sources.
+- Keep architecture warning counts as regression evidence, not as the primary
+  definition of completion.
 - Split `ShellCoreFFIAdapter.swift` into smaller operation-family owners while
   keeping the public facade and versioned JSON FFI contract stable.
 - Narrow `ShellHostController.swift` to observable orchestration by extracting
@@ -58,16 +63,19 @@ or preserve duplicate Swift domain logic just to make moves easier.
 
 ## Decisions
 
-### Use warning burn-down as the completion signal
+### Use authority cleanup as the completion signal
 
-This change should not count a file move as progress unless the architecture
-report or documented debt ledger becomes smaller or more precise. The initial
-target is to reduce the report from 17 warnings to 12 or fewer while adding no
-new warnings.
+This change should not count a file move as progress unless production Swift no
+longer compiles or exposes a Rust-owned domain implementation, or unless a
+remaining legacy helper is moved behind an explicit script/test-support
+boundary. The architecture report should decrease as a consequence of real
+owner cleanup and must not gain new warnings, but line count is only a
+supporting signal.
 
 Alternative considered: split files opportunistically and leave the report
-unchanged. That creates churn without answering the user's concern about when
-large-file debt is actually done.
+unchanged. That creates churn without answering the user's concern about whether
+the Swift legacy implementation has actually been cleaned up after Rust core
+became authoritative.
 
 ### Keep the public shell-core facade stable while splitting internals
 
@@ -97,8 +105,8 @@ terminal runtime effects, and shell-core authority failures.
 
 `ShellActionRegistry.standard` and gated manifest parity helpers can remain only
 as fixture/test support while Rust coverage exists. They should be moved out of
-production-facing model files or hidden behind build flags that the app target
-does not compile.
+production-facing model files into script support or hidden behind build flags
+that the app target does not compile.
 
 Alternative considered: leave fixture code in place with comments. That keeps
 the files large and makes future contributors wonder whether Swift still owns
@@ -124,9 +132,9 @@ drift.
 - Splitting the FFI adapter can duplicate DTOs -> Keep shared portable DTOs in a
   single internal module and operation-family files limited to payload/response
   facades.
-- Tight warning targets can block useful intermediate moves -> Allow a slice to
-  document an intermediate boundary only when the next slice and remaining
-  warning are recorded in `clients/apple/ARCHITECTURE.md`.
+- Warning targets can distract from authority cleanup -> Treat warning count as
+  a regression guard and require `clients/apple/ARCHITECTURE.md` to record the
+  semantic owner boundary, not just a line-count change.
 - Test-support moves can break ad-hoc Swift scripts -> Move helpers together
   with scripts that consume them, or add explicit test-support files to those
   script compile invocations.
@@ -136,22 +144,24 @@ drift.
 
 ## Migration Plan
 
-1. Capture the current line-count and warning baseline in `ARCHITECTURE.md` and
-   tighten the architecture report so target warnings are named.
-2. Split `ShellCoreFFIAdapter.swift` internals while keeping its public methods
-   stable. Run the FFI adapter script after each operation-family move.
-3. Extract shell startup/manifest/persistence collaborators from
+1. Capture the current authority debt baseline in `ARCHITECTURE.md`: which
+   Rust-owned Swift legacy implementations remain in production files, which are
+   test fixtures, and which app paths already fail closed through shell-core.
+2. Move manifest parity helpers and the Swift action registry fixture out of
+   production-facing model files into explicit script support, keeping Rust core
+   and FFI tests as the portable behavior authority.
+3. Split `ShellCoreFFIAdapter.swift` internals while keeping its public methods
+   stable so Swift contains adapter code rather than duplicated domain logic.
+   Run the FFI adapter script after each operation-family move.
+4. Extract shell startup/manifest/persistence collaborators from
    `ShellHostController.swift`. Run manifest, runtime metadata, shell contract,
    and architecture checks.
-4. Extract action dispatch, reducer command routing, and control response
+5. Extract action dispatch, reducer command routing, and control response
    adoption from `ShellHostController.swift` and
    `ShellHostControlCommandHandling.swift`. Run action, control-command seam,
    shell-core adapter, and shell contract checks.
-5. Move fixture-only manifest/action helpers into test support or stricter build
-   gates. Run the Swift scripts that compile those helpers plus Rust fixture
-   tests.
-6. Update the architecture debt ledger and warning threshold after every
-   warning reduction.
+6. Update the architecture debt ledger after every legacy cleanup or owner
+   split.
 7. Finish with `git diff --check`, focused Swift/Rust validation, strict
    OpenSpec validation for the change, and repo-wide strict OpenSpec
    validation.
@@ -163,5 +173,5 @@ while keeping already-validated owner splits.
 
 - Should this change also split `ShellStateMutations.swift`, or should that be a
   follow-up after the controller and FFI bridge are narrow?
-- Should the architecture checker enforce per-file line thresholds for named
-  target owners immediately, or first record a decreasing warning budget?
+- Which remaining Swift helpers are pure compatibility decode/repair logic that
+  must stay in the macOS adapter, rather than legacy Rust-owned domain logic?

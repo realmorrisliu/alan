@@ -2802,14 +2802,24 @@ reject_pattern \
     "ShellActionRegistry\\.standard" \
     "runtime shell actions must use shell-core instead of the Swift parity registry"
 
-require_pattern \
+reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
-    "Parity fixture support only" \
-    "Swift action registry must be documented as fixture-only while shell-core is authoritative"
+    "final class ShellActionRegistry|struct ShellActionDescriptor|enum ShellActionTargetKind|enum ShellResolvedActionTarget|standardActions" \
+    "Swift action registry fixture/resolver must live outside production Apple sources"
 
 require_pattern \
+    "clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
+    "Script/test parity support only" \
+    "Swift action registry parity fixture must live in explicit script support"
+
+reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
-    "SHELL_MANIFEST_PARITY_FIXTURES" \
-    "Swift manifest algorithms must remain quarantined behind the parity-fixture gate"
+    "SHELL_MANIFEST_PARITY_FIXTURES|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers|ShellManifestLegacyMigration" \
+    "Swift manifest parity algorithms must live outside production Apple sources"
+
+require_pattern \
+    "clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift" \
+    "Script/test parity support only" \
+    "Swift manifest parity fixture must live in explicit script support"
 
 printf 'Shell contract checks passed.\n'

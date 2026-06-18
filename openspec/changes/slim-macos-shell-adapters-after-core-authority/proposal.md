@@ -8,18 +8,19 @@ boundary into smaller, reviewable Swift owners.
 
 ## What Changes
 
-- Split the coarse `ShellCoreFFIAdapter.swift` bridge into focused request,
-  envelope, materialization, control, action, settings, manifest, and Terminal
-  Profile adapter owners without changing the JSON FFI contract.
+- Remove or move Swift implementations of Rust-owned shell-domain behavior from
+  production Apple sources once the Rust core and FFI coverage are in place.
+- Keep the `ShellCoreFFIAdapter.swift` public facade stable while splitting its
+  request, envelope, materialization, control, action, settings, manifest, and
+  Terminal Profile owners so Swift keeps only adapter responsibilities.
 - Narrow `ShellHostController.swift` by moving shell-core-backed manifest
   startup, action dispatch, reducer command routing, persistence scheduling, and
   platform metadata preservation into named collaborators.
-- Move fixture-only Swift shell-domain helpers out of production-facing files or
-  behind explicit test-support boundaries once Rust core and FFI tests cover the
-  same behavior.
+- Move fixture-only Swift shell-domain helpers out of production-facing files
+  into explicit script/test-support boundaries once Rust core and FFI tests
+  cover the same behavior.
 - Convert the architecture-maintainability report from broad visible debt into
-  staged burn-down gates with a documented baseline, target warning count, and
-  per-slice verification requirements.
+  a regression guard and evidence ledger for the semantic cleanup.
 - Preserve macOS-owned behavior in Swift: SwiftUI/AppKit presentation, Ghostty
   runtime attachment, file IO, terminal delivery, diagnostics, and other OS
   effects stay out of Rust shell core.

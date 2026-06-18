@@ -75,6 +75,15 @@
 		00000000000000000000004D /* Support/ShellSidebarSpaceSliderWheelMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */; };
 		00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */; };
 		00000000000000000000004F /* Services/Shell/ShellCoreFFIAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000159 /* Services/Shell/ShellCoreFFIAdapter.swift */; };
+		00000000000000000000005B /* Services/Shell/ShellCoreFFIActionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015B /* Services/Shell/ShellCoreFFIActionAdapter.swift */; };
+		00000000000000000000005C /* Services/Shell/ShellCoreFFIControlAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015C /* Services/Shell/ShellCoreFFIControlAdapter.swift */; };
+		00000000000000000000005D /* Services/Shell/ShellCoreFFIEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015D /* Services/Shell/ShellCoreFFIEnvelope.swift */; };
+		00000000000000000000005E /* Services/Shell/ShellCoreFFILoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015E /* Services/Shell/ShellCoreFFILoader.swift */; };
+		00000000000000000000005F /* Services/Shell/ShellCoreFFIManifestAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015F /* Services/Shell/ShellCoreFFIManifestAdapter.swift */; };
+		000000000000000000000060 /* Services/Shell/ShellCoreFFIMaterialization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000160 /* Services/Shell/ShellCoreFFIMaterialization.swift */; };
+		000000000000000000000061 /* Services/Shell/ShellCoreFFIReducerAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000161 /* Services/Shell/ShellCoreFFIReducerAdapter.swift */; };
+		000000000000000000000062 /* Services/Shell/ShellCoreFFISettingsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000162 /* Services/Shell/ShellCoreFFISettingsAdapter.swift */; };
+		000000000000000000000063 /* Services/Shell/ShellCoreFFITerminalProfileAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000163 /* Services/Shell/ShellCoreFFITerminalProfileAdapter.swift */; };
 		00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
@@ -172,6 +181,15 @@
 		000000000000000000000157 /* Support/ShellSidebarSpaceSliderWheelMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceSliderWheelMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellLocalFolderOpener.swift; sourceTree = "<group>"; };
 		000000000000000000000159 /* Services/Shell/ShellCoreFFIAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIAdapter.swift; sourceTree = "<group>"; };
+		00000000000000000000015B /* Services/Shell/ShellCoreFFIActionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIActionAdapter.swift; sourceTree = "<group>"; };
+		00000000000000000000015C /* Services/Shell/ShellCoreFFIControlAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIControlAdapter.swift; sourceTree = "<group>"; };
+		00000000000000000000015D /* Services/Shell/ShellCoreFFIEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIEnvelope.swift; sourceTree = "<group>"; };
+		00000000000000000000015E /* Services/Shell/ShellCoreFFILoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFILoader.swift; sourceTree = "<group>"; };
+		00000000000000000000015F /* Services/Shell/ShellCoreFFIManifestAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIManifestAdapter.swift; sourceTree = "<group>"; };
+		000000000000000000000160 /* Services/Shell/ShellCoreFFIMaterialization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIMaterialization.swift; sourceTree = "<group>"; };
+		000000000000000000000161 /* Services/Shell/ShellCoreFFIReducerAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFIReducerAdapter.swift; sourceTree = "<group>"; };
+		000000000000000000000162 /* Services/Shell/ShellCoreFFISettingsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFISettingsAdapter.swift; sourceTree = "<group>"; };
+		000000000000000000000163 /* Services/Shell/ShellCoreFFITerminalProfileAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellCoreFFITerminalProfileAdapter.swift; sourceTree = "<group>"; };
 		00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPersistenceWriter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -343,6 +361,15 @@
 				000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */,
 				00000000000000000000012D /* Services/Shell/ShellControlFilePoller.swift */,
 				000000000000000000000159 /* Services/Shell/ShellCoreFFIAdapter.swift */,
+				00000000000000000000015B /* Services/Shell/ShellCoreFFIActionAdapter.swift */,
+				00000000000000000000015C /* Services/Shell/ShellCoreFFIControlAdapter.swift */,
+				00000000000000000000015D /* Services/Shell/ShellCoreFFIEnvelope.swift */,
+				00000000000000000000015E /* Services/Shell/ShellCoreFFILoader.swift */,
+				00000000000000000000015F /* Services/Shell/ShellCoreFFIManifestAdapter.swift */,
+				000000000000000000000160 /* Services/Shell/ShellCoreFFIMaterialization.swift */,
+				000000000000000000000161 /* Services/Shell/ShellCoreFFIReducerAdapter.swift */,
+				000000000000000000000162 /* Services/Shell/ShellCoreFFISettingsAdapter.swift */,
+				000000000000000000000163 /* Services/Shell/ShellCoreFFITerminalProfileAdapter.swift */,
 				00000000000000000000012F /* Services/Shell/ShellDiagnostics.swift */,
 				00000000000000000000012E /* Services/Shell/ShellEventStore.swift */,
 				00000000000000000000012A /* Services/Shell/ShellLocalCommandExecutor.swift */,
@@ -583,6 +610,15 @@
 				00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */,
 				00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */,
 				00000000000000000000004F /* Services/Shell/ShellCoreFFIAdapter.swift in Sources */,
+				00000000000000000000005B /* Services/Shell/ShellCoreFFIActionAdapter.swift in Sources */,
+				00000000000000000000005C /* Services/Shell/ShellCoreFFIControlAdapter.swift in Sources */,
+				00000000000000000000005D /* Services/Shell/ShellCoreFFIEnvelope.swift in Sources */,
+				00000000000000000000005E /* Services/Shell/ShellCoreFFILoader.swift in Sources */,
+				00000000000000000000005F /* Services/Shell/ShellCoreFFIManifestAdapter.swift in Sources */,
+				000000000000000000000060 /* Services/Shell/ShellCoreFFIMaterialization.swift in Sources */,
+				000000000000000000000061 /* Services/Shell/ShellCoreFFIReducerAdapter.swift in Sources */,
+				000000000000000000000062 /* Services/Shell/ShellCoreFFISettingsAdapter.swift in Sources */,
+				000000000000000000000063 /* Services/Shell/ShellCoreFFITerminalProfileAdapter.swift in Sources */,
 				00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,

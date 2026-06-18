@@ -1,29 +1,32 @@
 ## ADDED Requirements
 
-### Requirement: Post-core shell adapter debt is measured and burned down
-After Rust shell core becomes authoritative, the Apple client SHALL treat the
-remaining large Swift shell adapter files as measurable architecture debt with a
-documented baseline, target warning budget, and per-slice owner boundary.
+### Requirement: Post-core Swift legacy shell-domain code is cleaned up
+After Rust shell core becomes authoritative, the Apple client SHALL remove
+Swift implementations of Rust-owned shell-domain behavior from production
+sources or move remaining parity fixtures into explicit test-support
+boundaries.
 
-#### Scenario: Slimming work starts
+#### Scenario: Cleanup work starts
 - **WHEN** a shell adapter slimming PR begins after shell-core authority
-- **THEN** it records the current `check-architecture-maintainability.sh`
-  warning count and the named files responsible for shell-core adapter,
-  controller, model, profile, settings, manifest, and control-command debt
-- **AND** it declares the target warning count or named warnings that the slice
-  will remove before implementation is considered complete
+- **THEN** it records the Swift production files that still contain Rust-owned
+  manifest, reducer/control, action registry, Terminal Profile, settings, or
+  materialization behavior
+- **AND** it declares which legacy implementations will be removed or moved to
+  test support before implementation is considered complete
 
-#### Scenario: Slimming slice completes
-- **WHEN** a slimming slice moves code out of a large Swift shell file
-- **THEN** the architecture warning count decreases or the debt ledger narrows
-  the remaining warning to a more precise owner and follow-up boundary
-- **AND** the slice does not add a new architecture warning
+#### Scenario: Cleanup slice completes
+- **WHEN** a cleanup slice moves Swift code that duplicates Rust-owned behavior
+- **THEN** the normal macOS app target no longer compiles that implementation as
+  production model/controller/service code
+- **AND** any remaining Swift parity helper lives in explicit script or test
+  support
+- **AND** the slice does not add a new shell-core fallback path
 
-#### Scenario: Warning budget is missed
-- **WHEN** a slimming slice finishes without reducing the promised warning
-  count or named warning
+#### Scenario: Cleanup boundary is missed
+- **WHEN** a cleanup slice finishes while production Swift still carries the
+  promised Rust-owned legacy implementation
 - **THEN** the PR records the remaining blocker in `clients/apple/ARCHITECTURE.md`
-- **AND** the OpenSpec task for that warning remains incomplete
+- **AND** the OpenSpec task for that legacy cleanup remains incomplete
 
 ### Requirement: Shell-core FFI adapter is split into narrow operation owners
 The Swift shell-core bridge SHALL keep a small public facade while moving
@@ -116,6 +119,6 @@ authority guards.
   behavior
 
 #### Scenario: Warning ledger changes
-- **WHEN** a split removes or narrows a warning from the architecture report
+- **WHEN** a cleanup or split removes or narrows a warning from the architecture report
 - **THEN** `clients/apple/ARCHITECTURE.md` is updated in the same PR with the
   new warning count, remaining owners, and next follow-up boundary

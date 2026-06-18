@@ -164,12 +164,11 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   requires Rust default/prune/materialize authority and no longer falls back to
   Swift `ShellContentWorkspaceManifest.defaultManifest`,
   `ShellContentWorkspaceManifest.pruningExpiredTabs`, or
-  `ShellWorkspaceMaterializer.materialize`. The old Swift default, prune, and
-  materialize algorithms are quarantined behind
-  `SHELL_MANIFEST_PARITY_FIXTURES` in
-  `Models/Shell/ShellWorkspaceManifest.swift`; default app and test builds keep
-  only Codable compatibility, decode repair, migration projection, and manifest
-  file IO helpers.
+  `ShellWorkspaceMaterializer.materialize`. The old Swift default, prune,
+  materialize, and legacy migration parity algorithms now live in
+  `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`;
+  default app builds keep only manifest DTOs, decode/selection repair,
+  transcript cleanup, projection helpers, and manifest file IO.
 - Domain duplicate removed from reducer and control paths: workspace reducer
   mutations and reusable local control commands now use shell-core failures,
   stable core errors, or explicit host-only command paths instead of a second
@@ -182,14 +181,15 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   resolution no longer falls back to Swift profile resolution after core
   failure; it returns an explicit fail-closed launch resolution. Reusable
   settings rows now come from shell-core or collapse to unavailable rows.
-- Parity fixture debt still visible but not runtime-authoritative:
-  `Models/Shell/ShellActionRegistry.swift` retains the Swift action table for
-  fixture export and parity tests only; runtime code is guarded from using
-  `ShellActionRegistry.standard`.
-- Adapter projection to keep narrow: `ShellCoreFFIAdapter` materializes core
-  state into current Swift runtime DTOs and preserves platform-only pane fields
-  such as runtime metadata, renderer state, display identity, and terminal
-  activity. This code may remain while it avoids making independent domain
+- Parity fixture debt moved out of production sources: the Swift action table
+  and resolver fixture now live in
+  `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`;
+  runtime code is guarded from using `ShellActionRegistry.standard`.
+- Adapter projection to keep narrow: `ShellCoreFFIAdapter` is now a facade with
+  sibling loader, envelope, materialization, and operation-family owners. The
+  materialization owner projects core state into current Swift runtime DTOs and
+  preserves platform-only pane fields such as runtime metadata, renderer state,
+  display identity, and terminal activity while avoiding independent domain
   decisions.
 - Platform recovery/effect to keep in Swift: manifest file IO, corrupt-file
   quarantine, diagnostics, Ghostty/runtime recovery, terminal input delivery,
@@ -252,12 +252,50 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-18 known large-file / bridge-boundary warnings. The shell-core migration keeps
-these warnings as adapter-only debt until the Rust-backed binding facade replaces
-the corresponding Swift reducer, manifest, action, control, profile, or settings
-domain implementation and the Swift files are narrowed. The current count
-includes the first coarse `ShellCoreFFIAdapter.swift` bridge, which is expected
-to shrink or split after the remaining control/profile replacement paths settle.
+15 known large-file / bridge-boundary warnings after the first post-core cleanup
+slice. These warnings are telemetry for the cleanup, not the cleanup
+definition. The real debt is any Swift production source that still carries a
+Rust-owned shell-domain implementation, fixture, or fallback after shell-core
+has become authoritative.
+
+### Post-Core Slimming Baseline
+
+Baseline captured on 2026-06-18 from the
+`feat/introduce-cross-platform-shell-core` worktree after the
+`make-shell-core-authoritative` implementation reached PR review. PR #560 was
+still open and review-blocked, so the slimming change uses the current branch's
+final shell-core authority boundary as its implementation baseline until the
+authority PR is merged and archived.
+
+The report-mode warning classes before the first cleanup slice were:
+
+- 16 large Swift files over the 1,200-line report threshold.
+- 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
+  while still outside a narrow bridge owner.
+
+After moving manifest/action parity support out of production Apple sources and
+splitting the shell-core FFI facade, the warning classes are:
+
+- 14 large Swift files over the report threshold.
+- 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
+  while still outside a narrow bridge owner.
+
+Rust-owned Swift legacy cleanup targets at this baseline:
+
+| File | Lines | Cleanup target |
+| --- | ---: | --- |
+| `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: manifest default/prune/materialize/migration parity implementations now live in `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`; production keeps DTOs, repair, transcript cleanup, and projection helpers. |
+| `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture now live in `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`; production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution. |
+| `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, and Terminal Profile operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
+| `ShellHostController.swift` | 4,637 | Extract manifest startup, persistence, reducer/action routing, and metadata preservation collaborators without restoring Swift domain algorithms. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,803 | Extract shell-core-backed response adoption and host routing details after controller split. |
+
+The first implementation batch targeted the production Swift legacy surface, not
+a line-count threshold. Manifest parity helpers and the Swift standard action
+registry moved out of normal app-target sources into script support. The
+reduced architecture warning count is a byproduct; success is defined by the
+absence of production-compiled Rust-owned Swift implementations and by
+`check-shell-contracts.sh` continuing to reject fallback paths.
 
 The current architecture gate remains non-blocking for future documented
 warnings while failing narrower regressions such as new root-level Swift files,
