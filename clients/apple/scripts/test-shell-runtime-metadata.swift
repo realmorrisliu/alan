@@ -79,6 +79,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
+        verifiesQuickTerminalFocusSocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -3017,6 +3018,38 @@ private enum ShellRuntimeMetadataTests {
         expect(
             localResponse == nil,
             "terminal.send_key socket requests must be routed to the host handler"
+        )
+    }
+
+    private static func verifiesQuickTerminalFocusSocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("quick-terminal-focus-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("quick_terminal.focus must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("quick_terminal.focus must not use local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "quick-terminal-focus-host-routing-1",
+                  "command": "quick_terminal.focus"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "quick_terminal.focus socket requests must be routed to the host handler"
         )
     }
 
