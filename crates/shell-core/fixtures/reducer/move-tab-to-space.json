@@ -27,7 +27,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp\/second",
+              "launch_target" : "shell",
+              "title" : "Second"
+            }
+          },
+          "title" : "Second"
         },
         {
           "capabilities" : [
@@ -40,6 +47,13 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp\/other",
+              "launch_target" : "shell",
+              "title" : "Shell"
+            }
+          },
           "title" : "Shell"
         }
       ],
@@ -159,7 +173,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp\/second",
+            "launch_target" : "shell",
+            "title" : "Second"
+          }
+        },
+        "title" : "Second"
       },
       {
         "capabilities" : [
@@ -172,6 +193,13 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp\/other",
+            "launch_target" : "shell",
+            "title" : "Shell"
+          }
+        },
         "title" : "Shell"
       }
     ],

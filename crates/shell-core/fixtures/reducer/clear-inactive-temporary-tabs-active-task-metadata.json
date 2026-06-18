@@ -27,13 +27,20 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp",
+              "launch_target" : "shell",
+              "title" : "Protected"
+            }
+          },
           "terminal_metadata" : {
             "active_task_state" : "foreground_command",
             "activity" : null,
             "cwd" : null,
             "title" : null
           },
-          "title" : "Shell"
+          "title" : "Protected"
         },
         {
           "capabilities" : [
@@ -46,7 +53,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp",
+              "launch_target" : "shell",
+              "title" : "Pinned"
+            }
+          },
+          "title" : "Pinned"
         },
         {
           "capabilities" : [
@@ -197,7 +211,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Clearable"
+          }
+        },
+        "title" : "Clearable"
       },
       {
         "capabilities" : [
@@ -210,13 +231,20 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Protected"
+          }
+        },
         "terminal_metadata" : {
           "active_task_state" : "foreground_command",
           "activity" : null,
           "cwd" : null,
           "title" : null
         },
-        "title" : "Shell"
+        "title" : "Protected"
       },
       {
         "capabilities" : [
@@ -229,7 +257,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Pinned"
+          }
+        },
+        "title" : "Pinned"
       },
       {
         "capabilities" : [

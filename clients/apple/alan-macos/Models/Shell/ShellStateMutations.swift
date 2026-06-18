@@ -1986,6 +1986,7 @@ extension ShellStateSnapshot {
     ) -> ShellPreparedContentMount {
         switch contentIntent {
         case .terminal(let launchTarget, let title, let workingDirectory):
+            let resolvedTitle = title ?? defaultTerminalTitle
             let pane = makeTerminalPane(
                 paneID: paneID,
                 tabID: tabID,
@@ -1996,6 +1997,7 @@ extension ShellStateSnapshot {
                     defaultWorkingDirectory: defaultWorkingDirectory,
                     terminalProfileID: terminalProfileID
                 ),
+                title: resolvedTitle,
                 summary: terminalSummary,
                 now: now,
                 terminalProfileID: terminalProfileID
@@ -2004,7 +2006,7 @@ extension ShellStateSnapshot {
                 pane: pane,
                 paneSlot: nil,
                 content: nil,
-                title: title ?? defaultTerminalTitle
+                title: resolvedTitle
             )
         case .markdown(let fileURL, let title):
             let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
@@ -2104,6 +2106,7 @@ extension ShellStateSnapshot {
         spaceID: String,
         launchTarget: ShellLaunchTarget,
         workingDirectory: String?,
+        title: String? = nil,
         summary: String,
         now: Date,
         terminalProfileID: String? = nil
@@ -2119,7 +2122,7 @@ extension ShellStateSnapshot {
             attention: .active,
             context: nil,
             viewport: ShellViewportSnapshot(
-                title: Self.defaultViewportTitle(for: launchTarget),
+                title: title ?? Self.defaultViewportTitle(for: launchTarget),
                 summary: summary,
                 visibleExcerpt: nil,
                 lastActivityAt: formatter.string(from: now)

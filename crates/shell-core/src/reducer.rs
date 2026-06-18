@@ -2775,7 +2775,7 @@ fn terminal_content(
     ContentInstance {
         content_id: content_id.to_string(),
         kind: ContentKind::Terminal,
-        title: "Shell".to_string(),
+        title: title.to_string(),
         icon_name: None,
         capabilities: ContentKind::Terminal.default_capabilities(),
         payload,

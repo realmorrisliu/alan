@@ -34,7 +34,7 @@
               "title" : "Worker"
             }
           },
-          "title" : "Shell"
+          "title" : "Worker"
         }
       ],
       "contract_version" : "0.2",

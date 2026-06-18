@@ -27,7 +27,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp\/second",
+              "launch_target" : "shell",
+              "title" : "Second"
+            }
+          },
+          "title" : "Second"
         },
         {
           "capabilities" : [
@@ -40,7 +47,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp\/third",
+              "launch_target" : "shell",
+              "title" : "Third"
+            }
+          },
+          "title" : "Third"
         }
       ],
       "contract_version" : "0.2",
@@ -149,7 +163,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp\/second",
+            "launch_target" : "shell",
+            "title" : "Second"
+          }
+        },
+        "title" : "Second"
       },
       {
         "capabilities" : [
@@ -162,7 +183,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp\/third",
+            "launch_target" : "shell",
+            "title" : "Third"
+          }
+        },
+        "title" : "Third"
       }
     ],
     "contract_version" : "0.2",

@@ -40,7 +40,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/Users\/morris",
+              "launch_target" : "shell",
+              "title" : "Target"
+            }
+          },
+          "title" : "Target"
         }
       ],
       "contract_version" : "0.2",
@@ -163,7 +170,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/Users\/morris",
+            "launch_target" : "shell",
+            "title" : "Target"
+          }
+        },
+        "title" : "Target"
       }
     ],
     "contract_version" : "0.2",

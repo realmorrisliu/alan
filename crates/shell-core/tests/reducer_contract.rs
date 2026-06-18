@@ -50,6 +50,10 @@ fn split_pane_reducer_returns_created_ids_runtime_intent_and_next_state() {
         Some("profile-main")
     );
     assert_eq!(created_payload.title.as_deref(), Some("Worker"));
+    assert_eq!(
+        content_title(&result.state, "content_pane_2"),
+        Some("Worker")
+    );
     assert!(matches!(
         result.runtime_intents.as_slice(),
         [RuntimeIntent::StartTerminal {
@@ -80,18 +84,26 @@ fn terminal_creation_reducers_skip_reserved_platform_pane_slot_ids() {
         })
         .expect("open terminal tab succeeds");
     assert_eq!(opened.changed_ids.created_pane_slot_ids, vec!["pane_3"]);
+    assert_eq!(
+        content_title(&opened.state, "content_pane_3"),
+        Some("Opened")
+    );
 
     let split = base_state()
         .reduce(ReducerOperation::SplitPane {
             pane_slot_id: "pane_1".to_string(),
             placement: SplitPlacement::Right,
-            title: None,
+            title: Some("Split Worker".to_string()),
             working_directory: None,
             terminal_profile_id: None,
             reserved_pane_slot_ids: reserved.clone(),
         })
         .expect("split succeeds");
     assert_eq!(split.changed_ids.created_pane_slot_ids, vec!["pane_3"]);
+    assert_eq!(
+        content_title(&split.state, "content_pane_3"),
+        Some("Split Worker")
+    );
 
     let duplicated = base_state()
         .reduce(ReducerOperation::DuplicateTab {
@@ -114,6 +126,10 @@ fn terminal_creation_reducers_skip_reserved_platform_pane_slot_ids() {
     assert_eq!(
         created_space.changed_ids.created_pane_slot_ids,
         vec!["pane_3"]
+    );
+    assert_eq!(
+        content_title(&created_space.state, "content_pane_3"),
+        Some("Other Shell")
     );
     assert_eq!(created_space.state.spaces[1].title, "generated");
     assert_eq!(
@@ -1238,6 +1254,14 @@ fn sample_activity() -> TerminalActivitySnapshot {
             expires_at: None,
         },
     }
+}
+
+fn content_title<'a>(state: &'a WorkspaceState, content_id: &str) -> Option<&'a str> {
+    state
+        .contents
+        .iter()
+        .find(|content| content.content_id == content_id)
+        .map(|content| content.title.as_str())
 }
 
 fn base_state() -> WorkspaceState {

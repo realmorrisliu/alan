@@ -27,7 +27,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp",
+              "launch_target" : "shell",
+              "title" : "Protected"
+            }
+          },
+          "title" : "Protected"
         },
         {
           "capabilities" : [
@@ -40,7 +47,14 @@
           "icon_name" : null,
           "kind" : "terminal",
           "lifecycle" : "active",
-          "title" : "Shell"
+          "payload" : {
+            "terminal" : {
+              "cwd" : "\/tmp",
+              "launch_target" : "shell",
+              "title" : "Pinned"
+            }
+          },
+          "title" : "Pinned"
         },
         {
           "capabilities" : [
@@ -191,7 +205,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Clearable"
+          }
+        },
+        "title" : "Clearable"
       },
       {
         "capabilities" : [
@@ -204,7 +225,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Protected"
+          }
+        },
+        "title" : "Protected"
       },
       {
         "capabilities" : [
@@ -217,7 +245,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp",
+            "launch_target" : "shell",
+            "title" : "Pinned"
+          }
+        },
+        "title" : "Pinned"
       },
       {
         "capabilities" : [

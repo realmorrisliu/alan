@@ -85,7 +85,14 @@
         "icon_name" : null,
         "kind" : "terminal",
         "lifecycle" : "active",
-        "title" : "Shell"
+        "payload" : {
+          "terminal" : {
+            "cwd" : "\/tmp\/second",
+            "launch_target" : "shell",
+            "title" : "Second"
+          }
+        },
+        "title" : "Second"
       }
     ],
     "contract_version" : "0.2",
