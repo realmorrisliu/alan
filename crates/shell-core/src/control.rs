@@ -344,8 +344,10 @@ impl ShellControlReducer {
                 };
                 self.apply_reducer(
                     command,
-                    ReducerOperation::PinTab { tab_id },
-                    ResponseProjection::Current,
+                    ReducerOperation::PinTab {
+                        tab_id: tab_id.clone(),
+                    },
+                    ResponseProjection::TargetTab(tab_id),
                 )
             }
             ShellControlCommandKind::TabUnpin => {
@@ -358,8 +360,10 @@ impl ShellControlReducer {
                 };
                 self.apply_reducer(
                     command,
-                    ReducerOperation::UnpinTab { tab_id },
-                    ResponseProjection::Current,
+                    ReducerOperation::UnpinTab {
+                        tab_id: tab_id.clone(),
+                    },
+                    ResponseProjection::TargetTab(tab_id),
                 )
             }
             ShellControlCommandKind::TabReorder => self.tab_reorder(command),
@@ -459,10 +463,10 @@ impl ShellControlReducer {
                 self.apply_reducer(
                     command,
                     ReducerOperation::SetAttention {
-                        pane_slot_id,
+                        pane_slot_id: pane_slot_id.clone(),
                         attention,
                     },
-                    ResponseProjection::Current,
+                    ResponseProjection::TargetPane(pane_slot_id),
                 )
             }
         }
@@ -540,12 +544,12 @@ impl ShellControlReducer {
         self.apply_reducer(
             command,
             ReducerOperation::OrganizeTab {
-                tab_id,
+                tab_id: tab_id.clone(),
                 target_space_id: None,
                 section,
                 index: Some(index),
             },
-            ResponseProjection::Current,
+            ResponseProjection::TargetTab(tab_id),
         )
     }
 
@@ -568,14 +572,17 @@ impl ShellControlReducer {
                 "tab_id and target_space_id are required.",
             );
         };
-        self.apply_reducer(
+        let mut result = self.apply_reducer(
             command,
             ReducerOperation::MoveTabToSpace {
-                tab_id,
-                target_space_id,
+                tab_id: tab_id.clone(),
+                target_space_id: target_space_id.clone(),
             },
-            ResponseProjection::Current,
-        )
+            ResponseProjection::TargetTab(tab_id),
+        );
+        // Echo the requested destination Space so automation can confirm the move target.
+        result.response.target_space_id = Some(target_space_id);
+        result
     }
 
     fn pane_split(&self, command: ShellControlCommand) -> ShellControlResult {
@@ -839,6 +846,12 @@ enum ResponseProjection {
     ResizeSplit,
     Zoom,
     MovePaneWithinTab(SplitPlacement),
+    /// Report the named pane as the response subject (not the workspace focus), for commands
+    /// like `attention.set` that mutate a specific, possibly unfocused, pane.
+    TargetPane(String),
+    /// Report the named tab as the response subject, for commands like `tab.pin`/`tab.unpin`/
+    /// `tab.reorder`/`tab.move_to_space` that mutate a specific, possibly unfocused, tab.
+    TargetTab(String),
 }
 
 struct TerminalTarget {
@@ -875,6 +888,30 @@ fn project_success_response(
     match projection {
         ResponseProjection::Snapshot => {}
         ResponseProjection::Current | ResponseProjection::Focus => {}
+        ResponseProjection::TargetPane(pane_slot_id) => {
+            // Echo the mutated pane (and its tab/Space) as the subject so automation sees the
+            // object it acted on, not whichever pane happens to hold focus.
+            response.pane_id = Some(pane_slot_id.clone());
+            response.pane_slot_id = Some(pane_slot_id.clone());
+            if let Some(slot) = state
+                .pane_slots
+                .iter()
+                .find(|slot| &slot.pane_slot_id == pane_slot_id)
+            {
+                response.tab_id = Some(slot.tab_id.clone());
+                response.space_id = Some(slot.space_id.clone());
+            }
+        }
+        ResponseProjection::TargetTab(tab_id) => {
+            response.tab_id = Some(tab_id.clone());
+            if let Some(space) = state
+                .spaces
+                .iter()
+                .find(|space| space.tabs.iter().any(|tab| &tab.tab_id == tab_id))
+            {
+                response.space_id = Some(space.space_id.clone());
+            }
+        }
         ResponseProjection::ResizeSplit => {
             response.split_node_id = command.split_node_id.clone();
             response.ratio = command.ratio;

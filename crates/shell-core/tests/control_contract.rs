@@ -206,6 +206,34 @@ fn tab_reorder_moves_tab_into_requested_section() {
         reordered.is_pinned,
         "tab.reorder must honor the requested pinned section"
     );
+    // The response subject must be the reordered tab, not the focused one.
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_unpinned"));
+    assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
+}
+
+#[test]
+fn attention_set_reports_target_pane_not_focused_pane() {
+    // Focus is on pane_unpinned; set attention on the background pane_pinned.
+    let state = pinned_and_unpinned_state();
+    let mut request = command("req-attention", ShellControlCommandKind::AttentionSet);
+    request.pane_id = Some("pane_pinned".to_string());
+    request.attention = Some(ShellAttentionState::Notable);
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(
+        result.response.pane_id.as_deref(),
+        Some("pane_pinned"),
+        "attention.set response must report the mutated pane, not the focused pane"
+    );
+    assert_eq!(result.response.pane_slot_id.as_deref(), Some("pane_pinned"));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_pinned"));
+    // Focus is unchanged and reported separately.
+    assert_eq!(
+        result.response.current_focused_pane_slot_id.as_deref(),
+        Some("pane_unpinned")
+    );
 }
 
 #[test]
