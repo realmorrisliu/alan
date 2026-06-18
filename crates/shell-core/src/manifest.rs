@@ -539,6 +539,22 @@ impl ShellContentWorkspaceManifest {
             manifest = Self::default_manifest(&self.window_id, default_working_directory, now);
         }
 
+        let state = Self::materialize_resolved_manifest(manifest, default_working_directory);
+        if !state.pane_slots.is_empty() {
+            return state;
+        }
+
+        // A non-empty manifest whose tabs all reference missing content materializes into a
+        // workspace with no terminal panes. Recover with a default terminal instead of opening
+        // empty, matching the pre-shell-core Swift materializer's fallback behavior.
+        let fallback = Self::default_manifest(&self.window_id, default_working_directory, now);
+        Self::materialize_resolved_manifest(fallback, default_working_directory)
+    }
+
+    fn materialize_resolved_manifest(
+        manifest: Self,
+        default_working_directory: &str,
+    ) -> WorkspaceState {
         let mut spaces = manifest.spaces.clone();
         spaces.sort_by(|lhs, rhs| {
             lhs.order

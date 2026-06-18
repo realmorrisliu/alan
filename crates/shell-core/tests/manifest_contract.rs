@@ -341,6 +341,53 @@ fn materialize_restores_quick_terminal_hidden_with_runtime_metadata() {
     );
 }
 
+#[test]
+fn materialize_recovers_default_terminal_when_no_panes_survive() {
+    // A tab whose pane slot references content that is not present materializes to no panes.
+    // With it as the only tab, the whole workspace would otherwise open empty.
+    let corrupt_tab = ShellContentWorkspaceTabRecord {
+        live_snapshot: Some(ShellContentTabRestoreSnapshot {
+            pane_tree: PaneTreeNode::pane("node_pane_corrupt", "pane_corrupt"),
+            pane_slots: vec![ShellPaneSlotRestoreRecord {
+                pane_slot_id: "pane_corrupt".to_string(),
+                content_id: "content_missing".to_string(),
+            }],
+            contents: Vec::new(),
+        }),
+        ..content_tab("tab_corrupt", "Corrupt", "/corrupt")
+    };
+    let manifest = ShellContentWorkspaceManifest {
+        schema_version: 1,
+        content_contract_version: "0.2".to_string(),
+        window_id: "window_main".to_string(),
+        selected_space_id: Some("space_main".to_string()),
+        selected_tab_id: Some("tab_corrupt".to_string()),
+        spaces: vec![ShellContentWorkspaceSpaceRecord {
+            space_id: "space_main".to_string(),
+            title: "Main".to_string(),
+            order: 0,
+            created_at: reference_time(),
+            updated_at: reference_time(),
+            selected_tab_id: Some("tab_corrupt".to_string()),
+            tabs: vec![corrupt_tab],
+            terminal_profile_id: None,
+            presentation_icon: None,
+        }],
+        quick_terminal: None,
+    };
+
+    let state = manifest.materialize("/fallback", REFERENCE_TIME);
+
+    assert!(
+        !state.pane_slots.is_empty(),
+        "a manifest that materializes no panes must recover a default terminal"
+    );
+    assert!(
+        state.focused_pane_id.is_some(),
+        "recovered workspace must focus a pane"
+    );
+}
+
 fn content_tab(tab_id: &str, title: &str, cwd: &str) -> ShellContentWorkspaceTabRecord {
     let pane_slot_id = format!("pane_{tab_id}");
     let content_id = format!("content_{pane_slot_id}");

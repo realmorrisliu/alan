@@ -945,6 +945,40 @@ fn pane_move_reducers_preserve_content_identity_and_repair_trees() {
 }
 
 #[test]
+fn lifting_pane_without_title_inherits_moved_pane_content_title() {
+    let state = base_state()
+        .reduce(ReducerOperation::SplitPane {
+            pane_slot_id: "pane_1".to_string(),
+            placement: SplitPlacement::Right,
+            title: Some("My Server".to_string()),
+            working_directory: None,
+            terminal_profile_id: None,
+            reserved_pane_slot_ids: Vec::new(),
+        })
+        .unwrap()
+        .state;
+    assert_eq!(content_title(&state, "content_pane_2"), Some("My Server"));
+
+    let lifted = state
+        .reduce(ReducerOperation::MovePaneToNewTab {
+            pane_slot_id: "pane_2".to_string(),
+            title: None,
+        })
+        .expect("lift without title succeeds");
+
+    let lifted_tab = lifted.state.spaces[0]
+        .tabs
+        .iter()
+        .find(|tab| tab.pane_tree.pane_ids() == vec!["pane_2".to_string()])
+        .expect("lifted tab exists");
+    assert_eq!(
+        lifted_tab.title.as_deref(),
+        Some("My Server"),
+        "lift without explicit title must inherit the moved pane content title"
+    );
+}
+
+#[test]
 fn pane_zoom_reducers_scope_zoom_to_tab_and_prune_invalid_zoom_state() {
     let state = base_state()
         .reduce(ReducerOperation::SplitPane {

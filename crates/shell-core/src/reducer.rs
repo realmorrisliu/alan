@@ -1985,11 +1985,23 @@ impl WorkspaceReducer {
                 .flat_map(|space| &space.tabs)
                 .map(|tab| &tab.tab_id),
         );
+        // When no explicit title is given (e.g. socket/control-file `pane.lift`), inherit the
+        // moved pane's current content title so titled terminals keep their name, matching the
+        // host UI path; only fall back to the generic label when no content title is available.
+        let resolved_title = title
+            .or_else(|| {
+                self.state
+                    .contents
+                    .iter()
+                    .find(|content| content.content_id == pane_slot.content_id)
+                    .map(|content| content.title.clone())
+            })
+            .or_else(|| Some("Lifted Pane".to_string()));
         self.state.spaces[space_index].tabs[source_tab_index].pane_tree = source_tree;
         let moved_tab = Tab {
             tab_id: new_tab_id.clone(),
             kind: source_tab.kind,
-            title: title.or_else(|| Some("Lifted Pane".to_string())),
+            title: resolved_title,
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.to_string()),
             zoomed_pane_id: None,
             is_pinned: false,
