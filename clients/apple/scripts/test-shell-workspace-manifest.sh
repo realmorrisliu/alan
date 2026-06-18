@@ -12,6 +12,7 @@ mkdir -p "$MODULE_CACHE_DIR"
 cargo build -p alan-shell-core-ffi
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
+    -D SHELL_MANIFEST_PARITY_FIXTURES \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellControlPlaneDTOs.swift" \

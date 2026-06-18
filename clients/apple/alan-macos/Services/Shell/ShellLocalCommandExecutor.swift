@@ -18,76 +18,42 @@ enum AlanShellLocalCommandExecutor {
     ) -> AlanShellLocalCommandResult? {
         if command.command.isShellCoreLocalCommandSupported {
             let shellCoreCommand = command.resolvingShellCoreDefaults(in: state)
-            guard let result = try? ShellCoreFFIAdapter.shared.handleControlCommand(
-                shellCoreCommand,
-                state: state
-            ) else {
-                return nil
+            do {
+                let result = try ShellCoreFFIAdapter.shared.handleControlCommand(
+                    shellCoreCommand,
+                    state: state
+                )
+                return AlanShellLocalCommandResult(shellCoreResult: result)
+            } catch {
+                return shellCoreFailureResult(command: command, state: state, error: error)
             }
-            return AlanShellLocalCommandResult(shellCoreResult: result)
         }
 
         switch command.command {
-        case .state:
-            let contentState = state.contentStateProjection()
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    snapshot: state,
-                    paneSlots: contentState.paneSlots,
-                    contents: contentState.contents,
-                    spaceID: state.focusedSpaceID,
-                    tabID: state.focusedTabID,
-                    paneID: state.focusedPaneID,
-                    paneSlotID: contentState.focusedPaneSlotID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .spaceList:
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    spaces: state.spaces,
-                    spaceID: command.spaceID ?? state.focusedSpaceID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .spaceCreate:
-            let resolvedTerminalProfileID = command.terminalProfileID
-                ?? terminalProfileIDForGlobalDefaultPaneCapture()
-            guard let result = try? ShellCoreFFIAdapter.shared.applyReducer(
-                state: state,
-                operation: .createTerminalSpace(
-                    title: command.title,
-                    tabTitle: nil,
-                    workingDirectory: command.cwd,
-                    terminalProfileID: resolvedTerminalProfileID,
-                    presentationIcon: nil,
-                    reservedPaneSlotIDs: []
-                )
-            ) else {
-                return nil
-            }
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: result.state,
-                    applied: true,
-                    spaceID: result.spaceID,
-                    tabID: result.tabID,
-                    paneID: result.paneID
-                ),
-                updatedState: result.state,
-                sideEffect: nil
-            )
+        case .state,
+             .spaceList,
+             .spaceCreate,
+             .tabList,
+             .tabOpen,
+             .tabClose,
+             .tabReorder,
+             .tabPin,
+             .tabUnpin,
+             .tabMoveToSpace,
+             .paneList,
+             .paneSplit,
+             .paneClose,
+             .paneLift,
+             .paneMove,
+             .paneMoveWithinTab,
+             .paneFocus,
+             .paneSpatialFocus,
+             .paneResizeSplit,
+             .paneEqualizeSplits,
+             .paneZoom,
+             .paneUnzoom,
+             .attentionSet:
+            return shellCoreRoutingFailureResult(command: command, state: state)
 
         case .spaceSetTerminalProfile:
             guard let spaceID = command.spaceID ?? state.focusedSpaceID else {
@@ -117,58 +83,12 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             }
-            guard let result = try? ShellCoreFFIAdapter.shared.applyReducer(
-                state: state,
-                operation: .setTerminalProfile(
-                    spaceID: spaceID,
-                    terminalProfileID: command.terminalProfileID
-                )
-            ) else {
-                return nil
-            }
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: result.state,
-                    applied: true,
-                    snapshot: result.state,
-                    spaceID: spaceID,
-                    tabID: result.state.focusedTabID,
-                    paneID: result.state.focusedPaneID
-                ),
-                updatedState: result.state,
-                sideEffect: nil
-            )
-
-        case .tabList:
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    tabs: state.tabs(in: command.spaceID),
-                    spaceID: command.spaceID ?? state.focusedSpaceID,
-                    tabID: state.focusedTabID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .tabOpen:
             do {
-                let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
-                    in: command.spaceID,
-                    explicit: command.terminalProfileID
-                )
-                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
                 let result = try ShellCoreFFIAdapter.shared.applyReducer(
                     state: state,
-                    operation: .openTerminalTab(
-                        spaceID: command.spaceID,
-                        title: command.title,
-                        workingDirectory: command.cwd,
-                        terminalProfileID: resolvedTerminalProfileID,
-                        reservedPaneSlotIDs: []
+                    operation: .setTerminalProfile(
+                        spaceID: spaceID,
+                        terminalProfileID: command.terminalProfileID
                     )
                 )
                 return AlanShellLocalCommandResult(
@@ -176,270 +96,17 @@ enum AlanShellLocalCommandExecutor {
                         for: command,
                         state: result.state,
                         applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
+                        snapshot: result.state,
+                        spaceID: spaceID,
+                        tabID: result.state.focusedTabID,
+                        paneID: result.state.focusedPaneID
                     ),
                     updatedState: result.state,
                     sideEffect: nil
                 )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
             } catch {
-                return nil
+                return shellCoreFailureResult(command: command, state: state, error: error)
             }
-
-        case .tabClose:
-            guard let tabID = command.tabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .closeTab(tabID: tabID)
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabPin:
-            guard let tabID = command.tabID ?? state.focusedTabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .pinTab(tabID: tabID)
-                )
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabUnpin:
-            guard let tabID = command.tabID ?? state.focusedTabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .unpinTab(tabID: tabID)
-                )
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabReorder:
-            guard let tabID = command.tabID,
-                  let section = command.section,
-                  let index = command.index
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_reorder_target_required",
-                        errorMessage: "tab_id, section, and index are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .organizeTab(
-                        tabID: tabID,
-                        targetSpaceID: command.spaceID,
-                        section: section,
-                        index: index
-                    )
-                )
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabMoveToSpace:
-            guard let tabID = command.tabID,
-                  let targetSpaceID = command.targetSpaceID ?? command.spaceID
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_move_target_required",
-                        errorMessage: "tab_id and target_space_id are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .moveTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
-                )
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        targetSpaceID: targetSpaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneList:
-            let contentState = state.contentStateProjection()
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    panes: state.panes(in: command.tabID),
-                    paneSlots: contentState.controlPlanePaneSlots(in: command.tabID),
-                    contents: contentState.controlPlaneContents(in: command.tabID),
-                    tabID: command.tabID ?? state.focusedTabID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
 
         case .paneSnapshot:
             guard let paneID = command.paneID,
@@ -469,256 +136,6 @@ enum AlanShellLocalCommandExecutor {
                 updatedState: nil,
                 sideEffect: nil
             )
-
-        case .paneSplit:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            guard let direction = command.direction else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        paneID: paneID,
-                        errorCode: "direction_required",
-                        errorMessage: "direction is required for pane.split."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let resolvedTerminalProfileID = state.terminalProfileIDForNewSplit(
-                    from: paneID,
-                    explicit: command.terminalProfileID
-                )
-                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .splitPane(
-                        paneSlotID: paneID,
-                        placement: .defaultPlacement(for: direction),
-                        title: nil,
-                        workingDirectory: resolvedTerminalProfileID == nil
-                            ? state.pane(paneID: paneID)?.cwd
-                            : nil,
-                        terminalProfileID: resolvedTerminalProfileID,
-                        reservedPaneSlotIDs: []
-                    )
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        snapshot: result.state,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID,
-                        paneSlotID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneClose:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .closePane(paneSlotID: paneID)
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneLift:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .movePaneToNewTab(paneSlotID: paneID, title: command.title)
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneMove:
-            guard let paneID = command.paneID,
-                  let targetTabID = command.tabID
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        paneID: command.paneID,
-                        errorCode: "pane_move_target_required",
-                        errorMessage: "pane_id and tab_id are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .movePaneToTab(
-                        paneSlotID: paneID,
-                        targetTabID: targetTabID,
-                        direction: command.direction ?? .vertical
-                    )
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneFocus:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .focusPane(paneSlotID: paneID)
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
-             .paneZoom, .paneUnzoom:
-            return nil
-
-        case .terminalSendText, .terminalRenderMetrics:
-            return nil
 
         case .agentActivity:
             guard let paneID = command.paneID else {
@@ -787,7 +204,7 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             } catch {
-                return nil
+                return mutationFailureResult(command: command, state: state, error: error)
             }
 
         case .attentionInbox:
@@ -801,49 +218,6 @@ enum AlanShellLocalCommandExecutor {
                 updatedState: nil,
                 sideEffect: nil
             )
-
-        case .attentionSet:
-            guard let paneID = command.paneID,
-                  let attention = command.attention
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "attention_target_required",
-                        errorMessage: "pane_id and attention are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try ShellCoreFFIAdapter.shared.applyReducer(
-                    state: state,
-                    operation: .setAttention(paneSlotID: paneID, attention: attention)
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
 
         case .routingCandidates:
             return AlanShellLocalCommandResult(
@@ -948,7 +322,10 @@ enum AlanShellLocalCommandExecutor {
                 }
             )
 
-        case .terminalSendKey, .performanceDiagnosticsSetEnabled,
+        case .terminalSendText,
+            .terminalSendKey,
+            .terminalRenderMetrics,
+            .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
             .eventsRead:
             return nil
@@ -1097,6 +474,59 @@ enum AlanShellLocalCommandExecutor {
                 errorMessage: "The requested tab organization target is not available."
             )
         }
+    }
+
+    private static func shellCoreFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot,
+        error: Error
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_core_unavailable",
+                errorMessage: "shell-core command failed: \(error)"
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
+    }
+
+    private static func shellCoreRoutingFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_core_routing_failed",
+                errorMessage: "shell-core command routing failed."
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
+    }
+
+    private static func mutationFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot,
+        error: Error
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_mutation_failed",
+                errorMessage: "shell mutation failed: \(error)"
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
     }
 
     private static func response(

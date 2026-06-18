@@ -17,6 +17,8 @@ struct ShellWorkspaceManifest: Codable, Equatable {
         case spaces
     }
 
+    #if SHELL_MANIFEST_PARITY_FIXTURES
+    // Parity fixture support only. Runtime manifest defaulting is owned by shell-core.
     static func defaultManifest(
         windowID: String,
         defaultWorkingDirectory: String,
@@ -74,6 +76,16 @@ struct ShellWorkspaceManifest: Codable, Equatable {
                 )
             ]
         )
+    }
+    #endif
+}
+
+private enum ShellManifestLegacyMigration {
+    static func defaultViewportTitle(launchTarget: ShellLaunchTarget) -> String {
+        switch launchTarget {
+        case .shell:
+            return "Shell"
+        }
     }
 }
 
@@ -247,6 +259,8 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
 }
 
 extension ShellContentWorkspaceManifest {
+    #if SHELL_MANIFEST_PARITY_FIXTURES
+    // Parity fixture support only. Runtime content manifest defaulting is owned by shell-core.
     static func defaultManifest(
         windowID: String,
         defaultWorkingDirectory: String,
@@ -260,6 +274,7 @@ extension ShellContentWorkspaceManifest {
         .migratingTerminalRestoreSnapshotsToContentContainers()
     }
 
+    // Parity fixture support only. Runtime startup pruning is owned by shell-core.
     func pruningExpiredTabs(now: Date, ttl: TimeInterval) -> ShellContentWorkspaceManifest {
         var pruned = self
         pruned.spaces = spaces.map { space in
@@ -271,6 +286,7 @@ extension ShellContentWorkspaceManifest {
         pruned.repairSelection()
         return pruned
     }
+    #endif
 
     mutating func repairSelection() {
         guard !spaces.isEmpty else {
@@ -439,7 +455,7 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
 
         let paneSlotID = "pane_\(tabID)"
         let contentID = ShellContentInstance.terminalContentID(forPaneID: paneSlotID)
-        let title = title ?? ShellWorkspaceMaterializer.defaultViewportTitleForMigration(
+        let title = title ?? ShellManifestLegacyMigration.defaultViewportTitle(
             launchTarget: .shell
         )
         return ShellContentTabRestoreSnapshot(
@@ -645,6 +661,8 @@ extension ShellContentTabRestoreSnapshot {
 }
 
 extension ShellWorkspaceManifest {
+    #if SHELL_MANIFEST_PARITY_FIXTURES
+    // Parity fixture support only. Runtime legacy manifest migration is owned by shell-core.
     func migratingTerminalRestoreSnapshotsToContentContainers() -> ShellContentWorkspaceManifest {
         ShellContentWorkspaceManifest(
             schemaVersion: schemaVersion,
@@ -681,7 +699,10 @@ extension ShellWorkspaceManifest {
             }
         )
     }
+    #endif
 
+    #if SHELL_MANIFEST_PARITY_FIXTURES
+    // Parity fixture support only. Runtime startup pruning is owned by shell-core.
     func pruningExpiredTabs(now: Date, ttl: TimeInterval) -> ShellWorkspaceManifest {
         var pruned = self
         pruned.spaces = spaces.map { space in
@@ -693,6 +714,7 @@ extension ShellWorkspaceManifest {
         pruned.repairSelection()
         return pruned
     }
+    #endif
 
     mutating func repairSelection() {
         guard !spaces.isEmpty else {
@@ -740,6 +762,8 @@ extension ShellWorkspaceManifest {
     }
 }
 
+#if SHELL_MANIFEST_PARITY_FIXTURES
+// Parity fixture support only. Runtime legacy pane migration is owned by shell-core.
 extension ShellTabRestoreSnapshot {
     func migratingTerminalPanesToContentContainers() -> ShellContentTabRestoreSnapshot {
         let paneSlots = panes.map { pane in
@@ -749,7 +773,7 @@ extension ShellTabRestoreSnapshot {
             )
         }
         let contents = panes.map { pane in
-            let title = pane.title ?? ShellWorkspaceMaterializer.defaultViewportTitleForMigration(
+            let title = pane.title ?? ShellManifestLegacyMigration.defaultViewportTitle(
                 launchTarget: pane.launchTarget
             )
             return ShellContentRestoreRecord(
@@ -778,7 +802,10 @@ extension ShellTabRestoreSnapshot {
         "content_\(paneID)"
     }
 }
+#endif
 
+#if SHELL_MANIFEST_PARITY_FIXTURES
+// Parity fixture support only. Runtime manifest materialization is owned by shell-core.
 struct ShellWorkspaceMaterializer {
     static func materialize(
         manifest: ShellContentWorkspaceManifest,
@@ -1206,3 +1233,4 @@ struct ShellWorkspaceMaterializer {
         defaultViewportTitle(for: launchTarget)
     }
 }
+#endif

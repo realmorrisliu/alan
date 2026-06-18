@@ -736,7 +736,11 @@ final class AlanTerminalInputRouter {
         guard input.phase == .down, !input.isRepeat else { return nil }
 
         guard let shortcut = shellActionShortcut(for: input) else { return nil }
-        return try? ShellCoreFFIAdapter.shared.keyboardAction(for: shortcut)
+        do {
+            return try ShellCoreFFIAdapter.shared.keyboardAction(for: shortcut)
+        } catch {
+            return nil
+        }
     }
 
     private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {

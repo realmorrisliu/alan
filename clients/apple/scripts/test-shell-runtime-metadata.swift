@@ -1479,7 +1479,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 80)
@@ -1590,7 +1590,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 82)
@@ -1666,7 +1666,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 83)
@@ -1798,7 +1798,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 94)
@@ -1887,7 +1887,7 @@ private enum ShellRuntimeMetadataTests {
             "quick terminal restore must not create a normal workspace tab"
         )
 
-        let restoredState = ShellWorkspaceMaterializer.materialize(
+        let restoredState = materializeManifestWithShellCore(
             manifest: savedManifest,
             defaultWorkingDirectory: "/fallback",
             now: Date(timeIntervalSince1970: 95)
@@ -5847,7 +5847,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 120)
@@ -7645,7 +7645,7 @@ private enum ShellRuntimeMetadataTests {
         )
         let controller = makeController(
             windowID: windowID,
-            shellState: ShellWorkspaceMaterializer.materialize(
+            shellState: materializeManifestWithShellCore(
                 manifest: manifest,
                 defaultWorkingDirectory: "/fallback",
                 now: Date(timeIntervalSince1970: 102)
@@ -7705,7 +7705,7 @@ private enum ShellRuntimeMetadataTests {
         )
         let controller = makeController(
             windowID: windowID,
-            shellState: ShellWorkspaceMaterializer.materialize(
+            shellState: materializeManifestWithShellCore(
                 manifest: manifest,
                 defaultWorkingDirectory: "/fallback",
                 now: Date(timeIntervalSince1970: 103)
@@ -7743,7 +7743,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 30)
@@ -7779,7 +7779,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 40)
@@ -7808,7 +7808,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 50)
@@ -7871,7 +7871,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 70)
@@ -8186,7 +8186,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 93)
@@ -8268,7 +8268,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -8319,7 +8319,7 @@ private enum ShellRuntimeMetadataTests {
         let foregroundController = makeController(
             windowID: "active_foreground_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: foregroundURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -8339,7 +8339,7 @@ private enum ShellRuntimeMetadataTests {
         let idleController = makeController(
             windowID: "active_idle_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: idleURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 61)
@@ -8359,7 +8359,7 @@ private enum ShellRuntimeMetadataTests {
         let exitedController = makeController(
             windowID: "active_exited_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: exitedURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 62)
@@ -8382,7 +8382,7 @@ private enum ShellRuntimeMetadataTests {
         let activeOnlyController = makeController(
             windowID: "active_only_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: activeOnlyURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 64)
@@ -8407,7 +8407,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: alanPendingWindowID,
             shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingYield: true),
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: alanPendingURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: alanPendingWindowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 63)
@@ -8920,7 +8920,7 @@ private enum ShellRuntimeMetadataTests {
         expect(!json.contains("sudo -iu"), "workspace manifest must not embed terminal profile command definitions")
         expect(!json.contains("unix_user"), "workspace manifest must not embed terminal profile Unix-user definitions")
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = materializeManifestWithShellCore(
             manifest: decoded,
             defaultWorkingDirectory: "/Users/morris",
             now: now
@@ -11490,6 +11490,38 @@ private enum ShellRuntimeMetadataTests {
         contentID: String
     ) -> ShellTerminalContentPayload? {
         snapshot?.contents.first { $0.contentID == contentID }?.payload.terminal
+    }
+
+    private static func defaultManifestWithShellCore(
+        windowID: String,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellContentWorkspaceManifest {
+        do {
+            return try ShellCoreFFIAdapter().defaultContentWorkspaceManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
+            )
+        } catch {
+            fail("shell-core default manifest failed: \(error)")
+        }
+    }
+
+    private static func materializeManifestWithShellCore(
+        manifest: ShellContentWorkspaceManifest,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellStateSnapshot {
+        do {
+            return try ShellCoreFFIAdapter().materializeContentWorkspaceManifest(
+                manifest: manifest,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
+            )
+        } catch {
+            fail("shell-core manifest materialize failed: \(error)")
+        }
     }
 
     private static func expect(

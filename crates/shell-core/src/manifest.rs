@@ -538,9 +538,14 @@ impl ShellContentWorkspaceManifest {
         if manifest.spaces.is_empty() {
             manifest = Self::default_manifest(&self.window_id, default_working_directory, now);
         }
+        let source_tab_count = manifest
+            .spaces
+            .iter()
+            .map(|space| space.tabs.len())
+            .sum::<usize>();
 
         let state = Self::materialize_resolved_manifest(manifest, default_working_directory);
-        if !state.pane_slots.is_empty() {
+        if !state.pane_slots.is_empty() || source_tab_count == 0 {
             return state;
         }
 

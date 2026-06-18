@@ -85,9 +85,8 @@ struct ShellWorkspaceManifestStore {
 
         // Only a genuinely unreadable/corrupt manifest should be quarantined. A manifest that
         // decodes cleanly but fails *migration* (e.g. the shell-core FFI dylib is missing or has
-        // an ABI mismatch) must not be moved aside — that would silently discard the user's valid
-        // saved workspace. Such failures propagate so the caller's `try?` fallback can run while
-        // the manifest stays in place.
+        // an ABI mismatch) must not be moved aside; that would silently discard the user's valid
+        // saved workspace. Such failures propagate while the manifest stays in place.
         let data: Data
         do {
             data = try Data(contentsOf: manifestURL)
@@ -122,14 +121,11 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        // Decoded a valid legacy manifest. Prefer the shell-core FFI migration, but fall back to
-        // the equivalent pure-Swift migration when the FFI dylib is unavailable or mismatched, so
-        // a packaging failure still recovers the user's saved workspace instead of dropping it (a
-        // bare `throw` would surface as `nil` at the caller and open a fresh default workspace that
-        // later persistence would write over the valid file).
-        let migratedManifest =
-            (try? ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(legacyManifest))
-            ?? legacyManifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        // Decoded a valid legacy manifest; migration failures here are infrastructure errors and
+        // propagate without quarantining the original file.
+        let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
+            legacyManifest
+        )
         try save(migratedManifest)
         return ShellWorkspaceManifestLoadResult(
             manifest: migratedManifest,

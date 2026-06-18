@@ -154,6 +154,58 @@ environment projection; Swift still supplies executable availability, loads the
 profile store, chooses the final pane working directory, and performs macOS
 process/runtime attachment.
 
+## Shell Core Authority Audit
+
+The `make-shell-core-authoritative` cleanup treats the current shell-core
+integration as real product code rather than a parity experiment. Remaining
+Swift around `ShellCoreFFIAdapter` is classified as follows:
+
+- Domain duplicate removed from runtime startup: workspace-manifest startup now
+  requires Rust default/prune/materialize authority and no longer falls back to
+  Swift `ShellContentWorkspaceManifest.defaultManifest`,
+  `ShellContentWorkspaceManifest.pruningExpiredTabs`, or
+  `ShellWorkspaceMaterializer.materialize`. The old Swift default, prune, and
+  materialize algorithms are quarantined behind
+  `SHELL_MANIFEST_PARITY_FIXTURES` in
+  `Models/Shell/ShellWorkspaceManifest.swift`; default app and test builds keep
+  only Codable compatibility, decode repair, migration projection, and manifest
+  file IO helpers.
+- Domain duplicate removed from reducer and control paths: workspace reducer
+  mutations and reusable local control commands now use shell-core failures,
+  stable core errors, or explicit host-only command paths instead of a second
+  Swift validation/mutation switch. The local executor keeps macOS-only
+  diagnostics, terminal runtime delivery, and quick-terminal host behavior
+  separate from portable shell-domain commands.
+- Domain duplicate removed from action, Terminal Profile, and settings paths:
+  shared action titles, availability, shortcuts, keyboard mapping, and effects
+  call shell-core and fail closed on core errors. Terminal Profile launch intent
+  resolution no longer falls back to Swift profile resolution after core
+  failure; it returns an explicit fail-closed launch resolution. Reusable
+  settings rows now come from shell-core or collapse to unavailable rows.
+- Parity fixture debt still visible but not runtime-authoritative:
+  `Models/Shell/ShellActionRegistry.swift` retains the Swift action table for
+  fixture export and parity tests only; runtime code is guarded from using
+  `ShellActionRegistry.standard`.
+- Adapter projection to keep narrow: `ShellCoreFFIAdapter` materializes core
+  state into current Swift runtime DTOs and preserves platform-only pane fields
+  such as runtime metadata, renderer state, display identity, and terminal
+  activity. This code may remain while it avoids making independent domain
+  decisions.
+- Platform recovery/effect to keep in Swift: manifest file IO, corrupt-file
+  quarantine, diagnostics, Ghostty/runtime recovery, terminal input delivery,
+  pasteboard/keyboard handling, windowing, SwiftUI/AppKit presentation, and
+  privileged macOS account effects.
+- Runtime exceptions to track: detached quick-terminal focus and command-failure
+  activity acknowledgement remain Swift adapter-layer behavior until the core
+  has explicit portable semantics for those cases.
+
+Swift workspace-manifest and runtime-metadata tests now call the shell-core
+adapter for default manifest creation, pruning, materialization, and legacy
+terminal manifest migration, while keeping Swift assertions focused on corrupt
+file recovery, persistence, app projection, and platform runtime metadata.
+Action, control, settings, and Terminal Profile focused tests likewise exercise
+the shell-core adapter or Rust fixture contracts for portable domain behavior.
+
 ## Apply Sequence Notes
 
 - Start with report-mode checks and pure model/support moves.

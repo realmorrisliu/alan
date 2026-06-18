@@ -295,6 +295,8 @@ struct ShellActionDescriptor {
     }
 }
 
+// Parity fixture support only. Runtime action descriptors, availability,
+// shortcuts, and effects are owned by shell-core through ShellCoreFFIAdapter.
 final class ShellActionRegistry {
     let actions: [ShellActionDescriptor]
 
@@ -544,6 +546,8 @@ final class ShellActionRegistry {
     }
 }
 
+// Parity fixture support only. Do not use this table as a runtime fallback for
+// shell-core action registry failures.
 private let standardActions: [ShellActionDescriptor] = [
     ShellActionDescriptor(
         id: .quickTerminalToggle,

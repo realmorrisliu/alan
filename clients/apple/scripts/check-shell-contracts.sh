@@ -934,8 +934,28 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
-    "ShellWorkspaceMaterializer\\.materialize" \
-    "workspace-manifest startup must materialize shell state from the manifest"
+    "ShellCoreFFIAdapter\\.shared\\.pruningExpiredTabs" \
+    "workspace-manifest startup pruning must use shell-core authority"
+
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.materializeContentWorkspaceManifest" \
+    "workspace-manifest startup must materialize shell state through shell-core authority"
+
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \
+    "workspace-manifest startup must not make shell-core manifest authority optional"
+
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
+    "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "migratingTerminalRestoreSnapshotsToContentContainers" \
+    "legacy workspace manifest migration must not fall back to the Swift migration helper"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
@@ -2766,5 +2786,25 @@ reject_pattern \
     "clients/apple/alan-macos" \
     "NotificationCenter\\.default\\.post" \
     "control-plane text delivery must not rely on NotificationCenter broadcast success"
+
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "try\\? ShellCoreFFIAdapter\\.shared" \
+    "runtime shell-core calls must fail closed instead of using optional Swift fallback"
+
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "ShellActionRegistry\\.standard" \
+    "runtime shell actions must use shell-core instead of the Swift parity registry"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+    "Parity fixture support only" \
+    "Swift action registry must be documented as fixture-only while shell-core is authoritative"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
+    "SHELL_MANIFEST_PARITY_FIXTURES" \
+    "Swift manifest algorithms must remain quarantined behind the parity-fixture gate"
 
 printf 'Shell contract checks passed.\n'

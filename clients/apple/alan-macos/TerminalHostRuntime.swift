@@ -36,6 +36,10 @@ enum AlanLaunchStrategy: String, Codable, Equatable {
     case terminalProfileCustomCommand = "terminal_profile_custom_command"
 }
 
+private enum ShellCoreTerminalProfileResolutionError: Error {
+    case unsupportedStrategy(String)
+}
+
 struct AlanCommandResolution: Equatable {
     let strategy: AlanLaunchStrategy
     let executablePath: String?
@@ -157,156 +161,36 @@ struct AlanCommandResolution: Equatable {
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AlanCommandResolution {
-        if let intent = try? ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent(
-            terminalProfileReference: terminalProfileReference,
-            terminalProfiles: terminalProfiles,
-            executablePaths: shellCoreExecutablePaths(fileManager: fileManager, environment: environment),
-            environment: shellCoreLaunchEnvironment(environment, fileManager: fileManager)
-        ),
-           let resolution = commandResolution(
-               from: intent,
-               repoRoot: inferredAlanRepoRoot(),
-               candidates: shellCoreCandidates(
-                   for: intent,
-                   fileManager: fileManager,
-                   environment: environment
-               )
-           )
-        {
-            return resolution
-        }
-
-        let overrideCommand = environment["ALAN_SHELL_BOOT_COMMAND"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let overrideShell = environment["ALAN_SHELL_LOGIN_SHELL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if overrideCommand?.isEmpty == false || overrideShell?.isEmpty == false {
-            return resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-        }
-
-        let document = terminalProfiles ?? .fallback
-        let requestedID = terminalProfileReference?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let profile =
-            requestedID.flatMap(document.profile(id:))
-            ?? (requestedID?.isEmpty == false ? nil : document.defaultProfile)
-        guard let profile else {
-            let fallback = resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-            return fallback.withTerminalProfile(
-                nil,
-                state: requestedID.map { .missing(requestedID: $0) } ?? .absent
+        do {
+            let intent = try ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent(
+                terminalProfileReference: terminalProfileReference,
+                terminalProfiles: terminalProfiles,
+                executablePaths: shellCoreExecutablePaths(fileManager: fileManager, environment: environment),
+                environment: shellCoreLaunchEnvironment(environment, fileManager: fileManager)
             )
-        }
-
-        switch profile.launch {
-        case .loginShell:
-            return resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-                .withTerminalProfile(profile, state: .resolved)
-        case .sudoUser(let unixUser):
-            return profileCommand(
-                profile,
-                strategy: .terminalProfileSudoUser,
-                executablePath: "/usr/bin/sudo",
-                arguments: ["-iu", unixUser],
-                fileManager: fileManager,
-                environment: environment
-            )
-        case .sudoRoot:
-            return profileCommand(
-                profile,
-                strategy: .terminalProfileSudoRoot,
-                executablePath: "/usr/bin/sudo",
-                arguments: ["-i"],
-                fileManager: fileManager,
-                environment: environment
-            )
-        case .customCommand(let command):
-            let executablePath = "/bin/zsh"
-            guard fileManager.isExecutableFile(atPath: executablePath) else {
-                let fallback = resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-                return fallback.withTerminalProfile(
-                    profile,
-                    state: .unavailable(requestedID: profile.id, reason: "missing_executable")
-                )
-            }
-            return AlanCommandResolution(
-                strategy: .terminalProfileCustomCommand,
-                executablePath: executablePath,
-                launchPath: executablePath,
-                arguments: ["-lc", command],
-                bootCommand: command,
-                surfaceCommand: command,
-                summary: "Launching pane with Terminal Profile \(profile.title)",
-                detail: profile.redactedDisplayDetail,
+            guard let resolution = commandResolution(
+                from: intent,
                 repoRoot: inferredAlanRepoRoot(),
-                candidates: profileCandidates(
-                    profile,
-                    executablePath: executablePath,
+                candidates: shellCoreCandidates(
+                    for: intent,
                     fileManager: fileManager,
                     environment: environment
-                ),
-                terminalProfile: profile,
-                terminalProfileState: .resolved
-            )
-        }
-    }
-
-    private func withTerminalProfile(
-        _ profile: TerminalProfileDefinition?,
-        state: TerminalProfileResolutionState
-    ) -> AlanCommandResolution {
-        AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: launchPath,
-            arguments: arguments,
-            bootCommand: bootCommand,
-            surfaceCommand: surfaceCommand,
-            summary: summary,
-            detail: detail,
-            repoRoot: repoRoot,
-            candidates: candidates,
-            terminalProfile: profile,
-            terminalProfileState: state
-        )
-    }
-
-    private static func profileCommand(
-        _ profile: TerminalProfileDefinition,
-        strategy: AlanLaunchStrategy,
-        executablePath: String,
-        arguments: [String],
-        fileManager: FileManager,
-        environment: [String: String]
-    ) -> AlanCommandResolution {
-        guard fileManager.isExecutableFile(atPath: executablePath) else {
-            let fallback = resolve(for: .shell, fileManager: fileManager, environment: environment)
-            return fallback.withTerminalProfile(
-                profile,
-                state: .unavailable(requestedID: profile.id, reason: "missing_executable")
-            )
-        }
-        let bootCommand = ([executablePath] + arguments)
-            .map(AlanShellBootProfile.shellQuoted)
-            .joined(separator: " ")
-        return AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: executablePath,
-            arguments: arguments,
-            bootCommand: bootCommand,
-            surfaceCommand: bootCommand,
-            summary: "Launching pane with Terminal Profile \(profile.title)",
-            detail: profile.redactedDisplayDetail,
-            repoRoot: inferredAlanRepoRoot(),
-            candidates: profileCandidates(
-                profile,
-                executablePath: executablePath,
+                )
+            ) else {
+                return shellCoreTerminalProfileFailureResolution(
+                    terminalProfileReference: terminalProfileReference,
+                    fileManager: fileManager,
+                    error: ShellCoreTerminalProfileResolutionError.unsupportedStrategy(intent.strategy)
+                )
+            }
+            return resolution
+        } catch {
+            return shellCoreTerminalProfileFailureResolution(
+                terminalProfileReference: terminalProfileReference,
                 fileManager: fileManager,
-                environment: environment
-            ),
-            terminalProfile: profile,
-            terminalProfileState: .resolved
-        )
+                error: error
+            )
+        }
     }
 
     private static func profileCandidates(
@@ -377,6 +261,50 @@ struct AlanCommandResolution: Equatable {
             terminalProfile: intent.terminalProfile,
             terminalProfileState: intent.resolvedTerminalProfileState,
             terminalProfileEnvironment: intent.profileEnvironment
+        )
+    }
+
+    private static func shellCoreTerminalProfileFailureResolution(
+        terminalProfileReference: String?,
+        fileManager: FileManager,
+        error: Error
+    ) -> AlanCommandResolution {
+        let shellPath = "/bin/sh"
+        let message = "alan shell-core terminal profile resolution failed: \(error)"
+        let script = "printf '%s\\n' \(AlanShellBootProfile.shellQuoted(message)) >&2; exit 78"
+        let arguments = ["-lc", script]
+        let bootCommand = ([shellPath] + arguments)
+            .map(AlanShellBootProfile.shellQuoted)
+            .joined(separator: " ")
+        let requestedID = terminalProfileReference?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return AlanCommandResolution(
+            strategy: .loginShellFallback,
+            executablePath: fileManager.isExecutableFile(atPath: shellPath) ? shellPath : nil,
+            launchPath: shellPath,
+            arguments: arguments,
+            bootCommand: bootCommand,
+            surfaceCommand: script,
+            summary: "Terminal Profile unavailable",
+            detail: message,
+            repoRoot: inferredAlanRepoRoot(),
+            candidates: [
+                AlanCommandCandidate(
+                    label: "shell-core terminal profile resolution",
+                    path: "shell_core_unavailable",
+                    isPresent: false
+                ),
+                AlanCommandCandidate(
+                    label: "Failure shell",
+                    path: shellPath,
+                    isPresent: fileManager.isExecutableFile(atPath: shellPath)
+                ),
+            ],
+            terminalProfile: nil,
+            terminalProfileState: .unavailable(
+                requestedID: requestedID?.isEmpty == false ? requestedID! : "default",
+                reason: "shell_core_unavailable"
+            )
         )
     }
 

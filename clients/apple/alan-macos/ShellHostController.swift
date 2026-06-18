@@ -613,6 +613,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let manifest: ShellContentWorkspaceManifest?
         let manifestRecovery: ShellWorkspaceManifestRecovery?
         let retiredTabCount: Int
+        var startupDiagnostics: [String] = []
         switch startupMode {
         case .fresh:
             shellState = .bootstrapDefault(windowID: resolvedWindowContext.windowID)
@@ -644,54 +645,55 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                         channel: resolvedWindowContext.installChannel
                     )
             )
-            let loadResult = try? store.loadOrCreateDefault(
-                windowID: resolvedWindowContext.windowID,
-                defaultWorkingDirectory: workingDirectory,
-                now: now
-            )
-            let loadedManifest = loadResult?.manifest
-                ?? (try? ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
-                    windowID: resolvedWindowContext.windowID,
-                    defaultWorkingDirectory: workingDirectory,
-                    now: now
-                ))
-                ?? ShellContentWorkspaceManifest.defaultManifest(
+            do {
+                let loadResult = try store.loadOrCreateDefault(
                     windowID: resolvedWindowContext.windowID,
                     defaultWorkingDirectory: workingDirectory,
                     now: now
                 )
-            let retainedManifest =
-                (try? ShellCoreFFIAdapter.shared.pruningExpiredTabs(
-                    manifest: loadedManifest,
-                    now: now,
-                    ttl: Self.unpinnedTabRetentionTTL
-                ))
-                ?? loadedManifest.pruningExpiredTabs(
+                let loadedManifest = loadResult.manifest
+                let retainedManifest = try ShellCoreFFIAdapter.shared.pruningExpiredTabs(
+                    manifest: loadResult.manifest,
                     now: now,
                     ttl: Self.unpinnedTabRetentionTTL
                 )
-            retiredTabCount = max(
-                loadedManifest.spaces.reduce(0) { $0 + $1.tabs.count }
-                    - retainedManifest.spaces.reduce(0) { $0 + $1.tabs.count },
-                0
-            )
-            if retainedManifest != loadedManifest {
-                try? store.save(retainedManifest)
+                let prunedRetiredTabCount = max(
+                    loadedManifest.spaces.reduce(0) { $0 + $1.tabs.count }
+                        - retainedManifest.spaces.reduce(0) { $0 + $1.tabs.count },
+                    0
+                )
+                if retainedManifest != loadedManifest {
+                    do {
+                        try store.save(retainedManifest)
+                    } catch {
+                        startupDiagnostics.append(
+                            "workspace manifest save failed after shell-core pruning: \(error)"
+                        )
+                    }
+                }
+                let materializedState = try ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest(
+                    manifest: retainedManifest,
+                    defaultWorkingDirectory: workingDirectory,
+                    now: now
+                )
+                shellState = materializedState
+                manifestStore = store
+                manifest = retainedManifest
+                manifestRecovery = loadResult.recovery
+                retiredTabCount = prunedRetiredTabCount
+            } catch {
+                shellState = .bootstrapDefault(
+                    windowID: resolvedWindowContext.windowID,
+                    workingDirectory: workingDirectory
+                )
+                manifestStore = store
+                manifest = nil
+                manifestRecovery = nil
+                retiredTabCount = 0
+                startupDiagnostics.append(
+                    "workspace manifest shell-core startup failed: \(error)"
+                )
             }
-            shellState =
-                (try? ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest(
-                    manifest: retainedManifest,
-                    defaultWorkingDirectory: workingDirectory,
-                    now: now
-                ))
-                ?? ShellWorkspaceMaterializer.materialize(
-                    manifest: retainedManifest,
-                    defaultWorkingDirectory: workingDirectory,
-                    now: now
-                )
-            manifestStore = store
-            manifest = retainedManifest
-            manifestRecovery = loadResult?.recovery
         }
 
         let controller = ShellHostController(
@@ -707,6 +709,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
         if let manifestRecovery {
             controller.recordWorkspaceManifestRecovery(manifestRecovery)
+        }
+        for diagnostic in startupDiagnostics {
+            controller.recordControlPlaneDiagnostic(diagnostic)
         }
         if retiredTabCount > 0 {
             controller.recordControlPlaneDiagnostic(
@@ -1112,14 +1117,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             guard let swiftResult = try? shellState.focusingPane(paneID) else { return }
             result = swiftResult
         } else {
-            guard let rustResult = try? ShellCoreFFIAdapter.shared.applyReducer(
-                state: shellState,
-                operation: .focusPane(paneSlotID: paneID)
-            ) else { return }
-            // Rust owns workspace focus. Swift keeps this narrow post-pass for
-            // platform terminal activity acknowledgement until activity signals
-            // are fully domain-owned by shell-core.
-            result = (try? rustResult.state.focusingPane(paneID)) ?? rustResult
+            do {
+                let rustResult = try ShellCoreFFIAdapter.shared.applyReducer(
+                    state: shellState,
+                    operation: .focusPane(paneSlotID: paneID)
+                )
+                // Rust owns workspace focus. Swift keeps this narrow post-pass
+                // for platform terminal activity acknowledgement until activity
+                // signals are fully domain-owned by shell-core.
+                let acknowledgedState = rustResult.tabID.map { tabID in
+                    rustResult.state.acknowledgingCommandFailureActivities(
+                        in: tabID,
+                        focusedPaneID: paneID
+                    )
+                } ?? rustResult.state
+                result = ShellStateMutationResult(
+                    state: acknowledgedState,
+                    spaceID: rustResult.spaceID,
+                    tabID: rustResult.tabID,
+                    paneID: rustResult.paneID
+                )
+            } catch {
+                recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
+                return
+            }
         }
         applyMutationResult(result)
         if let focusStartedAt {
@@ -2081,25 +2102,37 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func shellActionTitle(_ id: ShellActionID) -> String {
-        (try? ShellCoreFFIAdapter.shared.actionTitle(for: id)) ?? "Unavailable"
+        do {
+            return try ShellCoreFFIAdapter.shared.actionTitle(for: id) ?? "Unavailable"
+        } catch {
+            return "Unavailable"
+        }
     }
 
     func shellActionAvailability(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionAvailability {
-        (try? ShellCoreFFIAdapter.shared.actionAvailability(
-            id,
-            target: target,
-            state: shellState
-        )) ?? .unavailable(reason: "Action is unavailable")
+        do {
+            return try ShellCoreFFIAdapter.shared.actionAvailability(
+                id,
+                target: target,
+                state: shellState
+            )
+        } catch {
+            return .unavailable(reason: "shell-core action availability failed: \(error)")
+        }
     }
 
     func shellActionShortcut(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionShortcut? {
-        try? ShellCoreFFIAdapter.shared.defaultActionShortcut(for: id, target: target)
+        do {
+            return try ShellCoreFFIAdapter.shared.defaultActionShortcut(for: id, target: target)
+        } catch {
+            return nil
+        }
     }
 
     @discardableResult
@@ -2122,13 +2155,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 : .failed(reason: "Terminal search target is unavailable")
         }
 
-        return (try? ShellCoreFFIAdapter.shared.executeAction(
-            id,
-            target: target,
-            state: shellState
-        ) { [weak self] effect in
-            self?.performShellActionEffect(effect) ?? false
-        }) ?? .failed(reason: "Action dispatch failed")
+        do {
+            return try ShellCoreFFIAdapter.shared.executeAction(
+                id,
+                target: target,
+                state: shellState
+            ) { [weak self] effect in
+                self?.performShellActionEffect(effect) ?? false
+            }
+        } catch {
+            return .failed(reason: "shell-core action dispatch failed: \(error)")
+        }
     }
 
     private func performShellActionEffect(_ effect: ShellActionEffect) -> Bool {

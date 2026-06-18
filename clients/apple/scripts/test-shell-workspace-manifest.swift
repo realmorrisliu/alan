@@ -2,6 +2,48 @@ import Foundation
 
 struct TerminalRenderCoordinatorMetrics: Codable, Equatable {}
 
+private func defaultManifestWithShellCore(
+    windowID: String,
+    defaultWorkingDirectory: String,
+    now: Date
+) throws -> ShellContentWorkspaceManifest {
+    try ShellCoreFFIAdapter().defaultContentWorkspaceManifest(
+        windowID: windowID,
+        defaultWorkingDirectory: defaultWorkingDirectory,
+        now: now
+    )
+}
+
+private func materializeManifestWithShellCore(
+    manifest: ShellContentWorkspaceManifest,
+    defaultWorkingDirectory: String,
+    now: Date
+) throws -> ShellStateSnapshot {
+    try ShellCoreFFIAdapter().materializeContentWorkspaceManifest(
+        manifest: manifest,
+        defaultWorkingDirectory: defaultWorkingDirectory,
+        now: now
+    )
+}
+
+private func pruneManifestWithShellCore(
+    _ manifest: ShellContentWorkspaceManifest,
+    now: Date,
+    ttl: TimeInterval
+) throws -> ShellContentWorkspaceManifest {
+    try ShellCoreFFIAdapter().pruningExpiredTabs(
+        manifest: manifest,
+        now: now,
+        ttl: ttl
+    )
+}
+
+private func migrateLegacyManifestWithShellCore(
+    _ manifest: ShellWorkspaceManifest
+) throws -> ShellContentWorkspaceManifest {
+    try ShellCoreFFIAdapter().migrateLegacyTerminalManifest(manifest)
+}
+
 @main
 struct ShellWorkspaceManifestTestRunner {
     static func main() throws {
@@ -28,7 +70,6 @@ private enum ShellWorkspaceManifestTests {
         try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
-        try verifiesSwiftLegacyMigrationFallbackMatchesShellCore()
         try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
         try verifiesContentContainerMigrationPreservesWorkspaceMetadata()
         try verifiesContentContainerMigrationPreservesNilRestoreCwd()
@@ -178,7 +219,7 @@ private enum ShellWorkspaceManifestTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: oldData)
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: decoded,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -252,7 +293,7 @@ private enum ShellWorkspaceManifestTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(ShellContentWorkspaceManifest.self, from: data)
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: decoded,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -410,7 +451,7 @@ private enum ShellWorkspaceManifestTests {
             ]
         )
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -454,7 +495,7 @@ private enum ShellWorkspaceManifestTests {
             ]
         )
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -504,7 +545,7 @@ private enum ShellWorkspaceManifestTests {
             ]
         )
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -576,7 +617,7 @@ private enum ShellWorkspaceManifestTests {
             ]
         )
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -691,7 +732,7 @@ private enum ShellWorkspaceManifestTests {
         )
         let manifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -718,7 +759,7 @@ private enum ShellWorkspaceManifestTests {
         tab.pinSnapshot = makeContentSplitSnapshot(tabID: tab.tabID)
         let manifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: manifest,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -737,51 +778,6 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func verifiesSwiftLegacyMigrationFallbackMatchesShellCore() throws {
-        // `loadOrCreateDefault` falls back to the pure-Swift legacy migration when the shell-core
-        // FFI is unavailable. That fallback must be a faithful substitute, so it has to produce the
-        // same content manifest the FFI path would, recovering the user's saved workspace rather
-        // than dropping it to a default.
-        var pinnedTab = makeTab(
-            tabID: "tab_split",
-            title: "Pinned Split",
-            isPinned: true,
-            pinCwd: nil,
-            liveCwd: "/live/single",
-            lastActivatedAt: referenceDate,
-            lastActivityAt: referenceDate,
-            activeTask: .inactive
-        )
-        pinnedTab.pinSnapshot = makeSplitSnapshot(tabID: pinnedTab.tabID)
-        let liveTab = makeTab(
-            tabID: "tab_live",
-            title: "Live",
-            isPinned: false,
-            pinCwd: nil,
-            liveCwd: "/live/work",
-            lastActivatedAt: referenceDate,
-            lastActivityAt: referenceDate,
-            activeTask: .foregroundCommand
-        )
-        let manifest = makeManifest(selectedTabID: pinnedTab.tabID, tabs: [pinnedTab, liveTab])
-
-        let swiftMigrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
-        let shellCoreMigrated = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(manifest)
-
-        expect(
-            swiftMigrated == shellCoreMigrated,
-            "Swift legacy migration fallback must match the shell-core FFI migration"
-        )
-        expect(
-            swiftMigrated != ShellContentWorkspaceManifest.defaultManifest(
-                windowID: "window_main",
-                defaultWorkingDirectory: "/fallback",
-                now: referenceDate
-            ),
-            "migration fallback must preserve the saved workspace, not produce a default"
-        )
-    }
-
     private static func verifiesTerminalOnlySnapshotMigratesToContentContainerShape() throws {
         var tab = makeTab(
             tabID: "tab_split",
@@ -796,7 +792,7 @@ private enum ShellWorkspaceManifestTests {
         tab.pinSnapshot = makeSplitSnapshot(tabID: tab.tabID)
         let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let migrated = try migrateLegacyManifestWithShellCore(manifest)
         let migratedTab = try requireContentTab("tab_split", in: migrated)
         let snapshot = try requireSnapshot(migratedTab.pinSnapshot)
 
@@ -855,7 +851,7 @@ private enum ShellWorkspaceManifestTests {
         )
         let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let migrated = try migrateLegacyManifestWithShellCore(manifest)
         let migratedSpace = try requireOnlySpace(in: migrated)
         let migratedTab = try requireOnlyContentTab(in: migrated)
 
@@ -894,7 +890,7 @@ private enum ShellWorkspaceManifestTests {
         tab.liveSnapshot = makeSnapshot(tabID: tab.tabID, cwd: nil)
         let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
 
-        let migrated = manifest.migratingTerminalRestoreSnapshotsToContentContainers()
+        let migrated = try migrateLegacyManifestWithShellCore(manifest)
         let snapshot = try requireSnapshot(try requireOnlyContentTab(in: migrated).liveSnapshot)
 
         expect(
@@ -902,7 +898,7 @@ private enum ShellWorkspaceManifestTests {
             "migration must preserve nil cwd so restore can resolve the default directory later"
         )
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = try materializeManifestWithShellCore(
             manifest: migrated,
             defaultWorkingDirectory: "/default/project",
             now: referenceDate
@@ -952,7 +948,7 @@ private enum ShellWorkspaceManifestTests {
             tabs: [expiredInactive, expiredActive, recentInactive]
         )
 
-        let pruned = manifest.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
+        let pruned = try pruneManifestWithShellCore(manifest, now: referenceDate, ttl: twelveHours)
 
         expect(findContentTab("tab_expired", in: pruned) == nil, "expired inactive unpinned tab must be pruned")
         expect(findContentTab("tab_active", in: pruned) != nil, "active unpinned tab must survive TTL pruning")
@@ -974,8 +970,8 @@ private enum ShellWorkspaceManifestTests {
         )
         let manifest = makeContentManifest(selectedTabID: expiredInactive.tabID, tabs: [expiredInactive])
 
-        let pruned = manifest.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
-        let state = ShellWorkspaceMaterializer.materialize(
+        let pruned = try pruneManifestWithShellCore(manifest, now: referenceDate, ttl: twelveHours)
+        let state = try materializeManifestWithShellCore(
             manifest: pruned,
             defaultWorkingDirectory: "/tmp",
             now: referenceDate
@@ -1308,12 +1304,12 @@ private enum ShellWorkspaceManifestFixtureExporter {
     }
 
     private static func fixtures() throws -> [ShellCoreFixtureCase] {
-        let defaultManifest = ShellContentWorkspaceManifest.defaultManifest(
+        let defaultManifest = try defaultManifestWithShellCore(
             windowID: "window_main",
             defaultWorkingDirectory: "/repo/app",
             now: referenceDate
         )
-        let defaultState = ShellWorkspaceMaterializer.materialize(
+        let defaultState = try materializeManifestWithShellCore(
             manifest: defaultManifest,
             defaultWorkingDirectory: "/fallback",
             now: referenceDate
@@ -1352,7 +1348,7 @@ private enum ShellWorkspaceManifestFixtureExporter {
                 ),
             ]
         )
-        let emptySelectedState = ShellWorkspaceMaterializer.materialize(
+        let emptySelectedState = try materializeManifestWithShellCore(
             manifest: emptySelectedManifest,
             defaultWorkingDirectory: "/fallback",
             now: referenceDate
@@ -1389,7 +1385,7 @@ private enum ShellWorkspaceManifestFixtureExporter {
                 ),
             ]
         )
-        let pruned = pruneInput.pruningExpiredTabs(now: referenceDate, ttl: twelveHours)
+        let pruned = try pruneManifestWithShellCore(pruneInput, now: referenceDate, ttl: twelveHours)
         let pinnedManifest = makeContentManifest(
             selectedTabID: "tab_pinned",
             tabs: [
@@ -1402,14 +1398,14 @@ private enum ShellWorkspaceManifestFixtureExporter {
                 ),
             ]
         )
-        let pinnedState = ShellWorkspaceMaterializer.materialize(
+        let pinnedState = try materializeManifestWithShellCore(
             manifest: pinnedManifest,
             defaultWorkingDirectory: "/fallback",
             now: referenceDate
         )
         let legacyTerminalManifest = makeLegacyTerminalManifest()
         let migratedLegacyManifest =
-            legacyTerminalManifest.migratingTerminalRestoreSnapshotsToContentContainers()
+            try migrateLegacyManifestWithShellCore(legacyTerminalManifest)
         var quickTerminalManifest = makeContentManifest(
             selectedTabID: "tab_main",
             tabs: [
@@ -1431,7 +1427,7 @@ private enum ShellWorkspaceManifestFixtureExporter {
             ),
             activeTask: .foregroundCommand
         )
-        let quickTerminalState = ShellWorkspaceMaterializer.materialize(
+        let quickTerminalState = try materializeManifestWithShellCore(
             manifest: quickTerminalManifest,
             defaultWorkingDirectory: "/fallback",
             now: referenceDate
@@ -1448,7 +1444,7 @@ private enum ShellWorkspaceManifestFixtureExporter {
                 ),
             ]
         )
-        let missingProfileState = ShellWorkspaceMaterializer.materialize(
+        let missingProfileState = try materializeManifestWithShellCore(
             manifest: missingProfileManifest,
             defaultWorkingDirectory: "/fallback",
             now: referenceDate

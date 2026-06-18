@@ -136,6 +136,21 @@ extension ShellStateSnapshot {
         )
     }
 
+    func acknowledgingCommandFailureActivities(
+        in tabID: String,
+        focusedPaneID: String
+    ) -> ShellStateSnapshot {
+        let acknowledgedPanes = panesAcknowledgingCommandFailureActivities(
+            in: tabID,
+            focusedPaneID: focusedPaneID
+        )
+        return replacing(
+            spaces: rebuildingAttention(in: spaces, panes: acknowledgedPanes),
+            panes: acknowledgedPanes,
+            focusedPaneID: focusedPaneID
+        )
+    }
+
     private func panesAcknowledgingCommandFailureActivities(
         in tabID: String,
         focusedPaneID: String

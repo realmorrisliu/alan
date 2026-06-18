@@ -414,66 +414,18 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func terminalProfileRows(
         _ summary: TerminalProfileSettingsSummary
     ) -> [ShellSettingsRowModel] {
-        if let rows = try? ShellCoreFFIAdapter.shared.terminalProfileRows(summary) {
+        do {
+            let rows = try ShellCoreFFIAdapter.shared.terminalProfileRows(summary)
             return rows
+        } catch {
+            return [
+                unavailableRow(
+                    id: "terminalProfilesUnavailable",
+                    systemName: "terminal",
+                    title: "Terminal Profiles"
+                ),
+            ]
         }
-
-        var rows: [ShellSettingsRowModel] = [
-            ShellSettingsRowModel(
-                id: "terminalProfilesDefault",
-                systemName: "terminal",
-                title: "Default profile",
-                detail: "Used for new terminals.",
-                value: summary.defaultProfileTitle ?? "Login shell",
-                mutability: .editable
-            ),
-            ShellSettingsRowModel(
-                id: "terminalProfilesCreate",
-                systemName: "plus.circle",
-                title: "New profile",
-                detail: "Create a local startup profile.",
-                value: "Create…",
-                mutability: .actionOnly
-            )
-        ]
-
-        if let recoveryMessage = summary.recoveryMessage {
-            rows.append(
-                ShellSettingsRowModel(
-                    id: "terminalProfilesRecovery",
-                    systemName: "exclamationmark.triangle",
-                    title: "Profile store recovery",
-                    detail: recoveryMessage,
-                    value: "Fallback active"
-                )
-            )
-        }
-
-        rows.append(
-            contentsOf: summary.profiles.map { profile in
-                ShellSettingsRowModel(
-                    id: "terminalProfile.\(profile.id)",
-                    systemName: terminalProfileSystemName(profile),
-                    title: profile.title,
-                    detail: Self.nonRepeatingDetail(
-                        profile.redactedDisplayDetail,
-                        title: profile.title
-                    ),
-                    value: profile.id == summary.defaultProfileID ? "Default" : profile.launch.kind.rawValue,
-                    mutability: .editable
-                )
-            }
-        )
-        rows.append(
-            ShellSettingsRowModel(
-                id: "terminalProfilesSudoGuidance",
-                systemName: "lock.shield",
-                title: "Sudo behavior",
-                detail: "Prompts and passwordless sudo are controlled by macOS sudo policy.",
-                value: "System managed"
-            )
-        )
-        return rows
     }
 
     private static func managedTerminalAccountRows(
@@ -508,33 +460,6 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 value: terminalAccountStatusLabel(plan),
                 mutability: .actionOnly
             )
-        }
-    }
-
-    private static func nonRepeatingDetail(_ detail: String?, title: String) -> String? {
-        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let normalizedDetail,
-              !normalizedDetail.isEmpty,
-              normalizedDetail.localizedCaseInsensitiveCompare(normalizedTitle) != .orderedSame
-        else {
-            return nil
-        }
-
-        return normalizedDetail
-    }
-
-    private static func terminalProfileSystemName(_ profile: TerminalProfileDefinition) -> String {
-        switch profile.launch {
-        case .loginShell:
-            return "terminal"
-        case .sudoUser:
-            return "person.crop.circle"
-        case .sudoRoot:
-            return "exclamationmark.triangle"
-        case .customCommand:
-            return "chevron.left.forwardslash.chevron.right"
         }
     }
 
@@ -658,11 +583,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func capabilityRows(
         _ summary: ShellSettingsCapabilitiesSummary
     ) -> [ShellSettingsRowModel] {
-        if let rows = try? ShellCoreFFIAdapter.shared.capabilityRows(summary) {
+        do {
+            let rows = try ShellCoreFFIAdapter.shared.capabilityRows(summary)
             return rows
-        }
-
-        if summary.compactUnavailableReason != nil {
+        } catch {
             return [
                 unavailableRow(
                     id: "capabilitiesUnavailable",
@@ -671,100 +595,24 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 ),
             ]
         }
-
-        let total = summary.skills.count
-        let enabled = summary.skills.filter(\.enabled).count
-
-        return [
-            ShellSettingsRowModel(
-                id: "capabilitiesAvailable",
-                systemName: "puzzlepiece.extension",
-                title: "Skill catalog",
-                value: total == 0 ? "No skills" : "\(enabled) of \(total)"
-            ),
-        ]
     }
 
     private static func localRows(
         _ local: ShellSettingsLocalSummary,
         diagnostics: ShellSettingsDiagnosticsSummary
     ) -> [ShellSettingsRowModel] {
-        if let rows = try? ShellCoreFFIAdapter.shared.localRows(local, diagnostics: diagnostics) {
+        do {
+            let rows = try ShellCoreFFIAdapter.shared.localRows(local, diagnostics: diagnostics)
             return rows
+        } catch {
+            return [
+                unavailableRow(
+                    id: "localStateUnavailable",
+                    systemName: "app",
+                    title: "Local state"
+                ),
+            ]
         }
-
-        return [
-            ShellSettingsRowModel(
-                id: "appIdentity",
-                systemName: "app",
-                title: "Bundle ID",
-                value: local.bundleIdentifier
-            ),
-            ShellSettingsRowModel(
-                id: "installChannel",
-                systemName: "shippingbox",
-                title: "Channel",
-                value: local.channelLabel
-            ),
-            ShellSettingsRowModel(
-                id: "cliTool",
-                systemName: "terminal",
-                title: "Command line tool",
-                value: local.cliToolName
-            ),
-            ShellSettingsRowModel(
-                id: "daemonEndpoint",
-                systemName: "server.rack",
-                title: "Daemon endpoint",
-                value: local.daemonURL
-            ),
-            ShellSettingsRowModel(
-                id: "updates",
-                systemName: "arrow.down.circle",
-                title: "Updates",
-                value: local.updateSummary
-            ),
-            ShellSettingsRowModel(
-                id: "dataRoot",
-                systemName: "folder",
-                title: "Alan home",
-                value: local.alanHomeDisplayPath
-            ),
-            ShellSettingsRowModel(
-                id: "publicSkills",
-                systemName: "folder.badge.gearshape",
-                title: "Skill packages",
-                value: local.globalSkillsDisplayPath
-            ),
-            ShellSettingsRowModel(
-                id: "applicationSupport",
-                systemName: "externaldrive",
-                title: "Shell state",
-                value: local.applicationSupportDisplayPath
-            ),
-            ShellSettingsRowModel(
-                id: "shellControl",
-                systemName: "point.3.connected.trianglepath.dotted",
-                title: "Control namespace",
-                value: local.shellControlNamespace
-            ),
-            ShellSettingsRowModel(
-                id: "performanceDiagnostics",
-                systemName: "speedometer",
-                title: "Performance Trace",
-                detail: "Local performance trace. Terminal content is not recorded.",
-                value: diagnostics.isEnabled ? "Enabled" : "Disabled",
-                mutability: .editable
-            ),
-            ShellSettingsRowModel(
-                id: "performanceDiagnosticsExport",
-                systemName: "square.and.arrow.up",
-                title: "Export Diagnostics",
-                detail: diagnostics.exportDetail,
-                value: "Export",
-                mutability: .actionOnly
-            ),
-        ]
     }
 
     private static func unavailableRow(
@@ -780,31 +628,6 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         )
     }
 
-    private static func displayCredentialStatus(_ status: String) -> String {
-        switch status {
-        case "available":
-            return "Available"
-        case "missing":
-            return "Missing"
-        case "pending":
-            return "Pending"
-        case "expired":
-            return "Expired"
-        case "error":
-            return "Needs attention"
-        default:
-            return "Unknown"
-        }
-    }
-
-    private static func displayProviderName(_ provider: String) -> String {
-        provider
-            .split(separator: "_")
-            .map { part in
-                part.prefix(1).uppercased() + part.dropFirst()
-            }
-            .joined(separator: " ")
-    }
 }
 
 struct ShellSettingsRemoteSnapshot: Equatable {

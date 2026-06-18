@@ -87,6 +87,30 @@ fn materialize_preserves_empty_selected_space_and_inactive_space_selection() {
         state.spaces[1].presentation_icon.as_deref(),
         Some("rectangle.stack.fill")
     );
+
+    let only_empty_manifest = ShellContentWorkspaceManifest {
+        spaces: vec![ShellContentWorkspaceSpaceRecord {
+            space_id: "space_empty".to_string(),
+            title: "Empty".to_string(),
+            order: 0,
+            created_at: reference_time(),
+            updated_at: reference_time(),
+            selected_tab_id: None,
+            tabs: Vec::new(),
+            terminal_profile_id: None,
+            presentation_icon: None,
+        }],
+        ..manifest
+    };
+    let only_empty_state = only_empty_manifest.materialize("/fallback", REFERENCE_TIME);
+    assert_eq!(only_empty_state.spaces.len(), 1);
+    assert_eq!(
+        only_empty_state.focused_space_id.as_deref(),
+        Some("space_empty")
+    );
+    assert_eq!(only_empty_state.focused_tab_id, None);
+    assert_eq!(only_empty_state.focused_pane_id, None);
+    assert!(only_empty_state.pane_slots.is_empty());
 }
 
 #[test]
