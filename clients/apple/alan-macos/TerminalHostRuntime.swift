@@ -185,6 +185,13 @@ struct AlanCommandResolution: Equatable {
             }
             return resolution
         } catch {
+            // With no explicit profile requested, the resolved launch is just a login shell, which
+            // the native resolver computes without shell-core. Fall back to it when shell-core
+            // cannot load so default terminals still launch a usable shell instead of an
+            // immediately-exiting failure command.
+            if terminalProfileReference == nil {
+                return resolveShell(fileManager: fileManager, environment: environment)
+            }
             return shellCoreTerminalProfileFailureResolution(
                 terminalProfileReference: terminalProfileReference,
                 fileManager: fileManager,

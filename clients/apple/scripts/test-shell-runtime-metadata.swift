@@ -18,6 +18,9 @@ struct ShellRuntimeMetadataTestRunner {
 @MainActor
 private enum ShellRuntimeMetadataTests {
     static func run() {
+        // Runs first so the shared shell-core adapter is still uncached and can be forced into a
+        // load failure via a missing dylib path.
+        verifiesShellResolverFallsBackToLoginShellWhenCoreUnavailable()
         verifiesBootProfileCacheMemoizesPerLaunchKey()
         verifiesMetadataCallbackReusesCachedBootProfile()
         verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
@@ -11611,6 +11614,36 @@ private enum ShellRuntimeMetadataTests {
     private static func fail(_ message: String) -> Never {
         fputs("error: \(message)\n", stderr)
         exit(1)
+    }
+
+    private static func verifiesShellResolverFallsBackToLoginShellWhenCoreUnavailable() {
+        let environmentKey = "ALAN_SHELL_CORE_FFI_LIBRARY"
+        let originalPath = ProcessInfo.processInfo.environment[environmentKey]
+        let missingPath = "/tmp/alan-shell-core-ffi-missing-\(UUID().uuidString.lowercased()).dylib"
+        setenv(environmentKey, missingPath, 1)
+        defer {
+            if let originalPath {
+                setenv(environmentKey, originalPath, 1)
+            } else {
+                unsetenv(environmentKey)
+            }
+        }
+
+        // No explicit profile: shell-core cannot load, but a default terminal must still resolve a
+        // usable login shell instead of the immediately-exiting shell-core failure command.
+        let resolution = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: nil,
+            terminalProfiles: nil
+        )
+        expect(
+            resolution.summary != "Terminal Profile unavailable",
+            "default terminal must not resolve to the shell-core failure command when core is unavailable"
+        )
+        expect(
+            !(resolution.surfaceCommand?.contains("exit 78") ?? false),
+            "default-terminal fallback must launch a login shell, not an immediately-exiting command"
+        )
     }
 
     private final class AlwaysExecutableFileManager: FileManager {
