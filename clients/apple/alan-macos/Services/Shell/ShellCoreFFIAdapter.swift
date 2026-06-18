@@ -895,13 +895,20 @@ private struct ShellCoreControlResult: Decodable {
     }
 
     func shellCommandResult(fallbackState: ShellStateSnapshot) throws -> ShellCoreControlCommandResult {
+        // shell-core returns portable state that does not carry Swift-only pane fields
+        // (live cwd/process/activity/viewport/alanBinding). Merge them back from the live
+        // fallback state, matching `applyReducer`, so adopted updates and local control
+        // responses don't drop platform data until the next terminal metadata callback.
         let materializedUpdatedState = try updatedState?.materializedShellState()
+            .preservingPlatformPaneFields(from: fallbackState)
         let materializedResponseState = try response.state?.materializedShellState()
+            .preservingPlatformPaneFields(from: fallbackState)
         let projectionState = materializedResponseState ?? materializedUpdatedState ?? fallbackState
         return ShellCoreControlCommandResult(
             response: try response.shellResponse(
                 fallbackState: fallbackState,
-                projectionState: projectionState
+                projectionState: projectionState,
+                materializedResponseState: materializedResponseState
             ),
             updatedState: materializedUpdatedState,
             sideEffect: runtimeIntents.compactMap(\.sideEffect).first
@@ -966,14 +973,15 @@ private struct ShellCoreControlResponse: Decodable {
 
     func shellResponse(
         fallbackState: ShellStateSnapshot,
-        projectionState: ShellStateSnapshot
+        projectionState: ShellStateSnapshot,
+        materializedResponseState: ShellStateSnapshot?
     ) throws -> AlanShellControlResponse {
         let projectedContentState = projectionState.contentStateProjection()
         let contentProjection = projectedContentState.controlPlaneContentProjection(
             paneSlotID: paneSlotID ?? paneID,
             contentID: contentID
         )
-        let responseState = try state?.materializedShellState()
+        let responseState = materializedResponseState
         return AlanShellControlResponse(
             requestID: requestID,
             contractVersion: contractVersion,

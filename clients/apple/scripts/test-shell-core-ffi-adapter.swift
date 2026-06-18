@@ -50,6 +50,7 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterReducerFocus()
             try testProductionAdapterActions()
             try testProductionAdapterControlCommands()
+            try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterTerminalProfiles()
             print("Shell core FFI adapter tests passed.")
         } catch {
@@ -944,6 +945,93 @@ private func testProductionAdapterControlCommands() throws {
         sendResult.response.contentID == ShellContentInstance.terminalContentID(forPaneID: "pane_1"),
         "control adapter must project terminal content id"
     )
+}
+
+private func testProductionAdapterControlCommandsPreservePlatformPaneFields() throws {
+    let adapter = try ShellCoreFFIAdapter()
+    let state = ShellStateSnapshot.bootstrapDefault(
+        windowID: "window_main",
+        workingDirectory: "/repo/app"
+    )
+    let splitResult = try state.splittingPane("pane_1", placement: .right)
+    guard let targetPaneID = splitResult.paneID else {
+        throw TestFailure.message("split fixture must create a pane for control command")
+    }
+
+    // shell-core's portable round-trip rebuilds panes from content/pane-slot projections and
+    // drops Swift-only live pane fields such as `process`. Stamp one on the live input state so
+    // the assertions fail if the control path forgets to re-merge platform fields.
+    let liveProcess = ShellProcessBinding(program: "zsh", argvPreview: ["zsh", "-il"])
+    let liveState = splitResult.state.replacingPaneProcessForTesting(
+        paneID: "pane_1",
+        process: liveProcess
+    )
+    try expect(
+        liveState.pane(paneID: "pane_1")?.process == liveProcess,
+        "fixture must stamp a live process on pane_1"
+    )
+
+    // `pane.focus` returns an adopted `updated_state`; the live process must survive into it.
+    let focusResult = try adapter.handleControlCommand(
+        try controlCommand(
+            "pane.focus",
+            fields: [
+                "pane_id": targetPaneID,
+            ]
+        ),
+        state: liveState
+    )
+    try expect(
+        focusResult.updatedState?.pane(paneID: "pane_1")?.process == liveProcess,
+        "control adapter must preserve live pane process in adopted updated state"
+    )
+
+    // `state` returns a full `response.state`; the live process must survive into the response too.
+    let stateResult = try adapter.handleControlCommand(
+        try controlCommand("state", fields: [:]),
+        state: liveState
+    )
+    try expect(
+        stateResult.response.state?.pane(paneID: "pane_1")?.process == liveProcess,
+        "control adapter must preserve live pane process in the control response state"
+    )
+}
+
+private extension ShellStateSnapshot {
+    func replacingPaneProcessForTesting(
+        paneID: String,
+        process: ShellProcessBinding
+    ) -> ShellStateSnapshot {
+        let updatedPanes = panes.map { pane -> ShellPane in
+            guard pane.paneID == paneID else { return pane }
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                launchTarget: pane.launchTarget,
+                cwd: pane.cwd,
+                process: process,
+                attention: pane.attention,
+                context: pane.context,
+                viewport: pane.viewport,
+                activity: pane.activity,
+                alanBinding: pane.alanBinding,
+                terminalProfileID: pane.terminalProfileID
+            )
+        }
+        return ShellStateSnapshot(
+            contractVersion: contractVersion,
+            windowID: windowID,
+            focusedSpaceID: focusedSpaceID,
+            focusedTabID: focusedTabID,
+            focusedPaneID: focusedPaneID,
+            spaces: spaces,
+            panes: updatedPanes,
+            paneSlots: paneSlots,
+            contents: contents,
+            quickTerminal: quickTerminal
+        )
+    }
 }
 
 private func testProductionAdapterTerminalProfiles() throws {
