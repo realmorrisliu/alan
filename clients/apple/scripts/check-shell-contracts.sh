@@ -9,7 +9,7 @@ require_pattern() {
     local pattern="$2"
     local message="$3"
 
-    if ! grep -Eq "$pattern" "$REPO_ROOT/$file"; then
+    if ! grep -Eq -- "$pattern" "$REPO_ROOT/$file"; then
         printf 'error: %s\n' "$message" >&2
         printf '       expected pattern %s in %s\n' "$pattern" "$file" >&2
         exit 1
@@ -21,7 +21,7 @@ reject_pattern() {
     local pattern="$2"
     local message="$3"
 
-    if grep -ERq "$pattern" "$REPO_ROOT/$file"; then
+    if grep -ERq -- "$pattern" "$REPO_ROOT/$file"; then
         printf 'error: %s\n' "$message" >&2
         printf '       rejected pattern %s in %s\n' "$pattern" "$file" >&2
         exit 1
@@ -840,7 +840,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "host\\.setTerminalProfile\\([^\\n]+forSpaceID: space\\.spaceID\\)" \
+    "host\\.setTerminalProfile\\(.*forSpaceID: space\\.spaceID\\)" \
     "Space context-menu profile actions must target the Space whose menu was opened"
 
 require_pattern \
@@ -2629,6 +2629,66 @@ require_pattern \
     "dev channel install contract checks must cover the dev app bundle"
 
 require_pattern \
+    "scripts/install-channel.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="app\.alanworks\.macos\.dev\.privileged-helper"' \
+    "dev channel install contract must expose the dev privileged helper label"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="\$ALAN_PRIVILEGED_HELPER_LABEL"' \
+    "release/dev app assembly must pass the channel-scoped privileged helper label into Xcode"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    'CURRENT_PROJECT_VERSION="\$ALAN_BUNDLE_VERSION"' \
+    "release/dev app assembly must pass explicit bundle versions into Xcode for helper update registration"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
+    "unregisterForUpdate" \
+    "privileged helper update must unregister stale SMAppService jobs before re-registering"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
+    "shouldRetryRegistration" \
+    "privileged helper update must retry transient SMAppService registration denial after unregister"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "PRODUCT_MODULE_NAME = AlanPrivilegedHelper;" \
+    "privileged helper target must keep a stable Swift module name when app PRODUCT_NAME is overridden"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "Copy Privileged Helper" \
+    "app target must copy the channel-scoped privileged helper executable"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    'helper_source=.*BUILT_PRODUCTS_DIR.*helper_label' \
+    "privileged helper copy phase must use the channel-scoped helper build product"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    'diagnose\(request: \$0, verifyPTY: true\)' \
+    "helper-backed Managed User diagnosis must run PTY smoke before reporting ready"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "readManagedUserPTY" \
+    "helper-backed Managed User PTY sessions must expose a typed output-read operation for renderer attachment"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "AlanHelperManagedUserPtyRendererProxy" \
+    "managed_user terminal runtime must bridge helper PTY sessions into the Ghostty external-PTY attachment seam"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserRendererAttachmentBridgesHelperSession" \
+    "terminal runtime tests must prove managed_user renderer attachment bridges helper PTY sessions"
+
+require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
     'DEFAULT_APP_HOME="\$\{HOME:-/Users/\$\{USER:-\$\(id -un\)\}\}"' \
     "UI smoke must derive the installed Alan Dev app root from HOME like install-dev"
@@ -2652,6 +2712,71 @@ require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
     'SMOKE_BUNDLE_ID="\$\{SMOKE_BUNDLE_ID:-app\.alanworks\.macos\.dev\}"' \
     "UI smoke build mode must default to the Alan Dev bundle id"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="\$SMOKE_BUNDLE_ID\.privileged-helper"' \
+    "UI smoke build mode must embed the dev-channel privileged helper label"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'ALAN_APP_PRODUCT_NAME="Alan Dev"' \
+    "UI smoke build mode must override only the app product name"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    'ALAN_INSTALL_CHANNEL="\$\{ALAN_INSTALL_CHANNEL:-dev\}"' \
+    "privileged helper live smoke must default to the dev helper channel"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    "--compile-only" \
+    "privileged helper live smoke must support compile-only validation without touching launchd"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    "--alan-dev-privileged-helper-smoke-and-exit" \
+    "privileged helper live smoke must connect through the signed Alan Dev app client"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.swift" \
+    "ALAN_PRIVILEGED_HELPER_LIVE_SMOKE_ALLOW_STABLE" \
+    "privileged helper live smoke must refuse stable helper access by default"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.swift" \
+    "ALAN_PRIVILEGED_HELPER_SMOKE_START_PTY" \
+    "privileged helper live smoke must keep live PTY startup explicitly opt-in"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-install-and-exit" \
+    "Alan Dev must expose a dev-only helper install smoke command"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-restart-and-exit" \
+    "Alan Dev must expose a dev-only helper restart smoke command through SMAppService"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-smoke-and-exit" \
+    "Alan Dev must expose a dev-only helper live smoke command"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "ALAN_PRIVILEGED_HELPER_SMOKE_APPLY_REPAIR" \
+    "Alan Dev helper live smoke must keep repair apply behind an explicit environment flag"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "AlanInstallChannel\\.current\\(\\) == \\.dev" \
+    "helper install smoke command must refuse the stable channel"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "AlanPrivilegedHelperAppServiceManager\\(channel: \\.dev\\)" \
+    "helper install smoke command must call the dev helper lifecycle manager"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 APPLE_ROOT="$REPO_ROOT/clients/apple"
 SOURCE_ROOT="$APPLE_ROOT/alan-macos"
+HELPER_SOURCE_ROOT="$APPLE_ROOT/alan-macos-privileged-helper"
 PROJECT_FILE="$APPLE_ROOT/alan-macos.xcodeproj/project.pbxproj"
 README_FILE="$APPLE_ROOT/README.md"
 ARCH_DOC="$APPLE_ROOT/ARCHITECTURE.md"
@@ -440,7 +441,7 @@ while IFS= read -r ref; do
     name="$(printf '%s' "$ref" | sed -E 's/.*path = ([^;]+);.*/\1/')"
     [[ "$name" == "$ref" ]] && continue
     [[ "$name" == *.swift ]] || continue
-    if [[ ! -f "$SOURCE_ROOT/$name" ]]; then
+    if [[ ! -f "$SOURCE_ROOT/$name" && ! -f "$HELPER_SOURCE_ROOT/$name" ]]; then
         fail "Xcode project references missing Swift file $name"
     fi
 done < <(grep -E 'path = .*\.swift;' "$PROJECT_FILE" || true)

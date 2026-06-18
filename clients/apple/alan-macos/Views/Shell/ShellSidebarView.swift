@@ -2,6 +2,48 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 #if os(macOS)
+private struct ShellTerminalProfileMenuOption: Identifiable {
+    let profile: TerminalProfileDefinition
+    let isEnabled: Bool
+    let guidance: String?
+
+    var id: String { profile.id }
+}
+
+private func shellTerminalProfileMenuOptions() -> [ShellTerminalProfileMenuOption] {
+    let terminalProfiles = TerminalProfileSettingsSummary.current()
+    let managedAccounts = ManagedTerminalAccountSettingsSummary.current(
+        terminalProfiles: terminalProfiles,
+        helperClient: AlanPrivilegedHelperAppClient(channel: .current())
+    )
+    let selectableIDs = Set(
+        TerminalProfileSpaceIdentityFilter.selectableProfiles(
+            terminalProfiles: terminalProfiles,
+            managedTerminalAccounts: managedAccounts
+        ).map(\.id)
+    )
+    return terminalProfiles.profiles
+        .filter { $0.id != TerminalProfileDefinition.loginShellFallback.id }
+        .map { profile in
+            let isEnabled = selectableIDs.contains(profile.id)
+            return ShellTerminalProfileMenuOption(
+                profile: profile,
+                isEnabled: isEnabled,
+                guidance: isEnabled
+                    ? nil
+                    : TerminalProfileSpaceIdentityFilter.repairGuidance(
+                        profileID: profile.id,
+                        terminalProfiles: terminalProfiles,
+                        managedTerminalAccounts: managedAccounts
+                    )
+            )
+        }
+}
+
+private func shellTerminalProfileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
+    "\(profile.title) · \(profile.launch.kind.rawValue)"
+}
+
 struct ShellSidebarView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
@@ -100,10 +142,12 @@ struct ShellSidebarView: View {
     }
 
     private var spaceCreationProfileOptions: [ShellSpaceCreationForm.ProfileOption] {
-        TerminalProfileStore.defaultStore().load().profiles.map { profile in
+        shellTerminalProfileMenuOptions().map { option in
             ShellSpaceCreationForm.ProfileOption(
-                id: profile.id,
-                name: "\(profile.title) · \(profile.launch.kind.rawValue)"
+                id: option.profile.id,
+                name: shellTerminalProfileMenuTitle(option.profile),
+                isEnabled: option.isEnabled,
+                guidance: option.guidance
             )
         }
     }
@@ -1305,21 +1349,23 @@ private struct ShellSidebarSpaceSlider: View {
                 cancelScrubPreview()
                 _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
             } label: {
-                Label("Default", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
+                Label("Login shell", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
             }
 
-            ForEach(TerminalProfileStore.defaultStore().load().profiles, id: \.id) { profile in
+            ForEach(shellTerminalProfileMenuOptions()) { option in
                 Button {
                     cancelScrubPreview()
-                    _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
+                    _ = host.setTerminalProfile(option.profile.id, forSpaceID: space.spaceID)
                 } label: {
                     Label(
-                        profileMenuTitle(profile),
-                        systemImage: profile.id == space.terminalProfileID
+                        profileMenuTitle(option.profile),
+                        systemImage: option.profile.id == space.terminalProfileID
                             ? "checkmark"
-                            : profileSymbol(for: profile)
+                            : profileSymbol(for: option.profile)
                     )
                 }
+                .disabled(!option.isEnabled)
+                .help(option.guidance ?? profileMenuTitle(option.profile))
             }
         }
 
@@ -1568,6 +1614,8 @@ private struct ShellSidebarSpaceSlider: View {
             return "person.crop.circle"
         case .sudoRoot:
             return "exclamationmark.triangle"
+        case .managedUser:
+            return "checkmark.seal"
         case .customCommand:
             return "chevron.left.forwardslash.chevron.right"
         }

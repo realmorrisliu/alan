@@ -924,7 +924,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         presentationIconSystemName: String? = nil
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
         let result: ShellStateMutationResult
         do {
             switch launchTarget {
@@ -3334,20 +3333,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewTerminal(in: requestedSpaceID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
     }
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
-    }
-
-    private func globalDefaultTerminalProfileIDForPaneCapture() -> String? {
-        terminalProfileIDForGlobalDefaultPaneCapture(
-            channelApplicationSupportDirectoryName: windowContext.installChannel
-                .applicationSupportDirectoryName,
-            fileManager: fileManager
-        )
     }
 
     func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {

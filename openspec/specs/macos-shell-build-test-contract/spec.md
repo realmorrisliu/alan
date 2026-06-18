@@ -941,37 +941,48 @@ inheritance, and UI before those changes are accepted.
 
 ### Requirement: Managed Terminal Account Provisioning Has Focused Verification
 Alan for macOS SHALL require focused verification for Managed Terminal Account
-planning, sudoers generation, validation, execution boundaries, repair,
-rollback, and UI safety wording.
+planning, helper diagnosis, helper-backed account repair, helper-owned PTY
+spawn verification, legacy sudoers cleanup, rollback, and UI safety wording.
 
 #### Scenario: Dry-run planner tests run
 - **WHEN** provisioning planning behavior changes
-- **THEN** focused tests cover missing account, existing account, existing
-  sudoers entry, missing Terminal Profile, and already-ready account states
+- **THEN** focused tests cover missing account, existing Alan-managed account,
+  existing non-Alan account, missing home, invalid shell, legacy Alan sudoers
+  state, missing Terminal Profile, and already-ready account states
 
-#### Scenario: Sudoers generation tests run
-- **WHEN** sudoers rendering behavior changes
-- **THEN** focused tests cover generated rule scope, identifier escaping or
-  rejection, no passwordless root grant, no unrelated-user grant, and stable
-  Alan-owned file paths
+#### Scenario: Helper diagnosis tests run
+- **WHEN** helper-backed diagnosis behavior changes
+- **THEN** focused tests cover helper unavailable, helper outdated, invalid
+  helper signature, account not Alan managed, account repairable, legacy sudoers
+  cleanup available, and ready account states
 
-#### Scenario: Validation failure tests run
-- **WHEN** sudoers validation or non-interactive sudo verification behavior
-  changes
-- **THEN** focused tests cover validation failure, sudo failure, partial
-  provisioning state, and repair-plan generation
+#### Scenario: Helper apply tests run
+- **WHEN** helper-backed repair behavior changes
+- **THEN** focused tests cover typed plan validation, identifier rejection,
+  home path derivation, shell allowlist enforcement, no reusable credentials,
+  and rejection of raw shell, arbitrary executable, or raw sudoers requests
+
+#### Scenario: Managed-user PTY verification tests run
+- **WHEN** managed-user terminal readiness or launch behavior changes
+- **THEN** focused tests cover helper-owned PTY spawn success, PTY spawn
+  failure, helper rejection, child exit, signal/terminate routing, and no
+  `sudo_user` fallback for `managed_user` profiles
 
 #### Scenario: Rollback tests run
 - **WHEN** rollback behavior changes
-- **THEN** focused tests cover removal of Alan-owned sudoers/Profile integration
+- **THEN** focused tests cover removal of Alan-owned helper/Profile integration
+  and verified legacy Alan sudoers cleanup
 - **AND** tests confirm account and home-directory deletion require a separate
   destructive confirmation
+- **AND** tests confirm non-Alan sudoers files and ordinary macOS accounts are
+  preserved
 
 #### Scenario: UI safety tests run
 - **WHEN** Settings provisioning UI changes
-- **THEN** focused UI or model tests cover no GUI-autologin wording, privileged
-  plan preview, explicit confirmation, password redaction, ready state, and
-  repairable state
+- **THEN** focused UI or model tests cover helper install/update/invalid
+  states, no GUI-autologin wording, privileged plan preview, explicit
+  confirmation, password redaction, ready state, repairable state, and account
+  not Alan managed state
 
 ### Requirement: Sidebar Space slider layout has focused verification
 The Apple client SHALL include focused automated or documented verification for
@@ -1076,3 +1087,83 @@ and app-restart transcript restore.
 - **WHEN** a running-app smoke produces visible terminal output, closes or quits Alan through a confirmed path, and relaunches the freshly installed app
 - **THEN** verification confirms the restored terminal shows the prior output without an extra restored-session banner
 - **AND** the restored terminal accepts new input in a newly started shell at the restored cwd
+
+### Requirement: Ghostty fork is repository managed
+The Apple client SHALL use a repository-managed, pinned Alan-maintained Ghostty
+fork at `third_party/ghostty` for Alan-owned PTY integration work instead of
+relying only on arbitrary developer-local Ghostty checkouts.
+
+#### Scenario: Submodule is initialized
+- **WHEN** a developer prepares macOS terminal dependencies
+- **THEN** the supported setup path initializes or verifies the pinned Ghostty fork submodule at `third_party/ghostty`
+- **AND** generated Ghostty framework, resources, and terminfo artifacts are derived from that pinned source unless an explicit developer override is used
+
+#### Scenario: Submodule is missing
+- **WHEN** the Ghostty fork submodule is absent or uninitialized
+- **THEN** setup and build checks report the missing submodule and provide the supported initialization command
+- **AND** the failure does not look like an opaque linker or module-map error
+
+#### Scenario: Developer override is used
+- **WHEN** a developer intentionally points setup at a non-submodule Ghostty checkout
+- **THEN** the setup output identifies the override source and revision
+- **AND** review or CI paths continue to use the pinned repository-managed source by default
+
+### Requirement: Ghostty artifact drift is checked
+The Apple build/test setup SHALL detect when local Ghostty artifacts do not
+match the pinned Ghostty fork revision or declared cache key used for the
+current Alan checkout.
+
+#### Scenario: Artifacts match pinned revision
+- **WHEN** local Ghostty artifacts were built from the pinned submodule revision
+- **THEN** dependency checks accept them and record the revision in setup output or metadata
+
+#### Scenario: Artifacts are stale
+- **WHEN** local Ghostty artifacts were built from a different Ghostty revision without an explicit override
+- **THEN** dependency checks fail or warn according to the selected strictness mode
+- **AND** the output points to the supported rebuild command
+
+### Requirement: Alan-owned PTY runtime has focused verification
+The Apple client SHALL include focused tests or documented integration checks
+for Alan-owned PTY allocation, process launch, renderer attachment, text
+delivery, resize, signals, exit observation, and bounded transcript capture.
+
+#### Scenario: Fake PTY runtime accepts delivery
+- **WHEN** focused tests create a fake Alan-owned PTY runtime and send terminal text
+- **THEN** tests verify that delivery is acknowledged from the PTY runtime service rather than from renderer visibility
+
+#### Scenario: Fake process group receives interrupt
+- **WHEN** focused tests request interrupt for a fake active foreground process group
+- **THEN** tests verify that the runtime service records the attempted signal and reports a stable result
+
+#### Scenario: Ghostty integration lane runs
+- **WHEN** local Ghostty artifacts are prepared from the pinned fork
+- **THEN** the Ghostty integration lane verifies renderer attachment to the Alan-owned PTY path or reports a clear unsupported-seam failure
+
+### Requirement: Privileged Helper Integration Has Focused Verification
+The Apple client SHALL include focused tests and contract checks for privileged
+helper signing, channel isolation, typed API behavior, fake-helper seams, and
+Managed User no-fallback enforcement.
+
+#### Scenario: Channel isolation tests run
+- **WHEN** helper identity or packaging behavior changes
+- **THEN** focused checks verify stable and dev helpers use separate labels,
+  Mach services, bundle identifiers, data roots, and app code requirements
+
+#### Scenario: Fake helper tests run
+- **WHEN** Settings, Managed Users, or terminal launch code calls the helper
+  boundary
+- **THEN** focused tests can use a fake helper to cover status, diagnose,
+  apply, start PTY, terminate PTY, remove integration, and request denial
+  without requiring a live root helper
+
+#### Scenario: Integration smoke runs
+- **WHEN** helper-backed Managed User implementation is marked ready for review
+- **THEN** validation includes a dev-channel install/status roundtrip and a
+  helper-backed managed-user PTY smoke where local signing and authorization
+  prerequisites are available
+
+#### Scenario: Forbidden fallback checks run
+- **WHEN** Managed User helper-backed code changes
+- **THEN** contract checks reject using `do shell script ... with administrator
+  privileges`, raw sudoers editing, or `sudo -n -iu <target>` as the
+  helper-backed Managed User executor or readiness path

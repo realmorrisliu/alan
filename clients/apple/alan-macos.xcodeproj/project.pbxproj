@@ -91,6 +91,13 @@
 		000000000000000000000068 /* Services/Shell/ShellPlatformMetadataPreserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000168 /* Services/Shell/ShellPlatformMetadataPreserver.swift */; };
 		000000000000000000000069 /* Services/Shell/TerminalProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */; };
 		00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */; };
+		A11000000000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000101 /* main.swift */; };
+		A11000000000000000000002 /* app.alanworks.macos.privileged-helper in Embed Privileged Helper */ = {isa = PBXBuildFile; fileRef = A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A11000000000000000000003 /* Services/Shell/AlanPrivilegedHelperService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000103 /* Services/Shell/AlanPrivilegedHelperService.swift */; };
+		A11000000000000000000004 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */; };
+		A11000000000000000000005 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */; };
+		A11000000000000000000006 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
+		A11000000000000000000007 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -105,8 +112,33 @@
 		00000000000000000000003F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013F /* AppIcon.icon */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		A11000000000000000000501 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000501 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A11000000000000000000401;
+			remoteInfo = "alan-macos-privileged-helper";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A11000000000000000000205 /* Embed Privileged Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchServices;
+			dstSubfolderSpec = 1;
+			files = (
+				A11000000000000000000002 /* app.alanworks.macos.privileged-helper in Embed Privileged Helper */,
+			);
+			name = "Embed Privileged Helper";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		0000000000000000000000F1 /* Alan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Alan.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "$(ALAN_PRIVILEGED_HELPER_LABEL)"; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanApp.swift; sourceTree = "<group>"; };
 		000000000000000000000102 /* Views/Console/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ContentView.swift; sourceTree = "<group>"; };
 		000000000000000000000103 /* Services/Daemon/AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/AlanAPIClient.swift; sourceTree = "<group>"; };
@@ -203,6 +235,11 @@
 		000000000000000000000168 /* Services/Shell/ShellPlatformMetadataPreserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPlatformMetadataPreserver.swift; sourceTree = "<group>"; };
 		000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/TerminalProfileStore.swift; sourceTree = "<group>"; };
 		00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPersistenceWriter.swift; sourceTree = "<group>"; };
+		A11000000000000000000101 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A11000000000000000000102 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A11000000000000000000103 /* Services/Shell/AlanPrivilegedHelperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/AlanPrivilegedHelperService.swift; sourceTree = "<group>"; };
+		A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/AlanPrivilegedHelperXPC.swift; sourceTree = "<group>"; };
+		A11000000000000000000105 /* AlanDarwinPtySpawn.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = AlanDarwinPtySpawn.c; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -215,6 +252,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A11000000000000000000201 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -222,6 +266,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000302 /* alan-macos */,
+				A11000000000000000000302 /* alan-macos-privileged-helper */,
 				00000000000000000000010B /* GhosttyKit.xcframework */,
 				00000000000000000000010C /* ghostty-resources */,
 				00000000000000000000010D /* ghostty-terminfo */,
@@ -252,6 +297,7 @@
 				000000000000000000000106 /* ShellHostController.swift */,
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				000000000000000000000108 /* TerminalHostRuntime.swift */,
+				A11000000000000000000105 /* AlanDarwinPtySpawn.c */,
 				000000000000000000000110 /* TerminalRuntimeService.swift */,
 				000000000000000000000111 /* TerminalSurfaceController.swift */,
 				000000000000000000000109 /* TerminalHostView.swift */,
@@ -267,8 +313,18 @@
 			isa = PBXGroup;
 			children = (
 				0000000000000000000000F1 /* Alan.app */,
+				A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A11000000000000000000302 /* alan-macos-privileged-helper */ = {
+			isa = PBXGroup;
+			children = (
+				A11000000000000000000102 /* Info.plist */,
+				A11000000000000000000101 /* main.swift */,
+			);
+			path = "alan-macos-privileged-helper";
 			sourceTree = "<group>";
 		};
 		000000000000000000000304 /* App */ = {
@@ -385,6 +441,8 @@
 				00000000000000000000016A /* Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift */,
 				00000000000000000000012F /* Services/Shell/ShellDiagnostics.swift */,
 				00000000000000000000012E /* Services/Shell/ShellEventStore.swift */,
+				A11000000000000000000103 /* Services/Shell/AlanPrivilegedHelperService.swift */,
+				A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */,
 				00000000000000000000012A /* Services/Shell/ShellLocalCommandExecutor.swift */,
 				000000000000000000000158 /* Services/Shell/ShellLocalFolderOpener.swift */,
 				000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */,
@@ -445,10 +503,13 @@
 				000000000000000000000202 /* Sources */,
 				000000000000000000000201 /* Frameworks */,
 				000000000000000000000203 /* Resources */,
+				A11000000000000000000207 /* Copy Privileged Helper */,
+				A11000000000000000000206 /* Generate Privileged Helper LaunchDaemon Plist */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A11000000000000000000502 /* PBXTargetDependency */,
 			);
 			name = "alan-macos";
 			packageProductDependencies = (
@@ -457,6 +518,24 @@
 			productName = "alan-macos";
 			productReference = 0000000000000000000000F1 /* Alan.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A11000000000000000000401 /* alan-macos-privileged-helper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A11000000000000000000601 /* Build configuration list for PBXNativeTarget "alan-macos-privileged-helper" */;
+			buildPhases = (
+				A11000000000000000000202 /* Sources */,
+				A11000000000000000000201 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "alan-macos-privileged-helper";
+			packageProductDependencies = (
+			);
+			productName = "alan-macos-privileged-helper";
+			productReference = A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */;
+			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
 
@@ -469,6 +548,9 @@
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					000000000000000000000401 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					A11000000000000000000401 = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -490,6 +572,7 @@
 			projectRoot = "";
 			targets = (
 				000000000000000000000401 /* alan-macos */,
+				A11000000000000000000401 /* alan-macos-privileged-helper */,
 			);
 		};
 /* End PBXProject section */
@@ -526,6 +609,47 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nif [ \"${PLATFORM_NAME:-}\" = \"macosx\" ]; then\n  if [ ! -d \"$SRCROOT/GhosttyKit.xcframework\" ]; then\n    echo \"error: GhosttyKit.xcframework is missing. Run ./clients/apple/scripts/setup-local-ghosttykit.sh from the repo root, or run ./clients/apple/scripts/setup-local-ghosttykit.sh --check for diagnostics.\" >&2\n    exit 1\n  fi\nfi\n";
+		};
+		A11000000000000000000207 /* Copy Privileged Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(ALAN_PRIVILEGED_HELPER_LABEL)",
+			);
+			name = "Copy Privileged Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchServices/$(ALAN_PRIVILEGED_HELPER_LABEL)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nhelper_label=\"${ALAN_PRIVILEGED_HELPER_LABEL:-app.alanworks.macos.privileged-helper}\"\nhelper_source=\"$BUILT_PRODUCTS_DIR/$helper_label\"\nhelper_dir=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchServices\"\nmkdir -p \"$helper_dir\"\nif [ ! -f \"$helper_source\" ]; then\n  echo \"error: privileged helper build product missing: $helper_source\" >&2\n  exit 1\nfi\ncp -f \"$helper_source\" \"$helper_dir/$helper_label\"\n";
+		};
+		A11000000000000000000206 /* Generate Privileged Helper LaunchDaemon Plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Privileged Helper LaunchDaemon Plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchDaemons/$(ALAN_PRIVILEGED_HELPER_LABEL).plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nhelper_label=\"${ALAN_PRIVILEGED_HELPER_LABEL:-app.alanworks.macos.privileged-helper}\"\nplist_dir=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchDaemons\"\nmkdir -p \"$plist_dir\"\nplist_path=\"$plist_dir/$helper_label.plist\"\ncat > \"$plist_path\" <<PLIST\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>${helper_label}</string>\n\t<key>BundleProgram</key>\n\t<string>Contents/Library/LaunchServices/${helper_label}</string>\n\t<key>MachServices</key>\n\t<dict>\n\t\t<key>${helper_label}.xpc</key>\n\t\t<true/>\n\t</dict>\n\t<key>RunAtLoad</key>\n\t<false/>\n</dict>\n</plist>\nPLIST\n";
 		};
 		000000000000000000000205 /* Build Shell Core FFI */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -623,6 +747,8 @@
 				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
 				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
 				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
+				A11000000000000000000003 /* Services/Shell/AlanPrivilegedHelperService.swift in Sources */,
+				A11000000000000000000004 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */,
 				00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */,
 				00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */,
 				00000000000000000000004E /* Services/Shell/ShellLocalFolderOpener.swift in Sources */,
@@ -644,12 +770,31 @@
 				000000000000000000000067 /* Services/Shell/ShellReducerCommandCoordinator.swift in Sources */,
 				000000000000000000000068 /* Services/Shell/ShellPlatformMetadataPreserver.swift in Sources */,
 				00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */,
+				A11000000000000000000007 /* AlanDarwinPtySpawn.c in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,
 				00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A11000000000000000000202 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A11000000000000000000005 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */,
+				A11000000000000000000006 /* AlanDarwinPtySpawn.c in Sources */,
+				A11000000000000000000001 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A11000000000000000000502 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A11000000000000000000401 /* alan-macos-privileged-helper */;
+			targetProxy = A11000000000000000000501 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000000000701 /* Debug */ = {
@@ -743,6 +888,8 @@
 		000000000000000000000703 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALAN_PRIVILEGED_HELPER_LABEL = "app.alanworks.macos.privileged-helper";
+				ALAN_APP_PRODUCT_NAME = Alan;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ARCHS = arm64;
 				CODE_SIGNING_ALLOWED = NO;
@@ -765,8 +912,7 @@
 					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = app.alanworks.macos;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				"PRODUCT_NAME[sdk=macosx*]" = Alan;
+				PRODUCT_NAME = "$(ALAN_APP_PRODUCT_NAME)";
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -776,6 +922,8 @@
 		000000000000000000000704 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALAN_PRIVILEGED_HELPER_LABEL = "app.alanworks.macos.privileged-helper";
+				ALAN_APP_PRODUCT_NAME = Alan;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ARCHS = arm64;
 				CODE_SIGNING_ALLOWED = NO;
@@ -798,8 +946,61 @@
 					"-lc++",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = app.alanworks.macos;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				"PRODUCT_NAME[sdk=macosx*]" = Alan;
+				PRODUCT_NAME = "$(ALAN_APP_PRODUCT_NAME)";
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A11000000000000000000703 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALAN_PRIVILEGED_HELPER_LABEL = "app.alanworks.macos.privileged-helper";
+				ARCHS = arm64;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "alan-macos-privileged-helper/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALAN_PRIVILEGED_HELPER_LABEL)";
+				PRODUCT_MODULE_NAME = AlanPrivilegedHelper;
+				PRODUCT_NAME = "$(ALAN_PRIVILEGED_HELPER_LABEL)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A11000000000000000000704 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALAN_PRIVILEGED_HELPER_LABEL = "app.alanworks.macos.privileged-helper";
+				ARCHS = arm64;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "alan-macos-privileged-helper/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALAN_PRIVILEGED_HELPER_LABEL)";
+				PRODUCT_MODULE_NAME = AlanPrivilegedHelper;
+				PRODUCT_NAME = "$(ALAN_PRIVILEGED_HELPER_LABEL)";
+				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -823,6 +1024,15 @@
 			buildConfigurations = (
 				000000000000000000000701 /* Debug */,
 				000000000000000000000702 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A11000000000000000000601 /* Build configuration list for PBXNativeTarget "alan-macos-privileged-helper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A11000000000000000000703 /* Debug */,
+				A11000000000000000000704 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

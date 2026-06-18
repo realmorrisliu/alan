@@ -25,6 +25,7 @@ alan_install_channel_load stable
 require_equal "$ALAN_APP_BUNDLE_NAME" "Alan.app" "stable app bundle"
 require_equal "$ALAN_DISPLAY_NAME" "Alan" "stable display name"
 require_equal "$ALAN_BUNDLE_ID" "app.alanworks.macos" "stable bundle id"
+require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.privileged-helper" "stable privileged helper label"
 require_equal "$ALAN_CLI_NAME" "alan" "stable CLI"
 require_equal "$ALAN_HOME_DISPLAY" "~/.alan" "stable alan home"
 require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents/skills" "stable global skills"
@@ -37,6 +38,7 @@ alan_install_channel_load dev
 require_equal "$ALAN_APP_BUNDLE_NAME" "Alan Dev.app" "dev app bundle"
 require_equal "$ALAN_DISPLAY_NAME" "Alan Dev" "dev display name"
 require_equal "$ALAN_BUNDLE_ID" "app.alanworks.macos.dev" "dev bundle id"
+require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.dev.privileged-helper" "dev privileged helper label"
 require_equal "$ALAN_CLI_NAME" "alan-dev" "dev CLI"
 require_equal "$ALAN_HOME_DISPLAY" "~/.alan-dev" "dev alan home"
 require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents-dev/skills" "dev global skills"
@@ -54,6 +56,9 @@ if ! alan_release_env_allowed_key ALAN_INSTALL_CHANNEL; then
 fi
 if ! alan_release_env_allowed_key ALAN_CARGO_TARGET_DIR; then
     fail "release env allowlist must include ALAN_CARGO_TARGET_DIR"
+fi
+if ! alan_release_env_allowed_key ALAN_BUNDLE_VERSION; then
+    fail "release env allowlist must include ALAN_BUNDLE_VERSION"
 fi
 
 printf 'Install channel descriptor checks passed.\n'

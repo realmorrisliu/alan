@@ -2,12 +2,12 @@
 
 ### Requirement: Ghostty fork is repository managed
 The Apple client SHALL use a repository-managed, pinned Alan-maintained Ghostty
-fork for Alan-owned PTY integration work instead of relying only on arbitrary
-developer-local Ghostty checkouts.
+fork at `third_party/ghostty` for Alan-owned PTY integration work instead of
+relying only on arbitrary developer-local Ghostty checkouts.
 
 #### Scenario: Submodule is initialized
 - **WHEN** a developer prepares macOS terminal dependencies
-- **THEN** the supported setup path initializes or verifies the pinned Ghostty fork submodule
+- **THEN** the supported setup path initializes or verifies the pinned Ghostty fork submodule at `third_party/ghostty`
 - **AND** generated Ghostty framework, resources, and terminfo artifacts are derived from that pinned source unless an explicit developer override is used
 
 #### Scenario: Submodule is missing

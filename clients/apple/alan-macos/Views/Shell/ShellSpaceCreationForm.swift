@@ -12,6 +12,20 @@ struct ShellSpaceCreationForm: View {
     struct ProfileOption: Identifiable, Equatable {
         let id: String
         let name: String
+        let isEnabled: Bool
+        let guidance: String?
+
+        init(
+            id: String,
+            name: String,
+            isEnabled: Bool = true,
+            guidance: String? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.isEnabled = isEnabled
+            self.guidance = guidance
+        }
     }
 
     let profiles: [ProfileOption]
@@ -89,9 +103,11 @@ struct ShellSpaceCreationForm: View {
             VStack(alignment: .leading, spacing: ShellSpacing.tight) {
                 ShellFormSectionLabel("Profile")
                 ShellSelectField(value: selectedProfileName) {
-                    Button("Default") { selectedProfileID = nil }
+                    Button("Login shell") { selectedProfileID = nil }
                     ForEach(profiles) { profile in
                         Button(profile.name) { selectedProfileID = profile.id }
+                            .disabled(!profile.isEnabled)
+                            .help(profile.guidance ?? profile.name)
                     }
                 }
             }
@@ -115,7 +131,7 @@ struct ShellSpaceCreationForm: View {
     private var selectedProfileName: String {
         guard let id = selectedProfileID,
               let match = profiles.first(where: { $0.id == id })
-        else { return "Default" }
+        else { return "Login shell" }
         return match.name
     }
 

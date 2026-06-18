@@ -613,6 +613,46 @@ wait_for_file_without_text() {
     fail "timed out waiting for $label"
 }
 
+json_transcript_contains() {
+    local path="$1"
+    local needle="$2"
+    [[ -f "$path" ]] || return 1
+    awk -v needle="$needle" '
+        /"transcript_lines"[[:space:]]*:/ { inTranscriptLines = 1 }
+        inTranscriptLines && index($0, needle) > 0 { found = 1 }
+        inTranscriptLines && /^[[:space:]]*\][,[:space:]]*$/ { inTranscriptLines = 0 }
+        END { exit found ? 0 : 1 }
+    ' "$path"
+}
+
+wait_for_json_transcript_text() {
+    local path="$1"
+    local needle="$2"
+    local label="$3"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if json_transcript_contains "$path" "$needle"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label"
+}
+
+wait_for_json_transcript_without_text() {
+    local path="$1"
+    local needle="$2"
+    local label="$3"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if [[ -f "$path" ]] && ! json_transcript_contains "$path" "$needle"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label"
+}
+
 wait_for_window_capture() {
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
     while (( SECONDS < deadline )); do
@@ -713,38 +753,66 @@ on run argv
         else if actionName is "escape" then
             key code 53
         else if actionName is "terminal-clear" then
-            keystroke "k" using command down
-        else if actionName is "quit-confirm" then
-            set clickedQuit to false
+            set clickedClearTerminal to false
+            set foundClearTerminal to false
             repeat with candidateMenuBarItem in menu bar items of menu bar 1 of targetProcess
                 repeat with candidateMenuItem in menu items of menu 1 of candidateMenuBarItem
-                    if (name of candidateMenuItem starts with "Quit") then
-                        click candidateMenuItem
-                        set clickedQuit to true
-                        exit repeat
+                    if (name of candidateMenuItem is "Clear Terminal") then
+                        set foundClearTerminal to true
+                        if enabled of candidateMenuItem then
+                            click candidateMenuItem
+                            set clickedClearTerminal to true
+                            exit repeat
+                        end if
                     end if
                 end repeat
-                if clickedQuit then exit repeat
+                if clickedClearTerminal then exit repeat
             end repeat
+            if foundClearTerminal and not clickedClearTerminal then error "clear terminal menu item disabled"
+            if not clickedClearTerminal then keystroke "k" using command down
+        else if actionName is "quit-confirm" then
+            set clickedQuit to false
+            try
+                repeat with candidateMenuBarItem in menu bar items of menu bar 1 of targetProcess
+                    repeat with candidateMenuItem in menu items of menu 1 of candidateMenuBarItem
+                        if (name of candidateMenuItem starts with "Quit") then
+                            click candidateMenuItem
+                            set clickedQuit to true
+                            exit repeat
+                        end if
+                    end repeat
+                    if clickedQuit then exit repeat
+                end repeat
+            on error
+                set matches to every process whose unix id is targetPID
+                if (count of matches) = 0 then return
+                error "quit menu item not found"
+            end try
             if not clickedQuit then error "quit menu item not found"
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
                 if (count of matches) = 0 then return
                 set targetProcess to item 1 of matches
-                set frontmost of targetProcess to true
-                repeat with candidateWindow in windows of targetProcess
-                    if exists button "Close" of candidateWindow then
-                        click button "Close" of candidateWindow
-                        return
-                    end if
-                    repeat with candidateSheet in sheets of candidateWindow
-                        if exists button "Close" of candidateSheet then
-                            click button "Close" of candidateSheet
+                try
+                    set frontmost of targetProcess to true
+                    repeat with candidateWindow in windows of targetProcess
+                        if exists button "Close" of candidateWindow then
+                            click button "Close" of candidateWindow
                             return
                         end if
+                        repeat with candidateSheet in sheets of candidateWindow
+                            if exists button "Close" of candidateSheet then
+                                click button "Close" of candidateSheet
+                                return
+                            end if
+                        end repeat
                     end repeat
-                end repeat
+                on error
+                    set matches to every process whose unix id is targetPID
+                    if (count of matches) = 0 then return
+                    error "close confirmation lookup failed"
+                end try
                 key code 36
                 delay 0.25
                 set matches to every process whose unix id is targetPID
@@ -831,7 +899,7 @@ run_restart_restore_step() {
     wait_for_app_exit "restart restore confirmed quit"
 
     wait_for_file "$manifest_path" "workspace manifest after restart restore quit"
-    wait_for_file_text \
+    wait_for_json_transcript_text \
         "$manifest_path" \
         "$before_token" \
         "persisted restart transcript token"
@@ -851,7 +919,7 @@ run_restart_restore_step() {
 
     state_result=$(control_state)
     require_control_applied "$state_result" "restart restore state after relaunch"
-    wait_for_file_text \
+    wait_for_json_transcript_text \
         "$state_result" \
         "$before_token" \
         "restored control-state transcript token"
@@ -867,16 +935,16 @@ run_restart_restore_step() {
     while (( SECONDS < clear_deadline )); do
         clear_state_result=$(control_state)
         require_control_applied "$clear_state_result" "restart restore state after clear"
-        if ! grep -F "$before_token" "$clear_state_result" >/dev/null 2>&1; then
+        if ! json_transcript_contains "$clear_state_result" "$before_token"; then
             break
         fi
         sleep 0.5
     done
     [[ -n "$clear_state_result" ]] || fail "restart restore clear did not produce control state"
-    if grep -F "$before_token" "$clear_state_result" >/dev/null 2>&1; then
+    if json_transcript_contains "$clear_state_result" "$before_token"; then
         fail "restored transcript token remained in control state after clear"
     fi
-    wait_for_file_without_text \
+    wait_for_json_transcript_without_text \
         "$manifest_path" \
         "$before_token" \
         "persisted manifest to drop restored transcript token after clear"
@@ -901,7 +969,7 @@ run_restart_restore_step() {
 
     state_result=$(control_state)
     require_control_applied "$state_result" "restart restore state after clear relaunch"
-    if grep -F "$before_token" "$state_result" >/dev/null 2>&1; then
+    if json_transcript_contains "$state_result" "$before_token"; then
         fail "cleared restored transcript token returned after relaunch"
     fi
     append_manifest "restart_restore_clear_relaunch_absent=$before_token"
@@ -997,7 +1065,8 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
         -destination 'generic/platform=macOS' \
         -derivedDataPath "$DERIVED_DATA" \
         PRODUCT_BUNDLE_IDENTIFIER="$SMOKE_BUNDLE_ID" \
-        PRODUCT_NAME="Alan Dev" \
+        ALAN_PRIVILEGED_HELPER_LABEL="$SMOKE_BUNDLE_ID.privileged-helper" \
+        ALAN_APP_PRODUCT_NAME="Alan Dev" \
         INFOPLIST_KEY_CFBundleDisplayName="$SMOKE_DISPLAY_NAME" \
         build
 fi

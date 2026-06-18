@@ -28,41 +28,46 @@ private enum TerminalAccountDevDryRunSmoke {
             fullName: "Alan Smoke",
             shell: "/bin/zsh",
             homeDirectory: "/Users/alan_smoke",
-            hideFromLoginWindow: true,
-            bindCurrentSpaceAfterSuccess: true
+            hideFromLoginWindow: true
         )
-        let missingState = ManagedTerminalAccountState(
-            account: .missing,
-            sudoers: .missing,
-            terminalProfile: .missing,
-            verification: .notRun
+        let missingDiagnosis = AlanManagedUserDiagnosis(
+            request: request,
+            ownershipState: .missing,
+            readinessState: .accountMissing,
+            accountExists: false,
+            homeDirectoryExists: false,
+            shellMatches: false,
+            hiddenFromLoginWindow: false,
+            legacySudoersPath: nil,
+            terminalProfileID: nil,
+            ptySmokeVerified: false,
+            diagnostic: nil
         )
-        let plan = ManagedTerminalAccountPlanner.plan(request: request, state: missingState)
+        let plan = ManagedTerminalAccountPlanner.plan(request: request, diagnosis: missingDiagnosis)
         let planKinds = plan.steps.map(\.kind)
 
         expect(plan.status == .readyToApply, "missing account dry run must be ready to apply")
-        expect(planKinds.contains(.createStandardAccount), "dry run must include account creation")
-        expect(planKinds.contains(.hideAccount), "dry run must include login-window hiding")
-        expect(planKinds.contains(.writeSudoersDropIn), "dry run must include sudoers write")
-        expect(planKinds.contains(.validateSudoers), "dry run must include sudoers validation")
-        expect(planKinds.contains(.verifyTerminalEntry), "dry run must include terminal entry verification")
+        expect(
+            planKinds.contains(.helperStep(.createStandardAccount)),
+            "dry run must include helper-backed account creation"
+        )
+        expect(
+            planKinds.contains(.helperStep(.hideAccount)),
+            "dry run must include helper-backed login-window hiding"
+        )
+        expect(
+            planKinds.contains(.helperStep(.writeOwnershipMarker)),
+            "dry run must include Alan-managed ownership marker"
+        )
+        expect(
+            planKinds.contains(.helperStep(.verifyManagedUserPTY)),
+            "dry run must include helper PTY readiness verification"
+        )
+        expect(!planKinds.contains(.writeSudoersDropIn), "dry run must not include sudoers write")
+        expect(!planKinds.contains(.validateSudoers), "dry run must not include sudoers validation")
+        expect(!planKinds.contains(.verifyTerminalEntry), "dry run must not include sudo entry verification")
         expect(planKinds.contains(.createOrUpdateTerminalProfile), "dry run must include profile handoff")
-        expect(planKinds.contains(.bindCurrentSpace), "dry run must include explicit Space binding step")
-
-        let rule = ManagedTerminalAccountSudoersRule(request: request)
-        expect(
-            rule.filePath == "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke",
-            "sudoers path must be deterministic and Alan-owned"
-        )
-        expect(
-            rule.contents.contains("morris ALL=(alan_smoke) NOPASSWD: ALL"),
-            "sudoers rule must target only the managed account"
-        )
-        expect(!rule.contents.contains("ALL=(ALL)"), "sudoers rule must not grant passwordless root")
-        expect(
-            !rule.contents.contains("morris ALL=(root)"),
-            "sudoers rule must not grant direct root entry"
-        )
+        expect(!planKinds.contains(.bindCurrentSpace), "dry run must not include Space binding")
 
         let cancelledExecutor = ManagedTerminalAccountFakeExecutor()
         cancelledExecutor.cancelBeforeApply = true
@@ -80,7 +85,8 @@ private enum TerminalAccountDevDryRunSmoke {
 
         let readyState = ManagedTerminalAccountState(
             account: .standard(homeDirectory: "/Users/alan_smoke", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: rule.filePath),
+            sudoers: .missing,
+            ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos-dev/privileged-helper/managed-users/alan_smoke/ownership.json")),
             terminalProfile: .missing,
             verification: .passed
         )
@@ -100,7 +106,12 @@ private enum TerminalAccountDevDryRunSmoke {
                 "ALAN_MACOS_APPLICATION_SUPPORT_DIR": appSupport.path,
             ]
         )
-        try store.save(TerminalProfileDocument(defaultProfileID: handoff.id, profiles: [handoff]))
+        try store.save(
+            TerminalProfileDocument(
+                defaultProfileID: TerminalProfileDefinition.loginShellFallback.id,
+                profiles: [TerminalProfileDefinition.loginShellFallback, handoff]
+            )
+        )
         let loaded = store.load().document.profile(id: "alan_smoke")
 
         expect(fileManager.fileExists(atPath: devProfileStore.path), "handoff must write dev profile store")
@@ -109,7 +120,11 @@ private enum TerminalAccountDevDryRunSmoke {
             "dev-channel handoff must not create stable profile store"
         )
         expect(loaded?.managedTerminalAccountID == "alan_smoke", "profile must link managed account")
-        expect(loaded?.launch == .sudoUser(unixUser: "alan_smoke"), "profile must use sudo_user launch")
+        expect(loaded?.launch == .managedUser(unixUser: "alan_smoke"), "profile must use managed_user launch")
+        expect(
+            store.load().document.defaultProfileID == TerminalProfileDefinition.loginShellFallback.id,
+            "handoff must not change the default terminal identity from Login shell"
+        )
 
         print("terminal account dev dry-run smoke passed")
         print("tmp_root=\(root.path)")

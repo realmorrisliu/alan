@@ -6,5 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export ALAN_INSTALL_CHANNEL="dev"
 export ALAN_NOTARIZE="0"
 export ALAN_CREATE_RELEASE_ARCHIVE="0"
+export ALAN_BUNDLE_VERSION="${ALAN_BUNDLE_VERSION:-$(date -u +%Y%m%d%H%M%S)}"
 
 exec "$SCRIPT_DIR/install.sh" "$@"

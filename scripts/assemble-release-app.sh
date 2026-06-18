@@ -31,6 +31,7 @@ CREATE_ARCHIVE="${ALAN_CREATE_RELEASE_ARCHIVE:-$NOTARIZE}"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
 REVISION="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 DIRTY="false"
+XCODE_VERSION_SETTINGS=()
 
 if ! git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- 2>/dev/null ||
     ! git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
@@ -39,6 +40,10 @@ fi
 
 if alan_install_channel_is_dev && [[ -z "$SIGNING_IDENTITY" ]]; then
     SIGNING_IDENTITY="-"
+fi
+
+if [[ -n "${ALAN_BUNDLE_VERSION:-}" ]]; then
+    XCODE_VERSION_SETTINGS=(CURRENT_PROJECT_VERSION="$ALAN_BUNDLE_VERSION")
 fi
 
 fail() {
@@ -178,6 +183,7 @@ require_command xcodebuild
 require_command codesign
 require_command ditto
 require_command lipo
+require_command plutil
 require_command shasum
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then
     require_command security
@@ -206,8 +212,10 @@ xcodebuild \
     ALAN_SHELL_CORE_FFI_CARGO_TARGET="$CARGO_BUILD_TARGET" \
     CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
-    PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
+    ALAN_PRIVILEGED_HELPER_LABEL="$ALAN_PRIVILEGED_HELPER_LABEL" \
+    ALAN_APP_PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
+    "${XCODE_VERSION_SETTINGS[@]}" \
     CODE_SIGNING_ALLOWED=NO \
     build
 
@@ -217,6 +225,8 @@ fi
 if [[ ! -f "$SHELL_CORE_FFI_DYLIB" ]]; then
     fail "Release build did not produce $SHELL_CORE_FFI_DYLIB"
 fi
+BUNDLE_VERSION="$(plutil -extract CFBundleVersion raw -o - "$APP_BUNDLE/Contents/Info.plist")" ||
+    fail "could not read CFBundleVersion from $APP_BUNDLE"
 
 printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
@@ -251,6 +261,7 @@ cat >"$MANIFEST_PATH" <<EOF
   "package": "$(json_escape "$ALAN_APP_BUNDLE_NAME")",
   "bundle_identifier": "$(json_escape "$ALAN_BUNDLE_ID")",
   "version": "$(json_escape "$VERSION")",
+  "bundle_version": "$(json_escape "$BUNDLE_VERSION")",
   "git_revision": "$(json_escape "$REVISION")",
   "git_dirty": $DIRTY,
   "assembled_at_utc": "$(json_escape "$ASSEMBLED_AT")",

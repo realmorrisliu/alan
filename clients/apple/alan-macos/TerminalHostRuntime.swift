@@ -33,11 +33,39 @@ enum AlanLaunchStrategy: String, Codable, Equatable {
     case loginShellFallback = "login_shell_fallback"
     case terminalProfileSudoUser = "terminal_profile_sudo_user"
     case terminalProfileSudoRoot = "terminal_profile_sudo_root"
+    case terminalProfileManagedUser = "terminal_profile_managed_user"
     case terminalProfileCustomCommand = "terminal_profile_custom_command"
 }
 
 private enum ShellCoreTerminalProfileResolutionError: Error {
     case unsupportedStrategy(String)
+}
+
+struct AlanTerminalProfileBootMetadata: Equatable {
+    let requestedID: String?
+    let resolvedID: String?
+    let kind: String?
+    let title: String?
+    let state: TerminalProfileResolutionState
+}
+
+struct AlanTerminalBootRequest: Equatable {
+    let strategy: AlanLaunchStrategy
+    let executablePath: String
+    let arguments: [String]
+    let workingDirectory: String
+    let environment: [String: String]
+    let bootCommand: String
+    let rendererCompatibilityCommand: String?
+    let managedUserAccountName: String?
+    let terminalProfile: AlanTerminalProfileBootMetadata?
+
+    var launchCommandString: String {
+        if let managedUserAccountName {
+            return "managed_user \(AlanShellBootProfile.shellQuoted(managedUserAccountName))"
+        }
+        return ([executablePath] + arguments).map(AlanShellBootProfile.shellQuoted).joined(separator: " ")
+    }
 }
 
 struct AlanCommandResolution: Equatable {
@@ -54,6 +82,7 @@ struct AlanCommandResolution: Equatable {
     let terminalProfile: TerminalProfileDefinition?
     let terminalProfileState: TerminalProfileResolutionState
     let terminalProfileEnvironment: [String: String]
+    let managedUserAccountName: String?
 
     init(
         strategy: AlanLaunchStrategy,
@@ -68,7 +97,8 @@ struct AlanCommandResolution: Equatable {
         candidates: [AlanCommandCandidate],
         terminalProfile: TerminalProfileDefinition? = nil,
         terminalProfileState: TerminalProfileResolutionState = .absent,
-        terminalProfileEnvironment: [String: String] = [:]
+        terminalProfileEnvironment: [String: String] = [:],
+        managedUserAccountName: String? = nil
     ) {
         self.strategy = strategy
         self.executablePath = executablePath
@@ -83,10 +113,46 @@ struct AlanCommandResolution: Equatable {
         self.terminalProfile = terminalProfile
         self.terminalProfileState = terminalProfileState
         self.terminalProfileEnvironment = terminalProfileEnvironment
+        self.managedUserAccountName = managedUserAccountName
     }
 
     var launchCommandString: String {
-        ([launchPath] + arguments).map(AlanShellBootProfile.shellQuoted).joined(separator: " ")
+        if let managedUserAccountName {
+            return "managed_user \(AlanShellBootProfile.shellQuoted(managedUserAccountName))"
+        }
+        return ([launchPath] + arguments).map(AlanShellBootProfile.shellQuoted).joined(separator: " ")
+    }
+
+    func bootRequest(
+        workingDirectory: String,
+        environment: [String: String]
+    ) -> AlanTerminalBootRequest {
+        AlanTerminalBootRequest(
+            strategy: strategy,
+            executablePath: launchPath,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            bootCommand: bootCommand,
+            rendererCompatibilityCommand: surfaceCommand,
+            managedUserAccountName: managedUserAccountName,
+            terminalProfile: terminalProfileBootMetadata(environment: environment)
+        )
+    }
+
+    private func terminalProfileBootMetadata(
+        environment: [String: String]
+    ) -> AlanTerminalProfileBootMetadata? {
+        guard terminalProfile != nil || terminalProfileState != .absent else {
+            return nil
+        }
+        return AlanTerminalProfileBootMetadata(
+            requestedID: environment["ALAN_TERMINAL_PROFILE_REQUESTED_ID"],
+            resolvedID: terminalProfile?.id,
+            kind: terminalProfile?.launch.kind.rawValue,
+            title: terminalProfile?.title,
+            state: terminalProfileState
+        )
     }
 
     func reinjectingSudoEnvironment(_ environment: [String: String]) -> AlanCommandResolution {
@@ -118,7 +184,8 @@ struct AlanCommandResolution: Equatable {
             candidates: candidates,
             terminalProfile: terminalProfile,
             terminalProfileState: terminalProfileState,
-            terminalProfileEnvironment: terminalProfileEnvironment
+            terminalProfileEnvironment: terminalProfileEnvironment,
+            managedUserAccountName: managedUserAccountName
         )
     }
 
@@ -161,10 +228,26 @@ struct AlanCommandResolution: Equatable {
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AlanCommandResolution {
+        let requestedID = terminalProfileReference?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasExplicitTerminalProfileReference = requestedID?.isEmpty == false
+        if let managedProfile = locallyResolvedManagedUserProfile(
+            requestedID: requestedID,
+            terminalProfiles: terminalProfiles
+        ),
+           case .managedUser(let unixUser) = managedProfile.launch
+        {
+            return managedUserProfileCommand(
+                managedProfile,
+                unixUser: unixUser,
+                fileManager: fileManager,
+                environment: environment
+            )
+        }
+
         do {
             let intent = try ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent(
                 terminalProfileReference: terminalProfileReference,
-                terminalProfiles: terminalProfiles,
+                terminalProfiles: hasExplicitTerminalProfileReference ? terminalProfiles : nil,
                 executablePaths: shellCoreExecutablePaths(fileManager: fileManager, environment: environment),
                 environment: shellCoreLaunchEnvironment(environment, fileManager: fileManager)
             )
@@ -189,7 +272,7 @@ struct AlanCommandResolution: Equatable {
             // the native resolver computes without shell-core. Fall back to it when shell-core
             // cannot load so default terminals still launch a usable shell instead of an
             // immediately-exiting failure command.
-            if terminalProfileReference == nil {
+            if !hasExplicitTerminalProfileReference {
                 return resolveShell(fileManager: fileManager, environment: environment)
             }
             return shellCoreTerminalProfileFailureResolution(
@@ -198,6 +281,49 @@ struct AlanCommandResolution: Equatable {
                 error: error
             )
         }
+    }
+
+    private static func locallyResolvedManagedUserProfile(
+        requestedID: String?,
+        terminalProfiles: TerminalProfileDocument?
+    ) -> TerminalProfileDefinition? {
+        guard requestedID?.isEmpty == false else {
+            return nil
+        }
+        let profile = terminalProfiles?.profile(id: requestedID)
+        guard case .managedUser = profile?.launch else {
+            return nil
+        }
+        return profile
+    }
+
+    private static func managedUserProfileCommand(
+        _ profile: TerminalProfileDefinition,
+        unixUser: String,
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> AlanCommandResolution {
+        let bootCommand = "managed_user \(AlanShellBootProfile.shellQuoted(unixUser))"
+        return AlanCommandResolution(
+            strategy: .terminalProfileManagedUser,
+            executablePath: nil,
+            launchPath: "",
+            arguments: [],
+            bootCommand: bootCommand,
+            surfaceCommand: nil,
+            summary: "Launching pane with Managed User \(profile.title)",
+            detail: profile.redactedDisplayDetail,
+            repoRoot: inferredAlanRepoRoot(),
+            candidates: profileCandidates(
+                profile,
+                executablePath: "managed_user",
+                fileManager: fileManager,
+                environment: environment
+            ),
+            terminalProfile: profile,
+            terminalProfileState: .resolved,
+            managedUserAccountName: unixUser
+        )
     }
 
     private static func profileCandidates(
@@ -231,7 +357,10 @@ struct AlanCommandResolution: Equatable {
         environment: [String: String]
     ) -> [AlanCommandCandidate] {
         switch AlanLaunchStrategy(rawValue: intent.strategy) {
-        case .terminalProfileSudoUser, .terminalProfileSudoRoot, .terminalProfileCustomCommand:
+        case .terminalProfileSudoUser,
+             .terminalProfileSudoRoot,
+             .terminalProfileManagedUser,
+             .terminalProfileCustomCommand:
             if let profile = intent.terminalProfile {
                 return profileCandidates(
                     profile,
@@ -637,15 +766,22 @@ struct AlanShellBootProfile: Equatable {
     }
 
     var launchCommandString: String {
-        command.launchCommandString
+        bootRequest.launchCommandString
     }
 
     var bootCommand: String {
-        command.bootCommand
+        bootRequest.bootCommand
     }
 
     var surfaceCommand: String? {
-        command.surfaceCommand
+        bootRequest.rendererCompatibilityCommand
+    }
+
+    var bootRequest: AlanTerminalBootRequest {
+        command.bootRequest(
+            workingDirectory: workingDirectory,
+            environment: environment
+        )
     }
 
     var environmentPreview: [(key: String, value: String)] {
@@ -738,6 +874,9 @@ struct AlanShellBootProfile: Equatable {
         for (key, value) in resolvedCommand.terminalProfileEnvironment {
             environment[key] = value
         }
+        if let managedUserAccountName = resolvedCommand.managedUserAccountName {
+            environment["ALAN_MANAGED_USER_ACCOUNT"] = managedUserAccountName
+        }
 
         if let executablePath = resolvedCommand.executablePath {
             environment["ALAN_SHELL_EXECUTABLE"] = executablePath
@@ -749,6 +888,9 @@ struct AlanShellBootProfile: Equatable {
 
         if let terminfoPath = ghostty.terminfoPath {
             environment["TERMINFO"] = terminfoPath
+        }
+        if environment["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            environment["TERM"] = "xterm-256color"
         }
         environment["TERM_PROGRAM"] = "alan"
         environment["COLORTERM"] = "truecolor"

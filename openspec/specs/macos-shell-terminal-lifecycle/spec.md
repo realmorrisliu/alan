@@ -416,9 +416,9 @@ attention、surface readiness、alan binding 和 terminal command capabilities�
 - **AND** terminal host focus 解析到新的 PaneSlot 位置
 
 ### Requirement: Terminal Startup Uses Resolved Terminal Profile
-The macOS terminal lifecycle SHALL launch terminal content using the resolved
-Terminal Profile while preserving the existing Ghostty-backed terminal surface
-creation path.
+The macOS terminal lifecycle SHALL launch terminal content by resolving the
+Terminal Profile into an Alan-owned terminal boot request used by the
+Alan-owned PTY runtime.
 
 #### Scenario: Terminal content starts with profile command
 - **WHEN** terminal content is created with `terminal_profile_id` `alan`
@@ -426,13 +426,16 @@ creation path.
   `alan`
 - **THEN** alan resolves the terminal boot command to the structured sudo-user
   launch for `alan`
-- **AND** Ghostty surface creation still receives the command, working
-  directory, and environment through the existing terminal boot profile
+- **AND** the Alan-owned PTY runtime receives the command, working directory,
+  and environment through the terminal boot request before child process launch
+- **AND** Ghostty receives renderer attachment to Alan's PTY endpoint rather
+  than owning the launch command, working directory, or environment
 
 #### Scenario: Profile metadata is projected to terminal environment
 - **WHEN** terminal content starts with a resolved Terminal Profile
 - **THEN** alan exposes non-secret profile metadata such as profile id and launch
-  kind through terminal environment variables
+  kind through terminal environment variables passed to the Alan-owned PTY
+  runtime
 - **AND** alan does not expose provider credentials or secret values through
   those variables
 
@@ -519,3 +522,117 @@ for active terminal work, and before finalizing their runtimes.
 - **WHEN** Alan restarts after terminal ContentInstances were closed or interrupted in the prior app instance
 - **THEN** restored terminal panes may present saved transcript history from the prior session
 - **AND** Alan creates new terminal runtimes and child processes instead of claiming continuity with the prior app instance's PTYs, child processes, or Ghostty surfaces
+
+### Requirement: Alan-owned terminal process lifecycle is authoritative
+The macOS shell host SHALL treat Alan runtime service process state as
+authoritative for terminal lifecycle, close guards, control-plane delivery, and
+metadata projection when a terminal ContentInstance uses the Alan-owned PTY
+runtime path.
+
+#### Scenario: Foreground process changes
+- **WHEN** the Alan-owned PTY runtime observes foreground process or process-group changes
+- **THEN** shell lifecycle metadata updates the corresponding terminal ContentInstance
+- **AND** the update does not depend on the terminal view being visible
+
+#### Scenario: Renderer reports stale process state
+- **WHEN** renderer metadata conflicts with Alan-owned process lifecycle state
+- **THEN** Alan-owned runtime state wins for child-process status, close guards, signal eligibility, and text-delivery acceptance
+- **AND** renderer metadata may be retained as diagnostics
+
+### Requirement: Terminal shutdown uses Alan-owned process control
+For Alan-owned PTY runtimes, confirmed close and runtime shutdown SHALL use
+Alan-owned process and process-group controls before finalizing terminal
+ContentInstance state.
+
+#### Scenario: Graceful close is confirmed
+- **WHEN** a user confirms closing terminal content with active foreground work
+- **THEN** Alan requests graceful shutdown through the Alan-owned PTY/process runtime
+- **AND** Alan observes bounded output or exit state before force finalization policy runs
+
+#### Scenario: Force close is required
+- **WHEN** graceful shutdown times out or the process ignores the request
+- **THEN** Alan may escalate through configured process-group signal policy
+- **AND** the final shell state reports interrupted or forced shutdown metadata without exposing raw process handles
+
+### Requirement: Runtime replacement does not claim cross-app continuity
+Alan-owned PTY runtime ownership SHALL improve in-process terminal control, but
+MUST NOT claim terminal process continuity across Alan app termination unless a
+separate daemon-owned runtime capability is implemented.
+
+#### Scenario: App restarts after Alan-owned PTY runtime
+- **WHEN** alan restores a terminal ContentInstance after app restart
+- **THEN** alan creates a new runtime from persisted snapshot data
+- **AND** alan does not claim that the prior PTY, process group, foreground application, or file descriptors are still live
+
+#### Scenario: Daemon ownership is added later
+- **WHEN** a future change introduces daemon-owned PTY runtime survival across app quit
+- **THEN** that change updates lifecycle and persistence specs before exposing cross-app terminal continuity
+
+### Requirement: Terminal delivery follows PTY readiness
+For Alan-owned PTY runtimes, terminal text delivery SHALL be acknowledged only
+after Alan-owned PTY input accepts or durably queues the bytes according to the
+terminal ContentInstance delivery policy.
+
+#### Scenario: PTY accepts input
+- **WHEN** `terminal.send_text` targets terminal content with an input-ready Alan-owned PTY runtime
+- **THEN** the response reports `applied: true`, accepted byte count, and terminal `content_id`
+- **AND** the response does not depend on renderer visibility
+
+#### Scenario: Renderer is ready but PTY is closed
+- **WHEN** `terminal.send_text` targets terminal content whose renderer is still attached but whose Alan-owned PTY is closed
+- **THEN** the response reports `applied: false` with a stable closed-runtime error
+- **AND** no accepted bytes are claimed
+
+### Requirement: Helper Managed User Sessions Have Truthful Lifecycle States
+The macOS shell host SHALL represent helper-backed Managed User terminal
+sessions with explicit lifecycle and error states for helper availability,
+authorization, account readiness, PTY spawn, renderer attachment, child exit,
+and cleanup.
+
+#### Scenario: Helper is unavailable during launch
+- **WHEN** a terminal launch resolves to a `managed_user` profile and the
+  privileged helper is missing, outdated, invalid, or unreachable
+- **THEN** the terminal ContentInstance records a non-ready helper state
+- **AND** the UI and control plane do not report terminal input as accepted by a
+  live managed-user process
+
+#### Scenario: Helper rejects launch
+- **WHEN** the helper rejects `startManagedUserPTY` because the account is not
+  Alan managed, not ready, invalid, or not allowed for the current channel
+- **THEN** the terminal ContentInstance records the sanitized helper rejection
+  state
+- **AND** Alan does not retry through sudoers or an unmanaged command path
+
+#### Scenario: Renderer attachment fails after PTY starts
+- **WHEN** the helper starts a managed-user PTY session but Ghostty attachment
+  fails
+- **THEN** Alan records renderer failure separately from helper PTY creation
+- **AND** the helper session is terminated or cleaned up according to terminal
+  close policy
+
+#### Scenario: Managed user child exits
+- **WHEN** the helper reports that a managed-user child process exited
+- **THEN** terminal lifecycle metadata records exit status and helper session
+  finality
+- **AND** later text delivery does not claim success unless a new runtime is
+  explicitly started
+
+### Requirement: Helper Session Cleanup Follows Terminal Ownership
+The macOS shell host SHALL close helper-backed Managed User PTY sessions through
+the same terminal ContentInstance runtime finalization boundary used by ordinary
+terminal runtimes.
+
+#### Scenario: Managed user pane is closed
+- **WHEN** a user closes a PaneSlot that mounts helper-backed Managed User
+  terminal content
+- **THEN** the runtime service finalizes the terminal ContentInstance exactly
+  once
+- **AND** the helper receives the corresponding terminate or cleanup request for
+  the managed-user PTY session
+
+#### Scenario: Client connection is lost
+- **WHEN** Alan loses its helper connection while helper-backed terminal
+  sessions are active
+- **THEN** shell state records helper disconnect diagnostics for affected
+  terminal ContentInstances
+- **AND** the helper cleans up sessions bound to that connection when possible

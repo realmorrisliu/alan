@@ -5,6 +5,9 @@ The macOS terminal runtime SHALL allocate and own the PTY, child process,
 process group metadata, lifecycle phase, delivery state, and exit observation
 through Alan terminal runtime services for each terminal ContentInstance.
 
+This requirement is scoped to the macOS Apple client runtime. It does not
+require Linux, Windows, or cross-platform PTY ownership behavior.
+
 #### Scenario: Terminal content starts with Alan-owned PTY
 - **WHEN** a terminal ContentInstance is created
 - **THEN** Alan allocates the PTY, launches the terminal child process, records the process group, and creates the runtime handle before attaching a renderer
@@ -14,6 +17,15 @@ through Alan terminal runtime services for each terminal ContentInstance.
 - **WHEN** Alan creates an Alan-owned PTY runtime before a visible terminal host view is mounted
 - **THEN** the child process and PTY lifecycle remain owned by the runtime service
 - **AND** renderer attachment can occur later without starting a second child process
+
+#### Scenario: Runtime is verified without renderer attachment
+- **WHEN** focused tests exercise Alan-owned PTY launch, input, resize, EOF,
+  signals, exit observation, or snapshot capture through fake or non-UI runtime
+  handles
+- **THEN** the runtime service reports behavior from Alan-owned PTY/process
+  handles
+- **AND** the test does not require a live Ghostty renderer to prove process
+  ownership semantics
 
 ### Requirement: Ghostty attaches to Alan-provided PTYs
 The Ghostty integration SHALL act as a renderer and terminal-protocol adapter
@@ -29,6 +41,13 @@ terminal child-process lifecycle.
 - **WHEN** SwiftUI or AppKit removes the visible terminal host view
 - **THEN** the Ghostty renderer attachment may detach
 - **AND** the Alan-owned PTY runtime, child process, process group, and delivery state remain alive unless the terminal content is closing
+
+#### Scenario: Renderer attachment seam is unavailable
+- **WHEN** the prepared Ghostty artifacts do not expose the external-PTY
+  attachment seam required by Alan
+- **THEN** Alan-owned PTY renderer integration checks fail with an explicit
+  unsupported-seam result
+- **AND** Alan does not silently fall back to Ghostty-owned child-process launch
 
 ### Requirement: Runtime control uses Alan process handles
 For Alan-owned PTY runtimes, the terminal runtime service SHALL implement
