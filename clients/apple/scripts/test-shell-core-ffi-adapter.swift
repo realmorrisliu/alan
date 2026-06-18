@@ -44,6 +44,7 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testSharedAdapterReportsLibraryLoadFailures()
             try testDescribeAndABIVersion()
             try testSchemaMismatchAndUnknownOperationErrors()
+            try testProductionAdapterFacadeErrorsWithNullPayloads()
             try testCapabilityRows()
             try testManifestReducerAndActionCalls()
             try testProductionAdapterReducerFocus()
@@ -57,6 +58,10 @@ private enum ShellCoreFFIAdapterTestRunner {
         }
     }
 }
+
+private struct EmptyShellCoreRequest: Encodable {}
+
+private struct EmptyShellCoreResponse: Decodable {}
 
 private func testSharedAdapterReportsLibraryLoadFailures() throws {
     let environmentKey = "ALAN_SHELL_CORE_FFI_LIBRARY"
@@ -174,6 +179,25 @@ private func testSchemaMismatchAndUnknownOperationErrors() throws {
         unknown.error?["code"] as? String == "unknown_operation",
         "unknown operation must be mapped into a stable error"
     )
+}
+
+private func testProductionAdapterFacadeErrorsWithNullPayloads() throws {
+    let adapter = try ShellCoreFFIAdapter()
+
+    do {
+        let _: EmptyShellCoreResponse = try adapter.testingSend(
+            operation: "missing.operation",
+            payload: EmptyShellCoreRequest(),
+            as: EmptyShellCoreResponse.self
+        )
+        throw TestFailure.message("unknown facade operation must throw a shell-core facade error")
+    } catch {
+        let description = String(describing: error)
+        try expect(
+            description.contains("shell core FFI unknown_operation"),
+            "adapter must surface error envelopes with null payloads as facade errors"
+        )
+    }
 }
 
 private func testCapabilityRows() throws {

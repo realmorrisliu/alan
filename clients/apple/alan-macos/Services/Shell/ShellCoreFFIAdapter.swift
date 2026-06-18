@@ -746,7 +746,8 @@ private struct ShellCoreResponseEnvelope: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         error = try container.decodeIfPresent(ShellCoreErrorPayload.self, forKey: .error)
-        if container.contains(.payload) {
+        if container.contains(.payload),
+           !(try container.decodeNil(forKey: .payload)) {
             let rawPayload = try container.decode(RawJSONValue.self, forKey: .payload)
             payload = try JSONSerialization.data(withJSONObject: rawPayload.value)
         } else {
@@ -754,6 +755,18 @@ private struct ShellCoreResponseEnvelope: Decodable {
         }
     }
 }
+
+#if ALAN_SHELL_CORE_FFI_TESTING
+extension ShellCoreFFIAdapter {
+    func testingSend<Input: Encodable, Output: Decodable>(
+        operation: String,
+        payload: Input,
+        as _: Output.Type
+    ) throws -> Output {
+        try send(operation: operation, payload: payload)
+    }
+}
+#endif
 
 private struct ShellCoreErrorPayload: Decodable {
     let code: String
