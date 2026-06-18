@@ -118,6 +118,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
+        verifiesSpatialFocusAcknowledgesCommandFailure()
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
         verifiesQuietAttentionNeverRequiresUserAction()
@@ -4849,6 +4850,38 @@ private enum ShellRuntimeMetadataTests {
         expect(
             acknowledgedProjection.secondaryLine != "Shell · Command failed 2",
             "acknowledged command failure must fall back to tab context instead of resurfacing"
+        )
+    }
+
+    private static func verifiesSpatialFocusAcknowledgesCommandFailure() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        // Focus the right sibling so the left pane's command failure is a background indicator.
+        controller.focus(paneID: "pane_2")
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity != nil,
+            "command failure must be retained on the background sibling before spatial focus"
+        )
+
+        let moved = controller.focusAdjacentPane(direction: .left)
+        expect(moved, "spatial focus left must move into the left sibling pane")
+        expect(
+            controller.shellState.focusedPaneID == "pane_1",
+            "spatial focus left must focus the left sibling pane"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == nil,
+            "spatial focus into a command-failure pane must acknowledge and clear its activity"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.attention != .notable,
+            "acknowledged spatial focus must stop keeping the pane notable"
         )
     }
 

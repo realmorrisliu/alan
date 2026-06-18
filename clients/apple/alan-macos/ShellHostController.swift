@@ -2012,14 +2012,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
         let previousPaneID = shellState.focusedPaneID
-        let result: ShellStateMutationResult
+        let rustResult: ShellStateMutationResult
         do {
-            result = try ShellCoreFFIAdapter.shared.applyReducer(
+            rustResult = try ShellCoreFFIAdapter.shared.applyReducer(
                 state: shellState,
                 operation: .focusAdjacentPane(direction: direction)
             )
         } catch {
             return false
+        }
+        // Mirror focus(paneID:): acknowledge command-failure activity/attention on the newly
+        // focused pane so spatial focus also clears a stale failure indicator within the tab.
+        let result: ShellStateMutationResult
+        if let tabID = rustResult.tabID, let focusedPaneID = rustResult.paneID {
+            result = ShellStateMutationResult(
+                state: rustResult.state.acknowledgingCommandFailureActivities(
+                    in: tabID,
+                    focusedPaneID: focusedPaneID
+                ),
+                spaceID: rustResult.spaceID,
+                tabID: rustResult.tabID,
+                paneID: rustResult.paneID
+            )
+        } else {
+            result = rustResult
         }
         applyMutationResult(result)
         controlPlane.recordSpatialFocus(
