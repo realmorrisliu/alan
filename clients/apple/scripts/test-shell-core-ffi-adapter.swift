@@ -52,6 +52,7 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterControlCommands()
             try testProductionAdapterUnscopedPaneListSpansAllTabs()
             try testProductionAdapterTabReorderReportsSectionAndIndex()
+            try testProductionAdapterPreservesFocusedQuickTerminal()
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
@@ -998,6 +999,54 @@ private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {
     try expect(
         listResult.response.panes?.count == listResult.response.paneSlots?.count,
         "pane.list legacy panes must match the pane slot projection scope exactly"
+    )
+}
+
+private func testProductionAdapterPreservesFocusedQuickTerminal() throws {
+    let adapter = try ShellCoreFFIAdapter()
+    let base = ShellStateSnapshot.bootstrapDefault(
+        windowID: "window_main",
+        workingDirectory: "/repo/app"
+    )
+    let quickShown = try adapter.applyReducer(
+        state: base,
+        operation: .showQuickTerminal(
+            workingDirectory: "/repo/quick",
+            defaultWorkingDirectory: "/home/test"
+        )
+    ).state
+
+    // Simulate the quick terminal holding focus: the projecting side carries the quick pane as
+    // focused_pane_id even though it lives outside the content pane slots.
+    let focusedQuick = ShellStateSnapshot(
+        contractVersion: quickShown.contractVersion,
+        windowID: quickShown.windowID,
+        focusedSpaceID: quickShown.focusedSpaceID,
+        focusedTabID: quickShown.focusedTabID,
+        focusedPaneID: ShellQuickTerminalSlot.globalPaneID,
+        spaces: quickShown.spaces,
+        panes: quickShown.panes,
+        paneSlots: quickShown.paneSlots,
+        contents: quickShown.contents,
+        quickTerminal: quickShown.quickTerminal
+    )
+    guard let tabID = focusedQuick.spaces.first?.tabs.first?.tabID else {
+        throw TestFailure.message("fixture must expose a tab to pin")
+    }
+
+    // A non-focus-changing reducer round-trips through Rust focus repair and Swift materialization;
+    // both must keep focus on the visible quick terminal.
+    let pinned = try adapter.applyReducer(
+        state: focusedQuick,
+        operation: .pinTab(tabID: tabID)
+    )
+    try expect(
+        pinned.state.focusedPaneID == ShellQuickTerminalSlot.globalPaneID,
+        "FFI tab organization must preserve focus on the visible quick terminal"
+    )
+    try expect(
+        pinned.state.quickTerminal != nil,
+        "quick terminal must survive FFI tab organization"
     )
 }
 

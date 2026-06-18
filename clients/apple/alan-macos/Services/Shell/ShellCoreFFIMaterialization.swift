@@ -62,13 +62,24 @@ struct ShellCorePortableWorkspaceState: Codable {
         else {
             return shellState
         }
+
+        // shell-core preserves focus on the quick pane (stored under quick_terminal, not in the
+        // content pane slots), but `materializingShellState()` cannot resolve it and repairs focus
+        // to a workspace pane. Restore the quick pane focus when the portable state carried it,
+        // mirroring the projecting side, so an FFI reducer op does not steal focus from the
+        // visible quick terminal.
+        let resolvedFocusedPaneID =
+            focusedPaneID == restoredQuickTerminal.pane.paneID
+            ? restoredQuickTerminal.pane.paneID
+            : shellState.focusedPaneID
+
         guard !shellState.panes.contains(where: { $0.paneID == restoredQuickTerminal.pane.paneID }) else {
             return ShellStateSnapshot(
                 contractVersion: shellState.contractVersion,
                 windowID: shellState.windowID,
                 focusedSpaceID: shellState.focusedSpaceID,
                 focusedTabID: shellState.focusedTabID,
-                focusedPaneID: shellState.focusedPaneID,
+                focusedPaneID: resolvedFocusedPaneID,
                 spaces: shellState.spaces,
                 panes: shellState.panes,
                 paneSlots: shellState.paneSlots,
@@ -86,7 +97,7 @@ struct ShellCorePortableWorkspaceState: Codable {
             windowID: shellState.windowID,
             focusedSpaceID: shellState.focusedSpaceID,
             focusedTabID: shellState.focusedTabID,
-            focusedPaneID: shellState.focusedPaneID,
+            focusedPaneID: resolvedFocusedPaneID,
             spaces: shellState.spaces,
             panes: shellState.panes + [restoredQuickTerminal.pane],
             paneSlots: shellState.paneSlots,
