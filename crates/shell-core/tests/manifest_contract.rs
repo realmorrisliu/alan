@@ -412,6 +412,71 @@ fn materialize_recovers_default_terminal_when_no_panes_survive() {
     );
 }
 
+#[test]
+fn materialize_repairs_focus_when_selected_tab_is_filtered_out() {
+    // The selected tab's snapshot references missing content, so it is filtered out during
+    // materialization while a sibling tab survives.
+    let dropped_selected_tab = ShellContentWorkspaceTabRecord {
+        live_snapshot: Some(ShellContentTabRestoreSnapshot {
+            pane_tree: PaneTreeNode::pane("node_pane_dropped", "pane_dropped"),
+            pane_slots: vec![ShellPaneSlotRestoreRecord {
+                pane_slot_id: "pane_dropped".to_string(),
+                content_id: "content_missing".to_string(),
+            }],
+            contents: Vec::new(),
+        }),
+        ..content_tab("tab_selected", "Selected", "/selected")
+    };
+    let manifest = ShellContentWorkspaceManifest {
+        schema_version: 1,
+        content_contract_version: "0.2".to_string(),
+        window_id: "window_main".to_string(),
+        selected_space_id: Some("space_main".to_string()),
+        selected_tab_id: Some("tab_selected".to_string()),
+        spaces: vec![ShellContentWorkspaceSpaceRecord {
+            space_id: "space_main".to_string(),
+            title: "Main".to_string(),
+            order: 0,
+            created_at: reference_time(),
+            updated_at: reference_time(),
+            selected_tab_id: Some("tab_selected".to_string()),
+            tabs: vec![
+                dropped_selected_tab,
+                content_tab("tab_valid", "Valid", "/valid"),
+            ],
+            terminal_profile_id: None,
+            presentation_icon: None,
+        }],
+        quick_terminal: None,
+    };
+
+    let state = manifest.materialize("/fallback", REFERENCE_TIME);
+
+    assert!(
+        state.spaces[0]
+            .tabs
+            .iter()
+            .all(|tab| tab.tab_id != "tab_selected"),
+        "the invalid selected tab must be filtered out"
+    );
+    assert_eq!(
+        state.focused_tab_id.as_deref(),
+        Some("tab_valid"),
+        "focus must repair to the surviving sibling tab, not point at the dropped tab"
+    );
+    assert!(
+        state
+            .focused_pane_id
+            .as_deref()
+            .map(|pane_id| state
+                .pane_slots
+                .iter()
+                .any(|slot| slot.pane_slot_id == pane_id))
+            .unwrap_or(false),
+        "repaired focus must resolve a usable focused pane present in the workspace"
+    );
+}
+
 fn content_tab(tab_id: &str, title: &str, cwd: &str) -> ShellContentWorkspaceTabRecord {
     let pane_slot_id = format!("pane_{tab_id}");
     let content_id = format!("content_{pane_slot_id}");

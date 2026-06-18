@@ -632,16 +632,35 @@ impl ShellContentWorkspaceManifest {
             })
             .collect::<Vec<_>>();
 
-        let focused_pane_id = manifest
+        // Repair focus so it never points at a tab dropped during materialization. The selected
+        // tab may have been filtered out above for having no valid pane slots; in that case fall
+        // back to the selected Space's surviving selected/first tab, keeping focus within that
+        // Space (a legitimately empty selected Space still resolves to no focused tab/pane).
+        let focused_space = manifest.selected_space_id.as_ref().and_then(|space_id| {
+            materialized_spaces
+                .iter()
+                .find(|space| &space.space_id == space_id)
+        });
+        let focused_tab_id = manifest
             .selected_tab_id
-            .as_ref()
-            .and_then(|selected_tab_id| {
-                materialized_spaces
-                    .iter()
-                    .flat_map(|space| &space.tabs)
-                    .find(|tab| &tab.tab_id == selected_tab_id)
-                    .and_then(|tab| tab.pane_tree.pane_ids().first().cloned())
+            .clone()
+            .filter(|selected| materialized_tab_exists(&materialized_spaces, selected))
+            .or_else(|| {
+                focused_space.and_then(|space| {
+                    space
+                        .selected_tab_id
+                        .clone()
+                        .filter(|selected| space.tabs.iter().any(|tab| &tab.tab_id == selected))
+                        .or_else(|| space.tabs.first().map(|tab| tab.tab_id.clone()))
+                })
             });
+        let focused_pane_id = focused_tab_id.as_ref().and_then(|tab_id| {
+            materialized_spaces
+                .iter()
+                .flat_map(|space| &space.tabs)
+                .find(|tab| &tab.tab_id == tab_id)
+                .and_then(|tab| tab.pane_tree.pane_ids().first().cloned())
+        });
         let quick_terminal = manifest
             .quick_terminal
             .as_ref()
@@ -651,7 +670,7 @@ impl ShellContentWorkspaceManifest {
             contract_version: manifest.content_contract_version,
             window_id: manifest.window_id,
             focused_space_id: manifest.selected_space_id,
-            focused_tab_id: manifest.selected_tab_id,
+            focused_tab_id,
             focused_pane_id,
             spaces: materialized_spaces,
             pane_slots,
@@ -659,6 +678,13 @@ impl ShellContentWorkspaceManifest {
             quick_terminal,
         }
     }
+}
+
+fn materialized_tab_exists(spaces: &[Space], tab_id: &str) -> bool {
+    spaces
+        .iter()
+        .flat_map(|space| &space.tabs)
+        .any(|tab| tab.tab_id == tab_id)
 }
 
 fn repaired_selected_tab_id(
