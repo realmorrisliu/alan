@@ -2577,41 +2577,58 @@ impl WorkspaceReducer {
     }
 
     fn repair_focus(&mut self, preferred_pane_slot_id: Option<String>) {
-        let resolved_pane_slot_id = preferred_pane_slot_id
-            .filter(|pane_slot_id| {
+        // The Quick Terminal pane lives under `quick_terminal`, not `pane_slots`. When it is the
+        // preferred focus, keep it (and the underlying overlay space/tab) instead of falling back
+        // to a workspace pane, so organizing a tab while the Quick Terminal is focused does not
+        // steal focus back into the workspace.
+        let prefers_quick_terminal = preferred_pane_slot_id.is_some()
+            && preferred_pane_slot_id
+                == self
+                    .state
+                    .quick_terminal
+                    .as_ref()
+                    .map(|quick| quick.pane_id.clone());
+
+        if prefers_quick_terminal {
+            self.state.focused_pane_id = preferred_pane_slot_id;
+        } else {
+            let resolved_pane_slot_id = preferred_pane_slot_id
+                .filter(|pane_slot_id| {
+                    self.state
+                        .pane_slots
+                        .iter()
+                        .any(|slot| slot.pane_slot_id == *pane_slot_id)
+                })
+                .or_else(|| {
+                    self.state
+                        .pane_slots
+                        .first()
+                        .map(|slot| slot.pane_slot_id.clone())
+                });
+
+            let focused_slot = resolved_pane_slot_id.as_ref().and_then(|pane_slot_id| {
                 self.state
                     .pane_slots
                     .iter()
-                    .any(|slot| slot.pane_slot_id == *pane_slot_id)
-            })
-            .or_else(|| {
-                self.state
-                    .pane_slots
-                    .first()
-                    .map(|slot| slot.pane_slot_id.clone())
+                    .find(|slot| slot.pane_slot_id == *pane_slot_id)
             });
-
-        let focused_slot = resolved_pane_slot_id.as_ref().and_then(|pane_slot_id| {
-            self.state
-                .pane_slots
-                .iter()
-                .find(|slot| slot.pane_slot_id == *pane_slot_id)
-        });
-        self.state.focused_space_id =
-            focused_slot.map(|slot| slot.space_id.clone()).or_else(|| {
-                self.state
-                    .spaces
-                    .first()
-                    .map(|space| space.space_id.clone())
-            });
-        self.state.focused_tab_id = focused_slot.map(|slot| slot.tab_id.clone()).or_else(|| {
-            self.state
-                .spaces
-                .first()
-                .and_then(|space| space.tabs.first())
-                .map(|tab| tab.tab_id.clone())
-        });
-        self.state.focused_pane_id = resolved_pane_slot_id;
+            self.state.focused_space_id =
+                focused_slot.map(|slot| slot.space_id.clone()).or_else(|| {
+                    self.state
+                        .spaces
+                        .first()
+                        .map(|space| space.space_id.clone())
+                });
+            self.state.focused_tab_id =
+                focused_slot.map(|slot| slot.tab_id.clone()).or_else(|| {
+                    self.state
+                        .spaces
+                        .first()
+                        .and_then(|space| space.tabs.first())
+                        .map(|tab| tab.tab_id.clone())
+                });
+            self.state.focused_pane_id = resolved_pane_slot_id;
+        }
 
         for space in &mut self.state.spaces {
             let preferred_tab_id =

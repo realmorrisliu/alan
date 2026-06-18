@@ -656,6 +656,36 @@ fn quick_terminal_reducers_preserve_detached_state_and_promote_into_workspace() 
 }
 
 #[test]
+fn tab_organization_preserves_focused_quick_terminal() {
+    let shown = base_state()
+        .reduce(ReducerOperation::ShowQuickTerminal {
+            working_directory: Some("/repo/app".to_string()),
+            default_working_directory: Some("/home/user".to_string()),
+        })
+        .expect("show quick terminal succeeds");
+    // Simulate the Quick Terminal holding focus (Swift projects focused_pane_id as the quick pane,
+    // which shell-core stores under quick_terminal rather than in pane_slots).
+    let mut focused_quick = shown.state;
+    focused_quick.focused_pane_id = Some("quick_terminal_pane".to_string());
+
+    let pinned = focused_quick
+        .reduce(ReducerOperation::PinTab {
+            tab_id: "tab_main".to_string(),
+        })
+        .expect("pin tab succeeds while quick terminal is focused");
+
+    assert_eq!(
+        pinned.state.focused_pane_id.as_deref(),
+        Some("quick_terminal_pane"),
+        "organizing a tab must not steal focus away from the focused Quick Terminal"
+    );
+    assert!(
+        pinned.state.quick_terminal.is_some(),
+        "the Quick Terminal must remain present after tab organization"
+    );
+}
+
+#[test]
 fn content_reducers_open_split_and_focus_existing_settings_content() {
     let opened = base_state()
         .reduce(ReducerOperation::OpenContentTab {
