@@ -237,6 +237,8 @@ struct AlanShellControlResponse: Codable {
     let ratio: Double?
     let changedSplitIDs: [String]?
     let affectedPaneIDs: [String]?
+    let terminalGridLayoutPolicy: TerminalGridLayoutPolicy?
+    let terminalGridLayoutEffects: [TerminalGridLayoutEffect]?
     let zoomedPaneID: String?
     let sourceTabID: String?
     let targetTabID: String?
@@ -292,6 +294,8 @@ struct AlanShellControlResponse: Codable {
         ratio: Double? = nil,
         changedSplitIDs: [String]? = nil,
         affectedPaneIDs: [String]? = nil,
+        terminalGridLayoutPolicy: TerminalGridLayoutPolicy? = nil,
+        terminalGridLayoutEffects: [TerminalGridLayoutEffect]? = nil,
         zoomedPaneID: String? = nil,
         sourceTabID: String? = nil,
         targetTabID: String? = nil,
@@ -346,6 +350,8 @@ struct AlanShellControlResponse: Codable {
         self.ratio = ratio
         self.changedSplitIDs = changedSplitIDs
         self.affectedPaneIDs = affectedPaneIDs
+        self.terminalGridLayoutPolicy = terminalGridLayoutPolicy
+        self.terminalGridLayoutEffects = terminalGridLayoutEffects
         self.zoomedPaneID = zoomedPaneID
         self.sourceTabID = sourceTabID
         self.targetTabID = targetTabID
@@ -402,6 +408,8 @@ struct AlanShellControlResponse: Codable {
         case ratio
         case changedSplitIDs = "changed_split_ids"
         case affectedPaneIDs = "affected_pane_ids"
+        case terminalGridLayoutPolicy = "terminal_grid_layout_policy"
+        case terminalGridLayoutEffects = "terminal_grid_layout_effects"
         case zoomedPaneID = "zoomed_pane_id"
         case sourceTabID = "source_tab_id"
         case targetTabID = "target_tab_id"

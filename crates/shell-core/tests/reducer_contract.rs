@@ -1151,6 +1151,7 @@ fn split_reducer_rejects_unsupported_non_terminal_content() {
         payload: ShellContentPayload::default(),
         terminal_metadata: None,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     };
 
     let error = state
@@ -1243,6 +1244,7 @@ fn base_state() -> WorkspaceState {
             payload: ShellContentPayload::terminal(ShellLaunchTarget::Shell, None, Some("Shell")),
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
+            renderer_state: Default::default(),
         }],
     }
 }

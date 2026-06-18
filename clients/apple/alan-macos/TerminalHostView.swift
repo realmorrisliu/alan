@@ -137,6 +137,16 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         publishRuntimeSnapshot()
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        let previousSize = frame.size
+        super.setFrameSize(newSize)
+        guard previousSize != newSize else { return }
+        layoutSubtreeIfNeeded()
+        synchronizeLiveHost()
+        syncNativeScrollback()
+        publishRuntimeSnapshot()
+    }
+
     override func layout() {
         super.layout()
         synchronizeLiveHost()
@@ -381,6 +391,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
 
         let displayID = (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
             .map { "\($0.uint32Value)" }
+        let surfaceState = surfaceController.surfaceStateSnapshot
 
         let snapshot = TerminalHostRuntimeSnapshot(
             stage: stage,
@@ -396,7 +407,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             isFocused: terminalInputIsActive,
             renderer: rendererSnapshot,
             paneMetadata: paneMetadata,
-            surfaceState: surfaceController.surfaceStateSnapshot,
+            surfaceState: surfaceState,
+            terminalGridDiagnostics: surfaceState.terminalGridDiagnostics,
             lastUpdatedAt: .now
         )
         runtimeReporter.publish(snapshot, observer: runtimeObserver)
@@ -408,6 +420,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             publishRuntimeSnapshot()
             return
         }
+        needsDeferredSurfaceAttachment = false
 #if canImport(GhosttyKit)
         guard let canvasView = canvasView as? AlanGhosttyCanvasView else { return }
         surfaceController.attach(
@@ -440,8 +453,37 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private var canSynchronizeLiveHost: Bool {
+    #if canImport(GhosttyKit)
+        terminalSurfaceAttachmentBlocker == nil
+    #else
         attachmentPolicy == .immediate || window != nil
+    #endif
     }
+
+#if canImport(GhosttyKit)
+    private var terminalSurfaceAttachmentBlocker: String? {
+        guard let window else {
+            return "window"
+        }
+        guard window.screen != nil || NSScreen.main != nil else {
+            return "screen"
+        }
+
+        let logicalSize = canvasView.bounds.size
+        guard logicalSize.width > 0, logicalSize.height > 0 else {
+            return "logical_size"
+        }
+
+        let backingSize = canvasView.convertToBacking(
+            NSRect(origin: .zero, size: logicalSize)
+        ).size
+        guard backingSize.width > 0, backingSize.height > 0 else {
+            return "backing_size"
+        }
+
+        return nil
+    }
+#endif
 
     private func scheduleDeferredSurfaceAttachment() {
         guard window != nil else {
@@ -559,6 +601,31 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         )
     }
 
+    private func terminalInputTraceStart() -> DispatchTime? {
+        Self.inputTrace.isEnabled ? DispatchTime.now() : nil
+    }
+
+    private func traceTerminalInputDuration(
+        _ eventName: String,
+        event: NSEvent? = nil,
+        startedAt: DispatchTime?,
+        details: @autoclosure () -> String = ""
+    ) {
+        guard let startedAt else { return }
+        let now = DispatchTime.now()
+        let nanos = now.uptimeNanoseconds >= startedAt.uptimeNanoseconds
+            ? now.uptimeNanoseconds - startedAt.uptimeNanoseconds
+            : 0
+        let elapsedMs = Double(nanos) / 1_000_000
+        let detailText = details()
+        let suffix = detailText.isEmpty ? "" : " \(detailText)"
+        traceTerminalInput(
+            eventName,
+            event: event,
+            details: "elapsed_ms=\(String(format: "%.3f", elapsedMs))\(suffix)"
+        )
+    }
+
     private func tracePointerInput(
         _ eventName: String,
         input: AlanTerminalPointerInput,
@@ -610,7 +677,10 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     private func requestTerminalFocus() {
-        window?.makeFirstResponder(self)
+        guard !terminalInputIsActive else { return }
+        if window?.makeFirstResponder(self) == true {
+            return
+        }
         synchronizeLiveHost()
         publishRuntimeSnapshot()
     }
@@ -1051,6 +1121,21 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     }
 
     override func keyDown(with event: NSEvent) {
+        let traceStartedAt = terminalInputTraceStart()
+        traceTerminalInput(
+            "raw-keyDown-begin",
+            event: event,
+            details: "keyCode=\(event.keyCode) chars_len=\((event.characters ?? "").count) surfaceReady=\(surfaceController.isSurfaceReady == true)"
+        )
+        defer {
+            traceTerminalInputDuration(
+                "raw-keyDown-end",
+                event: event,
+                startedAt: traceStartedAt,
+                details: "keyCode=\(event.keyCode) surfaceReady=\(surfaceController.isSurfaceReady == true)"
+            )
+        }
+
         if routeShellActionKeyIfNeeded(event) {
             return
         }
@@ -1234,8 +1319,15 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
     override func keyUp(with event: NSEvent) {
 #if canImport(GhosttyKit)
         guard surfaceController.isSurfaceReady == true else { return super.keyUp(with: event) }
+        let traceStartedAt = terminalInputTraceStart()
         let keyEvent = ghosttyKeyEvent(for: event, action: GHOSTTY_ACTION_RELEASE)
-        _ = surfaceController.sendKey(keyEvent)
+        let handled = surfaceController.sendKey(keyEvent)
+        traceTerminalInputDuration(
+            "keyUp-sendKey-end",
+            event: event,
+            startedAt: traceStartedAt,
+            details: "keyCode=\(event.keyCode) handled=\(handled)"
+        )
 #else
         super.keyUp(with: event)
 #endif
@@ -1385,6 +1477,7 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         textOverride: String? = nil,
         composing: Bool
     ) -> Bool {
+        let traceStartedAt = terminalInputTraceStart()
         var keyEvent = ghosttyKeyEvent(
             for: event,
             action: action,
@@ -1393,14 +1486,23 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         keyEvent.composing = composing
 
         let text = textOverride ?? textEvent.flatMap { textForKeyEvent($0) }
+        let handled: Bool
         if let text, shouldSendText(text) {
-            return text.withCString { cString in
+            handled = text.withCString { cString in
                 keyEvent.text = cString
                 return surfaceController.sendKey(keyEvent)
             }
+        } else {
+            handled = surfaceController.sendKey(keyEvent)
         }
 
-        return surfaceController.sendKey(keyEvent)
+        traceTerminalInputDuration(
+            "sendGhosttyKeyEvent-end",
+            event: event,
+            startedAt: traceStartedAt,
+            details: "action=\(action.rawValue) text_len=\((text ?? "").count) composing=\(composing) handled=\(handled)"
+        )
+        return handled
     }
 
     private func sendCommittedPreeditText(

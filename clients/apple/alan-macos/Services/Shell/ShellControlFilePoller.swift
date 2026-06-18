@@ -16,6 +16,7 @@ final class AlanShellControlFilePoller {
     private var pollSource: DispatchSourceTimer?
     private var trackedPaneIDs: Set<String> = []
     private var lastBindingPayloadByPaneID: [String: Data] = [:]
+    private var bindingURLByPaneID: [String: URL] = [:]
 
     init(
         windowID: String,
@@ -73,6 +74,11 @@ final class AlanShellControlFilePoller {
         let stalePaneIDs = Set(lastBindingPayloadByPaneID.keys).subtracting(paneIDs)
         for paneID in stalePaneIDs {
             lastBindingPayloadByPaneID.removeValue(forKey: paneID)
+            bindingURLByPaneID.removeValue(forKey: paneID)
+        }
+        let staleCachedPaneIDs = Set(bindingURLByPaneID.keys).subtracting(paneIDs)
+        for paneID in staleCachedPaneIDs {
+            bindingURLByPaneID.removeValue(forKey: paneID)
         }
     }
 
@@ -153,12 +159,7 @@ final class AlanShellControlFilePoller {
 
     private func pollBindings() {
         for paneID in trackedPaneIDs.sorted() {
-            let bindingURL = alanShellBindingFileURL(
-                windowID: windowID,
-                paneID: paneID,
-                fileManager: fileManager,
-                channel: channel
-            )
+            let bindingURL = cachedBindingURL(for: paneID)
 
             guard fileManager.fileExists(atPath: bindingURL.path) else {
                 if lastBindingPayloadByPaneID.removeValue(forKey: paneID) != nil {
@@ -185,6 +186,20 @@ final class AlanShellControlFilePoller {
             lastBindingPayloadByPaneID[paneID] = data
             bindingProjectionHandler(paneID, projection.shellBinding)
         }
+    }
+
+    private func cachedBindingURL(for paneID: String) -> URL {
+        if let url = bindingURLByPaneID[paneID] {
+            return url
+        }
+        let url = alanShellBindingFileURL(
+            windowID: windowID,
+            paneID: paneID,
+            fileManager: fileManager,
+            channel: channel
+        )
+        bindingURLByPaneID[paneID] = url
+        return url
     }
 }
 #endif

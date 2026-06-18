@@ -3354,6 +3354,7 @@ struct ShellContextSnapshot: Codable, Equatable {
     let inputReady: Bool?
     let readonly: Bool?
     let terminalMode: String?
+    let terminalGridDiagnostics: TerminalGridDiagnostics?
     let displayName: String?
     let displayID: String?
     let windowTitle: String?
@@ -3382,6 +3383,7 @@ struct ShellContextSnapshot: Codable, Equatable {
         inputReady: Bool? = nil,
         readonly: Bool? = nil,
         terminalMode: String? = nil,
+        terminalGridDiagnostics: TerminalGridDiagnostics? = nil,
         displayName: String? = nil,
         displayID: String? = nil,
         windowTitle: String? = nil,
@@ -3409,6 +3411,7 @@ struct ShellContextSnapshot: Codable, Equatable {
         self.inputReady = inputReady
         self.readonly = readonly
         self.terminalMode = terminalMode
+        self.terminalGridDiagnostics = terminalGridDiagnostics
         self.displayName = displayName
         self.displayID = displayID
         self.windowTitle = windowTitle
@@ -3438,6 +3441,7 @@ struct ShellContextSnapshot: Codable, Equatable {
         case inputReady = "input_ready"
         case readonly
         case terminalMode = "terminal_mode"
+        case terminalGridDiagnostics = "terminal_grid_diagnostics"
         case displayName = "display_name"
         case displayID = "display_id"
         case windowTitle = "window_title"

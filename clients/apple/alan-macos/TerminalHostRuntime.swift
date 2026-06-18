@@ -1466,6 +1466,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let renderer: TerminalRendererSnapshot
     let paneMetadata: TerminalPaneMetadataSnapshot
     let surfaceState: AlanTerminalSurfaceStateSnapshot
+    let terminalGridDiagnostics: TerminalGridDiagnostics?
     let lastUpdatedAt: Date
 
     init(
@@ -1483,6 +1484,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         renderer: TerminalRendererSnapshot,
         paneMetadata: TerminalPaneMetadataSnapshot,
         surfaceState: AlanTerminalSurfaceStateSnapshot,
+        terminalGridDiagnostics: TerminalGridDiagnostics? = nil,
         lastUpdatedAt: Date
     ) {
         self.stage = stage
@@ -1499,6 +1501,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         self.renderer = renderer
         self.paneMetadata = paneMetadata
         self.surfaceState = surfaceState
+        self.terminalGridDiagnostics = terminalGridDiagnostics
         self.lastUpdatedAt = lastUpdatedAt
     }
 
@@ -1525,6 +1528,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
             && renderer == other.renderer
             && paneMetadata == other.paneMetadata
             && surfaceState.equalsIgnoringTimestamp(other.surfaceState)
+            && terminalGridDiagnostics == other.terminalGridDiagnostics
     }
 
     static let placeholder = TerminalHostRuntimeSnapshot(
@@ -1542,6 +1546,7 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         renderer: .placeholder,
         paneMetadata: .placeholder,
         surfaceState: .placeholder,
+        terminalGridDiagnostics: nil,
         lastUpdatedAt: .now
     )
 }

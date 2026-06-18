@@ -14,6 +14,7 @@ struct TerminalRuntimeServiceTestRunner {
 @MainActor
 private enum TerminalRuntimeServiceTests {
     static func run() {
+        verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
@@ -55,6 +56,97 @@ private enum TerminalRuntimeServiceTests {
         verifiesRenderCoordinatorRecordsDiagnosticsWithoutChangingDrainBehavior()
         verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates()
         print("Terminal runtime service tests passed.")
+    }
+
+    private static func verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes() {
+        var responder = AlanTerminalPtyControlSequenceResponder()
+
+        var response = responder.process(Data("hello \u{1B}[c world".utf8))
+        expect(
+            response.rendererOutput == Data("hello  world".utf8),
+            "primary device attributes query must be consumed before renderer output"
+        )
+        expect(
+            response.ptyResponse == Data("\u{1B}[?62;22c".utf8),
+            "primary device attributes query must receive a terminal response"
+        )
+
+        response = responder.process(Data("\u{1B}[".utf8))
+        expect(
+            response.rendererOutput.isEmpty && response.ptyResponse.isEmpty,
+            "partial CSI must be buffered across PTY chunks"
+        )
+        response = responder.process(Data("0c".utf8))
+        expect(
+            response.rendererOutput.isEmpty,
+            "split primary device attributes query must not reach renderer output"
+        )
+        expect(
+            response.ptyResponse == Data("\u{1B}[?62;22c".utf8),
+            "split primary device attributes query must receive a terminal response"
+        )
+
+        var suppressedResponder = AlanTerminalPtyControlSequenceResponder()
+        suppressedResponder.suppressNextPrimaryDeviceAttributesResponse()
+        response = suppressedResponder.process(Data("\u{1B}[c".utf8))
+        expect(
+            response.rendererOutput.isEmpty && response.ptyResponse.isEmpty,
+            "suppressed primary device attributes query must be consumed without duplicate response"
+        )
+        response = suppressedResponder.process(Data("\u{1B}[c".utf8))
+        expect(
+            response.ptyResponse == Data("\u{1B}[?62;22c".utf8),
+            "only the preseeded primary device attributes response should be suppressed"
+        )
+
+        response = responder.process(Data("\u{1B}[31mred".utf8))
+        expect(
+            response.rendererOutput == Data("\u{1B}[31mred".utf8),
+            "non-DA CSI sequences must continue to Ghostty unchanged"
+        )
+        expect(response.ptyResponse.isEmpty, "non-DA CSI sequences must not emit PTY responses")
+
+        response = responder.process(Data("\u{1B}[6n".utf8))
+        expect(
+            response.rendererOutput.isEmpty,
+            "cursor position report query must be consumed before renderer output"
+        )
+        expect(
+            response.ptyResponse == Data("\u{1B}[1;1R".utf8),
+            "cursor position report query must receive a bounded PTY response"
+        )
+
+        response = responder.process(Data("\u{1B}]11;?\u{7}".utf8))
+        expect(
+            response.rendererOutput.isEmpty,
+            "background color query must be consumed before renderer output"
+        )
+        expect(
+            response.ptyResponse == Data("\u{1B}]11;rgb:0a0a/0c0c/1010\u{1B}\\".utf8),
+            "background color query must receive a bounded PTY response"
+        )
+
+        response = responder.process(Data("\u{1B}]".utf8))
+        expect(
+            response.rendererOutput.isEmpty && response.ptyResponse.isEmpty,
+            "partial OSC must be buffered across PTY chunks"
+        )
+        response = responder.process(Data("11;?\u{1B}\\".utf8))
+        expect(
+            response.rendererOutput.isEmpty,
+            "split background color query must not reach renderer output"
+        )
+        expect(
+            response.ptyResponse == Data("\u{1B}]11;rgb:0a0a/0c0c/1010\u{1B}\\".utf8),
+            "split background color query must receive a bounded PTY response"
+        )
+
+        response = responder.process(Data("\u{1B}]0;title\u{7}".utf8))
+        expect(
+            response.rendererOutput == Data("\u{1B}]0;title\u{7}".utf8),
+            "non-query OSC sequences must continue to Ghostty unchanged"
+        )
+        expect(response.ptyResponse.isEmpty, "non-query OSC sequences must not emit PTY responses")
     }
 
     private static func verifiesGhosttyTerminfoEnvironmentProjection() {
@@ -685,6 +777,81 @@ private enum TerminalRuntimeServiceTests {
         expect(
             helper.resizedPTYRequests.isEmpty,
             "managed_user surface resize must not treat logical view points as terminal rows and columns"
+        )
+        let rendererGrid = TerminalGridDiagnostics(
+            plannedGrid: TerminalGridDimensions(columns: 120, rows: 40),
+            rendererGrid: TerminalGridDimensions(columns: 120, rows: 40),
+            ptyGrid: nil,
+            canvasPoints: TerminalGridPointSize(width: 111, height: 33),
+            backingPoints: TerminalGridPointSize(width: 222, height: 66),
+            cellPoints: TerminalGridPointSize(width: 8.55, height: 18.5),
+            layoutPolicy: .maxFit,
+            mismatchStatus: .pending
+        )
+        surface.updateHostRuntimeSnapshot(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: contentID,
+                paneID: "pane_managed_user_surface",
+                tabID: "tab_managed_user_surface",
+                renderPriority: .foregroundInteractive,
+                logicalSize: CGSize(width: 111, height: 33),
+                backingSize: CGSize(width: 222, height: 66),
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: nil,
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                terminalGridDiagnostics: rendererGrid,
+                lastUpdatedAt: Date(timeIntervalSince1970: 151)
+            )
+        )
+        expect(
+            helper.resizedPTYRequests == [
+                AlanManagedUserPTYResizeRequest(
+                    sessionID: "fake-\(contentID)",
+                    columns: 120,
+                    rows: 40
+                ),
+            ],
+            "managed_user surface resize must follow the renderer terminal grid"
+        )
+
+        let pointOnlyChange = TerminalGridDiagnostics(
+            plannedGrid: TerminalGridDimensions(columns: 120, rows: 40),
+            rendererGrid: TerminalGridDimensions(columns: 120, rows: 40),
+            ptyGrid: TerminalGridDimensions(columns: 120, rows: 40),
+            canvasPoints: TerminalGridPointSize(width: 112, height: 33),
+            backingPoints: TerminalGridPointSize(width: 224, height: 66),
+            cellPoints: TerminalGridPointSize(width: 8.55, height: 18.5),
+            layoutPolicy: .maxFit,
+            mismatchStatus: .converged
+        )
+        surface.updateHostRuntimeSnapshot(
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: contentID,
+                paneID: "pane_managed_user_surface",
+                tabID: "tab_managed_user_surface",
+                renderPriority: .foregroundInteractive,
+                logicalSize: CGSize(width: 112, height: 33),
+                backingSize: CGSize(width: 224, height: 66),
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: nil,
+                isFocused: true,
+                renderer: .placeholder,
+                paneMetadata: .placeholder,
+                surfaceState: .placeholder,
+                terminalGridDiagnostics: pointOnlyChange,
+                lastUpdatedAt: Date(timeIntervalSince1970: 152)
+            )
+        )
+        expect(
+            helper.resizedPTYRequests.count == 1,
+            "point-only host frame changes must not repeat PTY resize when planned grid is unchanged"
         )
 
         let eof = surface.sendControlKey(.endOfTransmission)
@@ -1529,6 +1696,7 @@ private enum TerminalRuntimeServiceTests {
         ) as! FakeAlanTerminalSurfaceHandle
         let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 2)
         handle.commandOutputTextByRange[range] = "build started\nbuild passed"
+        handle.terminalDimensionsOverride = AlanTerminalPtyDimensions(columns: 100, rows: 30)
         handle.updateHostRuntimeSnapshot(
             transcriptRuntimeSnapshot(
                 contentID: contentID,
@@ -1550,7 +1718,8 @@ private enum TerminalRuntimeServiceTests {
         expect(snapshot.cwd == "/repo/app", "captured snapshot must preserve cwd")
         expect(snapshot.title == "make test", "captured snapshot must preserve terminal title")
         expect(snapshot.transcriptLines == ["build started", "build passed"], "capture must preserve text lines")
-        expect(snapshot.dimensions?.rows == 2, "capture must preserve visible row dimensions")
+        expect(snapshot.dimensions?.columns == 100, "capture must preserve PTY terminal columns")
+        expect(snapshot.dimensions?.rows == 30, "capture must preserve PTY terminal rows")
         expect(snapshot.viewport?.firstVisibleRow == 0, "capture must preserve viewport anchor")
         expect(snapshot.alternateScreen == false, "normal-buffer capture must not report alternate screen")
     }

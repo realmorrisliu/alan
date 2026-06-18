@@ -17,6 +17,8 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
 CARGO_BUILD_TARGET="aarch64-apple-darwin"
 CARGO_RELEASE_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/alan"
+SHELL_CORE_FFI_TARGET_DIR="${ALAN_SHELL_CORE_FFI_TARGET_DIR:-$REPO_ROOT/target/shell-core-ffi-release-unoptimized}"
+SHELL_CORE_FFI_BUILD_DYLIB="$SHELL_CORE_FFI_TARGET_DIR/release/libalan_shell_core_ffi.dylib"
 RELEASE_ARCH="arm64"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
@@ -184,6 +186,7 @@ require_command codesign
 require_command ditto
 require_command lipo
 require_command plutil
+require_command python3
 require_command shasum
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then
     require_command security
@@ -196,13 +199,20 @@ printf 'Building release alan binary for %s channel (%s)...\n' \
     "$ALAN_CHANNEL_ID" "$CARGO_BUILD_TARGET"
 cargo build --release -p alan --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
 
+printf 'Building release shell core FFI for %s channel...\n' "$ALAN_CHANNEL_ID"
+CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_TARGET_DIR="$SHELL_CORE_FFI_TARGET_DIR" \
+    cargo build --release -p alan-shell-core-ffi
+python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$SHELL_CORE_FFI_BUILD_DYLIB" ||
+    fail "release shell core FFI dylib is not loadable: $SHELL_CORE_FFI_BUILD_DYLIB"
+
 if [[ -e "$APP_BUNDLE" ]]; then
     printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
     rm -rf "$APP_BUNDLE"
 fi
 
 printf 'Building Release %s...\n' "$ALAN_APP_BUNDLE_NAME"
-xcodebuild \
+ALAN_SHELL_CORE_FFI_LIBRARY="$SHELL_CORE_FFI_BUILD_DYLIB" xcodebuild \
     -project "$REPO_ROOT/clients/apple/alan-macos.xcodeproj" \
     -scheme alan-macos \
     -configuration Release \
@@ -278,8 +288,16 @@ cat >"$MANIFEST_PATH" <<EOF
 }
 EOF
 
+printf 'Signing shell core FFI library...\n'
+[[ -f "$SHELL_CORE_FFI_DYLIB" ]] ||
+    fail "shell core FFI library was not embedded: $SHELL_CORE_FFI_DYLIB"
+thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
+sign_path "$SHELL_CORE_FFI_DYLIB"
+codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
+
 printf 'Signing app bundle...\n'
 sign_path "$APP_BUNDLE"
+codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
 ZIP_PATH=""

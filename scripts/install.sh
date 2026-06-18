@@ -173,7 +173,12 @@ fi
 printf 'Installing %s to %s...\n' "$ALAN_APP_BUNDLE_NAME" "$APP_TARGET"
 mkdir -p "$APP_INSTALL_DIR"
 rm -rf "$APP_TARGET"
-ditto "$APP_SOURCE" "$APP_TARGET"
+cp -R "$APP_SOURCE" "$APP_TARGET"
+if [[ -f "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib" ]]; then
+    codesign --verify --strict --verbose=2 \
+        "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib" >/dev/null
+fi
+codesign --verify --strict --verbose=2 "$APP_TARGET" >/dev/null
 if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     printf 'Removing legacy lowercase app bundle at %s...\n' "$LEGACY_APP_TARGET"
     rm -rf "$LEGACY_APP_TARGET"

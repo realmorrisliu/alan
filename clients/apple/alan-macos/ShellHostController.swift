@@ -1314,26 +1314,41 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        let result: ShellStateMutationResult
         do {
-            switch launchTarget {
-            case .shell:
-                result = try reducerCoordinator.apply(
-                    state: shellState,
-                    operation: .openTerminalTab(
-                        spaceID: spaceID,
-                        title: title,
-                        workingDirectory: workingDirectory,
-                        terminalProfileID: terminalProfileID,
-                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
-                    )
-                )
-            }
+            let result = try openTabMutation(
+                launchTarget: launchTarget,
+                in: spaceID,
+                title: title,
+                workingDirectory: workingDirectory,
+                terminalProfileID: terminalProfileID
+            )
+            applyMutationResult(result)
+            return result.tabID
         } catch {
             return nil
         }
-        applyMutationResult(result)
-        return result.tabID
+    }
+
+    private func openTabMutation(
+        launchTarget: ShellLaunchTarget = .shell,
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
+    ) throws -> ShellStateMutationResult {
+        switch launchTarget {
+        case .shell:
+            return try ShellCoreFFIAdapter.shared.applyReducer(
+                state: shellState,
+                operation: .openTerminalTab(
+                    spaceID: spaceID,
+                    title: title,
+                    workingDirectory: workingDirectory,
+                    terminalProfileID: terminalProfileID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
+        }
     }
 
     @discardableResult
@@ -1353,6 +1368,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 ? focusedPaneWorkingDirectory()
                 : nil)
         return openTab(
+            launchTarget: .shell,
+            in: spaceID,
+            title: title,
+            workingDirectory: resolvedWorkingDirectory,
+            terminalProfileID: resolvedTerminalProfileID
+        )
+    }
+
+    private func openTerminalTabMutation(
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
+    ) throws -> ShellStateMutationResult {
+        let resolvedTerminalProfileID = targetTerminalProfileID(
+            in: spaceID,
+            explicit: terminalProfileID
+        )
+        let resolvedWorkingDirectory =
+            workingDirectory
+            ?? (resolvedTerminalProfileID == nil
+                ? focusedPaneWorkingDirectory()
+                : nil)
+        return try openTabMutation(
             launchTarget: .shell,
             in: spaceID,
             title: title,
@@ -2854,6 +2893,79 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return snapshot.overlayingTerminalTranscriptSnapshots(capturedTranscripts)
     }
 
+    private func makeQuickTerminalRestoreRecord(
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
+    ) -> ShellQuickTerminalRestoreRecord? {
+        guard let quickTerminal = shellState.quickTerminal,
+              let pane = shellState.pane(paneID: quickTerminal.paneID)
+        else {
+            return nil
+        }
+
+        let contentID = pane.terminalContentID
+        let projectedContent = ShellContentInstance.projectingTerminalPane(pane, contentID: contentID)
+        let terminalPayload = projectedContent.payload.terminal
+        let transcriptSnapshot = transcriptSnapshotOverrides[contentID]
+            ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
+            ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
+        let title = projectedContent.title
+        let launchTarget = terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget
+        let cwd = terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory
+        let payloadTitle = terminalPayload?.title ?? title
+        let terminalProfileID = terminalPayload?.terminalProfileID ?? pane.terminalProfileID
+        let payload = ShellTerminalContentPayload(
+            launchTarget: launchTarget,
+            cwd: cwd,
+            title: payloadTitle,
+            transcriptSnapshot: transcriptSnapshot,
+            terminalProfileID: terminalProfileID,
+            terminalGridDiagnostics: terminalPayload?.terminalGridDiagnostics
+        )
+        let content = ShellContentRestoreRecord(
+            contentID: contentID,
+            kind: .terminal,
+            title: title,
+            payload: .terminal(payload)
+        )
+        let snapshot = ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_\(pane.paneID)",
+                kind: .pane,
+                direction: nil,
+                paneSlotID: pane.paneID,
+                children: nil
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: pane.paneID,
+                    contentID: contentID
+                )
+            ],
+            contents: [content]
+        )
+        return ShellQuickTerminalRestoreRecord(
+            paneID: pane.paneID,
+            presentation: quickTerminal.presentation,
+            lastWorkingDirectory: quickTerminal.lastWorkingDirectory ?? pane.cwd,
+            liveSnapshot: snapshot,
+            activeTask: terminalActiveTasksByPaneID[pane.paneID] ?? .inactive
+        )
+    }
+
+    private func existingQuickTerminalTranscriptSnapshot(
+        paneID: String,
+        contentID: String
+    ) -> TerminalTranscriptSnapshot? {
+        guard let snapshot = workspaceManifest?.quickTerminal?.liveSnapshot,
+              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneID }),
+              paneSlot.contentID == contentID,
+              let content = snapshot.contents.first(where: { $0.contentID == contentID })
+        else {
+            return nil
+        }
+        return content.payload.terminal?.transcriptSnapshot
+    }
+
     private func capturedTerminalTranscriptSnapshots(
         for snapshot: ShellContentTabRestoreSnapshot
     ) -> [String: TerminalTranscriptSnapshot] {
@@ -3637,28 +3749,37 @@ extension ShellHostController: ShellAutomationCommandHandling {
     ) -> ShellAutomationCommandResult {
         switch command {
         case .createTab(let request):
-            let tabID: String?
-            switch request.launchTarget {
-            case .shell:
-                tabID = openTerminalTab(
-                    in: request.spaceID,
-                    title: request.title,
-                    workingDirectory: request.workingDirectory,
-                    terminalProfileID: request.terminalProfileID
-                )
-            }
-            guard let tabID else {
+            let result: ShellStateMutationResult
+            do {
+                switch request.launchTarget {
+                case .shell:
+                    result = try openTerminalTabMutation(
+                        in: request.spaceID,
+                        title: request.title,
+                        workingDirectory: request.workingDirectory,
+                        terminalProfileID: request.terminalProfileID
+                    )
+                }
+            } catch let error as ShellStateMutationError {
                 return shellAutomationResult(
                     code: .missingTarget,
                     spaceID: request.spaceID,
-                    errorCode: "space_not_found",
-                    errorMessage: "The requested space does not exist."
+                    errorCode: error.rawValue,
+                    errorMessage: shellStateMutationErrorMessage(error)
+                )
+            } catch {
+                return shellAutomationResult(
+                    code: .rejected,
+                    spaceID: request.spaceID,
+                    errorCode: "shell_mutation_failed",
+                    errorMessage: String(describing: error)
                 )
             }
+            applyMutationResult(result)
             return shellAutomationResult(
                 code: .accepted,
                 spaceID: shellState.focusedSpaceID,
-                tabID: tabID,
+                tabID: result.tabID,
                 paneID: shellState.focusedPaneID
             )
 
@@ -3852,6 +3973,31 @@ extension ShellHostController: ShellAutomationCommandHandling {
             errorCode: "requires_confirmation",
             errorMessage: "The requested close contains active terminal work and requires confirmation."
         )
+    }
+
+    private func shellStateMutationErrorMessage(_ error: ShellStateMutationError) -> String {
+        switch error {
+        case .spaceNotFound:
+            return "The requested space does not exist."
+        case .tabNotFound:
+            return "The requested tab does not exist."
+        case .paneNotFound:
+            return "The requested pane does not exist."
+        case .unsupportedContent:
+            return "This action requires terminal content."
+        case .splitNotFound:
+            return "The requested split does not exist."
+        case .spatialFocusTargetNotFound:
+            return "There is no pane in that direction."
+        case .lastTab:
+            return "alan terminal workspace must keep at least one tab open."
+        case .lastPane:
+            return "alan terminal workspace must keep at least one pane open."
+        case .invalidMoveTarget:
+            return "The requested move target is not available."
+        case .invalidTabOrganizationTarget:
+            return "The requested tab organization target is not available."
+        }
     }
 
     private func shellAutomationResult(

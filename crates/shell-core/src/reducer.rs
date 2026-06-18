@@ -930,6 +930,10 @@ impl WorkspaceReducer {
         let pane_slot_ids = self.pane_slot_id_sources(reserved_pane_slot_ids);
         let pane_slot_id = next_id("pane", pane_slot_ids.iter());
         let content_id = terminal_content_id(&pane_slot_id);
+        let locks_tab_title = tab_title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|title| !title.is_empty());
         let resolved_tab_title = tab_title.unwrap_or_else(|| "Shell".to_string());
         let resolved_space_title = title.unwrap_or_else(|| {
             default_space_title_from_working_directory(
@@ -945,7 +949,7 @@ impl WorkspaceReducer {
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
             zoomed_pane_id: None,
             is_pinned: false,
-            is_title_user_locked: false,
+            is_title_user_locked: locks_tab_title,
         };
         self.state.spaces.push(Space {
             space_id: space_id.clone(),
@@ -1022,6 +1026,10 @@ impl WorkspaceReducer {
         let pane_slot_ids = self.pane_slot_id_sources(reserved_pane_slot_ids);
         let pane_slot_id = next_id("pane", pane_slot_ids.iter());
         let content_id = terminal_content_id(&pane_slot_id);
+        let locks_tab_title = title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|title| !title.is_empty());
         let resolved_title = title.unwrap_or_else(|| {
             let next_tab_count = self.state.spaces[space_index].tabs.len() + 1;
             format!("Shell {next_tab_count}")
@@ -1040,7 +1048,7 @@ impl WorkspaceReducer {
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
             zoomed_pane_id: None,
             is_pinned: false,
-            is_title_user_locked: false,
+            is_title_user_locked: locks_tab_title,
         });
         self.state.spaces[space_index].selected_tab_id = Some(tab_id.clone());
         self.state.pane_slots.push(PaneSlot {
@@ -1603,6 +1611,206 @@ impl WorkspaceReducer {
             removed_tab_ids: clearable_tab_ids.into_iter().collect(),
         });
         self.repair_focus(self.state.focused_pane_id.clone());
+        Ok(())
+    }
+
+    fn show_quick_terminal(
+        &mut self,
+        working_directory: Option<String>,
+        default_working_directory: Option<String>,
+    ) {
+        let existing = self.state.quick_terminal.clone();
+        let pane_id = existing
+            .as_ref()
+            .map(|quick| quick.pane_id.clone())
+            .unwrap_or_else(|| QUICK_TERMINAL_PANE_ID.to_string());
+        let content_id = existing
+            .as_ref()
+            .map(|quick| quick.content_id.clone())
+            .unwrap_or_else(|| terminal_content_id(&pane_id));
+        let known_cwd = existing.as_ref().and_then(|quick| {
+            quick
+                .terminal_payload
+                .as_ref()
+                .and_then(|payload| payload.cwd.clone())
+                .or_else(|| {
+                    quick
+                        .terminal_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.cwd.clone())
+                })
+                .or_else(|| quick.last_working_directory.clone())
+        });
+        let resolved_working_directory = non_empty_string(known_cwd)
+            .or_else(|| non_empty_string(working_directory))
+            .or_else(|| non_empty_string(default_working_directory));
+        let existing_payload = existing
+            .as_ref()
+            .and_then(|quick| quick.terminal_payload.clone());
+        let existing_metadata = existing
+            .as_ref()
+            .and_then(|quick| quick.terminal_metadata.clone());
+        let title = existing_payload
+            .as_ref()
+            .and_then(|payload| payload.title.clone())
+            .or_else(|| {
+                existing_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title.clone())
+            })
+            .unwrap_or_else(|| "Shell".to_string());
+        let mut payload = existing_payload.unwrap_or_else(|| ShellTerminalContentPayload {
+            launch_target: ShellLaunchTarget::Shell,
+            cwd: resolved_working_directory.clone(),
+            title: Some(title.clone()),
+            transcript_snapshot: None,
+            terminal_profile_id: None,
+            terminal_grid_diagnostics: None,
+        });
+        if payload.cwd.is_none() {
+            payload.cwd = resolved_working_directory.clone();
+        }
+        if payload.title.is_none() {
+            payload.title = Some(title.clone());
+        }
+        let metadata = existing_metadata.or_else(|| {
+            Some(TerminalRuntimeMetadata {
+                title: Some(title),
+                cwd: resolved_working_directory.clone(),
+                active_task_state: ShellTabActiveTaskState::Inactive,
+                activity: None,
+            })
+        });
+
+        self.state.quick_terminal = Some(ShellQuickTerminalState {
+            pane_id,
+            presentation: ShellQuickTerminalPresentation::Visible,
+            last_working_directory: resolved_working_directory,
+            content_id,
+            terminal_payload: Some(payload),
+            terminal_metadata: metadata,
+            attention: existing
+                .map(|quick| quick.attention)
+                .unwrap_or(ShellAttentionState::Active),
+        });
+    }
+
+    fn hide_quick_terminal(&mut self) -> Result<(), ReducerError> {
+        let Some(mut quick_terminal) = self.state.quick_terminal.clone() else {
+            return Err(ReducerError::new(
+                ReducerErrorCode::PaneNotFound,
+                "quick terminal not found",
+            ));
+        };
+        quick_terminal.presentation = ShellQuickTerminalPresentation::Hidden;
+        self.state.quick_terminal = Some(quick_terminal);
+        Ok(())
+    }
+
+    fn close_quick_terminal(&mut self) -> Result<(), ReducerError> {
+        let Some(quick_terminal) = self.state.quick_terminal.take() else {
+            return Err(ReducerError::new(
+                ReducerErrorCode::PaneNotFound,
+                "quick terminal not found",
+            ));
+        };
+        if self.state.focused_pane_id.as_deref() == Some(&quick_terminal.pane_id) {
+            self.repair_focus(None);
+        }
+        Ok(())
+    }
+
+    fn promote_quick_terminal(&mut self, target_space_id: &str) -> Result<(), ReducerError> {
+        let target_space_index = self.space_index(target_space_id)?;
+        let Some(quick_terminal) = self.state.quick_terminal.take() else {
+            return Err(ReducerError::new(
+                ReducerErrorCode::PaneNotFound,
+                "quick terminal not found",
+            ));
+        };
+        let pane_slot_id = quick_terminal.pane_id;
+        let content_id = quick_terminal.content_id;
+        let payload = quick_terminal.terminal_payload.clone().unwrap_or_else(|| {
+            ShellTerminalContentPayload {
+                launch_target: ShellLaunchTarget::Shell,
+                cwd: quick_terminal.last_working_directory.clone(),
+                title: quick_terminal
+                    .terminal_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title.clone())
+                    .or_else(|| Some("Quick Terminal".to_string())),
+                transcript_snapshot: None,
+                terminal_profile_id: None,
+                terminal_grid_diagnostics: None,
+            }
+        });
+        let title = payload
+            .title
+            .clone()
+            .or_else(|| {
+                quick_terminal
+                    .terminal_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.title.clone())
+            })
+            .unwrap_or_else(|| "Quick Terminal".to_string());
+        let tab_id = next_id(
+            "tab",
+            self.state
+                .spaces
+                .iter()
+                .flat_map(|space| &space.tabs)
+                .map(|tab| &tab.tab_id),
+        );
+        let tab = Tab {
+            tab_id: tab_id.clone(),
+            kind: TabKind::Terminal,
+            title: Some(title.clone()),
+            pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
+            zoomed_pane_id: None,
+            is_pinned: false,
+            is_title_user_locked: false,
+        };
+        self.state.spaces[target_space_index].tabs.push(tab);
+        self.state.spaces[target_space_index].selected_tab_id = Some(tab_id.clone());
+        self.state
+            .pane_slots
+            .retain(|slot| slot.pane_slot_id != pane_slot_id);
+        self.state
+            .contents
+            .retain(|content| content.content_id != content_id);
+        self.state.pane_slots.push(PaneSlot {
+            pane_slot_id: pane_slot_id.clone(),
+            tab_id: tab_id.clone(),
+            space_id: target_space_id.to_string(),
+            content_id: content_id.clone(),
+            attention: quick_terminal.attention,
+        });
+        self.state.contents.push(ContentInstance {
+            content_id: content_id.clone(),
+            kind: ContentKind::Terminal,
+            title,
+            icon_name: None,
+            capabilities: ContentKind::Terminal.default_capabilities(),
+            payload: ShellContentPayload {
+                terminal: Some(payload),
+                markdown: None,
+                settings: None,
+            },
+            terminal_metadata: quick_terminal.terminal_metadata,
+            lifecycle: ContentLifecycleState::Active,
+            renderer_state: Default::default(),
+        });
+        self.changed_ids.created_tab_ids.push(tab_id.clone());
+        self.changed_ids
+            .created_pane_slot_ids
+            .push(pane_slot_id.clone());
+        self.changed_ids.created_content_ids.push(content_id);
+        self.domain_events.push(DomainEvent::TabOpened {
+            tab_id,
+            pane_slot_id: pane_slot_id.clone(),
+        });
+        self.repair_focus(Some(pane_slot_id));
         Ok(())
     }
 
@@ -2513,6 +2721,7 @@ fn content_instance(
         payload,
         terminal_metadata: None,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     }
 }
 
@@ -2561,6 +2770,7 @@ fn terminal_content(
         payload,
         terminal_metadata: None,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     }
 }
 

@@ -996,7 +996,36 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
     let inputReady: Bool
     let rendererHealth: String
     let childExited: Bool
+    let terminalGridDiagnostics: TerminalGridDiagnostics?
     let lastUpdatedAt: Date
+
+    init(
+        readiness: AlanTerminalSurfaceReadiness,
+        terminalMode: AlanTerminalMode,
+        scrollback: AlanTerminalScrollbackState,
+        search: AlanTerminalSearchState?,
+        semanticCommands: AlanTerminalSemanticCommandState,
+        readonly: Bool,
+        secureInput: Bool,
+        inputReady: Bool,
+        rendererHealth: String,
+        childExited: Bool,
+        terminalGridDiagnostics: TerminalGridDiagnostics? = nil,
+        lastUpdatedAt: Date
+    ) {
+        self.readiness = readiness
+        self.terminalMode = terminalMode
+        self.scrollback = scrollback
+        self.search = search
+        self.semanticCommands = semanticCommands
+        self.readonly = readonly
+        self.secureInput = secureInput
+        self.inputReady = inputReady
+        self.rendererHealth = rendererHealth
+        self.childExited = childExited
+        self.terminalGridDiagnostics = terminalGridDiagnostics
+        self.lastUpdatedAt = lastUpdatedAt
+    }
 
     static let placeholder = AlanTerminalSurfaceStateSnapshot(
         readiness: .unready(reason: .missingSurface),
@@ -1009,6 +1038,7 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
         inputReady: false,
         rendererHealth: "pending",
         childExited: false,
+        terminalGridDiagnostics: nil,
         lastUpdatedAt: .now
     )
 
@@ -1023,6 +1053,7 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
             && inputReady == other.inputReady
             && rendererHealth == other.rendererHealth
             && childExited == other.childExited
+            && terminalGridDiagnostics == other.terminalGridDiagnostics
     }
 }
 
@@ -1149,6 +1180,7 @@ final class AlanTerminalSurfaceController {
             inputReady: isSurfaceReady,
             rendererHealth: latestRenderer.phase == .failed ? "failed" : latestRenderer.phase.rawValue,
             childExited: latestMetadata.processExited,
+            terminalGridDiagnostics: surfaceHandle?.terminalGridDiagnostics,
             lastUpdatedAt: .now
         )
     }

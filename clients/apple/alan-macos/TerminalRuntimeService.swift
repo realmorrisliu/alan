@@ -138,6 +138,12 @@ struct AlanTerminalPtyDimensions: Equatable {
     let rows: Int
 }
 
+private extension AlanTerminalPtyDimensions {
+    var terminalGridDimensions: TerminalGridDimensions {
+        TerminalGridDimensions(columns: columns, rows: rows)
+    }
+}
+
 enum AlanTerminalProcessExitStatus: Equatable {
     case exitCode(Int32)
     case signal(Int32)
@@ -176,6 +182,234 @@ struct AlanTerminalPtyRendererAttachment: Equatable {
     let readFileDescriptor: Int32
     let writeFileDescriptor: Int32
     let closeFileDescriptors: Bool
+}
+
+struct AlanTerminalPtyControlSequenceResponse: Equatable {
+    let rendererOutput: Data
+    let ptyResponse: Data
+
+    var didRespond: Bool {
+        !ptyResponse.isEmpty
+    }
+}
+
+struct AlanTerminalPtyControlSequenceResponder: Equatable {
+    private enum ParserState: Equatable {
+        case normal
+        case escape
+        case csi
+        case osc
+        case oscEscape
+    }
+
+    private static let escapeByte: UInt8 = 0x1B
+    private static let bellByte: UInt8 = 0x07
+    private static let csiByte: UInt8 = 0x9B
+    private static let oscByte: UInt8 = 0x9D
+    private static let leftBracketByte: UInt8 = 0x5B
+    private static let rightBracketByte: UInt8 = 0x5D
+    private static let backslashByte: UInt8 = 0x5C
+    private static let zeroByte: UInt8 = 0x30
+    private static let maxBufferedControlSequenceBytes = 512
+    private static let primaryDeviceAttributesResponse = Array("\u{1B}[?62;22c".utf8)
+    private static let cursorPositionReportResponse = Array("\u{1B}[1;1R".utf8)
+    private static let backgroundColorResponse = Array("\u{1B}]11;rgb:0a0a/0c0c/1010\u{1B}\\".utf8)
+
+    private var state: ParserState = .normal
+    private var pendingControlSequence: [UInt8] = []
+    private var suppressedPrimaryDeviceAttributesResponses: Int
+
+    init(suppressedPrimaryDeviceAttributesResponses: Int = 0) {
+        self.suppressedPrimaryDeviceAttributesResponses = max(
+            0,
+            suppressedPrimaryDeviceAttributesResponses
+        )
+    }
+
+    static var primaryDeviceAttributesResponseData: Data {
+        Data(primaryDeviceAttributesResponse)
+    }
+
+    mutating func suppressNextPrimaryDeviceAttributesResponse() {
+        suppressedPrimaryDeviceAttributesResponses += 1
+    }
+
+    mutating func process(_ data: Data) -> AlanTerminalPtyControlSequenceResponse {
+        var rendererOutput: [UInt8] = []
+        var ptyResponse: [UInt8] = []
+
+        for byte in data {
+            switch state {
+            case .normal:
+                if byte == Self.escapeByte {
+                    pendingControlSequence = [byte]
+                    state = .escape
+                } else if byte == Self.csiByte {
+                    pendingControlSequence = [byte]
+                    state = .csi
+                } else if byte == Self.oscByte {
+                    pendingControlSequence = [byte]
+                    state = .osc
+                } else {
+                    rendererOutput.append(byte)
+                }
+
+            case .escape:
+                if byte == Self.leftBracketByte {
+                    pendingControlSequence.append(byte)
+                    state = .csi
+                } else if byte == Self.rightBracketByte {
+                    pendingControlSequence.append(byte)
+                    state = .osc
+                } else {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    rendererOutput.append(byte)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .csi:
+                pendingControlSequence.append(byte)
+                if Self.isCSIFinalByte(byte) {
+                    if Self.isPrimaryDeviceAttributesQuery(pendingControlSequence) {
+                        if suppressedPrimaryDeviceAttributesResponses > 0 {
+                            suppressedPrimaryDeviceAttributesResponses -= 1
+                        } else {
+                            ptyResponse.append(contentsOf: Self.primaryDeviceAttributesResponse)
+                        }
+                    } else if Self.isCursorPositionReportQuery(pendingControlSequence) {
+                        ptyResponse.append(contentsOf: Self.cursorPositionReportResponse)
+                    } else {
+                        rendererOutput.append(contentsOf: pendingControlSequence)
+                    }
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .osc:
+                pendingControlSequence.append(byte)
+                if byte == Self.bellByte {
+                    Self.completeOSCSequence(
+                        pendingControlSequence,
+                        rendererOutput: &rendererOutput,
+                        ptyResponse: &ptyResponse
+                    )
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if byte == Self.escapeByte {
+                    state = .oscEscape
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .oscEscape:
+                pendingControlSequence.append(byte)
+                if byte == Self.backslashByte {
+                    Self.completeOSCSequence(
+                        pendingControlSequence,
+                        rendererOutput: &rendererOutput,
+                        ptyResponse: &ptyResponse
+                    )
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else {
+                    state = .osc
+                }
+            }
+        }
+
+        return AlanTerminalPtyControlSequenceResponse(
+            rendererOutput: Data(rendererOutput),
+            ptyResponse: Data(ptyResponse)
+        )
+    }
+
+    private static func isCSIFinalByte(_ byte: UInt8) -> Bool {
+        (0x40...0x7E).contains(byte)
+    }
+
+    private static func isPrimaryDeviceAttributesQuery(_ bytes: [UInt8]) -> Bool {
+        guard bytes.last == UInt8(ascii: "c") else { return false }
+
+        let parameterStartIndex: Int
+        if bytes.first == escapeByte {
+            guard bytes.count >= 3, bytes[1] == leftBracketByte else { return false }
+            parameterStartIndex = 2
+        } else if bytes.first == csiByte {
+            guard bytes.count >= 2 else { return false }
+            parameterStartIndex = 1
+        } else {
+            return false
+        }
+
+        let parameters = bytes[parameterStartIndex..<(bytes.count - 1)]
+        return parameters.isEmpty || (parameters.count == 1 && parameters.first == zeroByte)
+    }
+
+    private static func isCursorPositionReportQuery(_ bytes: [UInt8]) -> Bool {
+        guard bytes.last == UInt8(ascii: "n") else { return false }
+
+        let parameterStartIndex: Int
+        if bytes.first == escapeByte {
+            guard bytes.count >= 4, bytes[1] == leftBracketByte else { return false }
+            parameterStartIndex = 2
+        } else if bytes.first == csiByte {
+            guard bytes.count >= 3 else { return false }
+            parameterStartIndex = 1
+        } else {
+            return false
+        }
+
+        let parameters = bytes[parameterStartIndex..<(bytes.count - 1)]
+        return parameters.count == 1 && parameters.first == UInt8(ascii: "6")
+    }
+
+    private static func completeOSCSequence(
+        _ bytes: [UInt8],
+        rendererOutput: inout [UInt8],
+        ptyResponse: inout [UInt8]
+    ) {
+        if isBackgroundColorQuery(bytes) {
+            ptyResponse.append(contentsOf: backgroundColorResponse)
+        } else {
+            rendererOutput.append(contentsOf: bytes)
+        }
+    }
+
+    private static func isBackgroundColorQuery(_ bytes: [UInt8]) -> Bool {
+        let payloadRange: Range<Int>
+        if bytes.first == escapeByte {
+            guard bytes.count >= 6, bytes[1] == rightBracketByte else { return false }
+            if bytes.last == bellByte {
+                payloadRange = 2..<(bytes.count - 1)
+            } else if bytes.count >= 7,
+                bytes[bytes.count - 2] == escapeByte,
+                bytes.last == backslashByte
+            {
+                payloadRange = 2..<(bytes.count - 2)
+            } else {
+                return false
+            }
+        } else if bytes.first == oscByte {
+            guard bytes.count >= 5, bytes.last == bellByte else { return false }
+            payloadRange = 1..<(bytes.count - 1)
+        } else {
+            return false
+        }
+
+        let payload = String(decoding: bytes[payloadRange], as: UTF8.self)
+        return payload == "11;?"
+    }
 }
 
 enum AlanTerminalPtyRendererAttachmentResult: Equatable {
@@ -720,6 +954,7 @@ private final class AlanHelperManagedUserPtyRendererProxy {
     private let hostFileDescriptor: Int32
     private var rendererInputSource: DispatchSourceRead?
     private var helperOutputTimer: DispatchSourceTimer?
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var isInvalidated = false
 
     init(
@@ -804,7 +1039,15 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         }
         let output = ptyHandle.drainAvailableOutput()
         guard !output.isEmpty else { return }
-        output.withUnsafeBytes { buffer in
+
+        let response = controlSequenceResponder.process(output)
+        if response.didRespond, !ptyHandle.writeRendererInput(response.ptyResponse) {
+            invalidate()
+            return
+        }
+
+        guard !response.rendererOutput.isEmpty else { return }
+        response.rendererOutput.withUnsafeBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return }
             var offset = 0
             while offset < buffer.count {
@@ -868,6 +1111,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     fileprivate var masterFileDescriptor: Int32 = -1
     private var transcriptRingBufferLines: [String] = []
     private var acceptedInputBytes = 0
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var rendererProxy: AlanDarwinTerminalPtyRendererProxy?
 
     init(contentID: String, bootRequest: AlanTerminalBootRequest) {
@@ -1058,10 +1302,13 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         setNonBlocking(descriptors[1])
 
         rendererProxy?.invalidate()
+        let rendererControlSequenceResponder = controlSequenceResponder
+        controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
         let proxy = AlanDarwinTerminalPtyRendererProxy(
             ptyHandle: self,
             hostFileDescriptor: descriptors[0],
-            ptyFileDescriptor: masterFileDescriptor
+            ptyFileDescriptor: masterFileDescriptor,
+            controlSequenceResponder: rendererControlSequenceResponder
         )
         rendererProxy = proxy
         proxy.start()
@@ -1104,8 +1351,14 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         }
 
         guard !collected.isEmpty else { return [] }
-        rendererProxy?.forwardPtyOutput(collected)
-        let text = String(decoding: collected, as: UTF8.self)
+        let response = controlSequenceResponder.process(collected)
+        if response.didRespond {
+            _ = writePtyProtocolResponse(response.ptyResponse)
+        }
+
+        guard !response.rendererOutput.isEmpty else { return [] }
+        rendererProxy?.forwardPtyOutput(response.rendererOutput)
+        let text = String(decoding: response.rendererOutput, as: UTF8.self)
         let lines = transcriptLines(from: text)
         transcriptRingBufferLines.append(contentsOf: lines)
         if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
@@ -1114,6 +1367,16 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
             )
         }
         return lines
+    }
+
+    @discardableResult
+    fileprivate func writePtyProtocolResponse(_ data: Data) -> Int {
+        data.withUnsafeBytes { buffer -> Int in
+            guard masterFileDescriptor >= 0, let baseAddress = buffer.baseAddress else {
+                return -1
+            }
+            return Darwin.write(masterFileDescriptor, baseAddress, buffer.count)
+        }
     }
 
     @discardableResult
@@ -1126,6 +1389,23 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
             acceptedInputBytes += written
         }
         return written
+    }
+
+    fileprivate func recordRendererInputBytes(_ byteCount: Int) {
+        guard byteCount > 0 else { return }
+        acceptedInputBytes += byteCount
+    }
+
+    fileprivate func recordPtyOutput(_ data: Data) {
+        guard !data.isEmpty else { return }
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = transcriptLines(from: text)
+        transcriptRingBufferLines.append(contentsOf: lines)
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
     }
 
     @discardableResult
@@ -1207,8 +1487,21 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         processID = spawnedPid
         processGroupID = spawnedPid
         masterFileDescriptor = master
+        preseedFishPrimaryDeviceAttributesResponseIfNeeded()
         phase = .running
         resizeRequests.append(AlanTerminalPtyDimensions(columns: 80, rows: 24))
+    }
+
+    private func preseedFishPrimaryDeviceAttributesResponseIfNeeded() {
+        let executableName = URL(fileURLWithPath: bootRequest.executablePath).lastPathComponent
+        guard executableName == "fish" else { return }
+        let response = AlanTerminalPtyControlSequenceResponder.primaryDeviceAttributesResponseData
+        let written = response.withUnsafeBytes { buffer -> Int in
+            guard let baseAddress = buffer.baseAddress else { return -1 }
+            return Darwin.write(masterFileDescriptor, baseAddress, buffer.count)
+        }
+        guard written == response.count else { return }
+        controlSequenceResponder.suppressNextPrimaryDeviceAttributesResponse()
     }
 
     private func setNonBlocking(_ fileDescriptor: Int32) {
@@ -1222,18 +1515,25 @@ private final class AlanDarwinTerminalPtyRendererProxy {
     private weak var ptyHandle: AlanDarwinTerminalPtyHandle?
     private let hostFileDescriptor: Int32
     private let ptyFileDescriptor: Int32
+    private let ioQueue = DispatchQueue(
+        label: "dev.alan.terminal.pty.renderer",
+        qos: .userInitiated
+    )
     private var rendererInputSource: DispatchSourceRead?
     private var ptyOutputSource: DispatchSourceRead?
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var isInvalidated = false
 
     init(
         ptyHandle: AlanDarwinTerminalPtyHandle,
         hostFileDescriptor: Int32,
-        ptyFileDescriptor: Int32
+        ptyFileDescriptor: Int32,
+        controlSequenceResponder: AlanTerminalPtyControlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     ) {
         self.ptyHandle = ptyHandle
         self.hostFileDescriptor = hostFileDescriptor
         self.ptyFileDescriptor = ptyFileDescriptor
+        self.controlSequenceResponder = controlSequenceResponder
     }
 
     deinit {
@@ -1243,12 +1543,10 @@ private final class AlanDarwinTerminalPtyRendererProxy {
     func start() {
         let inputSource = DispatchSource.makeReadSource(
             fileDescriptor: hostFileDescriptor,
-            queue: .main
+            queue: ioQueue
         )
         inputSource.setEventHandler { [weak self] in
-            Task { @MainActor in
-                self?.drainRendererInputOnMainActor()
-            }
+            self?.drainRendererInput()
         }
         inputSource.setCancelHandler { [hostFileDescriptor] in
             close(hostFileDescriptor)
@@ -1258,12 +1556,10 @@ private final class AlanDarwinTerminalPtyRendererProxy {
 
         let outputSource = DispatchSource.makeReadSource(
             fileDescriptor: ptyFileDescriptor,
-            queue: .main
+            queue: ioQueue
         )
         outputSource.setEventHandler { [weak self] in
-            Task { @MainActor in
-                _ = self?.ptyHandle?.drainAvailableOutput()
-            }
+            self?.drainPtyOutput()
         }
         outputSource.resume()
         ptyOutputSource = outputSource
@@ -1302,19 +1598,28 @@ private final class AlanDarwinTerminalPtyRendererProxy {
         }
     }
 
-    @MainActor
-    private func drainRendererInputOnMainActor() {
-        guard !isInvalidated, let ptyHandle else { return }
+    private func drainRendererInput() {
+        guard !isInvalidated else { return }
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
             let count = Darwin.read(hostFileDescriptor, &buffer, buffer.count)
             if count > 0 {
-                buffer.withUnsafeBytes { rawBuffer in
-                    let slice = UnsafeRawBufferPointer(
-                        start: rawBuffer.baseAddress,
-                        count: count
+                let written = buffer.withUnsafeBytes { rawBuffer in
+                    writePtyInput(
+                        UnsafeRawBufferPointer(
+                            start: rawBuffer.baseAddress,
+                            count: count
+                        )
                     )
-                    _ = ptyHandle.writeRawInput(slice)
+                }
+                if written < 0 {
+                    invalidate()
+                    return
+                }
+                if written > 0 {
+                    Task { @MainActor [weak self] in
+                        self?.ptyHandle?.recordRendererInputBytes(written)
+                    }
                 }
                 continue
             }
@@ -1328,6 +1633,74 @@ private final class AlanDarwinTerminalPtyRendererProxy {
             invalidate()
             return
         }
+    }
+
+    private func drainPtyOutput() {
+        guard !isInvalidated else { return }
+        var collected = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            let count = Darwin.read(ptyFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                collected.append(buffer, count: count)
+                continue
+            }
+            if count == 0 {
+                Task { @MainActor [weak self] in
+                    _ = self?.ptyHandle?.refreshExitStatus()
+                }
+                break
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                break
+            }
+            break
+        }
+
+        guard !collected.isEmpty else { return }
+        let response = controlSequenceResponder.process(collected)
+        if response.didRespond {
+            let written = response.ptyResponse.withUnsafeBytes { rawBuffer in
+                writePtyInput(
+                    UnsafeRawBufferPointer(
+                        start: rawBuffer.baseAddress,
+                        count: rawBuffer.count
+                    )
+                )
+            }
+            if written < 0 {
+                invalidate()
+                return
+            }
+        }
+
+        guard !response.rendererOutput.isEmpty else { return }
+        forwardPtyOutput(response.rendererOutput)
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.recordPtyOutput(response.rendererOutput)
+        }
+    }
+
+    private func writePtyInput(_ buffer: UnsafeRawBufferPointer) -> Int {
+        guard let baseAddress = buffer.baseAddress else { return -1 }
+        var offset = 0
+        while offset < buffer.count {
+            let written = Darwin.write(
+                ptyFileDescriptor,
+                baseAddress.advanced(by: offset),
+                buffer.count - offset
+            )
+            if written > 0 {
+                offset += written
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return offset
+            }
+            return offset > 0 ? offset : -1
+        }
+        return offset
     }
 }
 
@@ -1603,6 +1976,8 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     var renderPriority: TerminalRuntimeRenderPriority { get }
     var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? { get }
     var fallbackTranscriptLines: [String] { get }
+    var terminalDimensions: AlanTerminalPtyDimensions? { get }
+    var terminalGridDiagnostics: TerminalGridDiagnostics? { get }
     var seededTranscriptSnapshot: TerminalTranscriptSnapshot? { get }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
@@ -1676,6 +2051,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private var bootProfile: AlanShellBootProfile?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
+    private var lastAppliedPtyGrid: AlanTerminalPtyDimensions?
     private var transcriptRingBufferLines: [String] = []
     private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
 #if canImport(GhosttyKit)
@@ -1726,6 +2102,57 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         return transcriptRingBufferLines
     }
 
+    var terminalDimensions: AlanTerminalPtyDimensions? {
+        ptyHandle?.snapshot.dimensions
+    }
+
+    var terminalGridDiagnostics: TerminalGridDiagnostics? {
+        let hostRuntime = latestHostRuntime
+        let ptyGrid = ptyHandle?.snapshot.dimensions?.terminalGridDimensions
+#if canImport(GhosttyKit)
+        let rendererGrid = liveHost.terminalGridDimensions?.terminalGridDimensions
+        let cellMetrics = liveHost.terminalCellMetrics
+#else
+        let rendererGrid = hostRuntime?.terminalGridDiagnostics?.rendererGrid
+        let cellMetrics = hostRuntime?.terminalGridDiagnostics?.cellPoints.map {
+            TerminalGridCellMetrics(widthPoints: $0.width, heightPoints: $0.height)
+        }
+#endif
+
+        guard hostRuntime != nil || ptyGrid != nil || rendererGrid != nil else { return nil }
+
+        let hostDiagnostics = hostRuntime?.terminalGridDiagnostics
+        let plannedGrid = rendererGrid ?? hostDiagnostics?.plannedGrid
+        let mismatchStatus: TerminalGridMismatchStatus = {
+            guard rendererGrid != nil || ptyGrid != nil || plannedGrid != nil else {
+                return .unavailable
+            }
+            guard let rendererGrid else { return .pending }
+            guard let ptyGrid else { return .pending }
+            return rendererGrid == ptyGrid ? .converged : .mismatch
+        }()
+        let canvasPoints = hostRuntime.map { TerminalGridPointSize($0.logicalSize) }
+        let remainder = terminalGridRemainder(
+            canvasPoints: canvasPoints,
+            grid: plannedGrid,
+            cellMetrics: cellMetrics
+        ) ?? hostDiagnostics?.remainder
+
+        return TerminalGridDiagnostics(
+            plannedGrid: plannedGrid,
+            rendererGrid: rendererGrid,
+            ptyGrid: ptyGrid,
+            canvasPoints: canvasPoints,
+            backingPoints: hostRuntime.map { TerminalGridPointSize($0.backingSize) },
+            cellPoints: hostDiagnostics?.cellPoints
+                ?? cellMetrics?.pointSize,
+            layoutPolicy: hostDiagnostics?.layoutPolicy
+                ?? .maxFit,
+            remainder: remainder,
+            mismatchStatus: mismatchStatus
+        )
+    }
+
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
         self.paneID = paneID
         self.bootProfile = bootProfile
@@ -1734,6 +2161,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
                 forTerminalContentID: contentID,
                 bootRequest: bootProfile.bootRequest
             )
+            lastAppliedPtyGrid = nil
         }
         guard currentSnapshot.teardownStatus != .completed else { return }
         updateSnapshot(
@@ -2044,10 +2472,41 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     }
 
     private func resizePtyToRendererGridIfAvailable() {
+        guard let rendererGrid = rendererTerminalGridForPtyResize else { return }
+        guard rendererGrid.isUsable else { return }
+        let dimensions = AlanTerminalPtyDimensions(
+            columns: rendererGrid.columns,
+            rows: rendererGrid.rows
+        )
+        guard dimensions != lastAppliedPtyGrid else { return }
+        guard let ptyHandle else { return }
+        let result = ptyHandle.resize(columns: dimensions.columns, rows: dimensions.rows)
+        if result.accepted {
+            lastAppliedPtyGrid = dimensions
+        }
+    }
+
+    private var rendererTerminalGridForPtyResize: TerminalGridDimensions? {
 #if canImport(GhosttyKit)
-        guard let dimensions = liveHost.terminalGridDimensions else { return }
-        _ = ptyHandle?.resize(columns: dimensions.columns, rows: dimensions.rows)
+        if let rendererGrid = liveHost.terminalGridDimensions?.terminalGridDimensions {
+            return rendererGrid
+        }
 #endif
+        return latestHostRuntime?.terminalGridDiagnostics?.rendererGrid
+    }
+
+    private func terminalGridRemainder(
+        canvasPoints: TerminalGridPointSize?,
+        grid: TerminalGridDimensions?,
+        cellMetrics: TerminalGridCellMetrics?
+    ) -> TerminalGridRemainder? {
+        guard let canvasPoints, let grid, let cellMetrics, cellMetrics.isAvailable else {
+            return nil
+        }
+        return TerminalGridRemainder(
+            widthPoints: max(0, canvasPoints.width - Double(grid.columns) * cellMetrics.widthPoints),
+            heightPoints: max(0, canvasPoints.height - Double(grid.rows) * cellMetrics.heightPoints)
+        )
     }
 
     private func updateSnapshot(
@@ -2285,7 +2744,10 @@ private func buildTerminalTranscriptCapture(
     }
 
     let metadata = hostSnapshot?.paneMetadata ?? surfaceSnapshot.metadata
-    let dimensions = transcriptDimensions(from: hostSnapshot, metrics: metrics)
+    let dimensions = transcriptDimensions(
+        ptyDimensions: handle.terminalDimensions,
+        metrics: metrics
+    )
     let alternateScreen = hostSnapshot?.surfaceState.terminalMode == .alternateScreen
     let snapshot = TerminalTranscriptSnapshot(
         contentID: handle.contentID,
@@ -2330,11 +2792,11 @@ private func transcriptLines(from text: String) -> [String] {
 }
 
 private func transcriptDimensions(
-    from hostSnapshot: TerminalHostRuntimeSnapshot?,
+    ptyDimensions: AlanTerminalPtyDimensions?,
     metrics: AlanTerminalScrollbackMetrics?
 ) -> TerminalTranscriptDimensions? {
-    let columns = hostSnapshot.map { Int($0.logicalSize.width.rounded(.down)) } ?? 0
-    let rows = metrics?.visibleRows ?? hostSnapshot.map { Int($0.logicalSize.height.rounded(.down)) } ?? 0
+    let columns = ptyDimensions?.columns ?? 0
+    let rows = ptyDimensions?.rows ?? metrics?.visibleRows ?? 0
     guard columns > 0 || rows > 0 else { return nil }
     return TerminalTranscriptDimensions(columns: max(0, columns), rows: max(0, rows))
 }
@@ -2739,6 +3201,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var onGracefulShutdownRequest: ((TerminalRuntimeGracefulShutdownReason) -> Void)?
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
+    var terminalDimensionsOverride: AlanTerminalPtyDimensions?
     var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
     private(set) var captureTranscriptTextRanges: [AlanTerminalBufferRange] = []
     var selectedText: String?
@@ -2776,6 +3239,14 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     var fallbackTranscriptLines: [String] {
         transcriptRingBufferLines
+    }
+
+    var terminalDimensions: AlanTerminalPtyDimensions? {
+        terminalDimensionsOverride
+    }
+
+    var terminalGridDiagnostics: TerminalGridDiagnostics? {
+        latestHostRuntime?.terminalGridDiagnostics
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
