@@ -942,6 +942,11 @@ require_pattern \
     "ShellCoreFFIAdapter\\.shared\\.materializeContentWorkspaceManifest" \
     "workspace-manifest startup must materialize shell state through shell-core authority"
 
+require_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "Disable manifest persistence for this recovery controller" \
+    "workspace-manifest shell-core failure recovery must not overwrite the saved manifest"
+
 reject_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
     "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \

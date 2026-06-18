@@ -686,7 +686,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                     windowID: resolvedWindowContext.windowID,
                     workingDirectory: workingDirectory
                 )
-                manifestStore = store
+                // Shell-core authority failures must leave any decoded valid manifest untouched.
+                // Disable manifest persistence for this recovery controller so bootstrap state
+                // cannot overwrite the saved manifest before the core dependency is repaired.
+                manifestStore = nil
                 manifest = nil
                 manifestRecovery = nil
                 retiredTabCount = 0
