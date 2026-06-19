@@ -104,6 +104,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
+        verifiesCommandFailureAcknowledgementRequiresFocusedPaneInTab()
         verifiesSpatialFocusAcknowledgesCommandFailure()
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
@@ -4042,6 +4043,45 @@ private enum ShellRuntimeMetadataTests {
         expect(
             acknowledgedProjection.secondaryLine != "Shell · Command failed 2",
             "acknowledged command failure must fall back to tab context instead of resurfacing"
+        )
+    }
+
+    private static func verifiesCommandFailureAcknowledgementRequiresFocusedPaneInTab() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+        let mismatchedFocusState = ShellStateSnapshot(
+            contractVersion: controller.shellState.contractVersion,
+            windowID: controller.shellState.windowID,
+            focusedSpaceID: "space_main",
+            focusedTabID: "tab_main",
+            focusedPaneID: "pane_2",
+            spaces: controller.shellState.spaces,
+            panes: controller.shellState.panes,
+            paneSlots: controller.shellState.paneSlots,
+            contents: controller.shellState.contents
+        )
+
+        let acknowledged = mismatchedFocusState.acknowledgingCommandFailureActivities(
+            in: "tab_main",
+            focusedPaneID: "pane_2"
+        )
+
+        expect(
+            acknowledged.pane(paneID: "pane_1")?.activity != nil,
+            "mismatched focus acknowledgement must not clear another tab's command failure"
+        )
+        expect(
+            acknowledged.focusedSpaceID == "space_main"
+                && acknowledged.focusedTabID == "tab_main"
+                && acknowledged.focusedPaneID == "pane_2",
+            "mismatched focus acknowledgement must preserve reducer focus metadata"
         )
     }
 

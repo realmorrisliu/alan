@@ -111,6 +111,13 @@ extension ShellStateSnapshot {
         in tabID: String,
         focusedPaneID: String
     ) -> ShellStateSnapshot {
+        guard let focusedPane = pane(paneID: focusedPaneID),
+              focusedPane.tabID == tabID,
+              tab(tabID: tabID)?.contains(paneID: focusedPaneID) == true
+        else {
+            return self
+        }
+
         let acknowledgedPanes = panesAcknowledgingCommandFailureActivities(
             in: tabID,
             focusedPaneID: focusedPaneID
