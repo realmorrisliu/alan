@@ -53,7 +53,6 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterControlCommands()
             try testProductionAdapterUnscopedPaneListSpansAllTabs()
             try testProductionAdapterTabReorderReportsSectionAndIndex()
-            try testProductionAdapterPreservesFocusedQuickTerminal()
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
@@ -359,30 +358,6 @@ private func testProductionAdapterReducerFocus() throws {
         "focus reducer must preserve selected tab"
     )
 
-    let quickFocusShown = try adapter.applyReducer(
-        state: state,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/repo/app"
-        )
-    ).state
-    let quickFocused = try adapter.applyReducer(
-        state: quickFocusShown,
-        operation: .focusPane(paneSlotID: ShellQuickTerminalSlot.globalPaneID)
-    )
-    try expect(
-        quickFocused.state.focusedPaneID == ShellQuickTerminalSlot.globalPaneID,
-        "focus reducer must focus the detached quick terminal through Rust"
-    )
-    try expect(
-        quickFocused.state.focusedSpaceID == quickFocusShown.focusedSpaceID,
-        "quick terminal focus must not move workspace space focus"
-    )
-    try expect(
-        quickFocused.state.focusedTabID == quickFocusShown.focusedTabID,
-        "quick terminal focus must not move workspace tab focus"
-    )
-
     let adjacentResult = try adapter.applyReducer(
         state: focusResult.state,
         operation: .focusAdjacentPane(direction: .left)
@@ -595,64 +570,6 @@ private func testProductionAdapterReducerFocus() throws {
     try expect(
         splitMarkdownContent?.payload.markdown?.title == "Split Guide.md",
         "production adapter must preserve Rust-split markdown payload"
-    )
-
-    let quickShown = try adapter.applyReducer(
-        state: attention.state,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    )
-    try expect(
-        quickShown.state.quickTerminal?.presentation == .visible,
-        "production adapter must show quick terminal through Rust"
-    )
-    try expect(
-        quickShown.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.cwd == "/repo/quick",
-        "production adapter must materialize quick terminal cwd from Rust"
-    )
-
-    let quickHidden = try adapter.applyReducer(
-        state: quickShown.state,
-        operation: .hideQuickTerminal
-    )
-    try expect(
-        quickHidden.state.quickTerminal?.presentation == .hidden,
-        "production adapter must hide quick terminal through Rust"
-    )
-
-    let quickPromoted = try adapter.applyReducer(
-        state: quickHidden.state,
-        operation: .promoteQuickTerminal(targetSpaceID: "space_main")
-    )
-    try expect(
-        quickPromoted.state.quickTerminal == nil,
-        "production adapter must clear detached quick terminal after Rust promotion"
-    )
-    try expect(
-        quickPromoted.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.spaceID == "space_main",
-        "production adapter must promote quick terminal pane into target space through Rust"
-    )
-
-    let quickForClose = try adapter.applyReducer(
-        state: attention.state,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    )
-    let quickClosed = try adapter.applyReducer(
-        state: quickForClose.state,
-        operation: .closeQuickTerminal
-    )
-    try expect(
-        quickClosed.state.quickTerminal == nil,
-        "production adapter must close quick terminal through Rust"
-    )
-    try expect(
-        quickClosed.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID) == nil,
-        "production adapter must remove quick terminal pane after Rust close"
     )
 
     let secondTab = try attention.state.openingTerminalTab(
@@ -1058,53 +975,6 @@ private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {
     )
 }
 
-private func testProductionAdapterPreservesFocusedQuickTerminal() throws {
-    let adapter = try ShellCoreFFIAdapter()
-    let base = ShellStateSnapshot.bootstrapDefault(
-        windowID: "window_main",
-        workingDirectory: "/repo/app"
-    )
-    let quickShown = try adapter.applyReducer(
-        state: base,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    ).state
-
-    // Simulate the quick terminal holding focus: the projecting side carries the quick pane as
-    // focused_pane_id even though it lives outside the content pane slots.
-    let focusedQuick = ShellStateSnapshot(
-        contractVersion: quickShown.contractVersion,
-        windowID: quickShown.windowID,
-        focusedSpaceID: quickShown.focusedSpaceID,
-        focusedTabID: quickShown.focusedTabID,
-        focusedPaneID: ShellQuickTerminalSlot.globalPaneID,
-        spaces: quickShown.spaces,
-        panes: quickShown.panes,
-        paneSlots: quickShown.paneSlots,
-        contents: quickShown.contents,
-        quickTerminal: quickShown.quickTerminal
-    )
-    guard let tabID = focusedQuick.spaces.first?.tabs.first?.tabID else {
-        throw TestFailure.message("fixture must expose a tab to pin")
-    }
-
-    // A non-focus-changing reducer round-trips through Rust focus repair and Swift materialization;
-    // both must keep focus on the visible quick terminal.
-    let pinned = try adapter.applyReducer(
-        state: focusedQuick,
-        operation: .pinTab(tabID: tabID)
-    )
-    try expect(
-        pinned.state.focusedPaneID == ShellQuickTerminalSlot.globalPaneID,
-        "FFI tab organization must preserve focus on the visible quick terminal"
-    )
-    try expect(
-        pinned.state.quickTerminal != nil,
-        "quick terminal must survive FFI tab organization"
-    )
-}
 
 private func testProductionAdapterTabReorderReportsSectionAndIndex() throws {
     // Full Swift -> Rust -> Swift round-trip: a tab organization mutation must surface the
@@ -1221,8 +1091,7 @@ private extension ShellStateSnapshot {
             spaces: spaces,
             panes: updatedPanes,
             paneSlots: paneSlots,
-            contents: contents,
-            quickTerminal: quickTerminal
+            contents: contents
         )
     }
 }

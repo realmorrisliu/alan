@@ -135,7 +135,6 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
     var selectedSpaceID: String?
     var selectedTabID: String?
     var spaces: [ShellContentWorkspaceSpaceRecord]
-    var quickTerminal: ShellQuickTerminalRestoreRecord? = nil
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -144,7 +143,6 @@ struct ShellContentWorkspaceManifest: Codable, Equatable {
         case selectedSpaceID = "selected_space_id"
         case selectedTabID = "selected_tab_id"
         case spaces
-        case quickTerminal = "quick_terminal"
     }
 }
 
@@ -216,13 +214,6 @@ extension ShellContentWorkspaceManifest {
                     removed = removed || result.removed
                 }
             }
-        }
-        if let quickSnapshot = manifest.quickTerminal?.liveSnapshot {
-            let result = quickSnapshot.clearingRestoredTranscriptSnapshot(
-                forTerminalContentID: contentID
-            )
-            manifest.quickTerminal?.liveSnapshot = result.snapshot
-            removed = removed || result.removed
         }
         return (manifest, removed)
     }
@@ -305,22 +296,6 @@ struct ShellContentWorkspaceTabRecord: Codable, Equatable, Identifiable {
         case activeTask = "active_task"
     }
 
-}
-
-struct ShellQuickTerminalRestoreRecord: Codable, Equatable {
-    var paneID: String
-    var presentation: ShellQuickTerminalPresentation
-    var lastWorkingDirectory: String?
-    var liveSnapshot: ShellContentTabRestoreSnapshot?
-    var activeTask: ShellTabActiveTaskState
-
-    private enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case presentation
-        case lastWorkingDirectory = "last_working_directory"
-        case liveSnapshot = "live_snapshot"
-        case activeTask = "active_task"
-    }
 }
 
 struct ShellContentTabRestoreSnapshot: Codable, Equatable {

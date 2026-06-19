@@ -149,11 +149,6 @@ enum ShellWorkspaceCommand: String, Codable, CaseIterable, Identifiable {
     case movePaneDown
     case closePane
     case closeTab
-    case quickTerminalToggle
-    case quickTerminalShow
-    case quickTerminalHide
-    case quickTerminalFocus
-    case quickTerminalClose
 
     var id: String { rawValue }
 }

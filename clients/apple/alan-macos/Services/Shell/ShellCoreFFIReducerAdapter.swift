@@ -76,10 +76,6 @@ enum ShellCoreReducerOperation: Encodable {
         section: ShellTabOrganizationSection,
         index: Int?
     )
-    case showQuickTerminal(workingDirectory: String?, defaultWorkingDirectory: String?)
-    case hideQuickTerminal
-    case closeQuickTerminal
-    case promoteQuickTerminal(targetSpaceID: String)
     case pinTab(tabID: String)
     case unpinTab(tabID: String)
     case renameTab(tabID: String, title: String)
@@ -225,17 +221,6 @@ enum ShellCoreReducerOperation: Encodable {
             try container.encodeIfPresent(targetSpaceID, forKey: .targetSpaceID)
             try container.encode(section, forKey: .section)
             try container.encodeIfPresent(index, forKey: .index)
-        case .showQuickTerminal(let workingDirectory, let defaultWorkingDirectory):
-            try container.encode("show_quick_terminal", forKey: .type)
-            try container.encodeIfPresent(workingDirectory, forKey: .workingDirectory)
-            try container.encodeIfPresent(defaultWorkingDirectory, forKey: .defaultWorkingDirectory)
-        case .hideQuickTerminal:
-            try container.encode("hide_quick_terminal", forKey: .type)
-        case .closeQuickTerminal:
-            try container.encode("close_quick_terminal", forKey: .type)
-        case .promoteQuickTerminal(let targetSpaceID):
-            try container.encode("promote_quick_terminal", forKey: .type)
-            try container.encode(targetSpaceID, forKey: .targetSpaceID)
         case .pinTab(let tabID):
             try container.encode("pin_tab", forKey: .type)
             try container.encode(tabID, forKey: .tabID)

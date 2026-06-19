@@ -226,11 +226,7 @@ require_rust_reducer_adapter \
     "state.movingPaneToNewTab(" \
     "state.movingPane(" \
     "state.focusingPane(" \
-    "state.settingAttention(" \
-    "try \$0.hidingQuickTerminal(" \
-    "\$0.showingQuickTerminal(" \
-    "try \$0.closingQuickTerminal(" \
-    "try \$0.promotingQuickTerminal("
+    "state.settingAttention("
 
 require_rust_reducer_adapter \
     "$SOURCE_ROOT/ShellHostController.swift" \
@@ -238,10 +234,6 @@ require_rust_reducer_adapter \
     "shellState.settingTerminalProfile(" \
     "shellState.settingPresentationIcon(" \
     "shellState.deletingSpace(" \
-    "shellState.showingQuickTerminal(" \
-    "shellState.hidingQuickTerminal(" \
-    "shellState.closingQuickTerminal(" \
-    "shellState.promotingQuickTerminal(" \
     "shellState.organizingTab(" \
     "shellState.clearingInactiveTemporaryTabs(" \
     "shellState.closingPane(" \

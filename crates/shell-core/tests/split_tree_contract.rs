@@ -246,7 +246,6 @@ fn workspace_model_serializes_platform_neutral_identity_fields() {
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
         }],
-        quick_terminal: None,
     };
 
     let encoded = serde_json::to_value(&state).unwrap();

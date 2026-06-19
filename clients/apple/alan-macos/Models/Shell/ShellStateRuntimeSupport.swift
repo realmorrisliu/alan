@@ -237,8 +237,7 @@ extension ShellStateSnapshot {
             spaces: repairedSpaces,
             panes: panes,
             paneSlots: retained.paneSlots,
-            contents: retained.contents,
-            quickTerminal: quickTerminal
+            contents: retained.contents
         )
     }
 

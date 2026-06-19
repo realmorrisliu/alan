@@ -89,10 +89,10 @@ struct AlanMacShellCommands: Commands {
             .shellActionKeyboardShortcut(host.shellActionShortcut(.terminalClear))
             .disabled(!host.shellActionAvailability(.terminalClear).isAvailable)
 
-            Button(host.shellActionTitle(.quickTerminalToggle)) {
-                host.performShellAction(.quickTerminalToggle)
+            Button("Summon Alan Window") {
+                summonPrimaryShellWindow()
             }
-            .shellActionKeyboardShortcut(host.shellActionShortcut(.quickTerminalToggle))
+            .keyboardShortcut(" ", modifiers: .option)
 
             Divider()
 
@@ -247,6 +247,13 @@ struct AlanMacShellCommands: Commands {
         openWindow(id: "main")
         _ = host.openSettingsTab()
         AlanMacPrimaryWindowPresenter.focusExistingWindowSoon()
+    }
+
+    private func summonPrimaryShellWindow() {
+        openWindow(id: "main")
+        AlanMacPrimaryWindowPresenter.summonExistingWindowSoon {
+            host.refocusSelectedTerminalPane()
+        }
     }
 
     private var markdownContentTypes: [UTType] {

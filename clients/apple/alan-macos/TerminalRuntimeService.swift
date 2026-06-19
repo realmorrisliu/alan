@@ -125,7 +125,6 @@ enum TerminalTranscriptCaptureResult: Equatable {
 enum TerminalRuntimeGracefulShutdownReason: String, Codable, Equatable {
     case paneClose = "pane_close"
     case tabClose = "tab_close"
-    case quickTerminalClose = "quick_terminal_close"
     case windowClose = "window_close"
     case appQuit = "app_quit"
 }

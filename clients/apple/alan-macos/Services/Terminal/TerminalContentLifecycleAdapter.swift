@@ -25,7 +25,7 @@ struct TerminalContentLifecycleAdapter {
                 .flatMap(\.tabs)
                 .flatMap(\.paneTree.paneSlotIDs)
         )
-        var mounts = contentState.paneSlots.compactMap { slot -> TerminalContentMount? in
+        return contentState.paneSlots.compactMap { slot -> TerminalContentMount? in
             guard mountedPaneSlotIDs.contains(slot.paneSlotID),
                   let content = contentsByID[slot.contentID],
                   content.kind == .terminal,
@@ -41,14 +41,6 @@ struct TerminalContentLifecycleAdapter {
                 spaceID: slot.spaceID
             )
         }
-
-        if let quickTerminalPaneID = state.quickTerminal?.paneID,
-           let quickTerminalPane = state.pane(paneID: quickTerminalPaneID)
-        {
-            mounts.append(TerminalContentMount(pane: quickTerminalPane))
-        }
-
-        return mounts
     }
 }
 #endif

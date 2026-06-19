@@ -125,10 +125,9 @@ inactive-tab cleanup, and attention production reducer calls now use the
 Rust-backed adapter for workspace panes.
 Terminal-creating reducer requests carry platform-reserved pane IDs from the
 macOS terminal runtime registry so Rust ID allocation does not collide with live
-runtime owners. Detached quick-terminal focus remains a macOS runtime exception
-because it is not mounted in Rust workspace pane slots, and command-failure
-activity acknowledgement remains a Swift adapter-layer pass after Rust focus
-until the portable reducer owns that semantic explicitly. Runtime-bearing
+runtime owners. Command-failure activity acknowledgement remains a Swift
+adapter-layer pass after Rust focus until the portable reducer owns that
+semantic explicitly. Runtime-bearing
 reducer branches that still lack terminal adapter wiring remain in Swift until
 their runtime intents are explicitly connected. Shared shell action title,
 availability, shortcut, keyboard lookup, and effect resolution now come from the
@@ -142,8 +141,9 @@ Profile should be captured for new panes. Control handlers that still own
 command-specific response details route
 their reusable reducer step, including pane resize, equalize, spatial focus, and
 within-tab move, through the Rust reducer adapter before recording host events.
-Host-required, diagnostic, render-metric, quick-terminal, and unsupported
-terminal-delivery commands stay in Swift. Settings surface row summaries for
+Host-required, diagnostic, render-metric, and unsupported terminal-delivery
+commands stay in Swift. Primary window summon is a macOS app/window command,
+outside the shell action and control registries. Settings surface row summaries for
 Terminal Profiles, capabilities, and local diagnostics are
 adapter-first Rust calls; Swift still owns section composition, navigation,
 host file discovery, and managed-account platform effects.
@@ -171,8 +171,8 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   mutations and reusable local control commands now use shell-core failures,
   stable core errors, or explicit host-only command paths instead of a second
   Swift validation/mutation switch. The local executor keeps macOS-only
-  diagnostics, terminal runtime delivery, and quick-terminal host behavior
-  separate from portable shell-domain commands.
+  diagnostics and terminal runtime delivery separate from portable shell-domain
+  commands.
 - Domain duplicate removed from action, Terminal Profile, and settings paths:
   shared action titles, availability, shortcuts, keyboard mapping, and effects
   call shell-core and fail closed on core errors. Explicit Terminal Profile
@@ -228,9 +228,9 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   quarantine, diagnostics, Ghostty/runtime recovery, terminal input delivery,
   pasteboard/keyboard handling, windowing, SwiftUI/AppKit presentation, and
   privileged macOS account effects.
-- Runtime exceptions to track: detached quick-terminal focus and command-failure
-  activity acknowledgement remain Swift adapter-layer behavior until the core
-  has explicit portable semantics for those cases.
+- Runtime exceptions to track: command-failure activity acknowledgement remains
+  Swift adapter-layer behavior until the core has explicit portable semantics
+  for that case.
 
 Swift workspace-manifest and runtime-metadata tests now call the shell-core
 adapter for default manifest creation, pruning, materialization, and legacy
@@ -331,8 +331,8 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 1,195 | Cleaned below the current report threshold: managed terminal account settings row icon/status/detail projection now calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`; production keeps settings navigation/grouping DTOs, remote/local host summary collection, workspace context discovery, and fail-closed unavailable rows. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
-| `ShellHostController.swift` | 4,424 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, reducer invocation including quick-terminal focus, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,805 | Partially cleaned: reusable reducer invocations now route through `ShellReducerCommandCoordinator`. The remaining bulk is platform-side control-plane request/response projection, terminal delivery, diagnostics, quick-terminal routing, and list helpers rather than a second Rust-owned mutation implementation. Remaining cleanup target: split control response projection and host routing into narrower collaborators after the controller split. |
+| `ShellHostController.swift` | 4,424 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,805 | Partially cleaned: reusable reducer invocations now route through `ShellReducerCommandCoordinator`. The remaining bulk is platform-side control-plane request/response projection, terminal delivery, diagnostics, and list helpers rather than a second Rust-owned mutation implementation. Remaining cleanup target: split control response projection and host routing into narrower collaborators after the controller split. |
 
 The first implementation batch targeted the production Swift legacy surface, not
 a line-count threshold. Manifest parity helpers and the Swift standard action

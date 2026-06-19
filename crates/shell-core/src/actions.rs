@@ -6,24 +6,6 @@ use thiserror::Error;
 /// Stable shell action id shared across shell clients.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ShellActionId {
-    /// Toggle quick terminal.
-    #[serde(rename = "shell.quick_terminal.toggle")]
-    QuickTerminalToggle,
-    /// Show quick terminal.
-    #[serde(rename = "shell.quick_terminal.show")]
-    QuickTerminalShow,
-    /// Hide quick terminal.
-    #[serde(rename = "shell.quick_terminal.hide")]
-    QuickTerminalHide,
-    /// Focus quick terminal.
-    #[serde(rename = "shell.quick_terminal.focus")]
-    QuickTerminalFocus,
-    /// Close quick terminal.
-    #[serde(rename = "shell.quick_terminal.close")]
-    QuickTerminalClose,
-    /// Promote quick terminal into a Space.
-    #[serde(rename = "shell.quick_terminal.promote")]
-    QuickTerminalPromote,
     /// Open a new terminal tab.
     #[serde(rename = "shell.tab.new_terminal")]
     NewTerminalTab,
@@ -129,12 +111,6 @@ impl ShellActionId {
     /// Stable raw action id.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::QuickTerminalToggle => "shell.quick_terminal.toggle",
-            Self::QuickTerminalShow => "shell.quick_terminal.show",
-            Self::QuickTerminalHide => "shell.quick_terminal.hide",
-            Self::QuickTerminalFocus => "shell.quick_terminal.focus",
-            Self::QuickTerminalClose => "shell.quick_terminal.close",
-            Self::QuickTerminalPromote => "shell.quick_terminal.promote",
             Self::NewTerminalTab => "shell.tab.new_terminal",
             Self::TabClose => "shell.tab.close",
             Self::TabRename => "shell.tab.rename",
@@ -352,16 +328,6 @@ pub enum ShellWorkspaceCommand {
     EqualizeSplits,
     /// Toggle pane zoom.
     TogglePaneZoom,
-    /// Quick terminal toggle.
-    QuickTerminalToggle,
-    /// Quick terminal show.
-    QuickTerminalShow,
-    /// Quick terminal hide.
-    QuickTerminalHide,
-    /// Quick terminal focus.
-    QuickTerminalFocus,
-    /// Quick terminal close.
-    QuickTerminalClose,
 }
 
 /// Portable action effect.
@@ -420,8 +386,6 @@ pub enum ShellActionEffect {
         /// Placement.
         placement: SplitPlacement,
     },
-    /// Promote quick terminal.
-    PromoteQuickTerminal { space_id: Option<String> },
     /// Clear terminal.
     TerminalClear { pane_id: Option<String> },
     /// Disabled placeholder.
@@ -722,7 +686,6 @@ enum AvailabilityKind {
     UpdatePinnedTab,
     MoveTab(i32),
     MoveTabToSpace,
-    QuickTerminalPromote,
 }
 
 impl AvailabilityKind {
@@ -748,7 +711,6 @@ impl AvailabilityKind {
             Self::UpdatePinnedTab => update_pinned_tab_availability(state, target),
             Self::MoveTab(offset) => move_tab_availability(offset, state, target),
             Self::MoveTabToSpace => move_tab_to_space_availability(state, target),
-            Self::QuickTerminalPromote => quick_terminal_promote_availability(state, target),
         }
     }
 }
@@ -761,64 +723,6 @@ fn standard_actions() -> Vec<ShellActionDescriptor> {
     use ShellWorkspaceCommand as Cmd;
 
     vec![
-        action(
-            QuickTerminalToggle,
-            "Toggle Quick Terminal",
-            CurrentSelection,
-            shortcut("space", vec![Option], Shell),
-            ShellActionEffect::WorkspaceCommand {
-                command: Cmd::QuickTerminalToggle,
-            },
-            AvailabilityKind::Always,
-        ),
-        action(
-            QuickTerminalShow,
-            "Show Quick Terminal",
-            CurrentSelection,
-            None,
-            ShellActionEffect::WorkspaceCommand {
-                command: Cmd::QuickTerminalShow,
-            },
-            AvailabilityKind::Always,
-        ),
-        action(
-            QuickTerminalHide,
-            "Hide Quick Terminal",
-            CurrentSelection,
-            None,
-            ShellActionEffect::WorkspaceCommand {
-                command: Cmd::QuickTerminalHide,
-            },
-            AvailabilityKind::Always,
-        ),
-        action(
-            QuickTerminalFocus,
-            "Focus Quick Terminal",
-            CurrentSelection,
-            None,
-            ShellActionEffect::WorkspaceCommand {
-                command: Cmd::QuickTerminalFocus,
-            },
-            AvailabilityKind::Always,
-        ),
-        action(
-            QuickTerminalClose,
-            "Close Quick Terminal",
-            CurrentSelection,
-            None,
-            ShellActionEffect::WorkspaceCommand {
-                command: Cmd::QuickTerminalClose,
-            },
-            AvailabilityKind::Always,
-        ),
-        action(
-            QuickTerminalPromote,
-            "Open Quick Terminal in Space...",
-            Space,
-            None,
-            ShellActionEffect::PromoteQuickTerminal { space_id: None },
-            AvailabilityKind::QuickTerminalPromote,
-        ),
         action(
             NewTerminalTab,
             "New Terminal Tab",
@@ -1256,9 +1160,6 @@ fn effect(
             pane_id: resolved_pane_id(resolved_target),
             placement,
         },
-        ShellActionEffect::PromoteQuickTerminal { .. } => ShellActionEffect::PromoteQuickTerminal {
-            space_id: resolved_space_id(resolved_target),
-        },
         ShellActionEffect::TerminalClear { .. } => ShellActionEffect::TerminalClear {
             pane_id: resolved_pane_id(resolved_target),
         },
@@ -1593,23 +1494,6 @@ fn move_tab_to_space_availability(
     }
 }
 
-fn quick_terminal_promote_availability(
-    state: &WorkspaceState,
-    target: &ShellActionTarget,
-) -> ShellActionAvailability {
-    if state.quick_terminal.is_none() {
-        return ShellActionAvailability::unavailable("Quick terminal is not available");
-    }
-    let ShellActionTarget::ContextSpace { space_id } = target else {
-        return ShellActionAvailability::unavailable("Quick terminal destination is required");
-    };
-    if state.space(space_id).is_some() {
-        ShellActionAvailability::Available
-    } else {
-        ShellActionAvailability::unavailable("Space is not available")
-    }
-}
-
 fn target_pane_id(state: &WorkspaceState, target: &ShellActionTarget) -> Option<String> {
     match target {
         ShellActionTarget::ContextPane { pane_id } => Some(pane_id.clone()),
@@ -1628,12 +1512,6 @@ fn targeted_tab<'a>(state: &'a WorkspaceState, target: &ShellActionTarget) -> Op
 }
 
 fn terminal_content_id_if_available(state: &WorkspaceState, pane_id: &str) -> Option<String> {
-    if let Some(quick_terminal) = &state.quick_terminal
-        && quick_terminal.pane_id == pane_id
-    {
-        return Some(quick_terminal.content_id.clone());
-    }
-
     let slot = state
         .pane_slots
         .iter()
@@ -1668,10 +1546,6 @@ impl WorkspaceStateActionExt for WorkspaceState {
             .iter()
             .flat_map(|space| &space.tabs)
             .any(|tab| tab.pane_tree.contains_pane_id(pane_id))
-            || self
-                .quick_terminal
-                .as_ref()
-                .is_some_and(|quick| quick.pane_id == pane_id)
     }
 
     fn tab_for_pane(&self, pane_id: &str) -> Option<&Tab> {
@@ -1712,67 +1586,6 @@ impl SplitPlacementActionExt for SplitPlacement {
             SplitPlacement::Right => crate::SpatialFocusDirection::Right,
             SplitPlacement::Up => crate::SpatialFocusDirection::Up,
             SplitPlacement::Down => crate::SpatialFocusDirection::Down,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ShellAttentionState, ShellQuickTerminalPresentation, ShellQuickTerminalState};
-
-    #[test]
-    fn terminal_content_availability_accepts_context_quick_terminal() {
-        let registry = ShellActionRegistry::standard();
-        let state = workspace_with_quick_terminal_focus(None);
-        let action = registry
-            .action(ShellActionId::FindOpen)
-            .expect("find action is registered");
-
-        assert_eq!(
-            action.availability(
-                &state,
-                &ShellActionTarget::ContextPane {
-                    pane_id: "quick_terminal_pane".to_string(),
-                },
-            ),
-            ShellActionAvailability::Available
-        );
-    }
-
-    #[test]
-    fn terminal_content_availability_accepts_focused_quick_terminal() {
-        let registry = ShellActionRegistry::standard();
-        let state = workspace_with_quick_terminal_focus(Some("quick_terminal_pane"));
-        let action = registry
-            .action(ShellActionId::FindOpen)
-            .expect("find action is registered");
-
-        assert_eq!(
-            action.availability(&state, &ShellActionTarget::CurrentSelection),
-            ShellActionAvailability::Available
-        );
-    }
-
-    fn workspace_with_quick_terminal_focus(focused_pane_id: Option<&str>) -> WorkspaceState {
-        WorkspaceState {
-            contract_version: "0.2".to_string(),
-            window_id: "window_main".to_string(),
-            focused_space_id: None,
-            focused_tab_id: None,
-            focused_pane_id: focused_pane_id.map(ToOwned::to_owned),
-            spaces: Vec::new(),
-            pane_slots: Vec::new(),
-            contents: Vec::new(),
-            quick_terminal: Some(ShellQuickTerminalState {
-                pane_id: "quick_terminal_pane".to_string(),
-                presentation: ShellQuickTerminalPresentation::Visible,
-                last_working_directory: Some("/repo/app".to_string()),
-                content_id: "content_quick_terminal_pane".to_string(),
-                terminal_payload: None,
-                terminal_metadata: None,
-                attention: ShellAttentionState::Idle,
-            }),
         }
     }
 }

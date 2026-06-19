@@ -2,9 +2,8 @@ use alan_shell_core::{
     ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeNode, ShellActionEffect,
     ShellActionExecutionResult, ShellActionId, ShellActionModifier, ShellActionRegistry,
     ShellActionRegistryError, ShellActionShortcut, ShellActionShortcutContext, ShellActionTarget,
-    ShellAttentionState, ShellContentPayload, ShellLaunchTarget, ShellQuickTerminalPresentation,
-    ShellQuickTerminalState, ShellWorkspaceCommand, Space, SplitDirection, SplitPlacement, Tab,
-    TabKind, TerminalRuntimeMetadata, WorkspaceState,
+    ShellAttentionState, ShellContentPayload, ShellLaunchTarget, ShellWorkspaceCommand, Space,
+    SplitDirection, SplitPlacement, Tab, TabKind, WorkspaceState,
 };
 
 #[test]
@@ -65,6 +64,11 @@ fn standard_action_ids_shortcuts_and_keyboard_lookup_are_stable() {
             ))
             .map(|action| action.id),
         Some(ShellActionId::PaneZoomToggle)
+    );
+    assert!(
+        ids.iter()
+            .all(|id| !id.starts_with("shell.quick_terminal.")),
+        "Quick Terminal actions must not remain in the shell action registry"
     );
 }
 
@@ -163,57 +167,6 @@ fn move_tab_to_space_requires_explicit_target_and_move_shortcut_stays_unavailabl
 }
 
 #[test]
-fn quick_terminal_promote_requires_destination_and_routes_space_id() {
-    let registry = ShellActionRegistry::standard();
-    let mut state = workspace_with_two_spaces();
-    state.quick_terminal = Some(ShellQuickTerminalState {
-        pane_id: "quick_terminal_pane".to_string(),
-        presentation: ShellQuickTerminalPresentation::Hidden,
-        last_working_directory: Some("/tmp".to_string()),
-        content_id: "content_quick_terminal_pane".to_string(),
-        terminal_payload: Some(alan_shell_core::ShellTerminalContentPayload {
-            launch_target: ShellLaunchTarget::Shell,
-            cwd: Some("/tmp".to_string()),
-            title: Some("Shell".to_string()),
-            transcript_snapshot: None,
-            terminal_profile_id: None,
-        }),
-        terminal_metadata: Some(TerminalRuntimeMetadata {
-            title: Some("Shell".to_string()),
-            cwd: Some("/tmp".to_string()),
-            active_task_state: Default::default(),
-            activity: None,
-        }),
-        attention: ShellAttentionState::Idle,
-    });
-
-    assert_eq!(
-        registry.execute(
-            ShellActionId::QuickTerminalPromote,
-            &ShellActionTarget::CurrentSelection,
-            &state,
-        ),
-        ShellActionExecutionResult::Unavailable {
-            reason: "Quick terminal destination is required".to_string(),
-        }
-    );
-    assert_eq!(
-        registry.execute(
-            ShellActionId::QuickTerminalPromote,
-            &ShellActionTarget::ContextSpace {
-                space_id: "space_2".to_string(),
-            },
-            &state,
-        ),
-        ShellActionExecutionResult::Executed {
-            effect: ShellActionEffect::PromoteQuickTerminal {
-                space_id: Some("space_2".to_string()),
-            },
-        }
-    );
-}
-
-#[test]
 fn pane_zoom_and_movement_follow_split_tree_availability() {
     let registry = ShellActionRegistry::standard();
     let single = single_tab_workspace();
@@ -267,20 +220,6 @@ fn workspace_with_two_tabs() -> WorkspaceState {
         vec!["pane_1", "pane_2"],
         None,
     )
-}
-
-fn workspace_with_two_spaces() -> WorkspaceState {
-    let mut state = single_tab_workspace();
-    state.spaces.push(Space {
-        space_id: "space_2".to_string(),
-        title: "Second".to_string(),
-        attention: ShellAttentionState::Idle,
-        tabs: Vec::new(),
-        selected_tab_id: None,
-        terminal_profile_id: None,
-        presentation_icon: None,
-    });
-    state
 }
 
 fn split_workspace() -> WorkspaceState {
@@ -360,7 +299,6 @@ fn workspace(tabs: Vec<Tab>, pane_ids: Vec<&str>, focused_pane_id: Option<&str>)
                 lifecycle: ContentLifecycleState::Active,
             })
             .collect(),
-        quick_terminal: None,
     }
 }
 

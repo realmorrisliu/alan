@@ -241,97 +241,6 @@ enum AlanShellLocalCommandExecutor {
                 sideEffect: nil
             )
 
-        case .quickTerminalToggle:
-            if state.quickTerminal?.presentation == .visible {
-                return quickTerminalResult(
-                    command: command,
-                    state: state,
-                    mutate: {
-                        try reducerCoordinator.apply(
-                            state: $0,
-                            operation: .hideQuickTerminal
-                        )
-                    }
-                )
-            }
-            return quickTerminalResult(
-                command: command,
-                state: state,
-                mutate: {
-                    try reducerCoordinator.apply(
-                        state: $0,
-                        operation: .showQuickTerminal(
-                            workingDirectory: command.cwd,
-                            defaultWorkingDirectory: defaultShellWorkingDirectory()
-                        )
-                    )
-                }
-            )
-
-        case .quickTerminalShow, .quickTerminalFocus:
-            return quickTerminalResult(
-                command: command,
-                state: state,
-                mutate: {
-                    try reducerCoordinator.apply(
-                        state: $0,
-                        operation: .showQuickTerminal(
-                            workingDirectory: command.cwd,
-                            defaultWorkingDirectory: defaultShellWorkingDirectory()
-                        )
-                    )
-                }
-            )
-
-        case .quickTerminalHide:
-            return quickTerminalResult(
-                command: command,
-                state: state,
-                mutate: {
-                    try reducerCoordinator.apply(
-                        state: $0,
-                        operation: .hideQuickTerminal
-                    )
-                }
-            )
-
-        case .quickTerminalClose:
-            return quickTerminalResult(
-                command: command,
-                state: state,
-                mutate: {
-                    try reducerCoordinator.apply(
-                        state: $0,
-                        operation: .closeQuickTerminal
-                    )
-                }
-            )
-
-        case .quickTerminalPromote:
-            guard let targetSpaceID = command.targetSpaceID ?? command.spaceID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "quick_terminal_destination_required",
-                        errorMessage: "target_space_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            return quickTerminalResult(
-                command: command,
-                state: state,
-                mutate: {
-                    try reducerCoordinator.apply(
-                        state: $0,
-                        operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
-                    )
-                }
-            )
-
         case .terminalSendText,
             .terminalSendKey,
             .terminalRenderMetrics,
@@ -339,46 +248,6 @@ enum AlanShellLocalCommandExecutor {
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
             .eventsRead:
             return nil
-        }
-    }
-
-    private static func quickTerminalResult(
-        command: AlanShellControlCommand,
-        state: ShellStateSnapshot,
-        mutate: (ShellStateSnapshot) throws -> ShellStateMutationResult
-    ) -> AlanShellLocalCommandResult {
-        do {
-            let result = try mutate(state)
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: result.state,
-                    applied: true,
-                    spaceID: result.spaceID,
-                    tabID: result.tabID,
-                    paneID: result.paneID
-                ),
-                updatedState: result.state,
-                sideEffect: nil
-            )
-        } catch let error as ShellStateMutationError {
-            return AlanShellLocalCommandResult(
-                response: failureResponse(for: error, command: command, state: state),
-                updatedState: nil,
-                sideEffect: nil
-            )
-        } catch {
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: false,
-                    errorCode: "quick_terminal_unavailable",
-                    errorMessage: "The quick terminal command could not be applied."
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
         }
     }
 
@@ -750,13 +619,7 @@ private extension AlanShellControlCommandKind {
              .eventsRead,
              .performanceDiagnosticsSetEnabled,
              .performanceDiagnosticsExportRecent,
-             .performanceDiagnosticsRecordChildPressure,
-             .quickTerminalToggle,
-             .quickTerminalShow,
-             .quickTerminalHide,
-             .quickTerminalFocus,
-             .quickTerminalClose,
-             .quickTerminalPromote:
+             .performanceDiagnosticsRecordChildPressure:
             return false
         }
     }
@@ -800,13 +663,7 @@ extension AlanShellControlCommandKind {
              .eventsRead,
              .performanceDiagnosticsSetEnabled,
              .performanceDiagnosticsExportRecent,
-             .performanceDiagnosticsRecordChildPressure,
-             .quickTerminalToggle,
-             .quickTerminalShow,
-             .quickTerminalHide,
-             .quickTerminalFocus,
-             .quickTerminalClose,
-             .quickTerminalPromote:
+             .performanceDiagnosticsRecordChildPressure:
             return false
         }
     }
@@ -913,10 +770,6 @@ private func attentionRank(for attention: ShellAttentionState) -> Int {
     case .awaitingUser:
         return 3
     }
-}
-
-private func defaultShellWorkingDirectory() -> String {
-    FileManager.default.homeDirectoryForCurrentUser.path
 }
 
 #endif

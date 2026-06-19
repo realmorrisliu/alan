@@ -142,28 +142,6 @@ extension ShellStateSnapshot {
         )
     }
 
-    func showingQuickTerminal(
-        workingDirectory: String?,
-        defaultWorkingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
-    ) -> ShellStateMutationResult {
-        do {
-            return try ShellCoreFFIAdapter().applyReducer(
-                state: self,
-                operation: .showQuickTerminal(
-                    workingDirectory: workingDirectory,
-                    defaultWorkingDirectory: defaultWorkingDirectory
-                )
-            )
-        } catch {
-            return ShellStateMutationResult(
-                state: self,
-                spaceID: focusedSpaceID,
-                tabID: focusedTabID,
-                paneID: focusedPaneID
-            )
-        }
-    }
-
     func splittingPane(
         _ paneID: String,
         direction: ShellSplitDirection,

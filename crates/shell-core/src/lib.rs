@@ -34,20 +34,21 @@ pub use envelope::{
     ShellCoreResponseEnvelope,
 };
 pub use manifest::{
-    ShellContentRestoreRecord, ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
+    LegacyQuickTerminalPresentation, LegacyQuickTerminalRestoreRecord, ShellContentRestoreRecord,
+    ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
     ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellPaneRestoreRecord,
-    ShellPaneSlotRestoreRecord, ShellQuickTerminalRestoreRecord, ShellTabRestoreSnapshot,
-    ShellWorkspaceManifest, ShellWorkspaceSpaceRecord, ShellWorkspaceTabRecord,
+    ShellPaneSlotRestoreRecord, ShellTabRestoreSnapshot, ShellWorkspaceManifest,
+    ShellWorkspaceSpaceRecord, ShellWorkspaceTabRecord,
 };
 pub use model::{
     ContentCapability, ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeKind,
     PaneTreeNode, PaneTreeNodeResizeOutcome, PaneTreeNodeResizeResult, ShellAttentionState,
-    ShellContentPayload, ShellLaunchTarget, ShellQuickTerminalPresentation,
-    ShellQuickTerminalState, ShellTabActiveTaskState, ShellTerminalContentPayload, Space,
-    SpatialFocusDirection, SplitDirection, SplitPlacement, Tab, TabKind, TabOrganizationSection,
-    TerminalActivityAgentMetadata, TerminalActivityDisplay, TerminalActivityFreshness,
-    TerminalActivityPriority, TerminalActivitySnapshot, TerminalActivitySource,
-    TerminalActivitySourceKind, TerminalActivityStatus, TerminalRuntimeMetadata, WorkspaceState,
+    ShellContentPayload, ShellLaunchTarget, ShellTabActiveTaskState, ShellTerminalContentPayload,
+    Space, SpatialFocusDirection, SplitDirection, SplitPlacement, Tab, TabKind,
+    TabOrganizationSection, TerminalActivityAgentMetadata, TerminalActivityDisplay,
+    TerminalActivityFreshness, TerminalActivityPriority, TerminalActivitySnapshot,
+    TerminalActivitySource, TerminalActivitySourceKind, TerminalActivityStatus,
+    TerminalRuntimeMetadata, WorkspaceState,
 };
 pub use reducer::{
     DomainEvent, ManifestSyncHint, ReducerChangedIds, ReducerError, ReducerErrorCode, ReducerFocus,

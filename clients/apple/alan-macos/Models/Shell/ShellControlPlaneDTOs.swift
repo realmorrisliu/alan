@@ -38,12 +38,6 @@ enum AlanShellControlCommandKind: String, Codable {
     case performanceDiagnosticsExportRecent = "performance_diagnostics.export_recent"
     case performanceDiagnosticsRecordChildPressure =
         "performance_diagnostics.record_child_pressure"
-    case quickTerminalToggle = "quick_terminal.toggle"
-    case quickTerminalShow = "quick_terminal.show"
-    case quickTerminalHide = "quick_terminal.hide"
-    case quickTerminalFocus = "quick_terminal.focus"
-    case quickTerminalClose = "quick_terminal.close"
-    case quickTerminalPromote = "quick_terminal.promote"
 }
 
 struct AlanShellControlCommand: Codable {

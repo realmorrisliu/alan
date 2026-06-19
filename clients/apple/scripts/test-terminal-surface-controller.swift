@@ -532,8 +532,8 @@ private enum TerminalSurfaceControllerTests {
             hasMarkedText: false
         )
         expect(
-            optionSpace == .shellAction(.quickTerminalToggle, .currentSelection),
-            "option-space must route to the quick terminal toggle through the registry"
+            optionSpace == .terminalKey,
+            "option-space must stay out of the shell action registry; primary window summon is an app command"
         )
     }
 

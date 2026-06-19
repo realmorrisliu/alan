@@ -204,36 +204,6 @@ pub struct TerminalRuntimeMetadata {
     pub activity: Option<TerminalActivitySnapshot>,
 }
 
-/// Portable quick terminal presentation state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShellQuickTerminalPresentation {
-    /// Quick terminal is visible.
-    Visible,
-    /// Quick terminal is hidden.
-    Hidden,
-}
-
-/// Materialized quick terminal restore state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellQuickTerminalState {
-    /// Stable quick terminal pane id.
-    pub pane_id: String,
-    /// Restored presentation state.
-    pub presentation: ShellQuickTerminalPresentation,
-    /// Last known working directory.
-    pub last_working_directory: Option<String>,
-    /// Restored content id.
-    pub content_id: String,
-    /// Restored terminal payload, preserved so adapters can launch the terminal losslessly.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_payload: Option<ShellTerminalContentPayload>,
-    /// Restored terminal metadata.
-    pub terminal_metadata: Option<TerminalRuntimeMetadata>,
-    /// Restored quick terminal attention.
-    pub attention: ShellAttentionState,
-}
-
 /// Terminal payload for restored content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellTerminalContentPayload {
@@ -1223,9 +1193,6 @@ pub struct WorkspaceState {
     pub pane_slots: Vec<PaneSlot>,
     /// Mounted content instances.
     pub contents: Vec<ContentInstance>,
-    /// Detached quick terminal restore state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quick_terminal: Option<ShellQuickTerminalState>,
 }
 
 impl WorkspaceState {

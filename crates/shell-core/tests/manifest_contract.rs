@@ -2,9 +2,9 @@ use alan_shell_core::{
     ContentKind, PaneTreeNode, ShellContentPayload, ShellContentRestoreRecord,
     ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
     ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellLaunchTarget,
-    ShellPaneRestoreRecord, ShellPaneSlotRestoreRecord, ShellQuickTerminalPresentation,
-    ShellQuickTerminalRestoreRecord, ShellTabActiveTaskState, ShellTabRestoreSnapshot,
-    ShellWorkspaceManifest, ShellWorkspaceSpaceRecord, ShellWorkspaceTabRecord, TabKind,
+    ShellPaneRestoreRecord, ShellPaneSlotRestoreRecord, ShellTabActiveTaskState,
+    ShellTabRestoreSnapshot, ShellWorkspaceManifest, ShellWorkspaceSpaceRecord,
+    ShellWorkspaceTabRecord, TabKind,
 };
 use chrono::{DateTime, Utc};
 
@@ -69,7 +69,7 @@ fn materialize_preserves_empty_selected_space_and_inactive_space_selection() {
                 presentation_icon: Some("rectangle.stack.fill".to_string()),
             },
         ],
-        quick_terminal: None,
+        legacy_quick_terminal: None,
     };
     manifest.repair_selection();
 
@@ -155,7 +155,7 @@ fn pruning_retains_pinned_active_task_and_empty_spaces_while_repairing_selection
                 presentation_icon: None,
             },
         ],
-        quick_terminal: None,
+        legacy_quick_terminal: None,
     };
 
     let pruned = manifest.pruning_expired_tabs("2027-01-16T08:00:00Z", 60);
@@ -206,7 +206,7 @@ fn materialize_uses_pin_snapshot_for_pinned_tabs() {
             terminal_profile_id: None,
             presentation_icon: None,
         }],
-        quick_terminal: None,
+        legacy_quick_terminal: None,
     };
 
     let state = manifest.materialize("/fallback", REFERENCE_TIME);
@@ -301,7 +301,7 @@ fn legacy_terminal_manifest_migrates_to_content_container_shape() {
 }
 
 #[test]
-fn materialize_restores_quick_terminal_hidden_with_runtime_metadata() {
+fn materialize_discards_legacy_quick_terminal_restore_data() {
     let manifest = ShellContentWorkspaceManifest {
         schema_version: 1,
         content_contract_version: "0.2".to_string(),
@@ -319,49 +319,55 @@ fn materialize_restores_quick_terminal_hidden_with_runtime_metadata() {
             terminal_profile_id: None,
             presentation_icon: None,
         }],
-        quick_terminal: Some(ShellQuickTerminalRestoreRecord {
-            pane_id: "quick_terminal_pane".to_string(),
-            presentation: ShellQuickTerminalPresentation::Visible,
-            last_working_directory: None,
-            live_snapshot: Some(ShellContentTabRestoreSnapshot {
-                pane_tree: PaneTreeNode::pane("node_quick_terminal_pane", "quick_terminal_pane"),
-                pane_slots: vec![ShellPaneSlotRestoreRecord {
-                    pane_slot_id: "quick_terminal_pane".to_string(),
-                    content_id: "content_quick_terminal_pane".to_string(),
+        legacy_quick_terminal: serde_json::from_value(serde_json::json!({
+            "pane_id": "quick_terminal_pane",
+            "presentation": "visible",
+            "last_working_directory": "/repo/quick",
+            "live_snapshot": {
+                "pane_tree": {
+                    "kind": "pane",
+                    "node_id": "node_quick_terminal_pane",
+                    "pane_slot_id": "quick_terminal_pane"
+                },
+                "pane_slots": [{
+                    "pane_slot_id": "quick_terminal_pane",
+                    "content_id": "content_quick_terminal_pane"
                 }],
-                contents: vec![ShellContentRestoreRecord {
-                    content_id: "content_quick_terminal_pane".to_string(),
-                    kind: ContentKind::Terminal,
-                    title: "python server".to_string(),
-                    payload: ShellContentPayload::terminal(
-                        ShellLaunchTarget::Shell,
-                        Some("/repo/quick"),
-                        Some("python server"),
-                    ),
-                }],
-            }),
-            active_task: ShellTabActiveTaskState::ForegroundCommand,
-        }),
+                "contents": [{
+                    "content_id": "content_quick_terminal_pane",
+                    "kind": "terminal",
+                    "title": "python server",
+                    "payload": {
+                        "terminal": {
+                            "launch_target": "shell",
+                            "cwd": "/repo/quick",
+                            "title": "python server"
+                        }
+                    }
+                }]
+            },
+            "active_task": "foreground_command"
+        }))
+        .expect("legacy quick terminal record decodes"),
     };
 
     let state = manifest.materialize("/fallback", REFERENCE_TIME);
-    let quick_terminal = state.quick_terminal.expect("quick terminal");
-
-    assert_eq!(
-        quick_terminal.presentation,
-        ShellQuickTerminalPresentation::Hidden
+    assert!(
+        state
+            .pane_slots
+            .iter()
+            .all(|slot| slot.pane_slot_id != "quick_terminal_pane")
     );
-    assert_eq!(
-        quick_terminal.last_working_directory.as_deref(),
-        Some("/repo/quick")
+    assert!(
+        state
+            .contents
+            .iter()
+            .all(|content| content.content_id != "content_quick_terminal_pane")
     );
-    assert_eq!(quick_terminal.content_id, "content_quick_terminal_pane");
-    assert_eq!(
-        quick_terminal
-            .terminal_metadata
-            .as_ref()
-            .and_then(|metadata| metadata.cwd.as_deref()),
-        Some("/repo/quick")
+    let written = serde_json::to_value(&manifest).expect("manifest serializes");
+    assert!(
+        written.get("quick_terminal").is_none(),
+        "legacy quick_terminal must be omitted from future manifest writes"
     );
 }
 
@@ -397,7 +403,7 @@ fn materialize_recovers_default_terminal_when_no_panes_survive() {
             terminal_profile_id: None,
             presentation_icon: None,
         }],
-        quick_terminal: None,
+        legacy_quick_terminal: None,
     };
 
     let state = manifest.materialize("/fallback", REFERENCE_TIME);
@@ -447,7 +453,7 @@ fn materialize_repairs_focus_when_selected_tab_is_filtered_out() {
             terminal_profile_id: None,
             presentation_icon: None,
         }],
-        quick_terminal: None,
+        legacy_quick_terminal: None,
     };
 
     let state = manifest.materialize("/fallback", REFERENCE_TIME);

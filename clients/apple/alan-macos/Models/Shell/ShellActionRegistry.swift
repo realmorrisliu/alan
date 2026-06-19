@@ -1,12 +1,6 @@
 import Foundation
 
 enum ShellActionID: String, Codable, CaseIterable, Identifiable, Hashable {
-    case quickTerminalToggle = "shell.quick_terminal.toggle"
-    case quickTerminalShow = "shell.quick_terminal.show"
-    case quickTerminalHide = "shell.quick_terminal.hide"
-    case quickTerminalFocus = "shell.quick_terminal.focus"
-    case quickTerminalClose = "shell.quick_terminal.close"
-    case quickTerminalPromote = "shell.quick_terminal.promote"
     case newTerminalTab = "shell.tab.new_terminal"
     case tabClose = "shell.tab.close"
     case tabRename = "shell.tab.rename"
@@ -231,7 +225,6 @@ enum ShellActionEffect: Equatable {
     case moveTab(String?, offset: Int)
     case moveTabToSpace(tabID: String?, spaceID: String?)
     case movePaneInTab(String?, placement: ShellPaneSplitDirection)
-    case promoteQuickTerminal(spaceID: String?)
     case terminalClear(String?)
     case disabledPlaceholder
 }

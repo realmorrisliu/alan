@@ -19,7 +19,6 @@ struct ShellActionEffectHandlers {
     let moveTab: (String?, Int) -> Bool
     let moveTabToSpace: (String, String) -> Bool
     let movePaneWithinTab: (String, ShellPaneSplitDirection) -> Bool
-    let promoteQuickTerminal: (String) -> Bool
     let clearTerminal: (String?) -> Bool
 
     func perform(_ effect: ShellActionEffect) -> Bool {
@@ -62,9 +61,6 @@ struct ShellActionEffectHandlers {
         case .movePaneInTab(let paneID, let placement):
             guard let paneID else { return false }
             return movePaneWithinTab(paneID, placement)
-        case .promoteQuickTerminal(let spaceID):
-            guard let spaceID else { return false }
-            return promoteQuickTerminal(spaceID)
         case .terminalClear(let paneID):
             return clearTerminal(paneID)
         case .disabledPlaceholder:

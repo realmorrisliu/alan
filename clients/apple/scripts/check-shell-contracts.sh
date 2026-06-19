@@ -97,23 +97,34 @@ reject_keydown_programmatic_text_delivery() {
     fi
 }
 
-require_quick_terminal_peak_nonactivating_panel() {
-    local file="clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift"
+require_primary_window_summon_command() {
+    local commands_file="clients/apple/alan-macos/App/AlanMacShellCommands.swift"
+    local presenter_file="clients/apple/alan-macos/App/AlanMacPrimaryWindowPresenter.swift"
 
     reject_pattern \
-        "$file" \
-        "NSApp\\.activate\\(ignoringOtherApps:" \
-        "quick terminal Peak must not activate the whole app when surfacing its detached panel"
+        "clients/apple/alan-macos" \
+        "QuickTerminal|quickTerminal|quick_terminal|Quick Terminal|quick-terminal" \
+        "active macOS app code must not keep quick terminal runtime or UI surfaces"
 
     require_pattern \
-        "$file" \
-        "\\.nonactivatingPanel" \
-        "quick terminal Peak panel must be non-activating so it can surface without raising Alan workspace UI"
+        "$commands_file" \
+        "Button\\(\"Summon Alan Window\"\\)" \
+        "former quick terminal shortcut must become the primary window summon command"
 
     require_pattern \
-        "$file" \
-        "orderFrontRegardless\\(\\)" \
-        "quick terminal Peak panel must order itself forward without depending on app activation"
+        "$commands_file" \
+        "\\.keyboardShortcut\\(\" \", modifiers: \\.option\\)" \
+        "primary window summon must own the former option-space shortcut outside shell actions"
+
+    require_pattern \
+        "$presenter_file" \
+        "\\.moveToActiveSpace" \
+        "primary window summon must move the primary window to the active macOS Space"
+
+    require_pattern \
+        "$presenter_file" \
+        "refocusTerminal" \
+        "primary window summon must request selected terminal focus after presenting"
 }
 
 require_title_bar_full_width_hit_area() {
@@ -572,7 +583,7 @@ require_semantic_terminal_actions_contract() {
 reject_active_shell_radius_drift
 reject_ghosttykit_umbrella_modulemap
 reject_keydown_programmatic_text_delivery
-require_quick_terminal_peak_nonactivating_panel
+require_primary_window_summon_command
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
 require_restored_transcript_full_width_layout

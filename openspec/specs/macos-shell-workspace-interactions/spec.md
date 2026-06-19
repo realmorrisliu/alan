@@ -438,34 +438,30 @@ changing selected Space, selected Tab, or focused pane.
 - **THEN** alan moves the clicked Tab and keeps the current selection unchanged
   unless the clicked Tab was already selected
 
-### Requirement: Quick Terminal Summon And Dismiss Are Shell Commands
-Quick terminal summon, dismiss, focus, and close operations SHALL route through
-Alan's shared shell command/controller paths so keyboard shortcuts, menu
-commands, and supported control surfaces converge on the same behavior.
-Alan SHALL expose a configurable global toggle shortcut for quick terminal; the
-draft default shortcut is `Option+Space`.
+### Requirement: Former Global Terminal Shortcut Summons Primary Window
+The macOS-only former global terminal shortcut SHALL be owned by the app/window
+command layer and SHALL summon the primary shell window without routing through
+shell workspace commands, shell actions, or control-plane commands.
 
-#### Scenario: Quick terminal command opens
-- **WHEN** the user invokes quick terminal from a keyboard shortcut, menu,
-  or supported control command
-- **THEN** Alan summons the same quick terminal target through the shared shell
-  controller path and focuses terminal input
+#### Scenario: Shortcut summons primary window
+- **WHEN** the user presses `Option+Space`
+- **THEN** Alan invokes Primary Window Summon
+- **AND** Alan does not mutate shell workspace state as a side effect
 
-#### Scenario: Quick terminal global shortcut toggles
-- **WHEN** the quick terminal is visible and the user invokes the quick terminal
-  toggle command again
-- **THEN** Alan hides the quick terminal presentation without closing the
-  underlying terminal runtime
+#### Scenario: Shortcut does not toggle hidden terminal state
+- **WHEN** the primary shell window is already visible and the user presses
+  `Option+Space`
+- **THEN** Alan focuses or summons the primary shell window
+- **AND** Alan does not hide a detached presentation or preserve a hidden
+  terminal runtime
 
-#### Scenario: Quick terminal does not use Escape as hide
-- **WHEN** the quick terminal owns focus and the user presses `Esc`
-- **THEN** Alan treats the key as terminal input unless an Alan-owned nested
-  quick-terminal menu or picker is currently open
+#### Scenario: Escape remains selected-content input
+- **WHEN** the primary shell window owns focus and the user presses `Esc`
+- **THEN** normal selected-content input handling applies
 
-#### Scenario: Quick terminal close is explicit
-- **WHEN** the user invokes close while the quick terminal owns focus
-- **THEN** Alan distinguishes hiding the quick terminal presentation from
-  closing the underlying terminal session
+#### Scenario: Terminal close uses normal scopes
+- **WHEN** the user closes terminal content in the primary shell window
+- **THEN** Alan uses normal pane, tab, window, or app close semantics
 
 ### Requirement: Pane layout operations are content-agnostic
 The macOS shell SHALL treat split, focus, resize, equalize, pane lift, cross-tab move, and close pane as PaneSlot operations over the split layout tree, not as terminal-only operations.

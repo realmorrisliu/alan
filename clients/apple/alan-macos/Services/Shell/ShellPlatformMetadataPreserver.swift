@@ -19,7 +19,7 @@ struct ShellPlatformMetadataPreserver {
     ) -> ShellStateSnapshot {
         let contentState = state.contentStateProjection()
         let hydratedPanes = state.panes.map { pane in
-            guard paneHasTerminalContent(pane, in: contentState, state: state) else {
+            guard paneHasTerminalContent(pane, in: contentState) else {
                 return pane
             }
             guard paneProjection.needsBootContextProjection(pane) else { return pane }
@@ -75,22 +75,19 @@ struct ShellPlatformMetadataPreserver {
             spaces: hydratedSpaces,
             panes: hydratedPanes,
             paneSlots: state.paneSlots,
-            contents: state.contents,
-            quickTerminal: state.quickTerminal
+            contents: state.contents
         )
     }
 
     private func paneHasTerminalContent(
         _ pane: ShellPane,
-        in contentState: ShellContentStateSnapshot,
-        state: ShellStateSnapshot
+        in contentState: ShellContentStateSnapshot
     ) -> Bool {
         if let content = contentState.contentMounted(in: pane.paneID) {
             return content.kind == .terminal
         }
 
-        return pane.isQuickTerminalPane
-            && state.quickTerminal?.paneID == pane.paneID
+        return false
     }
 
     private func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
