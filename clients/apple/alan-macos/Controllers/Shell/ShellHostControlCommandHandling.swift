@@ -599,7 +599,7 @@ extension ShellHostController {
             )
 
         case .paneSplit:
-            guard let paneID = command.paneID else {
+            guard let paneID = command.paneSlotID ?? command.paneID else {
                 return response(
                     requestID: command.requestID,
                     applied: false,
@@ -621,6 +621,8 @@ extension ShellHostController {
                     ShellAutomationPaneSplitRequest(
                         paneID: paneID,
                         placement: .defaultPlacement(for: direction),
+                        title: command.title,
+                        workingDirectory: command.cwd,
                         terminalProfileID: command.terminalProfileID
                     )
                 )
@@ -1392,7 +1394,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
+            )
             guard let updatedSplit = result.state.tab(tabID: targetTab.tabID)?
                 .paneTree
                 .node(nodeID: splitNodeID)
@@ -1464,7 +1469,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.equalizingSplits(in: tabID)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .equalizeSplits(tabID: tabID)
+            )
             guard let updatedTab = result.state.tab(tabID: tabID) else {
                 return response(
                     requestID: command.requestID,
@@ -1660,7 +1668,10 @@ extension ShellHostController {
         let previousFocusedPaneID = shellState.focusedPaneID
         let previousPane = previousFocusedPaneID.flatMap { pane(paneID: $0) }
         do {
-            let result = try shellState.focusingAdjacentPane(direction)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .focusAdjacentPane(direction: direction)
+            )
             applyMutationResult(result)
             controlPlane.recordSpatialFocus(
                 requestID: command.requestID,
@@ -1748,7 +1759,10 @@ extension ShellHostController {
         }
 
         do {
-            let result = try shellState.movingPaneWithinTab(paneID, placement: placement)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
+            )
             applyMutationResult(result)
             controlPlane.recordPaneMovedInTab(
                 requestID: command.requestID,

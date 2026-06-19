@@ -12,79 +12,6 @@ enum ShellWorkspaceManifestRecovery: Equatable {
     case quarantinedCorruptFile(URL)
 }
 
-/// Threading seam for shell persistence. The encode + atomic disk writes for both
-/// the workspace manifest and the control-plane shell-state file run on a serial
-/// background executor; callers choose synchronous durability (structural
-/// mutations) or fire-and-forget (debounced terminal-callback churn) so the
-/// terminal callback path never blocks the main thread on disk.
-protocol ShellPersistenceWriting: AnyObject {
-    /// Blocks the caller until the manifest is written (structural mutations).
-    /// Returns `true` when the write succeeded so callers can advance their
-    /// last-saved state and surface failures.
-    @discardableResult
-    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool
-    /// Enqueues the manifest write without blocking the caller (debounced content).
-    /// Failures are reported through the writer's error sink, not the caller.
-    func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest)
-    /// Blocks the caller until the shell-state file is written (structural).
-    func writeShellStateSync(_ state: ShellStateSnapshot)
-    /// Enqueues the shell-state file write without blocking the caller (debounced).
-    func writeShellStateAsync(_ state: ShellStateSnapshot)
-}
-
-final class ShellPersistenceWriter: ShellPersistenceWriting {
-    private let manifestStore: ShellWorkspaceManifestStore?
-    private let stateStore: ShellStatePersistenceStore
-    private let queue: DispatchQueue
-    /// Reports async-write failures. Set once after construction (before any write
-    /// is enqueued) so the owner can route failures to its diagnostics surface.
-    var onError: (String) -> Void
-
-    init(
-        manifestStore: ShellWorkspaceManifestStore?,
-        stateStore: ShellStatePersistenceStore,
-        queue: DispatchQueue = DispatchQueue(label: "app.alan.shell.persistence", qos: .utility),
-        onError: @escaping (String) -> Void = { NSLog("%@", $0) }
-    ) {
-        self.manifestStore = manifestStore
-        self.stateStore = stateStore
-        self.queue = queue
-        self.onError = onError
-    }
-
-    @discardableResult
-    func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool {
-        queue.sync { self.trySaveManifest(manifest) }
-    }
-
-    func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {
-        queue.async {
-            if !self.trySaveManifest(manifest) {
-                self.onError("workspace manifest async save failed")
-            }
-        }
-    }
-
-    func writeShellStateSync(_ state: ShellStateSnapshot) {
-        queue.sync { self.stateStore.save(state) }
-    }
-
-    func writeShellStateAsync(_ state: ShellStateSnapshot) {
-        queue.async { self.stateStore.save(state) }
-    }
-
-    /// Returns `true` on success (or when there is no manifest store to write to).
-    private func trySaveManifest(_ manifest: ShellContentWorkspaceManifest) -> Bool {
-        guard let manifestStore else { return true }
-        do {
-            try manifestStore.save(manifest)
-            return true
-        } catch {
-            return false
-        }
-    }
-}
-
 /// Debounce seam for coalescing high-frequency restore-content flush requests.
 /// Injected so tests can fire the pending flush deterministically.
 protocol ManifestFlushScheduling: AnyObject {
@@ -147,7 +74,7 @@ struct ShellWorkspaceManifestStore {
         now: Date
     ) throws -> ShellWorkspaceManifestLoadResult {
         if !fileManager.fileExists(atPath: manifestURL.path) {
-            let manifest = ShellContentWorkspaceManifest.defaultManifest(
+            let manifest = try ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now
@@ -156,55 +83,77 @@ struct ShellWorkspaceManifestStore {
             return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .createdDefault)
         }
 
+        // Only a genuinely unreadable/corrupt manifest should be quarantined. A manifest that
+        // decodes cleanly but fails *migration* (e.g. the shell-core FFI dylib is missing or has
+        // an ABI mismatch) must not be moved aside; that would silently discard the user's valid
+        // saved workspace. Such failures propagate while the manifest stays in place.
+        let data: Data
         do {
-            let data = try Data(contentsOf: manifestURL)
-            if let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data) {
-                guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion,
-                      manifest.contentContractVersion == ShellContentWorkspaceManifest.currentContentContractVersion
-                else {
-                    throw DecodingError.dataCorrupted(
-                        DecodingError.Context(
-                            codingPath: [],
-                            debugDescription: "Unsupported shell workspace manifest schema"
-                        )
-                    )
-                }
-                return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
-            }
-
-            let legacyManifest = try Self.decoder.decode(ShellWorkspaceManifest.self, from: data)
-            guard legacyManifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion else {
-                throw DecodingError.dataCorrupted(
-                    DecodingError.Context(
-                        codingPath: [],
-                        debugDescription: "Unsupported legacy shell workspace manifest schema"
-                    )
-                )
-            }
-            let migratedManifest = legacyManifest.migratingTerminalRestoreSnapshotsToContentContainers()
-            try save(migratedManifest)
-            return ShellWorkspaceManifestLoadResult(
-                manifest: migratedManifest,
-                recovery: .migratedLegacyTerminalManifest
-            )
+            data = try Data(contentsOf: manifestURL)
         } catch {
-            let corruptURL = quarantineURL(now: now)
-            if fileManager.fileExists(atPath: corruptURL.path) {
-                try fileManager.removeItem(at: corruptURL)
-            }
-            try fileManager.moveItem(at: manifestURL, to: corruptURL)
-
-            let manifest = ShellContentWorkspaceManifest.defaultManifest(
+            return try quarantineCorruptManifest(
                 windowID: windowID,
                 defaultWorkingDirectory: defaultWorkingDirectory,
                 now: now
             )
-            try save(manifest)
-            return ShellWorkspaceManifestLoadResult(
-                manifest: manifest,
-                recovery: .quarantinedCorruptFile(corruptURL)
+        }
+
+        if let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data) {
+            guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion,
+                  manifest.contentContractVersion == ShellContentWorkspaceManifest.currentContentContractVersion
+            else {
+                return try quarantineCorruptManifest(
+                    windowID: windowID,
+                    defaultWorkingDirectory: defaultWorkingDirectory,
+                    now: now
+                )
+            }
+            return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
+        }
+
+        guard let legacyManifest = try? Self.decoder.decode(ShellWorkspaceManifest.self, from: data),
+              legacyManifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion
+        else {
+            return try quarantineCorruptManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
             )
         }
+
+        // Decoded a valid legacy manifest; migration failures here are infrastructure errors and
+        // propagate without quarantining the original file.
+        let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
+            legacyManifest
+        )
+        try save(migratedManifest)
+        return ShellWorkspaceManifestLoadResult(
+            manifest: migratedManifest,
+            recovery: .migratedLegacyTerminalManifest
+        )
+    }
+
+    private func quarantineCorruptManifest(
+        windowID: String,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) throws -> ShellWorkspaceManifestLoadResult {
+        let corruptURL = quarantineURL(now: now)
+        if fileManager.fileExists(atPath: corruptURL.path) {
+            try fileManager.removeItem(at: corruptURL)
+        }
+        try fileManager.moveItem(at: manifestURL, to: corruptURL)
+
+        let manifest = try ShellCoreFFIAdapter.shared.defaultContentWorkspaceManifest(
+            windowID: windowID,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
+        try save(manifest)
+        return ShellWorkspaceManifestLoadResult(
+            manifest: manifest,
+            recovery: .quarantinedCorruptFile(corruptURL)
+        )
     }
 
     func save(_ manifest: ShellContentWorkspaceManifest) throws {

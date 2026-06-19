@@ -9,6 +9,8 @@ TEST_BINARY="${BUILD_DIR}/shell-runtime-metadata-tests"
 
 mkdir -p "$MODULE_CACHE_DIR"
 
+cargo build -p alan-shell-core-ffi
+
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
@@ -17,21 +19,39 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationCommand.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/ShellSidebarSpaceSliderLayout.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellModel.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellControlFilePoller.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellActionCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellClipboardWriter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellContentRenderingRegistry.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIActionAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIControlAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIEnvelope.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFILoader.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManifestAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIMaterialization.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIReducerAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFISettingsAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFITerminalProfileAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellDiagnostics.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellEventStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPlatformMetadataPreserver.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPerformanceDiagnostics.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPublishedStateMerger.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellReducerCommandCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellSocketServer.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPaneProjectionService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPersistenceWriter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellStatePersistenceStore.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
@@ -49,4 +69,5 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata.swift" \
     -o "$TEST_BINARY"
 
-"$TEST_BINARY"
+ALAN_SHELL_CORE_FFI_LIBRARY="$REPO_ROOT/target/debug/libalan_shell_core_ffi.dylib" \
+    "$TEST_BINARY"

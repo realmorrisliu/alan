@@ -933,9 +933,44 @@ require_pattern \
     "shell host startup must have a workspace-manifest restore path"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.pruningExpiredTabs" \
+    "workspace-manifest startup pruning must use shell-core authority"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.materializeContentWorkspaceManifest" \
+    "workspace-manifest startup must materialize shell state through shell-core authority"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "Disable manifest persistence for this recovery controller" \
+    "workspace-manifest shell-core failure recovery must not overwrite the saved manifest"
+
+reject_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
-    "ShellWorkspaceMaterializer\\.materialize" \
-    "workspace-manifest startup must materialize shell state from the manifest"
+    "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \
+    "workspace-manifest startup must not make shell-core manifest authority optional"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \
+    "workspace-manifest startup must not make shell-core manifest authority optional"
+
+reject_pattern \
+    "clients/apple/alan-macos/ShellHostController.swift" \
+    "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
+    "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
+    "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
+    "migratingTerminalRestoreSnapshotsToContentContainers" \
+    "legacy workspace manifest migration must not fall back to the Swift migration helper"
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
@@ -1139,7 +1174,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
-    "enum ShellWorkspaceCommand: String, CaseIterable, Identifiable" \
+    "enum ShellWorkspaceCommand: String, (Codable, )?CaseIterable, Identifiable" \
     "shell workspace commands must remain a centralized shared vocabulary"
 
 require_pattern \
@@ -1299,8 +1334,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "ShellActionRegistry\\.standard\\.keyboardAction" \
-    "terminal keyboard shortcuts must map through the shared shell action registry"
+    "ShellCoreFFIAdapter\\.shared\\.keyboardAction" \
+    "terminal keyboard shortcuts must map through the Rust-backed shared shell action registry"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
@@ -2378,14 +2413,44 @@ require_pattern \
     "release assembly must build the embedded CLI for the explicit Apple Silicon target"
 
 require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ALAN_SHELL_CORE_FFI_CARGO_TARGET" \
+    "shell-core FFI Xcode build must allow the release target to pin Cargo's target triple"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "aarch64-apple-darwin" \
+    "shell-core FFI Xcode build must map arm64 to the Apple Silicon Rust target"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "CARGO_BUILD_ARGS=.*--target \"\\\$CARGO_BUILD_TARGET\"" \
+    "shell-core FFI Xcode build must pass Cargo an explicit target triple"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "\\$\\(SRCROOT\\)/scripts/build-shell-core-ffi-dylib\\.sh" \
+    "Xcode shell-core FFI build must declare the external script as a sandbox input"
+
+require_pattern \
     "scripts/assemble-release-app.sh" \
     "CARGO_RELEASE_BIN" \
     "release assembly must copy the target-specific Cargo release binary"
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "ALAN_SHELL_CORE_FFI_CARGO_TARGET=\"\\\$CARGO_BUILD_TARGET\"" \
+    "release assembly must pin the shell-core FFI dylib to the Apple Silicon Rust target"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "thin_macho_to_arm64 \"\\\$EMBEDDED_BIN_DIR/\\\$ALAN_CLI_NAME\"" \
     "release assembly must verify the embedded CLI is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release assembly must verify the shell-core FFI dylib is arm64-only before signing"
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
@@ -2406,6 +2471,16 @@ require_pattern \
     "scripts/assemble-release-app.sh" \
     "Signing Sparkle framework and helper" \
     "release assembly must sign Sparkle nested code before the final app bundle"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "sign_path \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release assembly must sign the shell-core FFI dylib before the final app bundle"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "/usr/bin/codesign" \
+    "Xcode shell-core FFI build must sign the copied dylib when Xcode signing is enabled"
 
 require_pattern \
     "scripts/app-bundle-paths.sh" \
@@ -2431,6 +2506,16 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "require_arm64_macho \"\\\$ALAN_BIN\"" \
     "release app validation must reject non-arm64 embedded CLI binaries"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_arm64_macho \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release app validation must reject non-arm64 shell-core FFI dylibs"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_developer_id_signature \"\\\$SHELL_CORE_FFI_DYLIB\"" \
+    "release app validation must verify the shell-core FFI dylib signature"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \
@@ -2716,5 +2801,35 @@ reject_pattern \
     "clients/apple/alan-macos" \
     "NotificationCenter\\.default\\.post" \
     "control-plane text delivery must not rely on NotificationCenter broadcast success"
+
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "try\\? ShellCoreFFIAdapter\\.shared" \
+    "runtime shell-core calls must fail closed instead of using optional Swift fallback"
+
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "ShellActionRegistry\\.standard" \
+    "runtime shell actions must use shell-core instead of the Swift parity registry"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
+    "final class ShellActionRegistry|struct ShellActionDescriptor|enum ShellActionTargetKind|enum ShellResolvedActionTarget|standardActions" \
+    "Swift action registry fixture/resolver must live outside production Apple sources"
+
+require_pattern \
+    "clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
+    "Script/test parity support only" \
+    "Swift action registry parity fixture must live in explicit script support"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
+    "SHELL_MANIFEST_PARITY_FIXTURES|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers|ShellManifestLegacyMigration" \
+    "Swift manifest parity algorithms must live outside production Apple sources"
+
+require_pattern \
+    "clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift" \
+    "Script/test parity support only" \
+    "Swift manifest parity fixture must live in explicit script support"
 
 printf 'Shell contract checks passed.\n'

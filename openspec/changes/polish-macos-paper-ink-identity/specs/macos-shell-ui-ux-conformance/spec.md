@@ -34,6 +34,14 @@ adapts Space target widths to available sidebar space, supports every Space
 without an arbitrary count cap, and preserves preview-first scrub navigation
 without hover-driven geometry changes or cover-flow motion.
 
+#### Scenario: Scrubbing many Spaces
+- **WHEN** the user drags or scroll-scrubs across a sidebar with more Spaces
+  than can fit at the preferred target width
+- **THEN** the Space slider compresses targets within the continuous track
+  instead of hiding Spaces behind a fixed count limit
+- **AND** preview navigation updates without changing row geometry on hover
+  or introducing cover-flow-style motion
+
 ### Requirement: Empty Spaces render as workspace placeholders
 The default macOS shell SHALL render a selected Space with no mounted content
 as a centered workspace placeholder on the raised paper panel rather than as an

@@ -1,0 +1,478 @@
+//! Hand-written C ABI facade for `alan-shell-core`.
+//!
+//! This crate is intentionally separate from the pure Rust core. It exposes a
+//! small synchronous byte-envelope boundary for Swift and future platform
+//! adapters without shaping the core API around binding-generator constraints.
+
+use alan_shell_core::{
+    EnvelopeVersion, ManagedTerminalAccountSettingsSummary, ReducerError, ReducerOperation,
+    ShellActionId, ShellActionRegistry, ShellActionShortcut, ShellActionTarget,
+    ShellContentWorkspaceManifest, ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope,
+    ShellCoreRequestEnvelope, ShellCoreResponseEnvelope, ShellSettingsCapabilitiesSummary,
+    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsSummaryRows,
+    ShellWorkspaceManifest, TerminalExecutableAvailability, TerminalLaunchEnvironment,
+    TerminalLaunchIntent, TerminalProfileDocument, TerminalProfileEditor,
+    TerminalProfileEditorDraft, TerminalProfileSettingsSummary, TerminalProfileValidator,
+    WorkspaceState,
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+/// Current hand-written C ABI version.
+pub const ABI_VERSION: u32 = 1;
+
+/// Byte buffer returned by the C ABI.
+///
+/// Callers must release non-null buffers with `alan_shell_core_ffi_free_buffer`.
+#[repr(C)]
+pub struct AlanShellCoreByteBuffer {
+    /// Owned byte pointer.
+    pub ptr: *mut u8,
+    /// Byte length.
+    pub len: usize,
+}
+
+/// Returns the ABI version implemented by this dynamic library.
+#[unsafe(no_mangle)]
+pub extern "C" fn alan_shell_core_ffi_abi_version() -> u32 {
+    ABI_VERSION
+}
+
+/// Handles one JSON-encoded `ShellCoreRequestEnvelope` and returns a JSON
+/// `ShellCoreResponseEnvelope`.
+///
+/// # Safety
+///
+/// When `len` is non-zero, `ptr` must point to `len` readable bytes for the
+/// duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn alan_shell_core_ffi_handle_request(
+    ptr: *const u8,
+    len: usize,
+) -> AlanShellCoreByteBuffer {
+    if ptr.is_null() && len > 0 {
+        return owned_buffer(invalid_request_response("request pointer is null"));
+    }
+
+    let request = if len == 0 {
+        &[]
+    } else {
+        // SAFETY: The caller provides a pointer/length pair. The bytes are only
+        // borrowed for the duration of this function and copied into the
+        // response before returning.
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    };
+    owned_buffer(handle_request_bytes(request))
+}
+
+/// Handles one JSON request and writes the owned response pointer/length to
+/// out-parameters.
+///
+/// This exists for Swift dynamic loading, where C function pointers returning a
+/// custom struct are not representable as `@convention(c)` function types.
+///
+/// # Safety
+///
+/// When `len` is non-zero, `ptr` must point to `len` readable bytes for the
+/// duration of the call. `out_ptr` and `out_len` must be valid writable
+/// pointers. The returned pointer must be released with
+/// `alan_shell_core_ffi_free_bytes`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn alan_shell_core_ffi_handle_request_out(
+    ptr: *const u8,
+    len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> u8 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return 0;
+    }
+
+    // SAFETY: This function has the same pointer/length contract as
+    // `alan_shell_core_ffi_handle_request`.
+    let buffer = unsafe { alan_shell_core_ffi_handle_request(ptr, len) };
+    // SAFETY: The caller provided valid writable out-pointers.
+    unsafe {
+        *out_ptr = buffer.ptr;
+        *out_len = buffer.len;
+    }
+    1
+}
+
+/// Frees a byte buffer returned by `alan_shell_core_ffi_handle_request`.
+#[unsafe(no_mangle)]
+pub extern "C" fn alan_shell_core_ffi_free_buffer(buffer: AlanShellCoreByteBuffer) {
+    if buffer.ptr.is_null() {
+        return;
+    }
+    free_owned_bytes(buffer.ptr, buffer.len);
+}
+
+/// Frees a byte buffer returned by `alan_shell_core_ffi_handle_request_out`.
+#[unsafe(no_mangle)]
+pub extern "C" fn alan_shell_core_ffi_free_bytes(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    free_owned_bytes(ptr, len);
+}
+
+fn free_owned_bytes(ptr: *mut u8, len: usize) {
+    // SAFETY: `owned_buffer` creates buffers from boxed `[u8]` values with this
+    // exact pointer and length. Reconstructing the boxed slice drops it once.
+    unsafe {
+        let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
+        drop(Box::from_raw(slice));
+    }
+}
+
+/// Handles one request envelope as bytes.
+pub fn handle_request_bytes(request: &[u8]) -> Vec<u8> {
+    let request: ShellCoreRequestEnvelope = match serde_json::from_slice(request) {
+        Ok(request) => request,
+        Err(error) => {
+            return invalid_request_response(format!("failed to decode request envelope: {error}"));
+        }
+    };
+
+    let response = match request.ensure_supported() {
+        Ok(()) => dispatch_request(request),
+        Err(error) => ShellCoreResponseEnvelope::error(request.id, error),
+    };
+    serialize_response(&response)
+}
+
+fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvelope {
+    let request_id = request.id;
+    let result = match request.operation.as_str() {
+        "facade.describe" => Ok(json!({
+            "abi_version": ABI_VERSION,
+            "binding": "c_abi_bytes",
+            "schema_version": EnvelopeVersion::CURRENT,
+            "generated_bindings": false,
+            "supported_operations": supported_operations(),
+        })),
+        "manifest.default_manifest" => default_manifest(request.payload),
+        "manifest.materialize" => materialize_manifest(request.payload),
+        "manifest.pruning_expired_tabs" => pruning_expired_tabs(request.payload),
+        "manifest.migrate_legacy_terminal_manifest" => {
+            migrate_legacy_terminal_manifest(request.payload)
+        }
+        "reducer.apply" => apply_reducer(request.payload),
+        "control.handle" => handle_control(request.payload),
+        "actions.standard_descriptors" => standard_action_descriptors(request.payload),
+        "actions.default_shortcut" => default_action_shortcut(request.payload),
+        "actions.keyboard_action" => keyboard_action(request.payload),
+        "actions.execute" => execute_action(request.payload),
+        "terminal_profile.validate" => validate_terminal_profile(request.payload),
+        "terminal_profile.make_definition" => make_terminal_profile_definition(request.payload),
+        "terminal_profile.resolve_launch_intent" => resolve_terminal_launch_intent(request.payload),
+        "settings.terminal_profile_rows" => terminal_profile_rows(request.payload),
+        "settings.managed_terminal_account_rows" => managed_terminal_account_rows(request.payload),
+        "settings.capability_rows" => capability_rows(request.payload),
+        "settings.local_rows" => local_rows(request.payload),
+        operation => Err(ShellCoreErrorCode::UnknownOperation
+            .envelope("unknown shell-core facade operation")
+            .with_detail("operation", json!(operation))),
+    };
+
+    match result {
+        Ok(payload) => ShellCoreResponseEnvelope::success(request_id, payload),
+        Err(error) => ShellCoreResponseEnvelope::error(request_id, error),
+    }
+}
+
+fn supported_operations() -> &'static [&'static str] {
+    &[
+        "facade.describe",
+        "manifest.default_manifest",
+        "manifest.materialize",
+        "manifest.pruning_expired_tabs",
+        "manifest.migrate_legacy_terminal_manifest",
+        "reducer.apply",
+        "control.handle",
+        "actions.standard_descriptors",
+        "actions.default_shortcut",
+        "actions.keyboard_action",
+        "actions.execute",
+        "terminal_profile.validate",
+        "terminal_profile.make_definition",
+        "terminal_profile.resolve_launch_intent",
+        "settings.terminal_profile_rows",
+        "settings.managed_terminal_account_rows",
+        "settings.capability_rows",
+        "settings.local_rows",
+    ]
+}
+
+fn default_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: DefaultManifestInput = decode_payload(payload, "manifest.default_manifest")?;
+    Ok(json!({
+        "manifest": ShellContentWorkspaceManifest::default_manifest(
+            &input.window_id,
+            &input.default_working_directory,
+            &input.now,
+        ),
+    }))
+}
+
+fn materialize_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: MaterializeManifestInput = decode_payload(payload, "manifest.materialize")?;
+    Ok(json!({
+        "state": input
+            .manifest
+            .materialize(&input.default_working_directory, &input.now),
+    }))
+}
+
+fn pruning_expired_tabs(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: PruningExpiredTabsInput = decode_payload(payload, "manifest.pruning_expired_tabs")?;
+    Ok(json!({
+        "manifest": input.manifest.pruning_expired_tabs(&input.now, input.ttl_seconds),
+    }))
+}
+
+fn migrate_legacy_terminal_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: LegacyManifestInput =
+        decode_payload(payload, "manifest.migrate_legacy_terminal_manifest")?;
+    Ok(json!({
+        "manifest": input
+            .manifest
+            .migrating_terminal_restore_snapshots_to_content_containers(),
+    }))
+}
+
+fn apply_reducer(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ReducerApplyInput = decode_payload(payload, "reducer.apply")?;
+    Ok(match input.state.reduce(input.operation) {
+        Ok(result) => json!({
+            "status": "ok",
+            "result": result,
+        }),
+        Err(error) => reducer_error_payload(error, input.state),
+    })
+}
+
+fn handle_control(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ControlHandleInput = decode_payload(payload, "control.handle")?;
+    Ok(json!({
+        "result": input.state.reduce_control(input.command),
+    }))
+}
+
+fn standard_action_descriptors(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let _: EmptyInput = decode_payload(payload, "actions.standard_descriptors")?;
+    let registry = ShellActionRegistry::standard();
+    Ok(json!({
+        "actions": registry.actions(),
+    }))
+}
+
+fn default_action_shortcut(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ActionDefaultShortcutInput = decode_payload(payload, "actions.default_shortcut")?;
+    let registry = ShellActionRegistry::standard();
+    Ok(json!({
+        "shortcut": registry.default_shortcut(input.id, &input.target),
+    }))
+}
+
+fn keyboard_action(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ActionKeyboardInput = decode_payload(payload, "actions.keyboard_action")?;
+    let registry = ShellActionRegistry::standard();
+    Ok(json!({
+        "keyboard_action": registry.keyboard_action(&input.shortcut),
+    }))
+}
+
+fn execute_action(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ActionExecuteInput = decode_payload(payload, "actions.execute")?;
+    let registry = ShellActionRegistry::standard();
+    Ok(json!({
+        "result": registry.execute(input.id, &input.target, &input.state),
+    }))
+}
+
+fn validate_terminal_profile(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let document: TerminalProfileDocument = decode_payload(payload, "terminal_profile.validate")?;
+    let result = TerminalProfileValidator::validate(&document);
+    Ok(json!({
+        "is_valid": result.is_valid(),
+        "errors": result.errors,
+    }))
+}
+
+fn make_terminal_profile_definition(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let draft: TerminalProfileEditorDraft =
+        decode_payload(payload, "terminal_profile.make_definition")?;
+    let result = TerminalProfileEditor::make_definition(draft);
+    Ok(json!({
+        "is_valid": result.is_valid(),
+        "definition": result.definition,
+        "errors": result.errors,
+    }))
+}
+
+fn resolve_terminal_launch_intent(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: TerminalLaunchIntentInput =
+        decode_payload(payload, "terminal_profile.resolve_launch_intent")?;
+    Ok(json!({
+        "intent": TerminalLaunchIntent::resolve(
+            input.terminal_profile_reference.as_deref(),
+            input.terminal_profiles.as_ref(),
+            &input.availability,
+            &input.environment,
+        ),
+    }))
+}
+
+fn terminal_profile_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let summary: TerminalProfileSettingsSummary =
+        decode_payload(payload, "settings.terminal_profile_rows")?;
+    Ok(json!({
+        "rows": ShellSettingsSummaryRows::terminal_profile_rows(&summary),
+    }))
+}
+
+fn managed_terminal_account_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let summary: ManagedTerminalAccountSettingsSummary =
+        decode_payload(payload, "settings.managed_terminal_account_rows")?;
+    Ok(json!({
+        "rows": ShellSettingsSummaryRows::managed_terminal_account_rows(&summary),
+    }))
+}
+
+fn capability_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let summary: ShellSettingsCapabilitiesSummary =
+        decode_payload(payload, "settings.capability_rows")?;
+    Ok(json!({
+        "rows": ShellSettingsSummaryRows::capability_rows(&summary),
+    }))
+}
+
+fn local_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: LocalRowsInput = decode_payload(payload, "settings.local_rows")?;
+    Ok(json!({
+        "rows": ShellSettingsSummaryRows::local_rows(&input.local, &input.diagnostics),
+    }))
+}
+
+fn decode_payload<T: for<'de> Deserialize<'de>>(
+    payload: Value,
+    operation: &'static str,
+) -> Result<T, ShellCoreErrorEnvelope> {
+    serde_json::from_value(payload).map_err(|error| {
+        ShellCoreErrorCode::InvalidPayload
+            .envelope("invalid shell-core facade payload")
+            .with_detail("operation", json!(operation))
+            .with_detail("message", json!(error.to_string()))
+    })
+}
+
+fn invalid_request_response(message: impl Into<String>) -> Vec<u8> {
+    let response = ShellCoreResponseEnvelope::error(
+        Uuid::nil(),
+        ShellCoreErrorCode::InvalidPayload.envelope(message),
+    );
+    serialize_response(&response)
+}
+
+fn serialize_response(response: &ShellCoreResponseEnvelope) -> Vec<u8> {
+    serde_json::to_vec(response).unwrap_or_else(|error| {
+        let fallback = ShellCoreResponseEnvelope::error(
+            response.request_id,
+            ShellCoreErrorCode::InvalidPayload
+                .envelope("failed to encode shell-core facade response")
+                .with_detail("message", json!(error.to_string())),
+        );
+        serde_json::to_vec(&fallback).expect("fallback shell-core response envelope must serialize")
+    })
+}
+
+fn owned_buffer(bytes: Vec<u8>) -> AlanShellCoreByteBuffer {
+    let len = bytes.len();
+    let ptr = Box::into_raw(bytes.into_boxed_slice()) as *mut u8;
+    AlanShellCoreByteBuffer { ptr, len }
+}
+
+fn reducer_error_payload(error: ReducerError, state: WorkspaceState) -> Value {
+    json!({
+        "status": "error",
+        "error_code": error.code,
+        "error_message": error.message,
+        "state": state,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct EmptyInput {}
+
+#[derive(Debug, Deserialize)]
+struct DefaultManifestInput {
+    window_id: String,
+    default_working_directory: String,
+    now: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MaterializeManifestInput {
+    manifest: ShellContentWorkspaceManifest,
+    default_working_directory: String,
+    now: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PruningExpiredTabsInput {
+    manifest: ShellContentWorkspaceManifest,
+    now: String,
+    ttl_seconds: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyManifestInput {
+    manifest: ShellWorkspaceManifest,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReducerApplyInput {
+    state: WorkspaceState,
+    operation: ReducerOperation,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControlHandleInput {
+    state: WorkspaceState,
+    command: ShellControlCommand,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActionDefaultShortcutInput {
+    id: ShellActionId,
+    target: ShellActionTarget,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActionKeyboardInput {
+    shortcut: ShellActionShortcut,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActionExecuteInput {
+    state: WorkspaceState,
+    id: ShellActionId,
+    target: ShellActionTarget,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalLaunchIntentInput {
+    terminal_profile_reference: Option<String>,
+    terminal_profiles: Option<TerminalProfileDocument>,
+    availability: TerminalExecutableAvailability,
+    environment: TerminalLaunchEnvironment,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalRowsInput {
+    local: ShellSettingsLocalSummary,
+    diagnostics: ShellSettingsDiagnosticsSummary,
+}

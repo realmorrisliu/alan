@@ -6,6 +6,8 @@ members = [
     "crates/llm",
     "crates/runtime",
     "crates/runtime/skills/swebench/tooling",
+    "crates/shell-core",
+    "crates/shell-core-ffi",
     "crates/tools",
     "crates/tui",
     "crates/alan",
@@ -110,5 +112,7 @@ alan-protocol = { path = "crates/protocol" }
 alan-llm = { path = "crates/llm" }
 alan-runtime = { path = "crates/runtime" }
 alan-swebench-tooling = { path = "crates/runtime/skills/swebench/tooling" }
+alan-shell-core = { path = "crates/shell-core" }
+alan-shell-core-ffi = { path = "crates/shell-core-ffi" }
 alan-tools = { path = "crates/tools" }
 alan-terminal-ui = { path = "crates/tui" }

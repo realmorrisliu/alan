@@ -26,7 +26,7 @@ struct AlanCommandCandidate: Identifiable, Equatable {
     var id: String { "\(label):\(path)" }
 }
 
-enum AlanLaunchStrategy: String, Equatable {
+enum AlanLaunchStrategy: String, Codable, Equatable {
     case shellCommandEnv = "shell_command_env"
     case loginShellOverride = "login_shell_override"
     case loginShellEnv = "login_shell_env"
@@ -34,6 +34,10 @@ enum AlanLaunchStrategy: String, Equatable {
     case terminalProfileSudoUser = "terminal_profile_sudo_user"
     case terminalProfileSudoRoot = "terminal_profile_sudo_root"
     case terminalProfileCustomCommand = "terminal_profile_custom_command"
+}
+
+private enum ShellCoreTerminalProfileResolutionError: Error {
+    case unsupportedStrategy(String)
 }
 
 struct AlanCommandResolution: Equatable {
@@ -49,6 +53,7 @@ struct AlanCommandResolution: Equatable {
     let candidates: [AlanCommandCandidate]
     let terminalProfile: TerminalProfileDefinition?
     let terminalProfileState: TerminalProfileResolutionState
+    let terminalProfileEnvironment: [String: String]
 
     init(
         strategy: AlanLaunchStrategy,
@@ -62,7 +67,8 @@ struct AlanCommandResolution: Equatable {
         repoRoot: String?,
         candidates: [AlanCommandCandidate],
         terminalProfile: TerminalProfileDefinition? = nil,
-        terminalProfileState: TerminalProfileResolutionState = .absent
+        terminalProfileState: TerminalProfileResolutionState = .absent,
+        terminalProfileEnvironment: [String: String] = [:]
     ) {
         self.strategy = strategy
         self.executablePath = executablePath
@@ -76,6 +82,7 @@ struct AlanCommandResolution: Equatable {
         self.candidates = candidates
         self.terminalProfile = terminalProfile
         self.terminalProfileState = terminalProfileState
+        self.terminalProfileEnvironment = terminalProfileEnvironment
     }
 
     var launchCommandString: String {
@@ -110,7 +117,8 @@ struct AlanCommandResolution: Equatable {
             repoRoot: repoRoot,
             candidates: candidates,
             terminalProfile: terminalProfile,
-            terminalProfileState: terminalProfileState
+            terminalProfileState: terminalProfileState,
+            terminalProfileEnvironment: terminalProfileEnvironment
         )
     }
 
@@ -153,137 +161,43 @@ struct AlanCommandResolution: Equatable {
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AlanCommandResolution {
-        let overrideCommand = environment["ALAN_SHELL_BOOT_COMMAND"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let overrideShell = environment["ALAN_SHELL_LOGIN_SHELL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if overrideCommand?.isEmpty == false || overrideShell?.isEmpty == false {
-            return resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-        }
-
-        let document = terminalProfiles ?? .fallback
-        let requestedID = terminalProfileReference?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let profile =
-            requestedID.flatMap(document.profile(id:))
-            ?? (requestedID?.isEmpty == false ? nil : document.defaultProfile)
-        guard let profile else {
-            let fallback = resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-            return fallback.withTerminalProfile(
-                nil,
-                state: requestedID.map { .missing(requestedID: $0) } ?? .absent
+        do {
+            let intent = try ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent(
+                terminalProfileReference: terminalProfileReference,
+                terminalProfiles: terminalProfiles,
+                executablePaths: shellCoreExecutablePaths(fileManager: fileManager, environment: environment),
+                environment: shellCoreLaunchEnvironment(environment, fileManager: fileManager)
             )
-        }
-
-        switch profile.launch {
-        case .loginShell:
-            return resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-                .withTerminalProfile(profile, state: .resolved)
-        case .sudoUser(let unixUser):
-            return profileCommand(
-                profile,
-                strategy: .terminalProfileSudoUser,
-                executablePath: "/usr/bin/sudo",
-                arguments: ["-iu", unixUser],
-                fileManager: fileManager,
-                environment: environment
-            )
-        case .sudoRoot:
-            return profileCommand(
-                profile,
-                strategy: .terminalProfileSudoRoot,
-                executablePath: "/usr/bin/sudo",
-                arguments: ["-i"],
-                fileManager: fileManager,
-                environment: environment
-            )
-        case .customCommand(let command):
-            let executablePath = "/bin/zsh"
-            guard fileManager.isExecutableFile(atPath: executablePath) else {
-                let fallback = resolve(for: launchTarget, fileManager: fileManager, environment: environment)
-                return fallback.withTerminalProfile(
-                    profile,
-                    state: .unavailable(requestedID: profile.id, reason: "missing_executable")
-                )
-            }
-            return AlanCommandResolution(
-                strategy: .terminalProfileCustomCommand,
-                executablePath: executablePath,
-                launchPath: executablePath,
-                arguments: ["-lc", command],
-                bootCommand: command,
-                surfaceCommand: command,
-                summary: "Launching pane with Terminal Profile \(profile.title)",
-                detail: profile.redactedDisplayDetail,
+            guard let resolution = commandResolution(
+                from: intent,
                 repoRoot: inferredAlanRepoRoot(),
-                candidates: profileCandidates(
-                    profile,
-                    executablePath: executablePath,
+                candidates: shellCoreCandidates(
+                    for: intent,
                     fileManager: fileManager,
                     environment: environment
-                ),
-                terminalProfile: profile,
-                terminalProfileState: .resolved
-            )
-        }
-    }
-
-    private func withTerminalProfile(
-        _ profile: TerminalProfileDefinition?,
-        state: TerminalProfileResolutionState
-    ) -> AlanCommandResolution {
-        AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: launchPath,
-            arguments: arguments,
-            bootCommand: bootCommand,
-            surfaceCommand: surfaceCommand,
-            summary: summary,
-            detail: detail,
-            repoRoot: repoRoot,
-            candidates: candidates,
-            terminalProfile: profile,
-            terminalProfileState: state
-        )
-    }
-
-    private static func profileCommand(
-        _ profile: TerminalProfileDefinition,
-        strategy: AlanLaunchStrategy,
-        executablePath: String,
-        arguments: [String],
-        fileManager: FileManager,
-        environment: [String: String]
-    ) -> AlanCommandResolution {
-        guard fileManager.isExecutableFile(atPath: executablePath) else {
-            let fallback = resolve(for: .shell, fileManager: fileManager, environment: environment)
-            return fallback.withTerminalProfile(
-                profile,
-                state: .unavailable(requestedID: profile.id, reason: "missing_executable")
-            )
-        }
-        let bootCommand = ([executablePath] + arguments)
-            .map(AlanShellBootProfile.shellQuoted)
-            .joined(separator: " ")
-        return AlanCommandResolution(
-            strategy: strategy,
-            executablePath: executablePath,
-            launchPath: executablePath,
-            arguments: arguments,
-            bootCommand: bootCommand,
-            surfaceCommand: bootCommand,
-            summary: "Launching pane with Terminal Profile \(profile.title)",
-            detail: profile.redactedDisplayDetail,
-            repoRoot: inferredAlanRepoRoot(),
-            candidates: profileCandidates(
-                profile,
-                executablePath: executablePath,
+                )
+            ) else {
+                return shellCoreTerminalProfileFailureResolution(
+                    terminalProfileReference: terminalProfileReference,
+                    fileManager: fileManager,
+                    error: ShellCoreTerminalProfileResolutionError.unsupportedStrategy(intent.strategy)
+                )
+            }
+            return resolution
+        } catch {
+            // With no explicit profile requested, the resolved launch is just a login shell, which
+            // the native resolver computes without shell-core. Fall back to it when shell-core
+            // cannot load so default terminals still launch a usable shell instead of an
+            // immediately-exiting failure command.
+            if terminalProfileReference == nil {
+                return resolveShell(fileManager: fileManager, environment: environment)
+            }
+            return shellCoreTerminalProfileFailureResolution(
+                terminalProfileReference: terminalProfileReference,
                 fileManager: fileManager,
-                environment: environment
-            ),
-            terminalProfile: profile,
-            terminalProfileState: .resolved
-        )
+                error: error
+            )
+        }
     }
 
     private static func profileCandidates(
@@ -311,6 +225,127 @@ struct AlanCommandResolution: Equatable {
         ]
     }
 
+    private static func shellCoreCandidates(
+        for intent: ShellCoreTerminalLaunchIntent,
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> [AlanCommandCandidate] {
+        switch AlanLaunchStrategy(rawValue: intent.strategy) {
+        case .terminalProfileSudoUser, .terminalProfileSudoRoot, .terminalProfileCustomCommand:
+            if let profile = intent.terminalProfile {
+                return profileCandidates(
+                    profile,
+                    executablePath: intent.executablePath ?? intent.launchPath,
+                    fileManager: fileManager,
+                    environment: environment
+                )
+            }
+        case .shellCommandEnv, .loginShellOverride, .loginShellEnv, .loginShellFallback, nil:
+            break
+        }
+        return shellResolutionCandidates(fileManager: fileManager, environment: environment)
+    }
+
+    private static func commandResolution(
+        from intent: ShellCoreTerminalLaunchIntent,
+        repoRoot: String?,
+        candidates: [AlanCommandCandidate]
+    ) -> AlanCommandResolution? {
+        guard let strategy = AlanLaunchStrategy(rawValue: intent.strategy) else {
+            return nil
+        }
+        return AlanCommandResolution(
+            strategy: strategy,
+            executablePath: intent.executablePath,
+            launchPath: intent.launchPath,
+            arguments: intent.arguments,
+            bootCommand: intent.bootCommand,
+            surfaceCommand: intent.surfaceCommand,
+            summary: intent.summary,
+            detail: intent.detail,
+            repoRoot: repoRoot,
+            candidates: candidates,
+            terminalProfile: intent.terminalProfile,
+            terminalProfileState: intent.resolvedTerminalProfileState,
+            terminalProfileEnvironment: intent.profileEnvironment
+        )
+    }
+
+    private static func shellCoreTerminalProfileFailureResolution(
+        terminalProfileReference: String?,
+        fileManager: FileManager,
+        error: Error
+    ) -> AlanCommandResolution {
+        let shellPath = "/bin/sh"
+        let message = "alan shell-core terminal profile resolution failed: \(error)"
+        let script = "printf '%s\\n' \(AlanShellBootProfile.shellQuoted(message)) >&2; exit 78"
+        let arguments = ["-lc", script]
+        let bootCommand = ([shellPath] + arguments)
+            .map(AlanShellBootProfile.shellQuoted)
+            .joined(separator: " ")
+        let requestedID = terminalProfileReference?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return AlanCommandResolution(
+            strategy: .loginShellFallback,
+            executablePath: fileManager.isExecutableFile(atPath: shellPath) ? shellPath : nil,
+            launchPath: shellPath,
+            arguments: arguments,
+            bootCommand: bootCommand,
+            surfaceCommand: script,
+            summary: "Terminal Profile unavailable",
+            detail: message,
+            repoRoot: inferredAlanRepoRoot(),
+            candidates: [
+                AlanCommandCandidate(
+                    label: "shell-core terminal profile resolution",
+                    path: "shell_core_unavailable",
+                    isPresent: false
+                ),
+                AlanCommandCandidate(
+                    label: "Failure shell",
+                    path: shellPath,
+                    isPresent: fileManager.isExecutableFile(atPath: shellPath)
+                ),
+            ],
+            terminalProfile: nil,
+            terminalProfileState: .unavailable(
+                requestedID: requestedID?.isEmpty == false ? requestedID! : "default",
+                reason: "shell_core_unavailable"
+            )
+        )
+    }
+
+    private static func shellCoreExecutablePaths(
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> Set<String> {
+        var paths = Set<String>()
+        for path in ["/usr/bin/sudo", "/bin/zsh", "/bin/bash", "/bin/sh"]
+            where fileManager.isExecutableFile(atPath: path)
+        {
+            paths.insert(path)
+        }
+        for key in ["ALAN_SHELL_LOGIN_SHELL", "SHELL"] {
+            if let path = normalizedExecutablePath(environment[key], fileManager: fileManager) {
+                paths.insert(path)
+            }
+        }
+        return paths
+    }
+
+    private static func shellCoreLaunchEnvironment(
+        _ environment: [String: String],
+        fileManager: FileManager
+    ) -> [String: String] {
+        var values = environment
+        for key in ["ALAN_SHELL_LOGIN_SHELL", "SHELL"] {
+            if let path = normalizedExecutablePath(environment[key], fileManager: fileManager) {
+                values[key] = path
+            }
+        }
+        return values
+    }
+
     private static func resolveShell(
         fileManager: FileManager,
         environment: [String: String]
@@ -331,28 +366,7 @@ struct AlanCommandResolution: Equatable {
             fileManager.isExecutableFile(atPath: $0)
         }
 
-        let candidates = [
-            AlanCommandCandidate(
-                label: "Env boot command",
-                path: customCommand ?? "(unset)",
-                isPresent: !(customCommand?.isEmpty ?? true)
-            ),
-            AlanCommandCandidate(
-                label: "Env login shell override",
-                path: environment["ALAN_SHELL_LOGIN_SHELL"] ?? "(unset)",
-                isPresent: shellOverride != nil
-            ),
-            AlanCommandCandidate(
-                label: "SHELL env",
-                path: environment["SHELL"] ?? "(unset)",
-                isPresent: envShell != nil
-            ),
-            AlanCommandCandidate(
-                label: "Fallback login shell",
-                path: fallbackShell ?? fallbackCandidates.joined(separator: ", "),
-                isPresent: fallbackShell != nil
-            ),
-        ]
+        let candidates = shellResolutionCandidates(fileManager: fileManager, environment: environment)
 
         if let customCommand, !customCommand.isEmpty {
             return AlanCommandResolution(
@@ -400,6 +414,49 @@ struct AlanCommandResolution: Equatable {
             repoRoot: repoRoot,
             candidates: candidates
         )
+    }
+
+    private static func shellResolutionCandidates(
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> [AlanCommandCandidate] {
+        let customCommand = environment["ALAN_SHELL_BOOT_COMMAND"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let shellOverride = normalizedExecutablePath(
+            environment["ALAN_SHELL_LOGIN_SHELL"],
+            fileManager: fileManager
+        )
+        let envShell = normalizedExecutablePath(
+            environment["SHELL"],
+            fileManager: fileManager
+        )
+        let fallbackCandidates = ["/bin/zsh", "/bin/bash", "/bin/sh"]
+        let fallbackShell = fallbackCandidates.first {
+            fileManager.isExecutableFile(atPath: $0)
+        }
+
+        return [
+            AlanCommandCandidate(
+                label: "Env boot command",
+                path: customCommand ?? "(unset)",
+                isPresent: !(customCommand?.isEmpty ?? true)
+            ),
+            AlanCommandCandidate(
+                label: "Env login shell override",
+                path: environment["ALAN_SHELL_LOGIN_SHELL"] ?? "(unset)",
+                isPresent: shellOverride != nil
+            ),
+            AlanCommandCandidate(
+                label: "SHELL env",
+                path: environment["SHELL"] ?? "(unset)",
+                isPresent: envShell != nil
+            ),
+            AlanCommandCandidate(
+                label: "Fallback login shell",
+                path: fallbackShell ?? fallbackCandidates.joined(separator: ", "),
+                isPresent: fallbackShell != nil
+            ),
+        ]
     }
 
     private static func directShell(
@@ -677,6 +734,9 @@ struct AlanShellBootProfile: Equatable {
             environment["ALAN_TERMINAL_PROFILE_ID"] = terminalProfile.id
             environment["ALAN_TERMINAL_PROFILE_KIND"] = terminalProfile.launch.kind.rawValue
             environment["ALAN_TERMINAL_PROFILE_TITLE"] = terminalProfile.title
+        }
+        for (key, value) in resolvedCommand.terminalProfileEnvironment {
+            environment[key] = value
         }
 
         if let executablePath = resolvedCommand.executablePath {

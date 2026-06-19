@@ -38,15 +38,21 @@ struct ShellAutomationCreateTabRequest: Equatable {
 struct ShellAutomationPaneSplitRequest: Equatable {
     let paneID: String
     let placement: ShellPaneSplitDirection
+    let title: String?
+    let workingDirectory: String?
     let terminalProfileID: String?
 
     init(
         paneID: String,
         placement: ShellPaneSplitDirection,
+        title: String? = nil,
+        workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) {
         self.paneID = paneID
         self.placement = placement
+        self.title = title
+        self.workingDirectory = workingDirectory
         self.terminalProfileID = terminalProfileID
     }
 }

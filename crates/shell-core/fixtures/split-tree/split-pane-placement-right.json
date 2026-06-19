@@ -1,0 +1,45 @@
+{
+  "description" : "Split right creates a vertical branch and places the new pane after the target.",
+  "expected" : {
+    "pane_ids" : [
+      "pane_1",
+      "pane_2"
+    ],
+    "tree" : {
+      "children" : [
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_1",
+          "pane_id" : "pane_1"
+        },
+        {
+          "kind" : "pane",
+          "node_id" : "node_pane_2",
+          "pane_id" : "pane_2"
+        }
+      ],
+      "direction" : "vertical",
+      "kind" : "split",
+      "node_id" : "node_split",
+      "ratio" : 0.5
+    }
+  },
+  "id" : "split-tree\/split-pane-placement-right",
+  "input" : {
+    "tree" : {
+      "kind" : "pane",
+      "node_id" : "node_pane_1",
+      "pane_id" : "pane_1"
+    }
+  },
+  "kind" : "split_tree",
+  "operation" : {
+    "new_leaf_node_id" : "node_pane_2",
+    "new_pane_id" : "pane_2",
+    "placement" : "right",
+    "split_node_id" : "node_split",
+    "target_pane_id" : "pane_1",
+    "type" : "split_pane"
+  },
+  "source" : "swift"
+}

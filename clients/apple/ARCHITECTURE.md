@@ -82,6 +82,143 @@ The accepted target under `clients/apple/alan-macos` is:
 - `Support/`: design tokens, formatting helpers, window placement, AppKit
   adapters, and small utilities.
 
+## Shell Core Boundary
+
+Reusable shell workspace semantics are migrating to the platform-neutral
+`alan-shell-core` Rust crate. The crate owns the durable domain contract for
+Spaces, Tabs, PaneSlots, ContentInstances, split trees, reducers, manifest
+semantics, shared actions, control-command outcomes, Terminal Profile launch
+intent resolution, settings summaries, coarse request/response envelopes, and
+Swift-exported parity fixture comparison.
+
+The Apple client remains the platform adapter. It owns SwiftUI/AppKit
+presentation, windowing, menu and keyboard rendering, terminal runtime
+attachment, Ghostty/AppKit bridge objects, file reads and writes, clipboard,
+file pickers, Sparkle/update UI, diagnostics presentation, App Intents, and
+privileged macOS account effects.
+
+Swift shell model and controller files may keep compatibility wrappers while a
+domain module is being migrated, but once the corresponding shell-core module
+has parity fixtures and adapter tests, new reusable domain behavior belongs in
+Rust rather than a second Swift implementation.
+
+The first Swift integration facade uses a hand-written synchronous C ABI over
+versioned JSON byte envelopes, implemented in `alan-shell-core-ffi`. This keeps
+the pure Rust core binding-agnostic and avoids generated Swift/header/modulemap
+churn until a later slice explicitly introduces a binding generator such as
+UniFFI. The Swift adapter owns request encoding, response decoding, stable error
+mapping, ABI-version checks, and schema-version mismatch handling.
+The initial facade dispatch covers manifest materialization, reducer apply,
+control-command handling, action registry lookup/execution, Terminal Profile
+validation/editing/launch-intent resolution, and settings summary rows; Swift
+production call paths should migrate through that adapter module by module after
+each parity gate.
+The macOS target now builds and bundles `libalan_shell_core_ffi.dylib`; the
+workspace manifest store delegates default manifest creation and legacy manifest
+migration to Rust, while workspace-manifest startup delegates TTL pruning and
+materialization to Rust before projecting the portable state back into the
+current macOS runtime snapshot shape. Swift keeps manifest file IO, corrupt-file
+quarantine, and compatibility fallbacks at the platform adapter boundary.
+Pane focus, adjacent-focus, terminal Space create, terminal Space delete, Space
+Terminal Profile metadata, Space presentation icon metadata, terminal tab open,
+terminal tab duplicate, terminal pane split, tab close, pane close, pin/unpin, reorder,
+move-to-space, rename, split resize/equalize, within-tab pane move,
+inactive-tab cleanup, and attention production reducer calls now use the
+Rust-backed adapter for workspace panes.
+Terminal-creating reducer requests carry platform-reserved pane IDs from the
+macOS terminal runtime registry so Rust ID allocation does not collide with live
+runtime owners. Detached quick-terminal focus remains a macOS runtime exception
+because it is not mounted in Rust workspace pane slots, and command-failure
+activity acknowledgement remains a Swift adapter-layer pass after Rust focus
+until the portable reducer owns that semantic explicitly. Runtime-bearing
+reducer branches that still lack terminal adapter wiring remain in Swift until
+their runtime intents are explicitly connected. Shared shell action title,
+availability, shortcut, keyboard lookup, and effect resolution now come from the
+Rust action registry before Swift executes platform presentation or terminal
+effects. Socket-local reusable workspace control commands, including state/list,
+Space create, tab open/close/reorder/pin/move, pane split/close/lift/move/
+focus/zoom, terminal send, and attention updates, now route through Rust
+`control.handle`; Swift normalizes
+platform defaults such as global Terminal Profile capture before calling the
+adapter. Control handlers that still own command-specific response details route
+their reusable reducer step, including pane resize, equalize, spatial focus, and
+within-tab move, through the Rust reducer adapter before recording host events.
+Host-required, diagnostic, render-metric, quick-terminal, and unsupported
+terminal-delivery commands stay in Swift. Settings surface row summaries for
+Terminal Profiles, capabilities, and local diagnostics are
+adapter-first Rust calls; Swift still owns section composition, navigation,
+host file discovery, and managed-account platform effects.
+Terminal Profile launch intent resolution in `TerminalHostRuntime` now asks Rust
+for strategy, argv, profile resolution state, working-directory hints, and
+environment projection; Swift still supplies executable availability, loads the
+profile store, chooses the final pane working directory, and performs macOS
+process/runtime attachment.
+
+## Shell Core Authority Audit
+
+The `make-shell-core-authoritative` cleanup treats the current shell-core
+integration as real product code rather than a parity experiment. Remaining
+Swift around `ShellCoreFFIAdapter` is classified as follows:
+
+- Domain duplicate removed from runtime startup: workspace-manifest startup now
+  requires Rust default/prune/materialize authority and no longer falls back to
+  Swift `ShellContentWorkspaceManifest.defaultManifest`,
+  `ShellContentWorkspaceManifest.pruningExpiredTabs`, or
+  `ShellWorkspaceMaterializer.materialize`. The old Swift default, prune,
+  materialize, and legacy migration parity algorithms now live in
+  `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`;
+  default app builds keep only manifest DTOs, decode/selection repair,
+  transcript cleanup, projection helpers, and manifest file IO.
+- Domain duplicate removed from reducer and control paths: workspace reducer
+  mutations and reusable local control commands now use shell-core failures,
+  stable core errors, or explicit host-only command paths instead of a second
+  Swift validation/mutation switch. The local executor keeps macOS-only
+  diagnostics, terminal runtime delivery, and quick-terminal host behavior
+  separate from portable shell-domain commands.
+- Domain duplicate removed from action, Terminal Profile, and settings paths:
+  shared action titles, availability, shortcuts, keyboard mapping, and effects
+  call shell-core and fail closed on core errors. Terminal Profile launch intent
+  resolution no longer falls back to Swift profile resolution after core
+  failure; it returns an explicit fail-closed launch resolution. Reusable
+  settings rows now come from shell-core or collapse to unavailable rows.
+- Parity fixture debt moved out of production sources: the Swift action table
+  and resolver fixture now live in
+  `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`;
+  runtime code is guarded from using `ShellActionRegistry.standard`.
+- Adapter projection to keep narrow: `ShellCoreFFIAdapter` is now a facade with
+  sibling loader, envelope, materialization, and operation-family owners. The
+  materialization owner projects core state into current Swift runtime DTOs and
+  preserves platform-only pane fields such as runtime metadata, renderer state,
+  display identity, and terminal activity while avoiding independent domain
+  decisions.
+- Host startup/persistence extracted from the observable controller:
+  `ShellWorkspaceManifestStartupCoordinator` owns workspace manifest load,
+  Rust-core pruning, Rust-core materialization, and startup diagnostics, while
+  `ShellWorkspacePersistenceCoordinator` owns manifest writer construction,
+  manifest save debounce, shell-state file writes, and control-plane flush
+  cadence. `ShellHostController` now supplies UI/runtime projection closures
+  instead of owning those persistence rules directly.
+- Host action/reducer/metadata routing extracted from the observable
+  controller: `ShellActionCoordinator` is the only Swift owner that calls the
+  Rust action registry FFI, `ShellReducerCommandCoordinator` is the only Swift
+  owner that calls the Rust reducer FFI, and
+  `ShellPlatformMetadataPreserver` owns post-adoption preservation of live
+  macOS-only pane context and runtime metadata.
+- Platform recovery/effect to keep in Swift: manifest file IO, corrupt-file
+  quarantine, diagnostics, Ghostty/runtime recovery, terminal input delivery,
+  pasteboard/keyboard handling, windowing, SwiftUI/AppKit presentation, and
+  privileged macOS account effects.
+- Runtime exceptions to track: detached quick-terminal focus and command-failure
+  activity acknowledgement remain Swift adapter-layer behavior until the core
+  has explicit portable semantics for those cases.
+
+Swift workspace-manifest and runtime-metadata tests now call the shell-core
+adapter for default manifest creation, pruning, materialization, and legacy
+terminal manifest migration, while keeping Swift assertions focused on corrupt
+file recovery, persistence, app projection, and platform runtime metadata.
+Action, control, settings, and Terminal Profile focused tests likewise exercise
+the shell-core adapter or Rust fixture contracts for portable domain behavior.
+
 ## Apply Sequence Notes
 
 - Start with report-mode checks and pure model/support moves.
@@ -128,11 +265,57 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-zero known warnings.
+15 known large-file / bridge-boundary warnings after the first post-core cleanup
+slice. These warnings are telemetry for the cleanup, not the cleanup
+definition. The real debt is any Swift production source that still carries a
+Rust-owned shell-domain implementation, fixture, or fallback after shell-core
+has become authoritative.
+
+### Post-Core Slimming Baseline
+
+Baseline captured on 2026-06-18 from the
+`feat/introduce-cross-platform-shell-core` worktree after the
+`make-shell-core-authoritative` implementation reached PR review. PR #560 was
+still open and review-blocked, so the slimming change uses the current branch's
+final shell-core authority boundary as its implementation baseline until the
+authority PR is merged and archived.
+
+The report-mode warning classes before the first cleanup slice were:
+
+- 16 large Swift files over the 1,200-line report threshold.
+- 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
+  while still outside a narrow bridge owner.
+
+After moving manifest/action parity support out of production Apple sources,
+splitting the shell-core FFI facade, and extracting manifest startup,
+persistence, action, reducer, and platform metadata coordinators from
+`ShellHostController.swift`, the warning classes are:
+
+- 14 large Swift files over the report threshold.
+- 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
+  while still outside a narrow bridge owner.
+
+Rust-owned Swift legacy cleanup targets at this baseline:
+
+| File | Lines | Cleanup target |
+| --- | ---: | --- |
+| `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: manifest default/prune/materialize/migration parity implementations now live in `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`; production keeps DTOs, repair, transcript cleanup, and projection helpers. |
+| `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture now live in `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`; production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution. |
+| `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, and Terminal Profile operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
+| `ShellHostController.swift` | 4,418 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, reducer invocation, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,803 | Partially cleaned: reusable reducer invocations now route through `ShellReducerCommandCoordinator`. Remaining cleanup target: shell-core-backed response adoption and host routing details after controller split. |
+
+The first implementation batch targeted the production Swift legacy surface, not
+a line-count threshold. Manifest parity helpers and the Swift standard action
+registry moved out of normal app-target sources into script support. The
+reduced architecture warning count is a byproduct; success is defined by the
+absence of production-compiled Rust-owned Swift implementations and by
+`check-shell-contracts.sh` continuing to reject fallback paths.
 
 The current architecture gate remains non-blocking for future documented
 warnings while failing narrower regressions such as new root-level Swift files,
-project membership drift, or reintroduced control-plane ownership in the wrong
-file.
+project membership drift, reintroduced control-plane ownership in the wrong
+file, direct reducer FFI calls outside `ShellReducerCommandCoordinator`, or
+direct action registry FFI calls outside `ShellActionCoordinator`.
 The `macos-app-architecture-maintainability` spec requires this debt record to
 stay current whenever warnings are introduced, broadened, or resolved.

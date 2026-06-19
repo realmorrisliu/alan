@@ -1,0 +1,123 @@
+{
+  "description" : "Local settings rows combine host identity with compact diagnostics metadata.",
+  "expected" : {
+    "rows" : [
+      {
+        "id" : "appIdentity",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "app",
+        "title" : "Bundle ID",
+        "value" : "app.alanworks.macos.dev"
+      },
+      {
+        "id" : "installChannel",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "shippingbox",
+        "title" : "Channel",
+        "value" : "Dev"
+      },
+      {
+        "id" : "cliTool",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "terminal",
+        "title" : "Command line tool",
+        "value" : "alan-dev"
+      },
+      {
+        "id" : "daemonEndpoint",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "server.rack",
+        "title" : "Daemon endpoint",
+        "value" : "http:\/\/127.0.0.1:8091"
+      },
+      {
+        "id" : "updates",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "arrow.down.circle",
+        "title" : "Updates",
+        "value" : "Manual local build"
+      },
+      {
+        "id" : "dataRoot",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "folder",
+        "title" : "Alan home",
+        "value" : "~\/.alan-dev"
+      },
+      {
+        "id" : "publicSkills",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "folder.badge.gearshape",
+        "title" : "Skill packages",
+        "value" : "~\/.agents-dev\/skills"
+      },
+      {
+        "id" : "applicationSupport",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "externaldrive",
+        "title" : "Shell state",
+        "value" : "~\/Library\/Application Support\/alan-macos-dev"
+      },
+      {
+        "id" : "shellControl",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "point.3.connected.trianglepath.dotted",
+        "title" : "Control namespace",
+        "value" : "alan-dev-shell-control"
+      },
+      {
+        "detail" : "Local performance trace. Terminal content is not recorded.",
+        "id" : "performanceDiagnostics",
+        "mutability" : "editable",
+        "offers_freeform_editing" : false,
+        "system_name" : "speedometer",
+        "title" : "Performance Trace",
+        "value" : "Enabled"
+      },
+      {
+        "detail" : "7 retained events, 1 stutter marker.",
+        "id" : "performanceDiagnosticsExport",
+        "mutability" : "action_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "square.and.arrow.up",
+        "title" : "Export Diagnostics",
+        "value" : "Export"
+      }
+    ]
+  },
+  "id" : "settings-summary\/local-diagnostics-rows",
+  "input" : {
+    "diagnostics" : {
+      "is_enabled" : true,
+      "retained_event_count" : 7,
+      "stutter_marker_count" : 1
+    },
+    "local" : {
+      "alan_home_display_path" : "~\/.alan-dev",
+      "application_support_display_path" : "~\/Library\/Application Support\/alan-macos-dev",
+      "bundle_identifier" : "app.alanworks.macos.dev",
+      "channel_label" : "Dev",
+      "cli_tool_name" : "alan-dev",
+      "daemon_bind_address" : "127.0.0.1:8091",
+      "daemon_url" : "http:\/\/127.0.0.1:8091",
+      "global_skills_display_path" : "~\/.agents-dev\/skills",
+      "shell_control_namespace" : "alan-dev-shell-control",
+      "update_detail" : "This local dev build does not use Sparkle updates.",
+      "update_summary" : "Manual local build"
+    }
+  },
+  "kind" : "settings_summary",
+  "operation" : {
+    "type" : "local_rows"
+  },
+  "source" : "swift"
+}

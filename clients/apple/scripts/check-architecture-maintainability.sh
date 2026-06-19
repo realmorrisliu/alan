@@ -92,7 +92,120 @@ printf 'Source root: clients/apple/alan-macos\n\n'
 
 if [[ ! -f "$ARCH_DOC" ]]; then
     fail "clients/apple/ARCHITECTURE.md must record the architecture inventory and target layout"
+else
+    if ! grep -q "## Shell Core Boundary" "$ARCH_DOC"; then
+        fail "clients/apple/ARCHITECTURE.md must document the Shell Core Boundary"
+    fi
+    if ! grep -q "new reusable domain behavior belongs in" "$ARCH_DOC"; then
+        fail "clients/apple/ARCHITECTURE.md must keep the Rust shell-core ownership rule"
+    fi
 fi
+
+require_rust_reducer_adapter() {
+    local file="$1"
+    shift
+    local forbidden
+
+    if [[ ! -f "$file" ]]; then
+        return
+    fi
+    for forbidden in "$@"; do
+        if grep -Fq "$forbidden" "$file"; then
+            fail "${file#$SOURCE_ROOT/} must route ${forbidden#shellState.} through the Rust shell-core adapter"
+        fi
+    done
+}
+
+require_single_owner_pattern() {
+    local pattern="$1"
+    local owner="$2"
+    local description="$3"
+    local file
+    local rel
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if [[ "$rel" != "$owner" ]]; then
+            fail "$description must stay in $owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "$pattern" "$SOURCE_ROOT" || true)
+}
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "shellState.resizingSplit(" \
+    "shellState.equalizingSplits(" \
+    "shellState.focusingAdjacentPane(" \
+    "shellState.movingPaneWithinTab("
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/Services/Shell/ShellLocalCommandExecutor.swift" \
+    "state.creatingSpace(" \
+    "state.settingTerminalProfile(" \
+    "state.openingTerminalTab(" \
+    "state.closingTab(" \
+    "state.pinningTab(" \
+    "state.unpinningTab(" \
+    "state.organizingTab(" \
+    "state.movingTabToSpace(" \
+    "state.splittingPane(" \
+    "state.closingPane(" \
+    "state.movingPaneToNewTab(" \
+    "state.movingPane(" \
+    "state.focusingPane(" \
+    "state.settingAttention(" \
+    "try \$0.hidingQuickTerminal(" \
+    "\$0.showingQuickTerminal(" \
+    "try \$0.closingQuickTerminal(" \
+    "try \$0.promotingQuickTerminal("
+
+require_rust_reducer_adapter \
+    "$SOURCE_ROOT/ShellHostController.swift" \
+    "shellState.creatingSpace(" \
+    "shellState.settingTerminalProfile(" \
+    "shellState.settingPresentationIcon(" \
+    "shellState.deletingSpace(" \
+    "shellState.showingQuickTerminal(" \
+    "shellState.hidingQuickTerminal(" \
+    "shellState.closingQuickTerminal(" \
+    "shellState.promotingQuickTerminal(" \
+    "shellState.organizingTab(" \
+    "shellState.clearingInactiveTemporaryTabs(" \
+    "shellState.closingPane(" \
+    "shellState.closingTab(" \
+    "shellState.duplicatingTab(" \
+    "shellState.resizingSplit(" \
+    "shellState.equalizingSplits(" \
+    "shellState.movingPane(" \
+    "shellState.movingPaneToNewTab(" \
+    "shellState.movingPaneWithinTab(" \
+    "shellState.openingContentTab(" \
+    "shellState.splittingPane("
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.applyReducer" \
+    "Services/Shell/ShellReducerCommandCoordinator.swift" \
+    "shell-core reducer invocation"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.actionTitle" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action title lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.actionAvailability" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action availability lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action shortcut lookup"
+
+require_single_owner_pattern \
+    "ShellCoreFFIAdapter.shared.executeAction" \
+    "Services/Shell/ShellActionCoordinator.swift" \
+    "shell-core action execution"
 
 printf 'Current Swift inventory:\n'
 while IFS= read -r file; do

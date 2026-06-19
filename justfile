@@ -8,6 +8,15 @@ default:
 test:
     cargo test --workspace
 
+# Run the platform-neutral shell workspace core tests
+shell-core-test:
+    cargo test -p alan-shell-core
+
+# Run shell-core FFI facade and Swift adapter tests
+shell-core-ffi-test:
+    cargo test -p alan-shell-core-ffi
+    bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
+
 # Check code (format + lint + test)
 check: fmt lint test
     @echo "✅ All checks passed"

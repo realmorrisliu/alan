@@ -12,64 +12,60 @@ struct AlanShellLocalCommandResult {
 }
 
 enum AlanShellLocalCommandExecutor {
+    private static let reducerCoordinator = ShellReducerCommandCoordinator()
+
     static func execute(
         command: AlanShellControlCommand,
         state: ShellStateSnapshot
     ) -> AlanShellLocalCommandResult? {
+        if command.command.isShellCoreLocalCommandSupported {
+            let shellCoreCommand = command.resolvingShellCoreDefaults(in: state)
+            do {
+                let result = try ShellCoreFFIAdapter.shared.handleControlCommand(
+                    shellCoreCommand,
+                    state: state
+                )
+                return AlanShellLocalCommandResult(shellCoreResult: result)
+            } catch {
+                // When shell-core itself is unavailable (missing/mismatched dylib, etc.), fall
+                // through by returning nil so the socket-local path defers to the host handler,
+                // which answers host-answerable commands (state/space.list/tab.list/pane.list)
+                // from Swift state. Only a structured command error from a working shell-core
+                // surfaces as a failure response.
+                if let coreError = error as? ShellCoreFFIAdapterError,
+                   coreError.indicatesShellCoreUnavailable
+                {
+                    return nil
+                }
+                return shellCoreFailureResult(command: command, state: state, error: error)
+            }
+        }
+
         switch command.command {
-        case .state:
-            let contentState = state.contentStateProjection()
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    snapshot: state,
-                    paneSlots: contentState.paneSlots,
-                    contents: contentState.contents,
-                    spaceID: state.focusedSpaceID,
-                    tabID: state.focusedTabID,
-                    paneID: state.focusedPaneID,
-                    paneSlotID: contentState.focusedPaneSlotID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .spaceList:
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    spaces: state.spaces,
-                    spaceID: command.spaceID ?? state.focusedSpaceID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .spaceCreate:
-            let resolvedTerminalProfileID = command.terminalProfileID
-                ?? terminalProfileIDForGlobalDefaultPaneCapture()
-            let result = state.creatingSpace(
-                launchTarget: .shell,
-                title: command.title,
-                workingDirectory: command.cwd,
-                terminalProfileID: resolvedTerminalProfileID
-            )
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: result.state,
-                    applied: true,
-                    spaceID: result.spaceID,
-                    tabID: result.tabID,
-                    paneID: result.paneID
-                ),
-                updatedState: result.state,
-                sideEffect: nil
-            )
+        case .state,
+             .spaceList,
+             .spaceCreate,
+             .tabList,
+             .tabOpen,
+             .tabClose,
+             .tabReorder,
+             .tabPin,
+             .tabUnpin,
+             .tabMoveToSpace,
+             .paneList,
+             .paneSplit,
+             .paneClose,
+             .paneLift,
+             .paneMove,
+             .paneMoveWithinTab,
+             .paneFocus,
+             .paneSpatialFocus,
+             .paneResizeSplit,
+             .paneEqualizeSplits,
+             .paneZoom,
+             .paneUnzoom,
+             .attentionSet:
+            return shellCoreRoutingFailureResult(command: command, state: state)
 
         case .spaceSetTerminalProfile:
             guard let spaceID = command.spaceID ?? state.focusedSpaceID else {
@@ -85,10 +81,7 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             }
-            guard let nextState = state.settingTerminalProfile(
-                command.terminalProfileID,
-                forSpaceID: spaceID
-            ) else {
+            guard state.space(spaceID: spaceID) != nil else {
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
@@ -102,301 +95,30 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             }
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: nextState,
-                    applied: true,
-                    snapshot: nextState,
-                    spaceID: spaceID,
-                    tabID: nextState.focusedTabID,
-                    paneID: nextState.focusedPaneID
-                ),
-                updatedState: nextState,
-                sideEffect: nil
-            )
-
-        case .tabList:
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
+            do {
+                let result = try reducerCoordinator.apply(
                     state: state,
-                    applied: true,
-                    tabs: state.tabs(in: command.spaceID),
-                    spaceID: command.spaceID ?? state.focusedSpaceID,
-                    tabID: state.focusedTabID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
-
-        case .tabOpen:
-            do {
-                let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
-                    in: command.spaceID,
-                    explicit: command.terminalProfileID
-                )
-                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
-                let result = try state.openingTerminalTab(
-                    in: command.spaceID,
-                    title: command.title,
-                    workingDirectory: command.cwd,
-                    terminalProfileID: resolvedTerminalProfileID
+                    operation: .setTerminalProfile(
+                        spaceID: spaceID,
+                        terminalProfileID: command.terminalProfileID
+                    )
                 )
                 return AlanShellLocalCommandResult(
                     response: response(
                         for: command,
                         state: result.state,
                         applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
+                        snapshot: result.state,
+                        spaceID: spaceID,
+                        tabID: result.state.focusedTabID,
+                        paneID: result.state.focusedPaneID
                     ),
                     updatedState: result.state,
                     sideEffect: nil
                 )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
             } catch {
-                return nil
+                return shellCoreFailureResult(command: command, state: state, error: error)
             }
-
-        case .tabClose:
-            guard let tabID = command.tabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-
-            do {
-                let result = try state.closingTab(tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabPin:
-            guard let tabID = command.tabID ?? state.focusedTabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.pinningTab(tabID)
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabUnpin:
-            guard let tabID = command.tabID ?? state.focusedTabID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "tab_required",
-                        errorMessage: "tab_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.unpinningTab(tabID)
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabReorder:
-            guard let tabID = command.tabID,
-                  let section = command.section,
-                  let index = command.index
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_reorder_target_required",
-                        errorMessage: "tab_id, section, and index are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.organizingTab(
-                    tabID: tabID,
-                    targetSpaceID: command.spaceID,
-                    section: section,
-                    index: index
-                )
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .tabMoveToSpace:
-            guard let tabID = command.tabID,
-                  let targetSpaceID = command.targetSpaceID ?? command.spaceID
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        errorCode: "tab_move_target_required",
-                        errorMessage: "tab_id and target_space_id are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.movingTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
-                let location = result.state.tabOrganizationLocation(tabID: tabID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: location?.spaceID,
-                        targetSpaceID: targetSpaceID,
-                        tabID: tabID,
-                        paneID: result.state.focusedPaneID,
-                        section: location?.section,
-                        index: location?.index
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneList:
-            let contentState = state.contentStateProjection()
-            return AlanShellLocalCommandResult(
-                response: response(
-                    for: command,
-                    state: state,
-                    applied: true,
-                    panes: state.panes(in: command.tabID),
-                    paneSlots: contentState.controlPlanePaneSlots(in: command.tabID),
-                    contents: contentState.controlPlaneContents(in: command.tabID),
-                    tabID: command.tabID ?? state.focusedTabID
-                ),
-                updatedState: nil,
-                sideEffect: nil
-            )
 
         case .paneSnapshot:
             guard let paneID = command.paneID,
@@ -426,236 +148,6 @@ enum AlanShellLocalCommandExecutor {
                 updatedState: nil,
                 sideEffect: nil
             )
-
-        case .paneSplit:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            guard let direction = command.direction else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        paneID: paneID,
-                        errorCode: "direction_required",
-                        errorMessage: "direction is required for pane.split."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let resolvedTerminalProfileID = state.terminalProfileIDForNewSplit(
-                    from: paneID,
-                    explicit: command.terminalProfileID
-                )
-                    ?? terminalProfileIDForGlobalDefaultPaneCapture()
-                let result = try state.splittingPane(
-                    paneID,
-                    direction: direction,
-                    terminalProfileID: resolvedTerminalProfileID
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        snapshot: result.state,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID,
-                        paneSlotID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneClose:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.closingPane(paneID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneLift:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.movingPaneToNewTab(paneID, title: command.title)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneMove:
-            guard let paneID = command.paneID,
-                  let targetTabID = command.tabID
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        tabID: command.tabID,
-                        paneID: command.paneID,
-                        errorCode: "pane_move_target_required",
-                        errorMessage: "pane_id and tab_id are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.movingPane(
-                    paneID,
-                    toTab: targetTabID,
-                    direction: command.direction ?? .vertical
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneFocus:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.focusingPane(paneID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
-
-        case .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
-             .paneZoom, .paneUnzoom:
-            return nil
-
-        case .terminalSendText, .terminalRenderMetrics:
-            return nil
 
         case .agentActivity:
             guard let paneID = command.paneID else {
@@ -724,7 +216,7 @@ enum AlanShellLocalCommandExecutor {
                     sideEffect: nil
                 )
             } catch {
-                return nil
+                return mutationFailureResult(command: command, state: state, error: error)
             }
 
         case .attentionInbox:
@@ -738,46 +230,6 @@ enum AlanShellLocalCommandExecutor {
                 updatedState: nil,
                 sideEffect: nil
             )
-
-        case .attentionSet:
-            guard let paneID = command.paneID,
-                  let attention = command.attention
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "attention_target_required",
-                        errorMessage: "pane_id and attention are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            do {
-                let result = try state.settingAttention(attention, for: paneID)
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return nil
-            }
 
         case .routingCandidates:
             return AlanShellLocalCommandResult(
@@ -796,14 +248,25 @@ enum AlanShellLocalCommandExecutor {
                 return quickTerminalResult(
                     command: command,
                     state: state,
-                    mutate: { try $0.hidingQuickTerminal() }
+                    mutate: {
+                        try reducerCoordinator.apply(
+                            state: $0,
+                            operation: .hideQuickTerminal
+                        )
+                    }
                 )
             }
             return quickTerminalResult(
                 command: command,
                 state: state,
                 mutate: {
-                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                    try reducerCoordinator.apply(
+                        state: $0,
+                        operation: .showQuickTerminal(
+                            workingDirectory: command.cwd,
+                            defaultWorkingDirectory: defaultShellWorkingDirectory()
+                        )
+                    )
                 }
             )
 
@@ -812,7 +275,13 @@ enum AlanShellLocalCommandExecutor {
                 command: command,
                 state: state,
                 mutate: {
-                    $0.showingQuickTerminal(workingDirectory: command.cwd)
+                    try reducerCoordinator.apply(
+                        state: $0,
+                        operation: .showQuickTerminal(
+                            workingDirectory: command.cwd,
+                            defaultWorkingDirectory: defaultShellWorkingDirectory()
+                        )
+                    )
                 }
             )
 
@@ -820,14 +289,24 @@ enum AlanShellLocalCommandExecutor {
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.hidingQuickTerminal() }
+                mutate: {
+                    try reducerCoordinator.apply(
+                        state: $0,
+                        operation: .hideQuickTerminal
+                    )
+                }
             )
 
         case .quickTerminalClose:
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.closingQuickTerminal() }
+                mutate: {
+                    try reducerCoordinator.apply(
+                        state: $0,
+                        operation: .closeQuickTerminal
+                    )
+                }
             )
 
         case .quickTerminalPromote:
@@ -847,10 +326,18 @@ enum AlanShellLocalCommandExecutor {
             return quickTerminalResult(
                 command: command,
                 state: state,
-                mutate: { try $0.promotingQuickTerminal(to: targetSpaceID) }
+                mutate: {
+                    try reducerCoordinator.apply(
+                        state: $0,
+                        operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
+                    )
+                }
             )
 
-        case .terminalSendKey, .performanceDiagnosticsSetEnabled,
+        case .terminalSendText,
+            .terminalSendKey,
+            .terminalRenderMetrics,
+            .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
             .eventsRead:
             return nil
@@ -1001,6 +488,59 @@ enum AlanShellLocalCommandExecutor {
         }
     }
 
+    private static func shellCoreFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot,
+        error: Error
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_core_unavailable",
+                errorMessage: "shell-core command failed: \(error)"
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
+    }
+
+    private static func shellCoreRoutingFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_core_routing_failed",
+                errorMessage: "shell-core command routing failed."
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
+    }
+
+    private static func mutationFailureResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot,
+        error: Error
+    ) -> AlanShellLocalCommandResult {
+        AlanShellLocalCommandResult(
+            response: response(
+                for: command,
+                state: state,
+                applied: false,
+                errorCode: "shell_mutation_failed",
+                errorMessage: "shell mutation failed: \(error)"
+            ),
+            updatedState: nil,
+            sideEffect: nil
+        )
+    }
+
     private static func response(
         for command: AlanShellControlCommand,
         state: ShellStateSnapshot,
@@ -1074,6 +614,153 @@ enum AlanShellLocalCommandExecutor {
             errorCode: errorCode,
             errorMessage: errorMessage
         )
+    }
+}
+
+private extension AlanShellLocalCommandResult {
+    init(shellCoreResult: ShellCoreControlCommandResult) {
+        self.init(
+            response: shellCoreResult.response,
+            updatedState: shellCoreResult.updatedState,
+            sideEffect: shellCoreResult.sideEffect.map(AlanShellLocalCommandSideEffect.init)
+        )
+    }
+}
+
+private extension AlanShellLocalCommandSideEffect {
+    init(_ sideEffect: ShellCoreControlSideEffect) {
+        switch sideEffect {
+        case .sendText(let paneID, let text):
+            self = .sendText(paneID: paneID, text: text)
+        }
+    }
+}
+
+private extension AlanShellControlCommand {
+    func resolvingShellCoreDefaults(in state: ShellStateSnapshot) -> AlanShellControlCommand {
+        switch command {
+        case .spaceCreate:
+            let resolvedTerminalProfileID = terminalProfileID
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            return withTerminalProfileID(resolvedTerminalProfileID)
+
+        case .tabOpen:
+            let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
+                in: spaceID,
+                explicit: terminalProfileID
+            )
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            return withTerminalProfileID(resolvedTerminalProfileID)
+
+        case .paneSplit:
+            let resolvedTerminalProfileID = paneID.flatMap {
+                state.terminalProfileIDForNewSplit(from: $0, explicit: terminalProfileID)
+            }
+                ?? terminalProfileID
+                ?? terminalProfileIDForGlobalDefaultPaneCapture()
+            let resolvedCwd = cwd
+                ?? (resolvedTerminalProfileID == nil
+                    ? paneID.flatMap { state.pane(paneID: $0)?.cwd }
+                    : nil)
+            return withTerminalProfileID(resolvedTerminalProfileID, cwd: resolvedCwd)
+
+        default:
+            return self
+        }
+    }
+
+    func withTerminalProfileID(
+        _ terminalProfileID: String?,
+        cwd resolvedCwd: String? = nil
+    ) -> AlanShellControlCommand {
+        AlanShellControlCommand(
+            requestID: requestID,
+            command: command,
+            spaceID: spaceID,
+            targetSpaceID: targetSpaceID,
+            tabID: tabID,
+            paneID: paneID,
+            paneSlotID: paneSlotID,
+            contentID: contentID,
+            splitNodeID: splitNodeID,
+            ratio: ratio,
+            section: section,
+            index: index,
+            direction: direction,
+            spatialDirection: spatialDirection,
+            placement: placement,
+            title: title,
+            cwd: resolvedCwd ?? cwd,
+            text: text,
+            key: key,
+            attention: attention,
+            agentKind: agentKind,
+            agentStatus: agentStatus,
+            sessionLabel: sessionLabel,
+            projectLabel: projectLabel,
+            workingDirectory: workingDirectory,
+            terminalProfileID: terminalProfileID,
+            detail: detail,
+            updatedAt: updatedAt,
+            afterEventID: afterEventID,
+            limit: limit,
+            enabled: enabled,
+            exportDirectory: exportDirectory,
+            childProcessRole: childProcessRole,
+            childCPUPercent: childCPUPercent,
+            childMemoryBytes: childMemoryBytes,
+            childThreadCount: childThreadCount
+        )
+    }
+}
+
+private extension AlanShellControlCommandKind {
+    var isShellCoreLocalCommandSupported: Bool {
+        switch self {
+        case .state,
+             .spaceList,
+             .spaceCreate,
+             .tabList,
+             .tabOpen,
+             .tabClose,
+             .tabReorder,
+             .tabPin,
+             .tabUnpin,
+             .tabMoveToSpace,
+             .paneList,
+             .paneSplit,
+             .paneClose,
+             .paneLift,
+             .paneMove,
+             .paneMoveWithinTab,
+             .paneFocus,
+             .paneSpatialFocus,
+             .paneResizeSplit,
+             .paneEqualizeSplits,
+             .paneZoom,
+             .paneUnzoom,
+             .attentionSet:
+            return true
+        case .spaceSetTerminalProfile,
+             .paneSnapshot,
+             .terminalSendText,
+             .terminalSendKey,
+             .terminalRenderMetrics,
+             .agentActivity,
+             .attentionInbox,
+             .routingCandidates,
+             .eventsRead,
+             .performanceDiagnosticsSetEnabled,
+             .performanceDiagnosticsExportRecent,
+             .performanceDiagnosticsRecordChildPressure,
+             .quickTerminalToggle,
+             .quickTerminalShow,
+             .quickTerminalHide,
+             .quickTerminalFocus,
+             .quickTerminalClose,
+             .quickTerminalPromote:
+            return false
+        }
     }
 }
 
@@ -1178,6 +865,10 @@ private func attentionRank(for attention: ShellAttentionState) -> Int {
     case .awaitingUser:
         return 3
     }
+}
+
+private func defaultShellWorkingDirectory() -> String {
+    FileManager.default.homeDirectoryForCurrentUser.path
 }
 
 #endif

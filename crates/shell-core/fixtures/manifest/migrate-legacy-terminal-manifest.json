@@ -1,0 +1,119 @@
+{
+  "description" : "Legacy terminal-only manifest migrates into content-container snapshot shape.",
+  "expected" : {
+    "manifest" : {
+      "content_contract_version" : "0.2",
+      "schema_version" : 1,
+      "selected_space_id" : "space_main",
+      "selected_tab_id" : "tab_legacy",
+      "spaces" : [
+        {
+          "created_at" : "2027-01-15T08:00:00Z",
+          "order" : 0,
+          "presentation_icon" : "rectangle.stack.fill",
+          "selected_tab_id" : "tab_legacy",
+          "space_id" : "space_main",
+          "tabs" : [
+            {
+              "active_task" : "inactive",
+              "created_at" : "2027-01-15T08:00:00Z",
+              "is_pinned" : true,
+              "is_title_user_locked" : true,
+              "kind" : "terminal",
+              "last_activated_at" : "2027-01-15T08:00:00Z",
+              "last_activity_at" : "2027-01-15T08:00:00Z",
+              "pin_snapshot" : {
+                "contents" : [
+                  {
+                    "content_id" : "content_pane_legacy",
+                    "kind" : "terminal",
+                    "payload" : {
+                      "terminal" : {
+                        "cwd" : "\/legacy\/pinned",
+                        "launch_target" : "shell",
+                        "terminal_profile_id" : "profile-main",
+                        "title" : "Legacy"
+                      }
+                    },
+                    "title" : "Legacy"
+                  }
+                ],
+                "pane_slots" : [
+                  {
+                    "content_id" : "content_pane_legacy",
+                    "pane_slot_id" : "pane_legacy"
+                  }
+                ],
+                "pane_tree" : {
+                  "kind" : "pane",
+                  "node_id" : "node_pane_legacy",
+                  "pane_slot_id" : "pane_legacy"
+                }
+              },
+              "tab_id" : "tab_legacy",
+              "title" : "Legacy"
+            }
+          ],
+          "terminal_profile_id" : "profile-main",
+          "title" : "Main",
+          "updated_at" : "2027-01-15T08:00:00Z"
+        }
+      ],
+      "window_id" : "window_main"
+    },
+    "status" : "ok"
+  },
+  "id" : "manifest\/migrate-legacy-terminal-manifest",
+  "input" : {
+    "schema_version" : 1,
+    "selected_space_id" : "space_main",
+    "selected_tab_id" : "tab_legacy",
+    "spaces" : [
+      {
+        "created_at" : "2027-01-15T08:00:00Z",
+        "order" : 0,
+        "presentation_icon" : "rectangle.stack.fill",
+        "selected_tab_id" : "tab_legacy",
+        "space_id" : "space_main",
+        "tabs" : [
+          {
+            "active_task" : "inactive",
+            "created_at" : "2027-01-15T08:00:00Z",
+            "is_pinned" : true,
+            "is_title_user_locked" : true,
+            "kind" : "terminal",
+            "last_activated_at" : "2027-01-15T08:00:00Z",
+            "last_activity_at" : "2027-01-15T08:00:00Z",
+            "pin_snapshot" : {
+              "pane_tree" : {
+                "kind" : "pane",
+                "node_id" : "node_pane_legacy",
+                "pane_id" : "pane_legacy"
+              },
+              "panes" : [
+                {
+                  "cwd" : "\/legacy\/pinned",
+                  "launch_target" : "shell",
+                  "pane_id" : "pane_legacy",
+                  "terminal_profile_id" : "profile-main",
+                  "title" : "Legacy"
+                }
+              ]
+            },
+            "tab_id" : "tab_legacy",
+            "title" : "Legacy"
+          }
+        ],
+        "terminal_profile_id" : "profile-main",
+        "title" : "Main",
+        "updated_at" : "2027-01-15T08:00:00Z"
+      }
+    ],
+    "window_id" : "window_main"
+  },
+  "kind" : "manifest",
+  "operation" : {
+    "type" : "migrate_legacy_terminal_manifest"
+  },
+  "source" : "swift"
+}

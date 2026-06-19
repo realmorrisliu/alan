@@ -1,0 +1,95 @@
+{
+  "description" : "Terminal Profile settings rows preserve default, recovery, profile, and sudo guidance semantics.",
+  "expected" : {
+    "rows" : [
+      {
+        "detail" : "Used for new terminals.",
+        "id" : "terminalProfilesDefault",
+        "mutability" : "editable",
+        "offers_freeform_editing" : false,
+        "system_name" : "terminal",
+        "title" : "Default profile",
+        "value" : "Login shell"
+      },
+      {
+        "detail" : "Create a local startup profile.",
+        "id" : "terminalProfilesCreate",
+        "mutability" : "action_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "plus.circle",
+        "title" : "New profile",
+        "value" : "Create…"
+      },
+      {
+        "detail" : "Recovered local store.",
+        "id" : "terminalProfilesRecovery",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "exclamationmark.triangle",
+        "title" : "Profile store recovery",
+        "value" : "Fallback active"
+      },
+      {
+        "id" : "terminalProfile.login_shell",
+        "mutability" : "editable",
+        "offers_freeform_editing" : false,
+        "system_name" : "terminal",
+        "title" : "Login shell",
+        "value" : "Default"
+      },
+      {
+        "detail" : "Sudo user alan",
+        "id" : "terminalProfile.alan",
+        "mutability" : "editable",
+        "offers_freeform_editing" : false,
+        "system_name" : "person.crop.circle",
+        "title" : "Alan",
+        "value" : "sudo_user"
+      },
+      {
+        "detail" : "Prompts and passwordless sudo are controlled by macOS sudo policy.",
+        "id" : "terminalProfilesSudoGuidance",
+        "mutability" : "read_only",
+        "offers_freeform_editing" : false,
+        "system_name" : "lock.shield",
+        "title" : "Sudo behavior",
+        "value" : "System managed"
+      }
+    ]
+  },
+  "id" : "settings-summary\/terminal-profile-rows",
+  "input" : {
+    "default_profile_id" : "login_shell",
+    "profiles" : [
+      {
+        "id" : "login_shell",
+        "launch" : {
+          "kind" : "login_shell"
+        },
+        "presentation" : {
+          "symbol_name" : "terminal"
+        },
+        "title" : "Login shell"
+      },
+      {
+        "default_working_directory" : "\/Users\/alan",
+        "id" : "alan",
+        "launch" : {
+          "kind" : "sudo_user",
+          "unix_user" : "alan"
+        },
+        "managed_terminal_account_id" : "alan",
+        "presentation" : {
+          "symbol_name" : "person.crop.circle"
+        },
+        "title" : "Alan"
+      }
+    ],
+    "recovery_message" : "Recovered local store."
+  },
+  "kind" : "settings_summary",
+  "operation" : {
+    "type" : "terminal_profile_rows"
+  },
+  "source" : "swift"
+}

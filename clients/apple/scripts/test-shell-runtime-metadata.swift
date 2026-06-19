@@ -18,6 +18,9 @@ struct ShellRuntimeMetadataTestRunner {
 @MainActor
 private enum ShellRuntimeMetadataTests {
     static func run() {
+        // Runs first so the shared shell-core adapter is still uncached and can be forced into a
+        // load failure via a missing dylib path.
+        verifiesShellResolverFallsBackToLoginShellWhenCoreUnavailable()
         verifiesBootProfileCacheMemoizesPerLaunchKey()
         verifiesMetadataCallbackReusesCachedBootProfile()
         verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
@@ -51,6 +54,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesShellHostControllerRoutesSharedAutomationCommands()
         verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
+        verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -90,6 +94,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
+        verifiesTerminalSendTextSocketRequestsRequireHostHandler()
+        verifiesTerminalSendKeySocketRequestsRequireHostHandler()
         verifiesQuickTerminalFocusSocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
@@ -116,6 +122,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
+        verifiesSpatialFocusAcknowledgesCommandFailure()
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
         verifiesQuietAttentionNeverRequiresUserAction()
@@ -1477,7 +1484,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 80)
@@ -1588,7 +1595,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 82)
@@ -1664,7 +1671,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 83)
@@ -1796,7 +1803,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 94)
@@ -1885,7 +1892,7 @@ private enum ShellRuntimeMetadataTests {
             "quick terminal restore must not create a normal workspace tab"
         )
 
-        let restoredState = ShellWorkspaceMaterializer.materialize(
+        let restoredState = materializeManifestWithShellCore(
             manifest: savedManifest,
             defaultWorkingDirectory: "/fallback",
             now: Date(timeIntervalSince1970: 95)
@@ -2200,6 +2207,47 @@ private enum ShellRuntimeMetadataTests {
         expect(
             missing.code == .missingTarget && !missing.applied,
             "shared command handler must report missing targets with stable semantics"
+        )
+    }
+
+    private static func verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields() {
+        let controller = makeController(
+            windowID: "host_split_launch",
+            shellState: .bootstrapDefault(
+                windowID: "host_split_launch",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+
+        // Canonical `pane_slot_id` targeting plus explicit launch fields must both survive the
+        // host-routed pane.split path.
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "host-split-launch-1",
+                  "command": "pane.split",
+                  "pane_slot_id": "pane_1",
+                  "direction": "horizontal",
+                  "cwd": "/Users/morris/explicit",
+                  "title": "Build Watcher"
+                }
+                """
+            )
+        )
+        guard response.applied == true, let newPaneID = response.paneID else {
+            fail("host pane.split must accept pane_slot_id and apply")
+        }
+        expect(
+            controller.shellState.pane(paneID: newPaneID)?.cwd == "/Users/morris/explicit",
+            "host pane.split must honor the explicit cwd instead of inheriting the source pane"
+        )
+        expect(
+            controller.shellState
+                .contentStateProjection()
+                .contentMounted(in: newPaneID)?
+                .title == "Build Watcher",
+            "host pane.split must honor the explicit title instead of the generic one"
         )
     }
 
@@ -3724,6 +3772,74 @@ private enum ShellRuntimeMetadataTests {
         expect(localResponse == nil, "pane.move socket requests must be routed to the host handler")
     }
 
+    private static func verifiesTerminalSendTextSocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("terminal-send-text-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("terminal.send_text must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("terminal.send_text must not use socket-local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-send-text-host-routing-1",
+                  "command": "terminal.send_text",
+                  "pane_slot_id": "pane_1",
+                  "text": "echo host-routing"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "terminal.send_text socket requests must be routed to the host handler"
+        )
+    }
+
+    private static func verifiesTerminalSendKeySocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("terminal-send-key-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("terminal.send_key must not mutate through the local executor")
+            },
+            sideEffectHandler: { _ in
+                fail("terminal.send_key must not use socket-local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "terminal-send-key-host-routing-1",
+                  "command": "terminal.send_key",
+                  "pane_slot_id": "pane_1",
+                  "key": "return"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "terminal.send_key socket requests must be routed to the host handler"
+        )
+    }
+
     private static func verifiesQuickTerminalFocusSocketRequestsRequireHostHandler() {
         let controller = makeController()
         let socketServer = AlanShellSocketServer(
@@ -4782,6 +4898,38 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesSpatialFocusAcknowledgesCommandFailure() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        // Focus the right sibling so the left pane's command failure is a background indicator.
+        controller.focus(paneID: "pane_2")
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity != nil,
+            "command failure must be retained on the background sibling before spatial focus"
+        )
+
+        let moved = controller.focusAdjacentPane(direction: .left)
+        expect(moved, "spatial focus left must move into the left sibling pane")
+        expect(
+            controller.shellState.focusedPaneID == "pane_1",
+            "spatial focus left must focus the left sibling pane"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == nil,
+            "spatial focus into a command-failure pane must acknowledge and clear its activity"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.attention != .notable,
+            "acknowledged spatial focus must stop keeping the pane notable"
+        )
+    }
+
     private static func verifiesActivityFreshnessPolicies() {
         let now = Date(timeIntervalSince1970: 1_779_008_400)
         let bell = TerminalActivitySnapshot.bellActivity(now: now)
@@ -5777,7 +5925,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 120)
@@ -7575,7 +7723,7 @@ private enum ShellRuntimeMetadataTests {
         )
         let controller = makeController(
             windowID: windowID,
-            shellState: ShellWorkspaceMaterializer.materialize(
+            shellState: materializeManifestWithShellCore(
                 manifest: manifest,
                 defaultWorkingDirectory: "/fallback",
                 now: Date(timeIntervalSince1970: 102)
@@ -7635,7 +7783,7 @@ private enum ShellRuntimeMetadataTests {
         )
         let controller = makeController(
             windowID: windowID,
-            shellState: ShellWorkspaceMaterializer.materialize(
+            shellState: materializeManifestWithShellCore(
                 manifest: manifest,
                 defaultWorkingDirectory: "/fallback",
                 now: Date(timeIntervalSince1970: 103)
@@ -7673,7 +7821,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 30)
@@ -7709,7 +7857,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 40)
@@ -7738,7 +7886,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 50)
@@ -7801,7 +7949,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 70)
@@ -8116,7 +8264,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/repo/app",
                 now: Date(timeIntervalSince1970: 93)
@@ -8198,7 +8346,7 @@ private enum ShellRuntimeMetadataTests {
         let controller = makeController(
             windowID: windowID,
             workspaceManifestStore: store,
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: windowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -8249,7 +8397,7 @@ private enum ShellRuntimeMetadataTests {
         let foregroundController = makeController(
             windowID: "active_foreground_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: foregroundURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 60)
@@ -8269,7 +8417,7 @@ private enum ShellRuntimeMetadataTests {
         let idleController = makeController(
             windowID: "active_idle_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: idleURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 61)
@@ -8289,7 +8437,7 @@ private enum ShellRuntimeMetadataTests {
         let exitedController = makeController(
             windowID: "active_exited_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: exitedURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 62)
@@ -8312,7 +8460,7 @@ private enum ShellRuntimeMetadataTests {
         let activeOnlyController = makeController(
             windowID: "active_only_\(UUID().uuidString)",
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: activeOnlyURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: "window_main",
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 64)
@@ -8337,7 +8485,7 @@ private enum ShellRuntimeMetadataTests {
             windowID: alanPendingWindowID,
             shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingYield: true),
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: alanPendingURL),
-            workspaceManifest: ShellContentWorkspaceManifest.defaultManifest(
+            workspaceManifest: defaultManifestWithShellCore(
                 windowID: alanPendingWindowID,
                 defaultWorkingDirectory: "/tmp",
                 now: Date(timeIntervalSince1970: 63)
@@ -8850,7 +8998,7 @@ private enum ShellRuntimeMetadataTests {
         expect(!json.contains("sudo -iu"), "workspace manifest must not embed terminal profile command definitions")
         expect(!json.contains("unix_user"), "workspace manifest must not embed terminal profile Unix-user definitions")
 
-        let state = ShellWorkspaceMaterializer.materialize(
+        let state = materializeManifestWithShellCore(
             manifest: decoded,
             defaultWorkingDirectory: "/Users/morris",
             now: now
@@ -9068,6 +9216,37 @@ private enum ShellRuntimeMetadataTests {
                 "ALAN_MACOS_APPLICATION_SUPPORT_DIR": supportRoot.path,
                 "ALAN_INSTALL_CHANNEL": "stable",
             ]
+        )
+        let inheritedCwdLocalSplitResult = AlanShellLocalCommandExecutor.execute(
+            command: decodeControlCommand(
+                """
+                {
+                  "request_id": "local-split-inherit-source-cwd",
+                  "command": "pane.split",
+                  "pane_id": "pane_1",
+                  "direction": "horizontal"
+                }
+                """
+            ),
+            state: .bootstrapDefault(
+                windowID: "local_split_inherit_source_cwd",
+                workingDirectory: "/Users/morris/project"
+            )
+        )
+        let inheritedCwdPane = inheritedCwdLocalSplitResult?.updatedState?.pane(
+            paneID: inheritedCwdLocalSplitResult?.response.paneID ?? ""
+        )
+        expect(
+            inheritedCwdLocalSplitResult?.response.applied == true,
+            "local pane.split without a captured profile must apply"
+        )
+        expect(
+            inheritedCwdPane?.terminalProfileID == nil,
+            "local pane.split without a captured profile must leave profile unset"
+        )
+        expect(
+            inheritedCwdPane?.cwd == "/Users/morris/project",
+            "local pane.split without a captured profile must inherit source pane cwd"
         )
         do {
             try store.save(terminalProfiles)
@@ -11391,6 +11570,38 @@ private enum ShellRuntimeMetadataTests {
         snapshot?.contents.first { $0.contentID == contentID }?.payload.terminal
     }
 
+    private static func defaultManifestWithShellCore(
+        windowID: String,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellContentWorkspaceManifest {
+        do {
+            return try ShellCoreFFIAdapter().defaultContentWorkspaceManifest(
+                windowID: windowID,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
+            )
+        } catch {
+            fail("shell-core default manifest failed: \(error)")
+        }
+    }
+
+    private static func materializeManifestWithShellCore(
+        manifest: ShellContentWorkspaceManifest,
+        defaultWorkingDirectory: String,
+        now: Date
+    ) -> ShellStateSnapshot {
+        do {
+            return try ShellCoreFFIAdapter().materializeContentWorkspaceManifest(
+                manifest: manifest,
+                defaultWorkingDirectory: defaultWorkingDirectory,
+                now: now
+            )
+        } catch {
+            fail("shell-core manifest materialize failed: \(error)")
+        }
+    }
+
     private static func expect(
         _ condition: @autoclosure () -> Bool,
         _ message: String
@@ -11403,6 +11614,36 @@ private enum ShellRuntimeMetadataTests {
     private static func fail(_ message: String) -> Never {
         fputs("error: \(message)\n", stderr)
         exit(1)
+    }
+
+    private static func verifiesShellResolverFallsBackToLoginShellWhenCoreUnavailable() {
+        let environmentKey = "ALAN_SHELL_CORE_FFI_LIBRARY"
+        let originalPath = ProcessInfo.processInfo.environment[environmentKey]
+        let missingPath = "/tmp/alan-shell-core-ffi-missing-\(UUID().uuidString.lowercased()).dylib"
+        setenv(environmentKey, missingPath, 1)
+        defer {
+            if let originalPath {
+                setenv(environmentKey, originalPath, 1)
+            } else {
+                unsetenv(environmentKey)
+            }
+        }
+
+        // No explicit profile: shell-core cannot load, but a default terminal must still resolve a
+        // usable login shell instead of the immediately-exiting shell-core failure command.
+        let resolution = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: nil,
+            terminalProfiles: nil
+        )
+        expect(
+            resolution.summary != "Terminal Profile unavailable",
+            "default terminal must not resolve to the shell-core failure command when core is unavailable"
+        )
+        expect(
+            !(resolution.surfaceCommand?.contains("exit 78") ?? false),
+            "default-terminal fallback must launch a login shell, not an immediately-exiting command"
+        )
     }
 
     private final class AlwaysExecutableFileManager: FileManager {

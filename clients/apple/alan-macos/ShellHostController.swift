@@ -372,23 +372,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case fresh
         case restorePrevious
         case workspaceManifest
+
+        var workspaceStartupMode: ShellWorkspaceStartupMode {
+            switch self {
+            case .fresh:
+                return .fresh
+            case .restorePrevious:
+                return .restorePrevious
+            case .workspaceManifest:
+                return .workspaceManifest
+            }
+        }
     }
 
-    private static let unpinnedTabRetentionTTL: TimeInterval = 12 * 60 * 60
     private static let gracefulShutdownPollInterval: TimeInterval = 0.05
     private static let iso8601Formatter = ISO8601DateFormatter()
     private let fileManager: FileManager
     private let windowContext: ShellWindowContext
-    private let persistenceURL: URL
-    private let persistenceStore: ShellStatePersistenceStore
-    private let workspaceManifestStore: ShellWorkspaceManifestStore?
-    private let persistenceWriter: ShellPersistenceWriting
-    private let manifestFlushScheduler: ManifestFlushScheduling
-    private var pendingContentFlushScheduled = false
-    private var workspaceManifest: ShellContentWorkspaceManifest?
+    private let persistenceCoordinator: ShellWorkspacePersistenceCoordinator
+    private let actionCoordinator = ShellActionCoordinator()
+    let reducerCoordinator = ShellReducerCommandCoordinator()
     private var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     private var terminalContentIDsSuppressingAutoClose: Set<String> = []
     private let paneProjection: ShellPaneProjectionService
+    private let platformMetadataPreserver: ShellPlatformMetadataPreserver
     private let terminalContentProjection: TerminalContentProjectionAdapter
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     private let clipboardWriter: ShellClipboardWriter
@@ -500,6 +507,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
     private var visibleBackgroundRuntimeProjectionScheduled = false
     private var shellWindowIsVisibleForRendering = true
+    private var workspaceManifest: ShellContentWorkspaceManifest? {
+        persistenceCoordinator.currentManifest()
+    }
 
     init(
         shellState: ShellStateSnapshot,
@@ -518,28 +528,31 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         self.fileManager = fileManager
-        self.bootProfileCache = bootProfileCache ?? AlanShellBootProfileCache()
+        let resolvedBootProfileCache = bootProfileCache ?? AlanShellBootProfileCache()
+        self.bootProfileCache = resolvedBootProfileCache
         let paneProjection = ShellPaneProjectionService(fileManager: fileManager)
         self.paneProjection = paneProjection
+        self.platformMetadataPreserver = ShellPlatformMetadataPreserver(
+            paneProjection: paneProjection,
+            bootProfileCache: resolvedBootProfileCache
+        )
         self.terminalContentProjection = TerminalContentProjectionAdapter(
             paneProjection: paneProjection
         )
         let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
         self.windowContext = resolvedContext
-        self.persistenceURL = persistenceURL ?? resolvedContext.persistenceURL
-        self.persistenceStore = ShellStatePersistenceStore(
+        let resolvedPersistenceURL = persistenceURL ?? resolvedContext.persistenceURL
+        let persistenceStore = ShellStatePersistenceStore(
             fileManager: fileManager,
-            persistenceURL: self.persistenceURL
+            persistenceURL: resolvedPersistenceURL
         )
-        self.workspaceManifestStore = workspaceManifestStore
-        self.persistenceWriter =
-            persistenceWriter
-            ?? ShellPersistenceWriter(
-                manifestStore: workspaceManifestStore,
-                stateStore: self.persistenceStore
-            )
-        self.manifestFlushScheduler = manifestFlushScheduler ?? DebouncedManifestFlushScheduler()
-        self.workspaceManifest = workspaceManifest
+        self.persistenceCoordinator = ShellWorkspacePersistenceCoordinator(
+            manifestStore: workspaceManifestStore,
+            stateStore: persistenceStore,
+            workspaceManifest: workspaceManifest,
+            persistenceWriter: persistenceWriter,
+            manifestFlushScheduler: manifestFlushScheduler
+        )
         self.clipboardWriter = ShellClipboardWriter()
         self.closeConfirmationPresenter =
             closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
@@ -555,14 +568,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         // Route async persistence-write failures (debounced restore content) to the
         // control-plane diagnostics surface, mirroring the synchronous paths.
-        if let writer = self.persistenceWriter as? ShellPersistenceWriter {
-            writer.onError = { [weak self] message in
-                if Thread.isMainThread {
-                    self?.recordControlPlaneDiagnostic(message)
-                } else {
-                    DispatchQueue.main.async { self?.recordControlPlaneDiagnostic(message) }
-                }
-            }
+        persistenceCoordinator.onDiagnostic = { [weak self] message in
+            self?.recordControlPlaneDiagnostic(message)
         }
 
         if shellState.panes.isEmpty {
@@ -607,93 +614,34 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 restorePrevious: usesRestorableWindowContext,
                 channel: installChannel
             )
-        let persistenceURL = resolvedWindowContext.persistenceURL
-        let shellState: ShellStateSnapshot
-        let manifestStore: ShellWorkspaceManifestStore?
-        let manifest: ShellContentWorkspaceManifest?
-        let manifestRecovery: ShellWorkspaceManifestRecovery?
-        let retiredTabCount: Int
-        switch startupMode {
-        case .fresh:
-            shellState = .bootstrapDefault(windowID: resolvedWindowContext.windowID)
-            manifestStore = nil
-            manifest = nil
-            manifestRecovery = nil
-            retiredTabCount = 0
-        case .restorePrevious:
-            shellState =
-                ShellStatePersistenceStore.restoreShellState(
-                    fileManager: fileManager,
-                    persistenceURL: persistenceURL,
-                    channel: resolvedWindowContext.installChannel
-                )
-                ?? .bootstrapDefault(windowID: resolvedWindowContext.windowID)
-            manifestStore = nil
-            manifest = nil
-            manifestRecovery = nil
-            retiredTabCount = 0
-        case .workspaceManifest:
-            let workingDirectory = defaultWorkingDirectory
-                ?? fileManager.homeDirectoryForCurrentUser.path
-            let store = ShellWorkspaceManifestStore(
-                fileManager: fileManager,
-                manifestURL: workspaceManifestURL
-                    ?? ShellWorkspaceManifestStore.defaultManifestURL(
-                        windowID: resolvedWindowContext.windowID,
-                        fileManager: fileManager,
-                        channel: resolvedWindowContext.installChannel
-                    )
-            )
-            let loadResult = try? store.loadOrCreateDefault(
-                windowID: resolvedWindowContext.windowID,
-                defaultWorkingDirectory: workingDirectory,
-                now: now
-            )
-            let loadedManifest = loadResult?.manifest
-                ?? ShellContentWorkspaceManifest.defaultManifest(
-                    windowID: resolvedWindowContext.windowID,
-                    defaultWorkingDirectory: workingDirectory,
-                    now: now
-                )
-            let retainedManifest = loadedManifest.pruningExpiredTabs(
-                now: now,
-                ttl: Self.unpinnedTabRetentionTTL
-            )
-            retiredTabCount = max(
-                loadedManifest.spaces.reduce(0) { $0 + $1.tabs.count }
-                    - retainedManifest.spaces.reduce(0) { $0 + $1.tabs.count },
-                0
-            )
-            if retainedManifest != loadedManifest {
-                try? store.save(retainedManifest)
-            }
-            shellState = ShellWorkspaceMaterializer.materialize(
-                manifest: retainedManifest,
-                defaultWorkingDirectory: workingDirectory,
-                now: now
-            )
-            manifestStore = store
-            manifest = retainedManifest
-            manifestRecovery = loadResult?.recovery
-        }
+        let startup = ShellWorkspaceManifestStartupCoordinator(fileManager: fileManager).prepare(
+            mode: startupMode.workspaceStartupMode,
+            windowContext: resolvedWindowContext,
+            workspaceManifestURL: workspaceManifestURL,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
 
         let controller = ShellHostController(
-            shellState: shellState,
+            shellState: startup.shellState,
             fileManager: fileManager,
             windowContext: resolvedWindowContext,
-            persistenceURL: persistenceURL,
-            workspaceManifestStore: manifestStore,
-            workspaceManifest: manifest
+            persistenceURL: resolvedWindowContext.persistenceURL,
+            workspaceManifestStore: startup.manifestStore,
+            workspaceManifest: startup.workspaceManifest
         )
-        if startupMode == .fresh {
+        if startup.shouldPersistInitialShellState {
             controller.persistShellState()
         }
-        if let manifestRecovery {
+        if let manifestRecovery = startup.manifestRecovery {
             controller.recordWorkspaceManifestRecovery(manifestRecovery)
         }
-        if retiredTabCount > 0 {
+        for diagnostic in startup.diagnostics {
+            controller.recordControlPlaneDiagnostic(diagnostic)
+        }
+        if startup.retiredTabCount > 0 {
             controller.recordControlPlaneDiagnostic(
-                "workspace manifest retired \(retiredTabCount) inactive unpinned tab(s)"
+                "workspace manifest retired \(startup.retiredTabCount) inactive unpinned tab(s)"
             )
         }
         return controller
@@ -1090,7 +1038,36 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func focus(paneID: String, requestTerminalFocus: Bool) {
         let focusStartedAt = performanceDiagnosticsStartTime()
-        guard let result = try? shellState.focusingPane(paneID) else { return }
+        let result: ShellStateMutationResult
+        if pane(paneID: paneID)?.isQuickTerminalPane == true {
+            guard let swiftResult = try? shellState.focusingPane(paneID) else { return }
+            result = swiftResult
+        } else {
+            do {
+                let rustResult = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .focusPane(paneSlotID: paneID)
+                )
+                // Rust owns workspace focus. Swift keeps this narrow post-pass
+                // for platform terminal activity acknowledgement until activity
+                // signals are fully domain-owned by shell-core.
+                let acknowledgedState = rustResult.tabID.map { tabID in
+                    rustResult.state.acknowledgingCommandFailureActivities(
+                        in: tabID,
+                        focusedPaneID: paneID
+                    )
+                } ?? rustResult.state
+                result = ShellStateMutationResult(
+                    state: acknowledgedState,
+                    spaceID: rustResult.spaceID,
+                    tabID: rustResult.tabID,
+                    paneID: rustResult.paneID
+                )
+            } catch {
+                recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
+                return
+            }
+        }
         applyMutationResult(result)
         if let focusStartedAt {
             let focusedPane = pane(paneID: paneID)
@@ -1167,17 +1144,37 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func showQuickTerminal() -> String? {
-        let result = shellState.showingQuickTerminal(
-            workingDirectory: focusedPaneWorkingDirectory()
-        )
-        applyMutationResult(result)
-        return result.paneID
+        let paneID = shellState.quickTerminal?.paneID ?? ShellQuickTerminalSlot.globalPaneID
+        let hadQuickPane = pane(paneID: paneID) != nil
+        do {
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .showQuickTerminal(
+                    workingDirectory: focusedPaneWorkingDirectory(),
+                    defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                )
+            )
+            let annotatedResult = hadQuickPane
+                ? result
+                : annotatingPaneViewport(
+                    result,
+                    paneID: paneID,
+                    fallbackSummary: "quick terminal scaffolded"
+            )
+            applyMutationResult(annotatedResult)
+            return paneID
+        } catch {
+            return nil
+        }
     }
 
     @discardableResult
     func hideQuickTerminal() -> Bool {
         do {
-            let result = try shellState.hidingQuickTerminal()
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .hideQuickTerminal
+            )
             applyMutationResult(result)
             return true
         } catch {
@@ -1235,7 +1232,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     private func applyCloseQuickTerminalMutation() -> Bool {
         do {
-            let result = try shellState.closingQuickTerminal()
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .closeQuickTerminal
+            )
             applyMutationResult(result)
             return true
         } catch {
@@ -1251,9 +1251,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func promoteQuickTerminal(to targetSpaceID: String) -> Bool {
         do {
-            let result = try shellState.promotingQuickTerminal(to: targetSpaceID)
-            applyMutationResult(result)
-            terminalRuntimeRegistry.requestFocus(for: result.paneID ?? ShellQuickTerminalSlot.globalPaneID)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
+            )
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: result.paneID ?? ShellQuickTerminalSlot.globalPaneID,
+                fallbackSummary: "quick terminal opened in space"
+            )
+            applyMutationResult(annotatedResult)
+            terminalRuntimeRegistry.requestFocus(
+                for: annotatedResult.paneID ?? ShellQuickTerminalSlot.globalPaneID
+            )
             return true
         } catch {
             return false
@@ -1274,14 +1284,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
             ?? globalDefaultTerminalProfileIDForPaneCapture()
-        let result = shellState.creatingSpace(
-            launchTarget: launchTarget,
-            title: title,
-            workingDirectory: workingDirectory,
-            terminalProfileID: resolvedTerminalProfileID,
-            presentationIconSystemName: presentationIconSystemName,
-            reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-        )
+        let result: ShellStateMutationResult
+        do {
+            switch launchTarget {
+            case .shell:
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .createTerminalSpace(
+                        title: title,
+                        tabTitle: nil,
+                        workingDirectory: workingDirectory,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        presentationIcon: presentationIconSystemName,
+                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                    )
+                )
+            }
+        } catch {
+            return nil
+        }
         applyMutationResult(result)
         return result.spaceID
     }
@@ -1304,13 +1325,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @discardableResult
     func setTerminalProfile(_ terminalProfileID: String?, forSpaceID spaceID: String) -> Bool {
-        guard let nextState = shellState.settingTerminalProfile(
-            terminalProfileID,
-            forSpaceID: spaceID
-        ) else {
+        let result: ShellStateMutationResult
+        do {
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .setTerminalProfile(
+                    spaceID: spaceID,
+                    terminalProfileID: terminalProfileID
+                )
+            )
+        } catch {
             return false
         }
-        adoptStateFromControlPlane(nextState)
+        applyMutationResult(result)
         return true
     }
 
@@ -1320,13 +1347,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     /// Invalid symbol names are treated as `nil` (clear) — the mutation rejects garbage input.
     @discardableResult
     func setPresentationIcon(_ systemName: String?, forSpaceID spaceID: String) -> Bool {
-        guard let nextState = shellState.settingPresentationIcon(
-            systemName,
-            forSpaceID: spaceID
-        ) else {
+        let result: ShellStateMutationResult
+        do {
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .setPresentationIcon(
+                    spaceID: spaceID,
+                    presentationIcon: systemName
+                )
+            )
+        } catch {
             return false
         }
-        adoptStateFromControlPlane(nextState)
+        applyMutationResult(result)
         return true
     }
 
@@ -1334,7 +1367,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func deleteSpace(spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.deletingSpace(spaceID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .deleteSpace(
+                    spaceID: spaceID,
+                    defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                )
+            )
         } catch {
             return false
         }
@@ -1343,14 +1382,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func isTabPinned(tabID: String) -> Bool {
-        if let tab = shellState.tab(tabID: tabID) {
-            return tab.isPinned
-        }
-        return workspaceManifest?
-            .spaces
-            .flatMap(\.tabs)
-            .first { $0.tabID == tabID }?
-            .isPinned == true
+        persistenceCoordinator.isTabPinned(tabID: tabID, in: shellState)
     }
 
     @discardableResult
@@ -1362,7 +1394,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         let result: ShellStateMutationResult
         do {
-            result = try shellState.pinningTab(targetTabID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .pinTab(tabID: targetTabID)
+            )
         } catch {
             return false
         }
@@ -1374,9 +1409,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func unpinTab(tabID: String? = nil) -> Bool {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
+        guard isTabPinned(tabID: targetTabID) else { return true }
         let result: ShellStateMutationResult
         do {
-            result = try shellState.unpinningTab(targetTabID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .unpinTab(tabID: targetTabID)
+            )
         } catch {
             return false
         }
@@ -1407,11 +1446,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let wasPinned = isTabPinned(tabID: tabID)
         let result: ShellStateMutationResult
         do {
-            result = try shellState.organizingTab(
-                tabID: tabID,
-                targetSpaceID: targetSpaceID,
-                section: section,
-                index: index
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .organizeTab(
+                    tabID: tabID,
+                    targetSpaceID: targetSpaceID,
+                    section: section,
+                    index: index
+                )
             )
         } catch {
             return false
@@ -1426,7 +1468,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         guard let targetTabID = tabID ?? selectedTabID else { return false }
         let result: ShellStateMutationResult
         do {
-            result = try shellState.movingTab(targetTabID, sectionOffset: offset)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .moveTab(tabID: targetTabID, sectionOffset: offset)
+            )
         } catch {
             return false
         }
@@ -1438,9 +1483,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func moveTabToSpace(tabID: String, targetSpaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.movingTabToSpace(
-                tabID: tabID,
-                targetSpaceID: targetSpaceID
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .moveTabToSpace(
+                    tabID: tabID,
+                    targetSpaceID: targetSpaceID
+                )
             )
         } catch {
             return false
@@ -1453,7 +1501,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func renameTab(tabID: String, title: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.renamingTab(tabID, title: title)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .renameTab(
+                    tabID: tabID,
+                    title: title
+                )
+            )
         } catch {
             return false
         }
@@ -1465,7 +1519,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func duplicateTab(tabID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.duplicatingTab(tabID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .duplicateTab(
+                    tabID: tabID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
         } catch {
             return false
         }
@@ -1487,7 +1547,20 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         select(tabID: tabID)
         let result: ShellStateMutationResult
         do {
-            result = try shellState.splittingPane(paneID, placement: .right)
+            let sourcePane = pane(paneID: paneID)
+            let terminalProfileID = sourcePane?.terminalProfileID
+                ?? selectedSpace?.terminalProfileID
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .splitPane(
+                    paneSlotID: paneID,
+                    placement: .right,
+                    title: nil,
+                    workingDirectory: terminalProfileID == nil ? sourcePane?.cwd : nil,
+                    terminalProfileID: terminalProfileID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
         } catch {
             return false
         }
@@ -1507,9 +1580,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func clearInactiveTemporaryTabs(in spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.clearingInactiveTemporaryTabs(
-                in: spaceID,
-                activeTaskByTabID: activeTaskByTabID()
+            let protectedTabIDs = activeTaskByTabID().compactMap { tabID, activeTask in
+                activeTask.protectsFromPruning ? tabID : nil
+            }
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .clearInactiveTemporaryTabs(
+                    spaceID: spaceID,
+                    protectedTabIDs: protectedTabIDs
+                )
             )
         } catch {
             return false
@@ -1530,12 +1609,56 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) -> String? {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.openingContentTab(
-                contentIntent,
-                in: spaceID,
-                terminalProfileID: terminalProfileID,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
+            let reservedPaneSlotIDs = terminalRuntimeRegistry.registeredPaneIDs.sorted()
+            switch contentIntent {
+            case .terminal(let launchTarget, let title, let workingDirectory):
+                switch launchTarget {
+                case .shell:
+                    let resolvedTerminalProfileID = targetTerminalProfileID(
+                        in: spaceID,
+                        explicit: terminalProfileID
+                    )
+                    let resolvedWorkingDirectory =
+                        workingDirectory
+                        ?? (resolvedTerminalProfileID == nil
+                            ? focusedPaneWorkingDirectory()
+                            : nil)
+                    result = try reducerCoordinator.apply(
+                        state: shellState,
+                        operation: .openTerminalTab(
+                            spaceID: spaceID,
+                            title: title,
+                            workingDirectory: resolvedWorkingDirectory,
+                            terminalProfileID: resolvedTerminalProfileID,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                }
+            case .markdown(let fileURL, let title):
+                let content = markdownContentDescriptor(fileURL: fileURL, title: title)
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .openContentTab(
+                        spaceID: spaceID,
+                        kind: .markdown,
+                        title: content.title,
+                        payload: content.payload,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            case .settings(let title):
+                let content = settingsContentDescriptor(title: title)
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .openContentTab(
+                        spaceID: spaceID,
+                        kind: .settings,
+                        title: content.title,
+                        payload: content.payload,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            }
         } catch {
             return nil
         }
@@ -1551,15 +1674,26 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        openContentTab(
-            .terminal(
-                launchTarget: launchTarget,
-                title: title,
-                workingDirectory: workingDirectory
-            ),
-            in: spaceID,
-            terminalProfileID: terminalProfileID
-        )
+        let result: ShellStateMutationResult
+        do {
+            switch launchTarget {
+            case .shell:
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .openTerminalTab(
+                        spaceID: spaceID,
+                        title: title,
+                        workingDirectory: workingDirectory,
+                        terminalProfileID: terminalProfileID,
+                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                    )
+                )
+            }
+        } catch {
+            return nil
+        }
+        applyMutationResult(result)
+        return result.tabID
     }
 
     @discardableResult
@@ -1666,13 +1800,69 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         let result: ShellStateMutationResult
         do {
-            result = try shellState.splittingPane(
-                paneID,
-                placement: placement,
-                contentIntent: contentIntent,
-                terminalProfileID: resolvedTerminalProfileID,
-                reservedPaneIDs: terminalRuntimeRegistry.registeredPaneIDs
-            )
+            let reservedPaneSlotIDs = terminalRuntimeRegistry.registeredPaneIDs.sorted()
+            if let contentIntent {
+                switch contentIntent {
+                case .terminal(let launchTarget, let title, let workingDirectory):
+                    switch launchTarget {
+                    case .shell:
+                        result = try reducerCoordinator.apply(
+                            state: shellState,
+                            operation: .splitPane(
+                                paneSlotID: paneID,
+                                placement: placement,
+                                title: title,
+                                workingDirectory: workingDirectory
+                                    ?? (resolvedTerminalProfileID == nil
+                                        ? pane(paneID: paneID)?.cwd
+                                        : nil),
+                                terminalProfileID: resolvedTerminalProfileID,
+                                reservedPaneSlotIDs: reservedPaneSlotIDs
+                            )
+                        )
+                    }
+                case .markdown(let fileURL, let title):
+                    let content = markdownContentDescriptor(fileURL: fileURL, title: title)
+                    result = try reducerCoordinator.apply(
+                        state: shellState,
+                        operation: .splitContentPane(
+                            paneSlotID: paneID,
+                            placement: placement,
+                            kind: .markdown,
+                            title: content.title,
+                            payload: content.payload,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                case .settings(let title):
+                    let content = settingsContentDescriptor(title: title)
+                    result = try reducerCoordinator.apply(
+                        state: shellState,
+                        operation: .splitContentPane(
+                            paneSlotID: paneID,
+                            placement: placement,
+                            kind: .settings,
+                            title: content.title,
+                            payload: content.payload,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                }
+            } else {
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .splitPane(
+                        paneSlotID: paneID,
+                        placement: placement,
+                        title: nil,
+                        workingDirectory: resolvedTerminalProfileID == nil
+                            ? pane(paneID: paneID)?.cwd
+                            : nil,
+                        terminalProfileID: resolvedTerminalProfileID,
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
+            }
         } catch {
             return nil
         }
@@ -1680,14 +1870,88 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return result.paneID
     }
 
+    private func markdownContentDescriptor(
+        fileURL: URL,
+        title: String?
+    ) -> (title: String, payload: ShellContentPayload) {
+        let resolvedURL = fileURL.isFileURL ? fileURL.standardizedFileURL : fileURL
+        let resolvedTitle = Self.markdownContentTitle(for: resolvedURL, explicitTitle: title)
+        return (
+            title: resolvedTitle,
+            payload: .markdown(
+                ShellMarkdownContentPayload(
+                    fileURL: resolvedURL.absoluteString,
+                    title: resolvedTitle
+                )
+            )
+        )
+    }
+
+    private func settingsContentDescriptor(
+        title: String?
+    ) -> (title: String, payload: ShellContentPayload) {
+        let resolvedTitle = Self.settingsContentTitle(explicitTitle: title)
+        return (
+            title: resolvedTitle,
+            payload: .settings(
+                ShellSettingsContentPayload(
+                    surfaceID: ShellContentInstance.settingsSurfaceID,
+                    title: resolvedTitle
+                )
+            )
+        )
+    }
+
+    private static func markdownContentTitle(for fileURL: URL, explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        let lastPathComponent = fileURL.lastPathComponent.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return lastPathComponent.isEmpty ? "Markdown" : lastPathComponent
+    }
+
+    private static func settingsContentTitle(explicitTitle: String?) -> String {
+        if let title = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty
+        {
+            return title
+        }
+
+        return "Settings"
+    }
+
     @discardableResult
     func focusAdjacentPane(direction: ShellSpatialFocusDirection) -> Bool {
         let previousPaneID = shellState.focusedPaneID
-        let result: ShellStateMutationResult
+        let rustResult: ShellStateMutationResult
         do {
-            result = try shellState.focusingAdjacentPane(direction)
+            rustResult = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .focusAdjacentPane(direction: direction)
+            )
         } catch {
             return false
+        }
+        // Mirror focus(paneID:): acknowledge command-failure activity/attention on the newly
+        // focused pane so spatial focus also clears a stale failure indicator within the tab.
+        let result: ShellStateMutationResult
+        if let tabID = rustResult.tabID, let focusedPaneID = rustResult.paneID {
+            result = ShellStateMutationResult(
+                state: rustResult.state.acknowledgingCommandFailureActivities(
+                    in: tabID,
+                    focusedPaneID: focusedPaneID
+                ),
+                spaceID: rustResult.spaceID,
+                tabID: rustResult.tabID,
+                paneID: rustResult.paneID
+            )
+        } else {
+            result = rustResult
         }
         applyMutationResult(result)
         controlPlane.recordSpatialFocus(
@@ -1773,21 +2037,21 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func shellActionTitle(_ id: ShellActionID) -> String {
-        ShellActionRegistry.standard.action(for: id)?.title ?? "Unavailable"
+        actionCoordinator.title(id)
     }
 
     func shellActionAvailability(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionAvailability {
-        ShellActionRegistry.standard.resolve(id, target: target, state: shellState).availability
+        actionCoordinator.availability(id, target: target, state: shellState)
     }
 
     func shellActionShortcut(
         _ id: ShellActionID,
         target: ShellActionTarget = .currentSelection
     ) -> ShellActionShortcut? {
-        ShellActionRegistry.standard.defaultShortcut(for: id, target: target)
+        actionCoordinator.shortcut(id, target: target)
     }
 
     @discardableResult
@@ -1796,86 +2060,84 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         target: ShellActionTarget = .currentSelection,
         source: ShellTerminalCommandSource = .keyboardShortcut
     ) -> ShellActionExecutionResult {
-        // The Space creation form is a modal flow over a display-only draft.
-        // Suppress shell actions (new/close tab, split, find, space switching,
-        // etc.) so they cannot mutate the hidden underlying Space while it is
-        // open. Cancel/Create are driven by the form directly, not through here.
-        if isPresentingSpaceCreation {
-            return .failed(reason: "Space creation in progress")
-        }
-
-        if id == .findOpen {
-            return openTerminalSearch(source: source, target: target)
-                ? .executed
-                : .failed(reason: "Terminal search target is unavailable")
-        }
-
-        return ShellActionRegistry.standard.execute(
+        actionCoordinator.perform(
             id,
             target: target,
-            state: shellState
-        ) { [weak self] effect in
-            self?.performShellActionEffect(effect) ?? false
-        }
+            source: source,
+            state: shellState,
+            isModalFlowActive: isPresentingSpaceCreation,
+            openSearch: { [weak self] source, target in
+                self?.openTerminalSearch(source: source, target: target) ?? false
+            },
+            effectHandlers: shellActionEffectHandlers
+        )
     }
 
-    private func performShellActionEffect(_ effect: ShellActionEffect) -> Bool {
-        switch effect {
-        case .workspaceCommand(let command):
-            return performShellWorkspaceCommand(command)
-        case .openTab(let launchTarget, let spaceID):
-            return performShellAutomationCommand(
-                .createTab(
-                    ShellAutomationCreateTabRequest(
-                        launchTarget: launchTarget,
-                        spaceID: spaceID,
-                        title: nil,
-                        workingDirectory: nil
+    private var shellActionEffectHandlers: ShellActionEffectHandlers {
+        ShellActionEffectHandlers(
+            selectedTabID: { [weak self] in self?.selectedTabID },
+            selectedPaneID: { [weak self] in self?.selectedPane?.paneID },
+            performWorkspaceCommand: { [weak self] command in
+                self?.performShellWorkspaceCommand(command) ?? false
+            },
+            openTab: { [weak self] launchTarget, spaceID in
+                self?.performShellAutomationCommand(
+                    .createTab(
+                        ShellAutomationCreateTabRequest(
+                            launchTarget: launchTarget,
+                            spaceID: spaceID,
+                            title: nil,
+                            workingDirectory: nil
+                        )
                     )
-                )
-            ).applied
-        case .closeTab(let tabID):
-            guard let tabID = tabID ?? selectedTabID else { return false }
-            return requestCloseTab(tabID: tabID)
-        case .renameTab:
-            return false
-        case .duplicateTab(let tabID):
-            guard let tabID else { return false }
-            return duplicateTab(tabID: tabID)
-        case .openTabInSplitView(let tabID):
-            guard let tabID else { return false }
-            return openTabInSplitView(tabID: tabID)
-        case .closePane(let paneID):
-            guard let paneID = paneID ?? selectedPane?.paneID else { return false }
-            return requestClosePane(paneID: paneID)
-        case .selectAdjacentTab(let offset):
-            return selectAdjacentTab(offset: offset)
-        case .selectAdjacentSpace(let offset):
-            return selectAdjacentSpace(offset: offset)
-        case .selectSpaceAt(let index):
-            return selectSpace(at: index)
-        case .pinTab(let tabID):
-            return pinTab(tabID: tabID)
-        case .unpinTab(let tabID):
-            return unpinTab(tabID: tabID)
-        case .updatePinnedTab(let tabID):
-            return updatePinnedTabSnapshot(tabID: tabID)
-        case .moveTab(let tabID, let offset):
-            return moveTab(tabID: tabID, offset: offset)
-        case .moveTabToSpace(let tabID, let spaceID):
-            guard let tabID, let spaceID else { return false }
-            return moveTabToSpace(tabID: tabID, targetSpaceID: spaceID)
-        case .movePaneInTab(let paneID, let placement):
-            guard let paneID else { return false }
-            return movePaneWithinTab(paneID: paneID, placement: placement)
-        case .promoteQuickTerminal(let spaceID):
-            guard let spaceID else { return false }
-            return promoteQuickTerminal(to: spaceID)
-        case .terminalClear(let paneID):
-            return clearTerminal(paneID: paneID)
-        case .disabledPlaceholder:
-            return false
-        }
+                ).applied ?? false
+            },
+            requestCloseTab: { [weak self] tabID in
+                self?.requestCloseTab(tabID: tabID) ?? false
+            },
+            duplicateTab: { [weak self] tabID in
+                self?.duplicateTab(tabID: tabID) ?? false
+            },
+            openTabInSplitView: { [weak self] tabID in
+                self?.openTabInSplitView(tabID: tabID) ?? false
+            },
+            requestClosePane: { [weak self] paneID in
+                self?.requestClosePane(paneID: paneID) ?? false
+            },
+            selectAdjacentTab: { [weak self] offset in
+                self?.selectAdjacentTab(offset: offset) ?? false
+            },
+            selectAdjacentSpace: { [weak self] offset in
+                self?.selectAdjacentSpace(offset: offset) ?? false
+            },
+            selectSpaceAt: { [weak self] index in
+                self?.selectSpace(at: index) ?? false
+            },
+            pinTab: { [weak self] tabID in
+                self?.pinTab(tabID: tabID) ?? false
+            },
+            unpinTab: { [weak self] tabID in
+                self?.unpinTab(tabID: tabID) ?? false
+            },
+            updatePinnedTab: { [weak self] tabID in
+                self?.updatePinnedTabSnapshot(tabID: tabID) ?? false
+            },
+            moveTab: { [weak self] tabID, offset in
+                self?.moveTab(tabID: tabID, offset: offset) ?? false
+            },
+            moveTabToSpace: { [weak self] tabID, spaceID in
+                self?.moveTabToSpace(tabID: tabID, targetSpaceID: spaceID) ?? false
+            },
+            movePaneWithinTab: { [weak self] paneID, placement in
+                self?.movePaneWithinTab(paneID: paneID, placement: placement) ?? false
+            },
+            promoteQuickTerminal: { [weak self] spaceID in
+                self?.promoteQuickTerminal(to: spaceID) ?? false
+            },
+            clearTerminal: { [weak self] paneID in
+                self?.clearTerminal(paneID: paneID) ?? false
+            }
+        )
     }
 
     @discardableResult
@@ -1895,7 +2157,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.resizingSplit(splitNodeID, ratio: ratio)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
+            )
         } catch {
             return false
         }
@@ -1908,7 +2173,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let previousTab = selectedTab
         let result: ShellStateMutationResult
         do {
-            result = try shellState.equalizingSplits(in: selectedTabID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .equalizeSplits(tabID: selectedTabID)
+            )
         } catch {
             return false
         }
@@ -1984,7 +2252,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     func setAttention(_ attention: ShellAttentionState, for paneID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try shellState.settingAttention(attention, for: paneID)
+            result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .setAttention(paneSlotID: paneID, attention: attention)
+            )
         } catch {
             return false
         }
@@ -2254,7 +2525,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 )
             }
             if didPublishPaneUpdate || activeTaskChanged {
-                scheduleContentFlush()
+                publishControlPlaneState(coalesced: true)
             }
         }
     }
@@ -2389,7 +2660,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             ).pane
         }
         if didPublishPaneUpdate || activeTaskChanged {
-            scheduleContentFlush()
+            publishControlPlaneState(coalesced: true)
         }
     }
 
@@ -2668,66 +2939,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             registry: terminalRuntimeRegistry
         )
 
-        let contentState = state.contentStateProjection()
-        let hydratedPanes = state.panes.map { pane in
-            guard paneHasTerminalContent(pane, in: contentState, state: state) else {
-                return pane
-            }
-            guard paneProjection.needsBootContextProjection(pane) else { return pane }
-            let bootProfile = bootProfileCache.profile(for: pane, shellState: state)
-            let projectedContext = paneProjection.projectedContext(
-                for: pane,
-                bootProfile: bootProfile,
-                workingDirectory: pane.cwd ?? bootProfile.workingDirectory,
-                processExited: nil,
-                lastCommandExitCode: pane.context?.lastCommandExitCode,
-                lastMetadataAt: nil,
-                activeTaskState: self.runtime(for: pane.paneID).paneMetadata.activeTaskState,
-                existing: pane.context,
-                runtime: self.runtime(for: pane.paneID)
-            )
-            return ShellPane(
-                paneID: pane.paneID,
-                tabID: pane.tabID,
-                spaceID: pane.spaceID,
-                launchTarget: pane.launchTarget,
-                cwd: pane.terminalProfileID == nil
-                    ? pane.cwd ?? bootProfile.workingDirectory
-                    : pane.cwd,
-                process: pane.process,
-                attention: pane.attention,
-                context: projectedContext,
-                viewport: pane.viewport,
-                activity: pane.activity,
-                alanBinding: pane.alanBinding,
-                terminalProfileID: pane.terminalProfileID
-            )
+        shellState = platformMetadataPreserver.preservingPlatformMetadata(in: state) { [weak self] paneID in
+            self?.runtime(for: paneID) ?? .placeholder
         }
-
-        let hydratedSpaces = state.spaces.map { space in
-            ShellSpace(
-                spaceID: space.spaceID,
-                title: space.title,
-                attention: strongestAttention(in: hydratedPanes.filter { $0.spaceID == space.spaceID }),
-                tabs: space.tabs,
-                selectedTabID: space.selectedTabID,
-                terminalProfileID: space.terminalProfileID,
-                presentationIconSystemName: space.presentationIconSystemName
-            )
-        }
-
-        shellState = ShellStateSnapshot(
-            contractVersion: state.contractVersion,
-            windowID: state.windowID,
-            focusedSpaceID: state.focusedSpaceID,
-            focusedTabID: state.focusedTabID,
-            focusedPaneID: state.focusedPaneID,
-            spaces: hydratedSpaces,
-            panes: hydratedPanes,
-            paneSlots: state.paneSlots,
-            contents: state.contents,
-            quickTerminal: state.quickTerminal
-        )
         reconcilePaneZoomState()
         synchronizeSelection()
         if publish {
@@ -2889,110 +3103,38 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func persistShellState(coalesced: Bool = false) {
-        if coalesced {
-            persistenceWriter.writeShellStateAsync(shellState)
-        } else {
-            persistenceWriter.writeShellStateSync(shellState)
-        }
-    }
-
-    /// Marks restore content dirty and schedules a single debounced flush. The
-    /// terminal callback path calls this instead of writing synchronously, so a
-    /// burst of output coalesces into one off-main write per debounce window.
-    private func scheduleContentFlush() {
-        guard !pendingContentFlushScheduled else { return }
-        pendingContentFlushScheduled = true
-        manifestFlushScheduler.schedule { [weak self] in
-            self?.flushPendingPersistence()
-        }
-    }
-
-    private func flushPendingPersistence() {
-        pendingContentFlushScheduled = false
-        syncWorkspaceManifestFromShellState(coalesced: true)
-        persistShellState(coalesced: true)
-        // Deferred control-plane persistence at the debounce cadence: records
-        // coalesced change events and mirrors state.json (encode + write off-main).
-        // The in-memory state was already merged promptly on the callback path.
-        controlPlane.persistPublished()
+        persistenceCoordinator.persistShellState(shellState, coalesced: coalesced)
     }
 
     /// Forces pending debounced persistence to disk synchronously. Wired to app
     /// background/resign-active and quit so a clean exit never loses pending
     /// restore content; also a deterministic flush point for tests.
     func flushWorkspacePersistence() {
-        pendingContentFlushScheduled = false
-        syncWorkspaceManifestFromShellState()
-        persistShellState()
-        // Record any pending change events and force the state.json mirror current
-        // before a clean exit / background transition.
-        controlPlane.publish(state: shellState)
-        controlPlane.flushStateFile()
-    }
-
-    private func syncWorkspaceManifestFromShellState(
-        now: Date = .now,
-        pinSnapshotTabIDs: Set<String> = [],
-        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:],
-        coalesced: Bool = false
-    ) {
-        guard workspaceManifestStore != nil else { return }
-
-        let nextManifest = makeWorkspaceManifestFromShellState(
-            now: now,
-            transcriptSnapshotOverrides: transcriptSnapshotOverrides
+        persistenceCoordinator.flushWorkspacePersistence(
+            state: shellState,
+            controlPlane: controlPlane,
+            makeManifest: { [weak self] now, transcriptSnapshotOverrides in
+                self?.makeWorkspaceManifestFromShellState(
+                    now: now,
+                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                )
+            },
+            makePinnedSnapshot: { [weak self] tabID in
+                self?.makePinnedTabSnapshot(tabID: tabID)
+            }
         )
-        var manifestToSave = nextManifest
-        if !pinSnapshotTabIDs.isEmpty {
-            applyPinSnapshotOverrides(to: &manifestToSave, tabIDs: pinSnapshotTabIDs)
-        }
-        if coalesced {
-            // Debounced restore content: advance the intended last-saved manifest
-            // optimistically (a failed write self-heals on the next flush, which
-            // rebuilds from current state). The writer surfaces async failures.
-            workspaceManifest = manifestToSave
-            persistenceWriter.writeManifestAsync(manifestToSave)
-        } else if persistenceWriter.writeManifestSync(manifestToSave) {
-            workspaceManifest = manifestToSave
-        } else {
-            recordControlPlaneDiagnostic("workspace manifest save failed")
-        }
     }
 
     private func clearRestoredTranscriptSnapshotFromWorkspaceManifest(
         forTerminalContentID contentID: String
     ) -> Bool {
-        guard workspaceManifestStore != nil, let workspaceManifest else { return false }
-
-        let result = workspaceManifest.clearingRestoredTranscriptSnapshot(
+        persistenceCoordinator.clearRestoredTranscriptSnapshot(
             forTerminalContentID: contentID
         )
-        guard result.removed else { return false }
-        guard persistenceWriter.writeManifestSync(result.manifest) else {
-            recordControlPlaneDiagnostic("workspace manifest clear transcript save failed")
-            return false
-        }
-        self.workspaceManifest = result.manifest
-        return true
     }
 
-    private func applyPinSnapshotOverrides(
-        to manifest: inout ShellContentWorkspaceManifest,
-        tabIDs: Set<String>
-    ) {
-        for spaceIndex in manifest.spaces.indices {
-            for tabIndex in manifest.spaces[spaceIndex].tabs.indices {
-                let tabID = manifest.spaces[spaceIndex].tabs[tabIndex].tabID
-                guard tabIDs.contains(tabID),
-                      let tab = shellState.tab(tabID: tabID)
-                else { continue }
-
-                let snapshot = makeRestoreSnapshot(for: tab)
-                manifest.spaces[spaceIndex].tabs[tabIndex].isPinned = true
-                manifest.spaces[spaceIndex].tabs[tabIndex].pinSnapshot = snapshot
-                manifest.spaces[spaceIndex].tabs[tabIndex].liveSnapshot = snapshot
-            }
-        }
+    private func makePinnedTabSnapshot(tabID: String) -> ShellContentTabRestoreSnapshot? {
+        shellState.tab(tabID: tabID).map(makeRestoreSnapshot)
     }
 
     private func updateWorkspaceManifestTab(
@@ -3000,35 +3142,24 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         mutate: (inout ShellContentWorkspaceTabRecord, ShellContentTabRestoreSnapshot) -> Void,
         diagnostic: (String) -> String
     ) -> Bool {
-        guard let tab = shellState.tab(tabID: tabID),
-              workspaceManifestStore != nil
-        else {
-            return false
+        let updated = persistenceCoordinator.updateManifestTab(
+            tabID: tabID,
+            makeManifest: { [weak self] now, transcriptSnapshotOverrides in
+                self?.makeWorkspaceManifestFromShellState(
+                    now: now,
+                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                )
+            },
+            makePinnedSnapshot: { [weak self] tabID in
+                self?.makePinnedTabSnapshot(tabID: tabID)
+            },
+            mutate: mutate,
+            diagnostic: diagnostic
+        )
+        if updated {
+            objectWillChange.send()
         }
-
-        let snapshot = makeRestoreSnapshot(for: tab)
-        var manifest = makeWorkspaceManifestFromShellState(now: .now)
-        var didUpdate = false
-
-        for spaceIndex in manifest.spaces.indices {
-            guard let tabIndex = manifest.spaces[spaceIndex].tabs.firstIndex(where: { $0.tabID == tabID }) else {
-                continue
-            }
-            mutate(&manifest.spaces[spaceIndex].tabs[tabIndex], snapshot)
-            didUpdate = true
-            break
-        }
-
-        guard didUpdate else { return false }
-
-        guard persistenceWriter.writeManifestSync(manifest) else {
-            recordControlPlaneDiagnostic("workspace manifest save failed")
-            return false
-        }
-        workspaceManifest = manifest
-        objectWillChange.send()
-        recordControlPlaneDiagnostic(diagnostic(tabID))
-        return true
+        return updated
     }
 
     private func makeWorkspaceManifestFromShellState(now: Date) -> ShellContentWorkspaceManifest {
@@ -3413,7 +3544,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyCloseTabMutation(tabID: String) -> ShellTabCloseResult {
         do {
-            let result = try shellState.closingTab(tabID)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .closeTab(tabID: tabID)
+            )
             applyMutationResult(result)
             return .closed
         } catch ShellStateMutationError.lastTab {
@@ -3446,7 +3580,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func applyClosePaneMutation(paneID: String) -> ShellPaneCloseResult {
         do {
-            let result = try shellState.closingPane(paneID)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .closePane(paneSlotID: paneID)
+            )
             applyMutationResult(result)
             return .closed
         } catch ShellStateMutationError.lastTab {
@@ -3584,8 +3721,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .quickTerminal:
             return applyCloseQuickTerminalMutation()
         case .window, .app:
-            syncWorkspaceManifestFromShellState(
-                transcriptSnapshotOverrides: transcriptSnapshotOverrides
+            persistenceCoordinator.syncManifestFromShellState(
+                transcriptSnapshotOverrides: transcriptSnapshotOverrides,
+                makeManifest: { [weak self] now, transcriptSnapshotOverrides in
+                    self?.makeWorkspaceManifestFromShellState(
+                        now: now,
+                        transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                    )
+                },
+                makePinnedSnapshot: { [weak self] tabID in
+                    self?.makePinnedTabSnapshot(tabID: tabID)
+                }
             )
             shutdownTerminalRuntimes()
             return true
@@ -3812,13 +3958,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         toTab targetTabID: String,
         direction: ShellSplitDirection
     ) -> Bool {
+        let targetTabTitle = shellState.tab(tabID: targetTabID)?.title ?? targetTabID
         do {
-            let result = try shellState.movingPane(
-                paneID,
-                toTab: targetTabID,
-                direction: direction
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .movePaneToTab(
+                    paneSlotID: paneID,
+                    targetTabID: targetTabID,
+                    direction: direction
+                )
             )
-            applyMutationResult(result)
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: paneID,
+                fallbackSummary: "pane moved to \(targetTabTitle)"
+            )
+            applyMutationResult(annotatedResult)
             return true
         } catch {
             return false
@@ -3848,9 +4003,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
 
         do {
-            let result = try shellState.movingPaneWithinTab(
-                paneID,
-                placement: placement
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
             )
             applyMutationResult(result)
             if let tabID = result.tabID {
@@ -3870,9 +4025,21 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func liftPaneToTab(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
+        let resolvedTitle = title ?? shellState.pane(paneID: paneID)?.viewport?.title ?? "Lifted Pane"
         do {
-            let result = try shellState.movingPaneToNewTab(paneID, title: title)
-            applyMutationResult(result)
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .movePaneToNewTab(
+                    paneSlotID: paneID,
+                    title: resolvedTitle
+                )
+            )
+            let annotatedResult = annotatingPaneViewport(
+                result,
+                paneID: paneID,
+                fallbackSummary: "pane moved to its own tab"
+            )
+            applyMutationResult(annotatedResult)
             return .lifted
         } catch ShellStateMutationError.lastPane {
             return .lastPane
@@ -3881,6 +4048,57 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } catch {
             return .paneNotFound
         }
+    }
+
+    private func annotatingPaneViewport(
+        _ result: ShellStateMutationResult,
+        paneID: String,
+        fallbackSummary: String,
+        now: Date = .now
+    ) -> ShellStateMutationResult {
+        let formatter = ISO8601DateFormatter()
+        let timestamp = formatter.string(from: now)
+        let nextPanes = result.state.panes.map { pane in
+            guard pane.paneID == paneID else { return pane }
+            let viewport = ShellViewportSnapshot(
+                title: pane.viewport?.title,
+                summary: pane.viewport?.summary ?? fallbackSummary,
+                visibleExcerpt: pane.viewport?.visibleExcerpt,
+                lastActivityAt: timestamp
+            )
+            return ShellPane(
+                paneID: pane.paneID,
+                tabID: pane.tabID,
+                spaceID: pane.spaceID,
+                launchTarget: pane.launchTarget,
+                cwd: pane.cwd,
+                process: pane.process,
+                attention: pane.attention,
+                context: pane.context,
+                viewport: viewport,
+                activity: pane.activity,
+                alanBinding: pane.alanBinding,
+                terminalProfileID: pane.terminalProfileID
+            )
+        }
+        let nextState = ShellStateSnapshot(
+            contractVersion: result.state.contractVersion,
+            windowID: result.state.windowID,
+            focusedSpaceID: result.state.focusedSpaceID,
+            focusedTabID: result.state.focusedTabID,
+            focusedPaneID: result.state.focusedPaneID,
+            spaces: result.state.spaces,
+            panes: nextPanes,
+            paneSlots: result.state.paneSlots,
+            contents: result.state.contents,
+            quickTerminal: result.state.quickTerminal
+        )
+        return ShellStateMutationResult(
+            state: nextState,
+            spaceID: result.spaceID,
+            tabID: result.tabID,
+            paneID: result.paneID
+        )
     }
 
     private var totalTabCount: Int {
@@ -3901,20 +4119,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         pinSnapshotTabIDs: Set<String> = [],
         coalesced: Bool = false
     ) {
-        // The high-frequency terminal callback path keeps the in-memory
-        // control-plane state fresh (so IPC clients never read stale pane state)
-        // but defers all disk work — manifest + shell-state file + control-plane
-        // event log + state.json mirror — to a debounced flush. Nothing on this
-        // path touches disk. Structural mutations persist synchronously for prompt
-        // durability.
-        if coalesced {
-            controlPlane.publishInMemory(state: shellState)
-            scheduleContentFlush()
-        } else {
-            syncWorkspaceManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
-            persistShellState()
-            controlPlane.publish(state: shellState)
-        }
+        persistenceCoordinator.publishControlPlaneState(
+            state: shellState,
+            controlPlane: controlPlane,
+            pinSnapshotTabIDs: pinSnapshotTabIDs,
+            coalesced: coalesced,
+            latestState: { [weak self] in self?.shellState },
+            makeManifest: { [weak self] now, transcriptSnapshotOverrides in
+                self?.makeWorkspaceManifestFromShellState(
+                    now: now,
+                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
+                )
+            },
+            makePinnedSnapshot: { [weak self] tabID in
+                self?.makePinnedTabSnapshot(tabID: tabID)
+            }
+        )
     }
 
     static func attentionRank(for attention: ShellAttentionState) -> Int {
@@ -3966,9 +4186,20 @@ extension ShellHostController: ShellAutomationCommandHandling {
             guard pane(paneID: request.paneID) != nil else {
                 return shellAutomationMissingPaneResult(request.paneID)
             }
+            // Carry explicit launch fields through a terminal content intent so a requested cwd
+            // or title is honored instead of falling back to the source/default launch settings.
+            let contentIntent: ShellContentIntent? =
+                (request.title != nil || request.workingDirectory != nil)
+                ? .terminal(
+                    launchTarget: .shell,
+                    title: request.title,
+                    workingDirectory: request.workingDirectory
+                )
+                : nil
             guard let paneID = splitPane(
                 paneID: request.paneID,
                 placement: request.placement,
+                contentIntent: contentIntent,
                 terminalProfileID: request.terminalProfileID
             ) else {
                 return shellAutomationMissingPaneResult(request.paneID)

@@ -22,6 +22,8 @@ ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
 APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
+SHELL_CORE_FFI_DYLIB_NAME="libalan_shell_core_ffi.dylib"
+SHELL_CORE_FFI_DYLIB="$APP_BUNDLE/Contents/Frameworks/$SHELL_CORE_FFI_DYLIB_NAME"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 SIGNING_IDENTITY="${ALAN_DEVELOPER_ID_APPLICATION:-${ALAN_SIGNING_IDENTITY:-}}"
 NOTARIZE="${ALAN_NOTARIZE:-0}"
@@ -201,6 +203,8 @@ xcodebuild \
     -destination generic/platform=macOS \
     -derivedDataPath "$DERIVED_DATA" \
     ARCHS="$RELEASE_ARCH" \
+    ALAN_SHELL_CORE_FFI_CARGO_TARGET="$CARGO_BUILD_TARGET" \
+    CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
     PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
@@ -209,6 +213,9 @@ xcodebuild \
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
     fail "Release build did not produce $APP_BUNDLE"
+fi
+if [[ ! -f "$SHELL_CORE_FFI_DYLIB" ]]; then
+    fail "Release build did not produce $SHELL_CORE_FFI_DYLIB"
 fi
 
 printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
@@ -219,9 +226,13 @@ chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 printf 'Verifying embedded alan binary architecture...\n'
 thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
+printf 'Verifying shell-core FFI dylib architecture...\n'
+thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
+
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded binaries...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+sign_path "$SHELL_CORE_FFI_DYLIB"
 
 printf 'Thinning Sparkle framework to arm64...\n'
 thin_sparkle_to_arm64
@@ -231,6 +242,7 @@ sign_sparkle_code
 
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
+SHELL_CORE_FFI_SHA="$(sha256 "$SHELL_CORE_FFI_DYLIB")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
@@ -246,6 +258,10 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$ALAN_CLI_NAME")": {
       "path": "Contents/Resources/bin/$(json_escape "$ALAN_CLI_NAME")",
       "sha256": "$(json_escape "$ALAN_SHA")"
+    },
+    "$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")": {
+      "path": "Contents/Frameworks/$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")",
+      "sha256": "$(json_escape "$SHELL_CORE_FFI_SHA")"
     }
   }
 }
