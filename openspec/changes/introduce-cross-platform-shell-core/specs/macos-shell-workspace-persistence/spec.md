@@ -2,7 +2,7 @@
 
 ### Requirement: macOS delegates portable manifest semantics to shell core
 Alan for macOS SHALL delegate portable workspace manifest semantics to the Rust
-shell core after the manifest module has parity fixtures and adapter tests.
+shell core after the manifest module has Rust contract tests and adapter tests.
 
 The macOS platform layer SHALL continue to own Application Support path
 selection, file reads and writes, atomic persistence, corrupt-file evidence, and

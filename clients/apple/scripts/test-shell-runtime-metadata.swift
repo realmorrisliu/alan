@@ -8256,7 +8256,7 @@ private enum ShellRuntimeMetadataTests {
             activeTask: .inactive
         )
 
-        let restored = tab.restoreSnapshot(defaultWorkingDirectory: "/fallback")
+        let restored = tab.pinSnapshot?.overlayingTerminalTranscriptSnapshots(from: tab.liveSnapshot)
         let payload = terminalPayload(in: restored, paneSlotID: "pane_1")
         expect(payload?.cwd == "/pinned", "pinned restore must keep explicit template cwd")
         expect(
@@ -8292,7 +8292,7 @@ private enum ShellRuntimeMetadataTests {
             activeTask: .inactive
         )
         let unmatchedPayload = terminalPayload(
-            in: unmatched.restoreSnapshot(defaultWorkingDirectory: "/fallback"),
+            in: unmatched.pinSnapshot?.overlayingTerminalTranscriptSnapshots(from: unmatched.liveSnapshot),
             paneSlotID: "pane_1"
         )
         expect(

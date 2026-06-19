@@ -3,7 +3,7 @@
 `make-shell-core-authoritative` changes the ownership boundary: Rust shell core
 is now the authority for portable shell-domain behavior, while Swift remains the
 macOS platform adapter. That transition explains the large positive diff. It
-adds `alan-shell-core`, `alan-shell-core-ffi`, parity fixtures, and Swift
+adds `alan-shell-core`, `alan-shell-core-ffi`, Rust contract tests, and Swift
 adapter tests before removing every coarse Swift host file that became too
 large during the migration.
 
@@ -42,12 +42,12 @@ to make moves easier.
 - Narrow `ShellHostController.swift` to observable orchestration by extracting
   startup/manifest, persistence, shell-core reducer routing, action dispatch,
   and platform metadata preservation into named collaborators.
-- Move fixture-only Swift shell-domain helpers out of normal production owners
-  or behind explicit test-support gates.
+- Remove obsolete Swift parity helpers from normal production owners and script
+  support once Rust core and FFI tests cover the same behavior.
 - Update `clients/apple/ARCHITECTURE.md` and architecture checks with each
   resolved warning so reduced debt cannot silently return.
 - Keep shell-core authority guards intact: no `try? ShellCoreFFIAdapter... ??
-  SwiftDomainImplementation`, no runtime use of Swift parity registries, and no
+  SwiftDomainImplementation`, no runtime use of Swift fallback registries, and no
   Swift fallback for core-owned domain behavior.
 
 **Non-Goals:**
@@ -101,16 +101,17 @@ Alternative considered: aggressively delete old methods first. That increases
 regression risk because the controller still coordinates SwiftUI observation,
 terminal runtime effects, and shell-core authority failures.
 
-### Treat fixture-only Swift code as test support
+### Delete obsolete Swift parity code instead of quarantining it
 
-`ShellActionRegistry.standard` and gated manifest parity helpers can remain only
-as fixture/test support while Rust coverage exists. They should be moved out of
-production-facing model files into script support or hidden behind build flags
-that the app target does not compile.
+`ShellActionRegistry.standard`, Swift manifest parity helpers, Swift reducer/tree
+parity support, and exported parity corpora should not remain as script support
+once Rust contract tests and FFI-backed adapter tests cover the portable
+behavior. Swift tests that need state setup should use explicit FFI-backed test
+builders so they exercise the same authority path as the app.
 
-Alternative considered: leave fixture code in place with comments. That keeps
-the files large and makes future contributors wonder whether Swift still owns
-the domain.
+Alternative considered: move fixture code into script support with comments.
+That still leaves a second Swift implementation of Rust-owned behavior and makes
+future contributors wonder whether Swift still owns the domain.
 
 ### Preserve validation locality
 
@@ -145,11 +146,11 @@ drift.
 ## Migration Plan
 
 1. Capture the current authority debt baseline in `ARCHITECTURE.md`: which
-   Rust-owned Swift legacy implementations remain in production files, which are
-   test fixtures, and which app paths already fail closed through shell-core.
-2. Move manifest parity helpers and the Swift action registry fixture out of
-   production-facing model files into explicit script support, keeping Rust core
-   and FFI tests as the portable behavior authority.
+   Rust-owned Swift legacy implementations remain in production files, which
+   script helpers are still legitimate platform test support, and which app
+   paths already fail closed through shell-core.
+2. Delete manifest/action/reducer parity helpers and the exported parity corpus,
+   keeping Rust core and FFI tests as the portable behavior authority.
 3. Split `ShellCoreFFIAdapter.swift` internals while keeping its public methods
    stable so Swift contains adapter code rather than duplicated domain logic.
    Run the FFI adapter script after each operation-family move.

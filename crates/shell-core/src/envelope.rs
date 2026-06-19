@@ -31,10 +31,6 @@ pub enum ShellCoreErrorCode {
     InvalidPayload,
     /// The requested operation is not known by this shell-core facade.
     UnknownOperation,
-    /// A parity fixture could not be loaded or did not match its stable id.
-    InvalidFixture,
-    /// A parity fixture produced output that differs from its expected result.
-    FixtureMismatch,
 }
 
 impl ShellCoreErrorCode {

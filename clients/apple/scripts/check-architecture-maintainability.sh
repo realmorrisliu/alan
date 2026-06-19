@@ -109,6 +109,10 @@ then
     fail "Swift reducer parity support must stay out of the alan-macos Xcode target"
 fi
 
+if find "$REPO_ROOT/clients/apple/scripts/support" -name '*ParitySupport.swift' -print -quit | grep -q .; then
+    fail "Swift parity support files must not be reintroduced; use shell-core contract tests or FFI-backed test builders"
+fi
+
 if ! grep -Fq "ShellStateRuntimeSupport.swift in Sources" "$PROJECT_FILE"; then
     fail "alan-macos target must keep the narrow runtime shell-state support owner"
 fi

@@ -13,24 +13,23 @@
 
 ## 2. Remove Production Swift Legacy Domain Implementations
 
-- [x] 2.1 Move Swift manifest default/prune/materialize/migration parity helpers
-  out of `Models/Shell/ShellWorkspaceManifest.swift` into explicit script
-  support so the app target keeps only manifest DTOs, compatibility decode/
-  repair, and platform file IO helpers.
-- [x] 2.2 Move `ShellActionRegistry.standard`, its action descriptor table, and
-  resolver fixture out of `Models/Shell/ShellActionRegistry.swift` into explicit
-  script support so production runtime cannot compile against the Swift action
-  registry as a fallback.
-- [x] 2.3 Update Swift script compile invocations to include the new test-support
-  files explicitly instead of depending on production model files for fixture
-  helpers.
+- [x] 2.1 Delete Swift manifest default/prune/materialize/migration parity
+  helpers from `Models/Shell/ShellWorkspaceManifest.swift` and script support so
+  the app target keeps only manifest DTOs, compatibility decode/repair, and
+  platform file IO helpers.
+- [x] 2.2 Delete `ShellActionRegistry.standard`, its action descriptor table,
+  and resolver fixture from `Models/Shell/ShellActionRegistry.swift` and script
+  support so production runtime cannot compile against the Swift action registry
+  as a fallback.
+- [x] 2.3 Update Swift script compile invocations to include explicit FFI-backed
+  test support instead of depending on Swift parity implementations.
 - [x] 2.4 Tighten `check-shell-contracts.sh` so production Apple sources reject
   `SHELL_MANIFEST_PARITY_FIXTURES`, `ShellWorkspaceMaterializer`, and
-  `ShellActionRegistry.standard`, while scripts may still compile dedicated
-  support fixtures.
+  `ShellActionRegistry.standard`, while scripts use Rust contracts and
+  FFI-backed test builders instead of parity support fixtures.
 - [x] 2.5 Run the affected focused checks:
   `clients/apple/scripts/test-shell-workspace-manifest.sh`,
-  `clients/apple/scripts/test-shell-action-registry.sh`,
+  `clients/apple/scripts/test-shell-core-ffi-adapter.sh`,
   `clients/apple/scripts/test-shell-sidebar-tab-rows.sh`,
   `cargo test -p alan-shell-core`, `cargo test -p alan-shell-core-ffi`,
   `bash clients/apple/scripts/check-shell-contracts.sh`, and architecture
@@ -71,7 +70,7 @@
 - [x] 4.6 Run affected focused checks:
   `clients/apple/scripts/test-shell-workspace-manifest.sh`,
   `clients/apple/scripts/test-shell-runtime-metadata.sh`,
-  `clients/apple/scripts/test-shell-action-registry.sh`,
+  `clients/apple/scripts/test-shell-core-ffi-adapter.sh`,
   `clients/apple/scripts/test-shell-automation-command-seams.sh`,
   `clients/apple/scripts/check-shell-contracts.sh`, and architecture validation.
 

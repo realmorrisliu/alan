@@ -3,8 +3,8 @@
 ### Requirement: Post-core Swift legacy shell-domain code is cleaned up
 After Rust shell core becomes authoritative, the Apple client SHALL remove
 Swift implementations of Rust-owned shell-domain behavior from production
-sources or move remaining parity fixtures into explicit test-support
-boundaries.
+sources. Remaining script test helpers SHALL be FFI-backed builders or
+platform-only fakes, not duplicate Swift implementations of Rust-owned behavior.
 
 #### Scenario: Cleanup work starts
 - **WHEN** a shell adapter slimming PR begins after shell-core authority
@@ -18,8 +18,7 @@ boundaries.
 - **WHEN** a cleanup slice moves Swift code that duplicates Rust-owned behavior
 - **THEN** the normal macOS app target no longer compiles that implementation as
   production model/controller/service code
-- **AND** any remaining Swift parity helper lives in explicit script or test
-  support
+- **AND** any remaining Swift test helper is FFI-backed or platform-only support
 - **AND** the slice does not add a new shell-core fallback path
 
 #### Scenario: Cleanup boundary is missed
@@ -78,27 +77,26 @@ metadata preservation to named collaborators.
 - **THEN** the affected focused shell script runs with shell contract
   validation and architecture maintainability validation
 
-### Requirement: Fixture-only Swift shell-domain helpers are test-support only
-The Apple client SHALL move Swift implementations that remain only for parity
-fixtures or script tests out of production-facing model/controller files, or
-guard them so the normal macOS app target cannot use them as runtime fallback
-behavior.
+### Requirement: Obsolete Swift parity helpers are removed
+The Apple client SHALL remove Swift implementations that only duplicate
+Rust-owned portable shell-domain behavior for parity validation. Swift script
+tests may keep explicit FFI-backed builders or platform-effect fakes, but they
+must not keep a second Swift registry, manifest materializer, reducer, or split
+tree implementation as fallback behavior.
 
-#### Scenario: Action registry fixture code remains
-- **WHEN** a Swift action registry table is still needed for fixture export or
-  parity comparison
-- **THEN** it lives in explicit test support or is guarded from production
-  runtime use
+#### Scenario: Action registry parity code is removed
+- **WHEN** Rust action contract tests and FFI adapter tests cover action
+  descriptors, target resolution, availability, shortcuts, and effects
+- **THEN** Swift standard registry tables and resolver fixtures are removed from
+  production and script-support sources
 - **AND** `check-shell-contracts.sh` continues to reject production references
-  to the Swift registry as a shell-core fallback
+  to Swift registry implementations as shell-core fallback
 
-#### Scenario: Manifest parity helpers remain
+#### Scenario: Manifest parity helpers are removed
 - **WHEN** Swift manifest defaulting, pruning, migration, or materialization
-  helpers remain only for parity fixtures
-- **THEN** they are excluded from normal app builds or moved into script test
-  support
-- **AND** Rust shell-core or FFI tests cover the portable behavior before the
-  production-facing helper is removed or hidden
+  helpers duplicated Rust-owned behavior
+- **THEN** they are removed from production and script-support sources
+- **AND** Rust shell-core or FFI tests cover the portable behavior
 
 ### Requirement: Behavior-preserving splits keep focused verification
 Each shell adapter slimming slice SHALL pair moved ownership with focused tests

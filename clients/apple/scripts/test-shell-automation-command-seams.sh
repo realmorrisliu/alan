@@ -14,8 +14,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
-    "$REPO_ROOT/clients/apple/scripts/support/ShellTreeMutationParitySupport.swift" \
-    "$REPO_ROOT/clients/apple/scripts/support/ShellStateMutationParitySupport.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateRuntimeSupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationCommand.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationEntities.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellAutomationIntents.swift" \

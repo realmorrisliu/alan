@@ -5,15 +5,14 @@
 //! avoids platform UI, terminal renderer, daemon hosting, filesystem location,
 //! clipboard, file picker, and privileged OS executor dependencies.
 //!
-//! The public API starts with coarse-grained request/response envelopes and a
-//! parity fixture harness. Typed workspace model, reducer, manifest, action,
-//! control, Terminal Profile, and settings-summary modules are added behind the
-//! same platform-neutral boundary as each migration slice lands.
+//! The public API starts with coarse-grained request/response envelopes. Typed
+//! workspace model, reducer, manifest, action, control, Terminal Profile, and
+//! settings-summary modules are added behind the same platform-neutral boundary
+//! as each migration slice lands.
 
 mod actions;
 mod control;
 mod envelope;
-mod fixtures;
 mod manifest;
 mod model;
 mod reducer;
@@ -34,7 +33,6 @@ pub use envelope::{
     EnvelopeVersion, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
     ShellCoreResponseEnvelope,
 };
-pub use fixtures::{FixtureCase, FixtureCorpus, FixtureError, FixtureKind, FixtureSource};
 pub use manifest::{
     ShellContentRestoreRecord, ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
     ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellPaneRestoreRecord,

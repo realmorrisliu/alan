@@ -173,8 +173,9 @@ private enum ShellSidebarTabRowTests {
         state = try state.focusingPane("pane_1").state
         let selectedTabBefore = state.focusedTabID
 
+        let adapter = try ShellCoreFFIAdapter()
         var effects: [ShellActionEffect] = []
-        let duplicate = ShellActionRegistry.standard.execute(
+        let duplicate = try adapter.executeAction(
             .tabDuplicate,
             target: .contextTab(clickedTabID),
             state: state
@@ -182,7 +183,7 @@ private enum ShellSidebarTabRowTests {
             effects.append(effect)
             return true
         }
-        let openSplit = ShellActionRegistry.standard.execute(
+        let openSplit = try adapter.executeAction(
             .tabOpenInSplitView,
             target: .contextTab(clickedTabID),
             state: state
@@ -226,11 +227,10 @@ private enum ShellSidebarTabRowTests {
         label: String
     ) throws {
         let contentTabID = try requireFocusedTabID(in: state)
-        let contentTab = try requireTab(contentTabID, in: state)
-        let contentPaneID = try requirePrimaryPaneID(in: contentTab)
 
+        let adapter = try ShellCoreFFIAdapter()
         var effects: [ShellActionEffect] = []
-        let duplicate = ShellActionRegistry.standard.execute(
+        let duplicate = try adapter.executeAction(
             .tabDuplicate,
             target: .contextTab(contentTabID),
             state: state
@@ -238,7 +238,7 @@ private enum ShellSidebarTabRowTests {
             effects.append(effect)
             return true
         }
-        let openSplit = ShellActionRegistry.standard.execute(
+        let openSplit = try adapter.executeAction(
             .tabOpenInSplitView,
             target: .contextTab(contentTabID),
             state: state
@@ -250,18 +250,6 @@ private enum ShellSidebarTabRowTests {
         expect(duplicate == .unavailable(reason: "Tab is not a terminal"), "\(label) tabs must not enable Duplicate Tab")
         expect(openSplit == .unavailable(reason: "Tab cannot be split"), "\(label) tabs must not enable Open in Split View")
         expect(effects.isEmpty, "\(label) tabs must not emit duplicate or split effects")
-
-        do {
-            _ = try state.duplicatingTab(contentTabID)
-            fail("\(label) tabs must not duplicate through direct state mutation")
-        } catch ShellStateMutationError.unsupportedContent {
-        }
-
-        do {
-            _ = try state.splittingPane(contentPaneID, placement: .right)
-            fail("\(label) panes must not split into a terminal through direct state mutation")
-        } catch ShellStateMutationError.unsupportedContent {
-        }
     }
 
     private static func verifiesTemporarySectionPresentationFollowsUnpinnedTabs() throws {

@@ -449,7 +449,7 @@ pub enum SplitDirection {
 }
 
 impl SplitDirection {
-    /// Stable string used by fixture helpers and path ids.
+    /// Stable string used by serialized paths and diagnostics.
     pub fn as_str(self) -> &'static str {
         match self {
             SplitDirection::Horizontal => "horizontal",

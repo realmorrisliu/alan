@@ -87,8 +87,8 @@ Reusable shell workspace semantics are migrating to the platform-neutral
 `alan-shell-core` Rust crate. The crate owns the durable domain contract for
 Spaces, Tabs, PaneSlots, ContentInstances, split trees, reducers, manifest
 semantics, shared actions, control-command outcomes, Terminal Profile launch
-intent resolution, settings summaries, coarse request/response envelopes, and
-Swift-exported parity fixture comparison.
+intent resolution, settings summaries, coarse request/response envelopes, Rust
+contract tests, and FFI-backed Swift adapter validation.
 
 The Apple client remains the platform adapter. It owns SwiftUI/AppKit
 presentation, windowing, menu and keyboard rendering, terminal runtime
@@ -98,8 +98,7 @@ privileged macOS account effects.
 
 Swift shell model and controller files may keep compatibility wrappers while a
 domain module is being migrated, but once the corresponding shell-core module
-has parity fixtures and adapter tests, new reusable domain behavior belongs in
-Rust rather than a second Swift implementation.
+has Rust contract tests and adapter tests, new reusable domain behavior belongs in Rust rather than a second Swift implementation.
 
 The first Swift integration facade uses a hand-written synchronous C ABI over
 versioned JSON byte envelopes, implemented in `alan-shell-core-ffi`. This keeps
@@ -111,7 +110,7 @@ The initial facade dispatch covers manifest materialization, reducer apply,
 control-command handling, action registry lookup/execution, Terminal Profile
 validation/editing/launch-intent resolution, and settings summary rows; Swift
 production call paths should migrate through that adapter module by module after
-each parity gate.
+each contract gate.
 The macOS target now builds and bundles `libalan_shell_core_ffi.dylib`; the
 workspace manifest store delegates default manifest creation and legacy manifest
 migration to Rust, while workspace-manifest startup delegates TTL pruning and
@@ -165,10 +164,9 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   Swift `ShellContentWorkspaceManifest.defaultManifest`,
   `ShellContentWorkspaceManifest.pruningExpiredTabs`, or
   `ShellWorkspaceMaterializer.materialize`. The old Swift default, prune,
-  materialize, and legacy migration parity algorithms now live in
-  `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`;
-  default app builds keep only manifest DTOs, decode/selection repair,
-  transcript cleanup, projection helpers, and manifest file IO.
+  materialize, and legacy migration parity algorithms were removed; default app
+  builds keep only manifest DTOs, decode/selection repair, transcript cleanup,
+  projection helpers, and manifest file IO.
 - Domain duplicate removed from reducer and control paths: workspace reducer
   mutations and reusable local control commands now use shell-core failures,
   stable core errors, or explicit host-only command paths instead of a second
@@ -198,10 +196,14 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   than a second Swift implementation of Rust-owned validate/plan semantics.
   Reusable settings rows now come from shell-core or collapse to unavailable
   rows.
-- Parity fixture debt moved out of production sources: the Swift action table
-  and resolver fixture now live in
-  `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`;
-  runtime code is guarded from using `ShellActionRegistry.standard`.
+- Parity fixture debt removed: migration fixture corpora, fixture exporters,
+  Swift action/manifest parity support, and Swift reducer/tree
+  parity support are gone. Script tests that still need constructed shell
+  states use `clients/apple/scripts/support/ShellCoreFFITestStateBuilder.swift`,
+  which prepares state through `ShellCoreFFIAdapter.applyReducer`, while Rust
+  `crates/shell-core/tests/*_contract.rs` owns the action, manifest, reducer,
+  and split-tree behavior contracts. Runtime code is guarded from using
+  `ShellActionRegistry.standard`.
 - Adapter projection to keep narrow: `ShellCoreFFIAdapter` is now a facade with
   sibling loader, envelope, materialization, and operation-family owners,
   including separate Terminal Profile and managed terminal account adapters.
@@ -235,7 +237,7 @@ adapter for default manifest creation, pruning, materialization, and legacy
 terminal manifest migration, while keeping Swift assertions focused on corrupt
 file recovery, persistence, app projection, and platform runtime metadata.
 Action, control, settings, and Terminal Profile focused tests likewise exercise
-the shell-core adapter or Rust fixture contracts for portable domain behavior.
+the shell-core adapter or Rust contract tests for portable domain behavior.
 
 ## Apply Sequence Notes
 
@@ -323,10 +325,10 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 
 | File | Lines | Cleanup target |
 | --- | ---: | --- |
-| `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: manifest default/prune/materialize/migration parity implementations now live in `clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift`; production keeps DTOs, repair, transcript cleanup, and projection helpers. |
-| `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture now live in `clients/apple/scripts/support/ShellActionRegistryParitySupport.swift`; production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution. |
-| `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`; full Swift reducer/tree mutation parity implementations now live in `clients/apple/scripts/support/ShellStateMutationParitySupport.swift` and `clients/apple/scripts/support/ShellTreeMutationParitySupport.swift`. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. |
-| `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountParitySupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
+| `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: Swift manifest default/prune/materialize/migration parity implementations and fixture exporters are removed. Production keeps DTOs, repair, transcript cleanup, projection helpers, and file IO while Rust manifest contract tests own portable behavior. |
+| `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture are removed. Production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution while Rust action tests plus FFI adapter tests own registry behavior. |
+| `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`, and the script-side duplicate Swift reducer/tree implementations are removed. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. Script state construction that still needs mutations uses the FFI-backed `ShellCoreFFITestStateBuilder.swift`. |
+| `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 1,195 | Cleaned below the current report threshold: managed terminal account settings row icon/status/detail projection now calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`; production keeps settings navigation/grouping DTOs, remote/local host summary collection, workspace context discovery, and fail-closed unavailable rows. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
 | `ShellHostController.swift` | 4,424 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, reducer invocation including quick-terminal focus, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |

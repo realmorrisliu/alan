@@ -1,4 +1,4 @@
-// Script/test parity support only. Production managed-account semantics are owned by shell-core.
+// Script/test support only. Production managed-account semantics are owned by shell-core.
 final class ManagedTerminalAccountFakeExecutor: ManagedTerminalAccountPrivilegedExecuting {
     var failAt: ManagedTerminalAccountPlanStepKind?
     var cancelBeforeApply = false

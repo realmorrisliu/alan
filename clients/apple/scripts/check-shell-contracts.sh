@@ -1283,9 +1283,9 @@ reject_pattern \
     "shell action registry must not register removed Ask alan or New alan Tab actions"
 
 reject_pattern \
-    "clients/apple/scripts/support/ShellStateMutationParitySupport.swift" \
+    "clients/apple/scripts/support" \
     "openingAlanTab|creatingAlanSpace|launchTarget: \\.alan|ShellLaunchTarget\\.alan" \
-    "shell state mutations must not create first-party alan tabs"
+    "shell test support must not create first-party alan tabs"
 
 reject_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
@@ -1653,9 +1653,9 @@ require_pattern \
     "pane title-bar close must route through a controller-owned targeted pane close path"
 
 require_pattern \
-    "clients/apple/scripts/test-shell-split-model.swift" \
-    "verifiesPaneScopedCloseKeepsInactivePaneTargeting" \
-    "split model tests must cover pane-scoped close targeting"
+    "crates/shell-core/tests/reducer_contract.rs" \
+    "closing_selected_pane_removes_content_and_repairs_focus" \
+    "Rust shell-core reducer tests must cover pane-scoped close targeting"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -1848,9 +1848,9 @@ require_pattern \
     "sidebar split topology classification must live in the testable shell model layer"
 
 require_pattern \
-    "clients/apple/scripts/test-shell-split-model.swift" \
-    "verifiesSidebarSplitTopologyProjection" \
-    "split model tests must cover sidebar topology projection"
+    "crates/shell-core/tests/split_tree_contract.rs" \
+    "removing_and_attaching_panes_preserves_binary_tree_shape" \
+    "Rust shell-core split-tree tests must cover split topology projection"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -2893,19 +2893,24 @@ reject_pattern \
     "Swift action registry fixture/resolver must live outside production Apple sources"
 
 require_pattern \
-    "clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
-    "Script/test parity support only" \
-    "Swift action registry parity fixture must live in explicit script support"
+    "crates/shell-core/tests/action_registry_contract.rs" \
+    "standard_action_ids_shortcuts_and_keyboard_lookup_are_stable" \
+    "Rust shell-core tests must own action registry contract coverage"
 
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
     "SHELL_MANIFEST_PARITY_FIXTURES|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers|ShellManifestLegacyMigration" \
     "Swift manifest parity algorithms must live outside production Apple sources"
 
+reject_pattern \
+    "clients/apple/scripts/support" \
+    "ParitySupport|final class ShellActionRegistry|struct ShellActionDescriptor|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers" \
+    "script support must not reintroduce Swift parity implementations after shell-core authority"
+
 require_pattern \
-    "clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift" \
-    "Script/test parity support only" \
-    "Swift manifest parity fixture must live in explicit script support"
+    "crates/shell-core/tests/manifest_contract.rs" \
+    "default_manifest_materializes_single_terminal_workspace" \
+    "Rust shell-core tests must own manifest default/materialization contract coverage"
 
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
@@ -2913,17 +2918,17 @@ reject_pattern \
     "fixture-only managed-account helpers must live outside production Apple sources"
 
 require_pattern \
-    "clients/apple/scripts/support/ManagedTerminalAccountParitySupport.swift" \
-    "Script/test parity support only" \
-    "Swift managed-account parity fixture must live in explicit script support"
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
+    "Script/test support only" \
+    "managed-account fake helpers must live in explicit script test support"
 
 require_pattern \
-    "clients/apple/scripts/support/ManagedTerminalAccountParitySupport.swift" \
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
     "ManagedTerminalAccountFakeExecutor" \
     "managed-account fake executor fixture must live in explicit script support"
 
 require_pattern \
-    "clients/apple/scripts/support/ManagedTerminalAccountParitySupport.swift" \
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
     "ManagedTerminalAccountProfileHandoff" \
     "managed-account profile handoff fixture must live in explicit script support"
 
