@@ -34,7 +34,6 @@ enum ShellCloseGuardScope: Equatable {
     case tab(String)
     case window
     case app
-    case quickTerminal
 }
 
 struct ShellCloseGuardImpact: Equatable {
@@ -74,8 +73,6 @@ final class ShellNSAlertCloseConfirmationPresenter: ShellCloseConfirmationPresen
             return "Close window?"
         case .app:
             return "Quit alan?"
-        case .quickTerminal:
-            return "Close Quick Terminal?"
         }
     }
 
@@ -108,219 +105,6 @@ struct ShellPaneMovementInteractionPolicy: Equatable {
         case .terminalContentDrag:
             return false
         }
-    }
-}
-
-enum ShellQuickTerminalPeakEscapeBehavior: Equatable {
-    case terminalInput
-}
-
-struct ShellQuickTerminalPeakInteractionPolicy: Equatable {
-    let escapeKeyBehavior: ShellQuickTerminalPeakEscapeBehavior
-    let hidesOnFocusLoss: Bool
-    let usesMainWindowParenting: Bool
-
-    static let terminalFirst = ShellQuickTerminalPeakInteractionPolicy(
-        escapeKeyBehavior: .terminalInput,
-        hidesOnFocusLoss: false,
-        usesMainWindowParenting: false
-    )
-}
-
-struct ShellQuickTerminalPeakPlacement: Equatable {
-    let frame: CGRect
-    let followsActiveSpace: Bool
-    let joinsAllSpaces: Bool
-    let requiresMainWindow: Bool
-
-    var windowCollectionBehavior: NSWindow.CollectionBehavior {
-        var behavior: NSWindow.CollectionBehavior = [.fullScreenAuxiliary]
-        if joinsAllSpaces {
-            behavior.insert(.canJoinAllSpaces)
-        } else if followsActiveSpace {
-            behavior.insert(.moveToActiveSpace)
-        }
-        return behavior
-    }
-
-    static func defaultPlacement(in visibleFrame: CGRect) -> ShellQuickTerminalPeakPlacement {
-        ShellQuickTerminalPeakPlacement(
-            frame: defaultFrame(in: visibleFrame),
-            followsActiveSpace: true,
-            joinsAllSpaces: true,
-            requiresMainWindow: false
-        )
-    }
-
-    static func activeVisibleFrame() -> CGRect {
-        let mouseLocation = NSEvent.mouseLocation
-        let activeScreen = NSScreen.screens.first { screen in
-            screen.frame.contains(mouseLocation)
-        }
-        return activeScreen?.visibleFrame
-            ?? NSScreen.main?.visibleFrame
-            ?? CGRect(x: 0, y: 0, width: 960, height: 600)
-    }
-
-    private static func defaultFrame(in visibleFrame: CGRect) -> CGRect {
-        let horizontalInset = min(max(visibleFrame.width * 0.05, 8), 48)
-        let verticalInset = min(max(visibleFrame.height * 0.06, 8), 52)
-        let availableWidth = max(160, visibleFrame.width - horizontalInset * 2)
-        let availableHeight = max(180, visibleFrame.height - verticalInset * 2)
-        let targetWidth = min(max(visibleFrame.width * 0.68, 720), min(980, availableWidth))
-        let targetHeight = min(max(visibleFrame.height * 0.38, 320), min(520, availableHeight))
-        let rawOriginY = visibleFrame.midY - targetHeight / 2 + visibleFrame.height * 0.08
-        let originX = visibleFrame.midX - targetWidth / 2
-        let originY = min(
-            max(rawOriginY, visibleFrame.minY + verticalInset),
-            visibleFrame.maxY - verticalInset - targetHeight
-        )
-        return CGRect(
-            x: originX,
-            y: originY,
-            width: targetWidth,
-            height: targetHeight
-        ).integral
-    }
-}
-
-struct ShellQuickTerminalPanelKeyRequestBudget {
-    enum Purpose {
-        case presentation
-        case terminalFocus
-    }
-
-    private(set) var presentationAttemptCount = 0
-    let maximumPresentationAttempts: Int
-
-    init(maximumPresentationAttempts: Int = 2) {
-        self.maximumPresentationAttempts = max(0, maximumPresentationAttempts)
-    }
-
-    mutating func reset() {
-        presentationAttemptCount = 0
-    }
-
-    mutating func shouldRequestKey(for purpose: Purpose) -> Bool {
-        switch purpose {
-        case .presentation:
-            guard presentationAttemptCount < maximumPresentationAttempts else { return false }
-            presentationAttemptCount += 1
-            return true
-        case .terminalFocus:
-            return true
-        }
-    }
-}
-
-enum ShellQuickTerminalPeakDismissalReason: Equatable {
-    case hidden
-    case removed
-}
-
-enum ShellQuickTerminalPeakModel {
-    static func tab(for pane: ShellPane) -> ShellTab {
-        ShellTab(
-            tabID: ShellQuickTerminalSlot.globalTabID,
-            kind: .terminal,
-            title: pane.viewport?.title ?? "Quick Terminal",
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(pane.paneID)",
-                kind: .pane,
-                direction: nil,
-                paneID: pane.paneID,
-                children: nil
-            )
-        )
-    }
-}
-
-@MainActor
-protocol ShellQuickTerminalPeakWindowing: AnyObject {
-    var onDismissRequest: (() -> Void)? { get set }
-    var isVisible: Bool { get }
-
-    func presentQuickTerminal(
-        host: ShellHostController,
-        pane: ShellPane,
-        tab: ShellTab,
-        placement: ShellQuickTerminalPeakPlacement
-    )
-    func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason)
-    func focusTerminal(paneID: String)
-}
-
-@MainActor
-final class ShellQuickTerminalPeakPresenter {
-    private let host: ShellHostController
-    private let window: ShellQuickTerminalPeakWindowing
-    private let visibleFrameProvider: () -> CGRect
-    private var lastPresentedPaneID: String?
-
-    init(
-        host: ShellHostController,
-        window: ShellQuickTerminalPeakWindowing,
-        visibleFrameProvider: @escaping () -> CGRect = ShellQuickTerminalPeakPlacement.activeVisibleFrame
-    ) {
-        self.host = host
-        self.window = window
-        self.visibleFrameProvider = visibleFrameProvider
-        self.window.onDismissRequest = { [weak host] in
-            _ = host?.hideQuickTerminal()
-        }
-    }
-
-    func synchronize() {
-        guard let slot = host.shellState.quickTerminal,
-              let pane = host.quickTerminalPane
-        else {
-            if window.isVisible || lastPresentedPaneID != nil {
-                window.dismissQuickTerminalPeak(reason: .removed)
-            }
-            lastPresentedPaneID = nil
-            return
-        }
-
-        switch slot.presentation {
-        case .visible:
-            let shouldPresent = !window.isVisible || lastPresentedPaneID != pane.paneID
-            if shouldPresent {
-                let tab = ShellQuickTerminalPeakModel.tab(for: pane)
-                let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrameProvider())
-                window.presentQuickTerminal(
-                    host: host,
-                    pane: pane,
-                    tab: tab,
-                    placement: placement
-                )
-                window.focusTerminal(paneID: pane.paneID)
-            }
-            lastPresentedPaneID = pane.paneID
-        case .hidden:
-            if window.isVisible || lastPresentedPaneID != nil {
-                window.dismissQuickTerminalPeak(reason: .hidden)
-            }
-            lastPresentedPaneID = pane.paneID
-        }
-    }
-
-    func windowDidResignKey() {
-        // Terminal-first policy: focus loss is informational and never hides the Peak.
-    }
-
-    func focusVisibleQuickTerminal() {
-        guard let slot = host.shellState.quickTerminal,
-              slot.presentation == .visible,
-              let pane = host.quickTerminalPane
-        else {
-            return
-        }
-        if !window.isVisible || lastPresentedPaneID != pane.paneID {
-            synchronize()
-            return
-        }
-        window.focusTerminal(paneID: pane.paneID)
-        lastPresentedPaneID = pane.paneID
     }
 }
 
@@ -446,7 +230,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
-    @Published private(set) var quickTerminalFocusRequestID: UInt64 = 0
     @Published var isPresentingSpaceCreation = false
     /// Live draft fields for the in-progress Space creation form. Published so
     /// the workspace can read the live name while the form is open.
@@ -683,16 +466,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return panesForSelectedTab.first
     }
 
-    var quickTerminalPane: ShellPane? {
-        shellState.quickTerminal.flatMap { slot in
-            shellState.pane(paneID: slot.paneID)
-        }
-    }
-
-    var quickTerminalPresentation: ShellQuickTerminalPresentation? {
-        shellState.quickTerminal?.presentation
-    }
-
     var focusedPane: ShellPane? {
         guard let focusedPaneID = shellState.focusedPaneID else { return nil }
         return pane(paneID: focusedPaneID)
@@ -829,11 +602,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         if let mountedContent = shellState.contentStateProjection().contentMounted(in: pane.paneID) {
             return mountedContent.kind == .terminal ? mountedContent.contentID : nil
         }
-        if pane.isQuickTerminalPane,
-           shellState.quickTerminal?.paneID == pane.paneID
-        {
-            return pane.terminalContentID
-        }
         return pane.terminalContentID
     }
 
@@ -842,12 +610,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func terminalRenderPriority(for pane: ShellPane) -> TerminalRuntimeRenderPriority {
-        if pane.isQuickTerminalPane {
-            return shellState.quickTerminal?.presentation == .visible
-                ? .foregroundInteractive
-                : .hiddenBackground
-        }
-
         let visiblePaneIDs = Set(displayPaneTree(for: selectedTab)?.paneIDs ?? [])
         return terminalRuntimeRenderPriority(
             paneID: pane.paneID,
@@ -971,8 +733,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 spaces: spaces,
                 panes: shellState.panes,
                 paneSlots: shellState.paneSlots,
-                contents: shellState.contents,
-                quickTerminal: shellState.quickTerminal
+                contents: shellState.contents
             )
             synchronizeSelection()
             publishControlPlaneState()
@@ -1039,34 +800,29 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private func focus(paneID: String, requestTerminalFocus: Bool) {
         let focusStartedAt = performanceDiagnosticsStartTime()
         let result: ShellStateMutationResult
-        if pane(paneID: paneID)?.isQuickTerminalPane == true {
-            guard let swiftResult = try? shellState.focusingPane(paneID) else { return }
-            result = swiftResult
-        } else {
-            do {
-                let rustResult = try reducerCoordinator.apply(
-                    state: shellState,
-                    operation: .focusPane(paneSlotID: paneID)
+        do {
+            let rustResult = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .focusPane(paneSlotID: paneID)
+            )
+            // Rust owns workspace focus. Swift keeps this narrow post-pass
+            // for platform terminal activity acknowledgement until activity
+            // signals are fully domain-owned by shell-core.
+            let acknowledgedState = rustResult.tabID.map { tabID in
+                rustResult.state.acknowledgingCommandFailureActivities(
+                    in: tabID,
+                    focusedPaneID: paneID
                 )
-                // Rust owns workspace focus. Swift keeps this narrow post-pass
-                // for platform terminal activity acknowledgement until activity
-                // signals are fully domain-owned by shell-core.
-                let acknowledgedState = rustResult.tabID.map { tabID in
-                    rustResult.state.acknowledgingCommandFailureActivities(
-                        in: tabID,
-                        focusedPaneID: paneID
-                    )
-                } ?? rustResult.state
-                result = ShellStateMutationResult(
-                    state: acknowledgedState,
-                    spaceID: rustResult.spaceID,
-                    tabID: rustResult.tabID,
-                    paneID: rustResult.paneID
-                )
-            } catch {
-                recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
-                return
-            }
+            } ?? rustResult.state
+            result = ShellStateMutationResult(
+                state: acknowledgedState,
+                spaceID: rustResult.spaceID,
+                tabID: rustResult.tabID,
+                paneID: rustResult.paneID
+            )
+        } catch {
+            recordControlPlaneDiagnostic("shell-core focus pane failed: \(error)")
+            return
         }
         applyMutationResult(result)
         if let focusStartedAt {
@@ -1135,80 +891,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
-    func toggleQuickTerminal() -> String? {
-        if shellState.quickTerminal?.presentation == .visible {
-            return hideQuickTerminal() ? shellState.quickTerminal?.paneID : nil
-        }
-        return showQuickTerminal()
-    }
-
-    @discardableResult
-    func showQuickTerminal() -> String? {
-        let paneID = shellState.quickTerminal?.paneID ?? ShellQuickTerminalSlot.globalPaneID
-        let hadQuickPane = pane(paneID: paneID) != nil
-        do {
-            let result = try reducerCoordinator.apply(
-                state: shellState,
-                operation: .showQuickTerminal(
-                    workingDirectory: focusedPaneWorkingDirectory(),
-                    defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-                )
-            )
-            let annotatedResult = hadQuickPane
-                ? result
-                : annotatingPaneViewport(
-                    result,
-                    paneID: paneID,
-                    fallbackSummary: "quick terminal scaffolded"
-            )
-            applyMutationResult(annotatedResult)
-            return paneID
-        } catch {
-            return nil
-        }
-    }
-
-    @discardableResult
-    func hideQuickTerminal() -> Bool {
-        do {
-            let result = try reducerCoordinator.apply(
-                state: shellState,
-                operation: .hideQuickTerminal
-            )
-            applyMutationResult(result)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    @discardableResult
-    func focusQuickTerminal() -> String? {
-        let wasVisible = shellState.quickTerminal?.presentation == .visible
-        guard let paneID = showQuickTerminal() else { return nil }
-        if wasVisible {
-            quickTerminalFocusRequestID &+= 1
-        }
-        return paneID
-    }
-
-    @discardableResult
-    func closeQuickTerminal() -> Bool {
-        if closeGuardImpact(for: .quickTerminal) != nil {
-            return false
-        }
-        return applyCloseQuickTerminalMutation()
-    }
-
-    @discardableResult
-    func requestCloseQuickTerminal() -> Bool {
-        if let impact = closeGuardImpact(for: .quickTerminal) {
-            return confirmAndApplyClose(impact)
-        }
-        return applyCloseQuickTerminalMutation()
-    }
-
-    @discardableResult
     func requestCloseWindow() -> Bool {
         requestCloseShellSurface(scope: .window)
     }
@@ -1227,47 +909,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
         shutdownTerminalRuntimes()
         return true
-    }
-
-    @discardableResult
-    private func applyCloseQuickTerminalMutation() -> Bool {
-        do {
-            let result = try reducerCoordinator.apply(
-                state: shellState,
-                operation: .closeQuickTerminal
-            )
-            applyMutationResult(result)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    @discardableResult
-    func closeQuickTerminalAfterTerminalRuntimeExit() -> Bool {
-        applyCloseQuickTerminalMutation()
-    }
-
-    @discardableResult
-    func promoteQuickTerminal(to targetSpaceID: String) -> Bool {
-        do {
-            let result = try reducerCoordinator.apply(
-                state: shellState,
-                operation: .promoteQuickTerminal(targetSpaceID: targetSpaceID)
-            )
-            let annotatedResult = annotatingPaneViewport(
-                result,
-                paneID: result.paneID ?? ShellQuickTerminalSlot.globalPaneID,
-                fallbackSummary: "quick terminal opened in space"
-            )
-            applyMutationResult(annotatedResult)
-            terminalRuntimeRegistry.requestFocus(
-                for: annotatedResult.paneID ?? ShellQuickTerminalSlot.globalPaneID
-            )
-            return true
-        } catch {
-            return false
-        }
     }
 
     func terminalHostDidRequestActivation(paneID: String) {
@@ -2014,16 +1655,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .closeTab:
             guard let tabID = selectedTabID else { return false }
             return requestCloseTab(tabID: tabID)
-        case .quickTerminalToggle:
-            return toggleQuickTerminal() != nil
-        case .quickTerminalShow:
-            return showQuickTerminal() != nil
-        case .quickTerminalHide:
-            return hideQuickTerminal()
-        case .quickTerminalFocus:
-            return focusQuickTerminal() != nil
-        case .quickTerminalClose:
-            return requestCloseQuickTerminal()
         }
     }
 
@@ -2130,9 +1761,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             },
             movePaneWithinTab: { [weak self] paneID, placement in
                 self?.movePaneWithinTab(paneID: paneID, placement: placement) ?? false
-            },
-            promoteQuickTerminal: { [weak self] spaceID in
-                self?.promoteQuickTerminal(to: spaceID) ?? false
             },
             clearTerminal: { [weak self] paneID in
                 self?.clearTerminal(paneID: paneID) ?? false
@@ -2444,14 +2072,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
            runtime.isFocused,
            shellState.focusedPaneID != paneID
         {
-            // Peak input focus is window-local; it must not commit the private quick
-            // terminal slot as the regular workspace selection.
-            let isQuickTerminalFocus = pane(paneID: paneID)
-                .map { paneIsQuickTerminalContent($0) } ?? false
-            if !isQuickTerminalFocus {
-                focus(paneID: paneID)
-                return
-            }
+            focus(paneID: paneID)
+            return
         }
 
         guard TerminalRuntimePublicationPolicy.shouldProjectToShell(
@@ -2730,8 +2352,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             spaces: updatedSpaces,
             panes: updatedPanes,
             paneSlots: shellState.paneSlots,
-            contents: shellState.contents,
-            quickTerminal: shellState.quickTerminal
+            contents: shellState.contents
         )
         synchronizeSelection()
         routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
@@ -2801,33 +2422,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     private func activityNotificationTab(for pane: ShellPane) -> ShellTab? {
-        if let tab = shellState.tab(tabID: pane.tabID) {
-            return tab
-        }
-
-        guard pane.isQuickTerminalPane,
-              shellState.quickTerminal?.paneID == pane.paneID
-        else {
-            return nil
-        }
-
-        return ShellQuickTerminalPeakModel.tab(for: pane)
+        shellState.tab(tabID: pane.tabID)
     }
 
     private func activityNotificationVisibility(
         for pane: ShellPane
     ) -> ShellActivityNotificationVisibility {
-        if pane.isQuickTerminalPane,
-           shellState.quickTerminal?.paneID == pane.paneID
-        {
-            guard appIsActiveProvider(),
-                  shellState.quickTerminal?.presentation == .visible
-            else {
-                return .background
-            }
-            return .focusedVisible
-        }
-
         let isSelectedSpace = pane.spaceID == selectedSpace?.spaceID
         let isSelectedTab = pane.tabID == selectedTab?.tabID
         guard appIsActiveProvider() else {
@@ -2912,8 +2512,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             spaces: repairedSpaces,
             panes: panes,
             paneSlots: shellState.paneSlots,
-            contents: shellState.contents,
-            quickTerminal: shellState.quickTerminal
+            contents: shellState.contents
         )
         synchronizeSelection()
         publishControlPlaneState()
@@ -3003,7 +2602,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         let prioritiesByContentID = shellState.panes.reduce(
             into: [String: TerminalRuntimeRenderPriority]()
         ) { priorities, pane in
-            guard paneHasTerminalContent(pane, in: contentState, state: shellState) else { return }
+            guard paneHasTerminalContent(pane, in: contentState) else { return }
             let contentID = contentState.contentMounted(in: pane.paneID)?.contentID
                 ?? pane.terminalContentID
             priorities[contentID] = terminalRenderPriority(for: pane)
@@ -3035,36 +2634,25 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func paneSupportsTerminalCommands(
         _ pane: ShellPane,
-        in contentState: ShellContentStateSnapshot,
-        state: ShellStateSnapshot? = nil
+        in contentState: ShellContentStateSnapshot
     ) -> Bool {
         if let content = contentState.contentMounted(in: pane.paneID) {
             return content.kind == .terminal
                 && content.capabilities.contains(.terminalInput)
         }
 
-        return paneIsQuickTerminalContent(pane, state: state)
+        return false
     }
 
     private func paneHasTerminalContent(
         _ pane: ShellPane,
-        in contentState: ShellContentStateSnapshot,
-        state: ShellStateSnapshot? = nil
+        in contentState: ShellContentStateSnapshot
     ) -> Bool {
         if let content = contentState.contentMounted(in: pane.paneID) {
             return content.kind == .terminal
         }
 
-        return paneIsQuickTerminalContent(pane, state: state)
-    }
-
-    private func paneIsQuickTerminalContent(
-        _ pane: ShellPane,
-        state: ShellStateSnapshot? = nil
-    ) -> Bool {
-        let snapshot = state ?? shellState
-        return pane.isQuickTerminalPane
-            && snapshot.quickTerminal?.paneID == pane.paneID
+        return false
     }
 
     private func tab(containingPaneID paneID: String) -> ShellTab? {
@@ -3235,9 +2823,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             selectedTabID: shellState.focusedTabID,
             spaces: spaces
         )
-        manifest.quickTerminal = makeQuickTerminalRestoreRecord(
-            transcriptSnapshotOverrides: transcriptSnapshotOverrides
-        )
         manifest.repairSelection()
         return manifest
     }
@@ -3268,78 +2853,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         var capturedTranscripts = capturedTerminalTranscriptSnapshots(for: snapshot)
         capturedTranscripts.merge(transcriptSnapshotOverrides) { _, override in override }
         return snapshot.overlayingTerminalTranscriptSnapshots(capturedTranscripts)
-    }
-
-    private func makeQuickTerminalRestoreRecord(
-        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
-    ) -> ShellQuickTerminalRestoreRecord? {
-        guard let quickTerminal = shellState.quickTerminal,
-              let pane = shellState.pane(paneID: quickTerminal.paneID)
-        else {
-            return nil
-        }
-
-        let contentID = pane.terminalContentID
-        let projectedContent = ShellContentInstance.projectingTerminalPane(pane, contentID: contentID)
-        let terminalPayload = projectedContent.payload.terminal
-        let transcriptSnapshot = transcriptSnapshotOverrides[contentID]
-            ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
-            ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
-        let title = projectedContent.title
-        let launchTarget = terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget
-        let cwd = terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory
-        let payloadTitle = terminalPayload?.title ?? title
-        let terminalProfileID = terminalPayload?.terminalProfileID ?? pane.terminalProfileID
-        let payload = ShellTerminalContentPayload(
-            launchTarget: launchTarget,
-            cwd: cwd,
-            title: payloadTitle,
-            transcriptSnapshot: transcriptSnapshot,
-            terminalProfileID: terminalProfileID
-        )
-        let content = ShellContentRestoreRecord(
-            contentID: contentID,
-            kind: .terminal,
-            title: title,
-            payload: .terminal(payload)
-        )
-        let snapshot = ShellContentTabRestoreSnapshot(
-            paneTree: ShellPaneSlotTreeNode(
-                nodeID: "node_\(pane.paneID)",
-                kind: .pane,
-                direction: nil,
-                paneSlotID: pane.paneID,
-                children: nil
-            ),
-            paneSlots: [
-                ShellPaneSlotRestoreRecord(
-                    paneSlotID: pane.paneID,
-                    contentID: contentID
-                )
-            ],
-            contents: [content]
-        )
-        return ShellQuickTerminalRestoreRecord(
-            paneID: pane.paneID,
-            presentation: quickTerminal.presentation,
-            lastWorkingDirectory: quickTerminal.lastWorkingDirectory ?? pane.cwd,
-            liveSnapshot: snapshot,
-            activeTask: terminalActiveTasksByPaneID[pane.paneID] ?? .inactive
-        )
-    }
-
-    private func existingQuickTerminalTranscriptSnapshot(
-        paneID: String,
-        contentID: String
-    ) -> TerminalTranscriptSnapshot? {
-        guard let snapshot = workspaceManifest?.quickTerminal?.liveSnapshot,
-              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneID }),
-              paneSlot.contentID == contentID,
-              let content = snapshot.contents.first(where: { $0.contentID == contentID })
-        else {
-            return nil
-        }
-        return content.payload.terminal?.transcriptSnapshot
     }
 
     private func capturedTerminalTranscriptSnapshots(
@@ -3598,9 +3111,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @discardableResult
     func closePaneAfterTerminalRuntimeExit(paneID: String) -> Bool {
         guard !terminalAutoCloseIsSuppressed(paneID: paneID) else { return false }
-        if shellState.quickTerminal?.paneID == paneID {
-            return closeQuickTerminalAfterTerminalRuntimeExit()
-        }
         return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
@@ -3699,8 +3209,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return .paneClose
         case .tab:
             return .tabClose
-        case .quickTerminal:
-            return .quickTerminalClose
         case .window:
             return .windowClose
         case .app:
@@ -3718,8 +3226,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return applyClosePaneMutation(paneID: paneID) == .closed
         case .tab(let tabID):
             return applyCloseTabMutation(tabID: tabID) == .closed
-        case .quickTerminal:
-            return applyCloseQuickTerminalMutation()
         case .window, .app:
             persistenceCoordinator.syncManifestFromShellState(
                 transcriptSnapshotOverrides: transcriptSnapshotOverrides,
@@ -3774,12 +3280,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         {
             return content.contentID
         }
-        guard let pane = shellState.pane(paneID: paneID),
-              pane.isQuickTerminalPane
-        else {
-            return nil
-        }
-        return pane.terminalContentID
+        return nil
     }
 
     private func terminalPaneIDsAffected(by scope: ShellCloseGuardScope) -> [String] {
@@ -3789,16 +3290,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         case .tab(let tabID):
             return shellState.tab(tabID: tabID)?.paneTree.paneIDs ?? []
         case .window, .app:
-            var paneIDs = shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs)
-            if let quickPaneID = shellState.quickTerminal?.paneID,
-               !paneIDs.contains(quickPaneID)
-            {
-                paneIDs.append(quickPaneID)
-            }
-            return paneIDs
-        case .quickTerminal:
-            guard let paneID = shellState.quickTerminal?.paneID else { return [] }
-            return [paneID]
+            return shellState.spaces.flatMap(\.tabs).flatMap(\.paneTree.paneIDs)
         }
     }
 
@@ -4090,8 +3582,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             spaces: result.state.spaces,
             panes: nextPanes,
             paneSlots: result.state.paneSlots,
-            contents: result.state.contents,
-            quickTerminal: result.state.quickTerminal
+            contents: result.state.contents
         )
         return ShellStateMutationResult(
             state: nextState,
@@ -4424,6 +3915,6 @@ extension ShellHostController: ShellAutomationCommandHandling {
 }
 
 extension ShellHostController {
-    static let spikePreview = ShellHostController(shellState: .spikePreview)
+    static let spikePreview = ShellHostController(shellState: .bootstrapDefault())
 }
 #endif

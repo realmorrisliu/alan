@@ -1,8 +1,8 @@
 use crate::{
     ContentCapability, ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeKind,
     PaneTreeNode, ShellAttentionState, ShellContentPayload, ShellLaunchTarget,
-    ShellQuickTerminalPresentation, ShellQuickTerminalState, ShellTabActiveTaskState, Space,
-    SplitDirection, Tab, TabKind, TerminalRuntimeMetadata, WorkspaceState,
+    ShellTabActiveTaskState, Space, SplitDirection, Tab, TabKind, TerminalRuntimeMetadata,
+    WorkspaceState,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl ShellWorkspaceManifest {
                 .iter()
                 .map(ShellContentWorkspaceSpaceRecord::from_legacy)
                 .collect(),
-            quick_terminal: None,
+            legacy_quick_terminal: None,
         }
     }
 }
@@ -381,14 +381,24 @@ impl ShellContentWorkspaceTabRecord {
     }
 }
 
-/// Quick terminal restore record.
+/// Legacy quick-terminal presentation state decoded only to discard old manifest data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyQuickTerminalPresentation {
+    /// Legacy quick terminal was visible.
+    Visible,
+    /// Legacy quick terminal was hidden.
+    Hidden,
+}
+
+/// Legacy quick terminal restore record decoded only to discard old manifest data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShellQuickTerminalRestoreRecord {
+pub struct LegacyQuickTerminalRestoreRecord {
     /// Pane id.
     pub pane_id: String,
     /// Persisted presentation state.
-    #[serde(default = "default_quick_terminal_presentation")]
-    pub presentation: ShellQuickTerminalPresentation,
+    #[serde(default = "default_legacy_quick_terminal_presentation")]
+    pub presentation: LegacyQuickTerminalPresentation,
     /// Last working directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_working_directory: Option<String>,
@@ -417,9 +427,9 @@ pub struct ShellContentWorkspaceManifest {
     pub selected_tab_id: Option<String>,
     /// Spaces.
     pub spaces: Vec<ShellContentWorkspaceSpaceRecord>,
-    /// Quick terminal restore record.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quick_terminal: Option<ShellQuickTerminalRestoreRecord>,
+    /// Legacy quick-terminal restore record. Decoded for load tolerance and omitted on write.
+    #[serde(default, rename = "quick_terminal", skip_serializing)]
+    pub legacy_quick_terminal: Option<LegacyQuickTerminalRestoreRecord>,
 }
 
 impl ShellContentWorkspaceManifest {
@@ -480,7 +490,7 @@ impl ShellContentWorkspaceManifest {
                 terminal_profile_id: None,
                 presentation_icon: None,
             }],
-            quick_terminal: None,
+            legacy_quick_terminal: None,
         }
     }
 
@@ -661,11 +671,6 @@ impl ShellContentWorkspaceManifest {
                 .find(|tab| &tab.tab_id == tab_id)
                 .and_then(|tab| tab.pane_tree.pane_ids().first().cloned())
         });
-        let quick_terminal = manifest
-            .quick_terminal
-            .as_ref()
-            .and_then(|record| materialize_quick_terminal(record, default_working_directory));
-
         WorkspaceState {
             contract_version: manifest.content_contract_version,
             window_id: manifest.window_id,
@@ -675,7 +680,6 @@ impl ShellContentWorkspaceManifest {
             spaces: materialized_spaces,
             pane_slots,
             contents,
-            quick_terminal,
         }
     }
 }
@@ -731,47 +735,6 @@ fn organized_runtime_tabs(tabs: Vec<Tab>) -> Vec<Tab> {
     pinned
 }
 
-fn materialize_quick_terminal(
-    record: &ShellQuickTerminalRestoreRecord,
-    default_working_directory: &str,
-) -> Option<ShellQuickTerminalState> {
-    let snapshot = record.live_snapshot.as_ref()?;
-    let pane_slot_record = snapshot
-        .pane_slots
-        .iter()
-        .find(|slot| slot.pane_slot_id == record.pane_id)
-        .or_else(|| snapshot.pane_slots.first())?;
-    let content_record = snapshot
-        .contents
-        .iter()
-        .find(|content| content.content_id == pane_slot_record.content_id)?;
-    if content_record.kind != ContentKind::Terminal {
-        return None;
-    }
-
-    let content = restored_content_instance(content_record.clone(), default_working_directory);
-    let terminal_metadata = content.terminal_metadata?;
-    let last_working_directory = record
-        .last_working_directory
-        .clone()
-        .or_else(|| terminal_metadata.cwd.clone());
-    let terminal_payload = content.payload.terminal.clone();
-
-    Some(ShellQuickTerminalState {
-        pane_id: record.pane_id.clone(),
-        presentation: ShellQuickTerminalPresentation::Hidden,
-        last_working_directory,
-        content_id: content.content_id,
-        terminal_payload,
-        terminal_metadata: Some(terminal_metadata),
-        attention: if record.active_task.protects_from_pruning() {
-            ShellAttentionState::Active
-        } else {
-            ShellAttentionState::Idle
-        },
-    })
-}
-
 fn restored_content_instance(
     record: ShellContentRestoreRecord,
     default_working_directory: &str,
@@ -813,8 +776,8 @@ fn content_id_for_pane_id(pane_id: &str) -> String {
     format!("content_{pane_id}")
 }
 
-fn default_quick_terminal_presentation() -> ShellQuickTerminalPresentation {
-    ShellQuickTerminalPresentation::Hidden
+fn default_legacy_quick_terminal_presentation() -> LegacyQuickTerminalPresentation {
+    LegacyQuickTerminalPresentation::Hidden
 }
 
 fn strongest_attention(pane_slots: &[PaneSlot], space_id: &str) -> ShellAttentionState {

@@ -3,7 +3,7 @@
 ### Requirement: macOS shell actions consume shared shell core action contract
 The macOS shell action registry SHALL consume shared action IDs, target
 resolution, availability, shortcut metadata, and action-to-effect mapping from
-the Rust shell core after the action module has parity fixtures and adapter
+the Rust shell core after the action module has Rust contract tests and adapter
 tests.
 
 Swift SHALL continue to own menu bar, context menu, keyboard, drag/drop, and

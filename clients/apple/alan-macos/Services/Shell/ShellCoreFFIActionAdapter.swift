@@ -280,7 +280,6 @@ private enum ShellCoreActionEffect: Decodable {
     case moveTab(String?, offset: Int)
     case moveTabToSpace(tabID: String?, spaceID: String?)
     case movePaneInTab(String?, placement: ShellPaneSplitDirection)
-    case promoteQuickTerminal(spaceID: String?)
     case terminalClear(String?)
     case disabledPlaceholder
 
@@ -343,10 +342,6 @@ private enum ShellCoreActionEffect: Decodable {
                 try container.decodeIfPresent(String.self, forKey: .paneID),
                 placement: try container.decode(ShellPaneSplitDirection.self, forKey: .placement)
             )
-        case "promote_quick_terminal":
-            self = .promoteQuickTerminal(
-                spaceID: try container.decodeIfPresent(String.self, forKey: .spaceID)
-            )
         case "terminal_clear":
             self = .terminalClear(try container.decodeIfPresent(String.self, forKey: .paneID))
         case "disabled_placeholder":
@@ -390,8 +385,6 @@ private enum ShellCoreActionEffect: Decodable {
             return .moveTabToSpace(tabID: tabID, spaceID: spaceID)
         case .movePaneInTab(let paneID, let placement):
             return .movePaneInTab(paneID, placement: placement)
-        case .promoteQuickTerminal(let spaceID):
-            return .promoteQuickTerminal(spaceID: spaceID)
         case .terminalClear(let paneID):
             return .terminalClear(paneID)
         case .disabledPlaceholder:

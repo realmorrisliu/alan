@@ -5,7 +5,7 @@ that are not UI-only: workspace state mutations, manifest materialization,
 action availability, control-plane command reduction, Terminal Profile
 resolution, and settings domain summaries. This makes a future Linux GTK client
 likely to reimplement the same behavior unless the reusable shell workspace
-domain is moved into a platform-neutral Rust core with strong parity tests.
+domain is moved into a platform-neutral Rust core with strong contract tests.
 
 ## What Changes
 
@@ -16,13 +16,13 @@ domain is moved into a platform-neutral Rust core with strong parity tests.
   clipboard, IPC transport, diagnostics presentation, and privileged macOS
   account apply paths in the Apple client platform layer.
 - Define a coarse-grained, versioned cross-language facade for Swift integration
-  after Rust parity is established. The first facade uses stable request/response
+  after Rust contract coverage is established. The first facade uses stable request/response
   envelopes and must not expose async callbacks, foreign traits, or long-lived
   Rust workspace objects.
-- Add Swift-exported parity fixtures and Rust tests before replacing each Swift
-  logic module.
+- Add focused Rust contract tests and FFI-backed Swift adapter tests before
+  replacing each Swift logic module.
 - Replace Swift shell workspace logic module by module only after the equivalent
-  Rust module passes parity and adapter tests.
+  Rust module passes contract and adapter tests.
 - Require architecture warning debt to decrease as Swift logic is replaced,
   preventing new pure workspace domain logic from accumulating in large Swift
   shell model/controller files.
@@ -34,7 +34,7 @@ domain is moved into a platform-neutral Rust core with strong parity tests.
 - `shell-workspace-core-contract`: Defines the platform-neutral Rust shell
   workspace core ownership, module boundaries, reducer/manifest/action/control
   contracts, platform adapter responsibilities, binding facade rules, and
-  parity-test requirements.
+  Rust contract and adapter-test requirements.
 
 ### Modified Capabilities
 
@@ -53,7 +53,7 @@ domain is moved into a platform-neutral Rust core with strong parity tests.
 - `macos-terminal-profiles`: Move Terminal Profile document validation,
   resolution order, and launch-intent construction into shell core while keeping
   platform process spawning and privileged account application outside it.
-- `macos-shell-build-test-contract`: Add parity-fixture, Rust core, binding
+- `macos-shell-build-test-contract`: Add Rust core, binding
   facade, and Swift replacement validation expectations.
 
 ## Impact
@@ -61,7 +61,7 @@ domain is moved into a platform-neutral Rust core with strong parity tests.
 - Affected Rust workspace:
   - New `crates/shell-core` pure Rust crate.
   - Optional dedicated binding/facade crate or module for Swift integration.
-  - Workspace `Cargo.toml`, focused Rust unit tests, fixture tests, and
+  - Workspace `Cargo.toml`, focused Rust unit tests, contract tests, and
     validation commands.
 - Affected Apple client code:
   - `clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift`

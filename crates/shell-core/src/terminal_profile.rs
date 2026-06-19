@@ -1320,7 +1320,7 @@ pub enum ManagedTerminalAccountPlanStatus {
 }
 
 impl ManagedTerminalAccountPlanStatus {
-    /// Stable label used by fixture projections and settings summaries.
+    /// Stable label used by settings summaries and diagnostics.
     pub fn label(&self) -> &'static str {
         match self {
             Self::ReadyToApply => "ready_to_apply",
@@ -1594,7 +1594,7 @@ impl ManagedTerminalAccountApplyResult {
     }
 }
 
-/// Fake executor for deterministic dry-run fixture projections.
+/// Fake executor for deterministic managed-account dry-run projections.
 pub struct ManagedTerminalAccountFakeExecutor;
 
 impl ManagedTerminalAccountFakeExecutor {

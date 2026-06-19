@@ -2,11 +2,17 @@ import Foundation
 
 extension ShellCoreFFIAdapter {
     func validateTerminalProfileDocument(
-        _ document: TerminalProfileDocument
+        _ document: TerminalProfileDocument,
+        executablePaths: Set<String> = [],
+        enforceExecutableAvailability: Bool = false
     ) throws -> TerminalProfileValidationResult {
         let response: ShellCoreTerminalProfileValidationResponse = try send(
             operation: "terminal_profile.validate",
-            payload: document
+            payload: ShellCoreTerminalProfileValidationPayload(
+                document: document,
+                executablePaths: executablePaths,
+                enforceExecutableAvailability: enforceExecutableAvailability
+            )
         )
         return response.validationResult
     }
@@ -19,6 +25,27 @@ extension ShellCoreFFIAdapter {
             payload: ShellCoreTerminalProfileEditorDraft(draft)
         )
         return response.editorResult
+    }
+
+    func upsertTerminalProfileDraft(
+        _ draft: TerminalProfileEditorDraft,
+        into document: TerminalProfileDocument
+    ) throws -> TerminalProfileDocumentEditorResult {
+        let response: ShellCoreTerminalProfileDocumentEditorResponse = try send(
+            operation: "terminal_profile.upsert",
+            payload: ShellCoreTerminalProfileUpsertPayload(draft: draft, document: document)
+        )
+        return response.documentEditorResult
+    }
+
+    func shouldCaptureGlobalDefaultTerminalProfile(
+        _ profile: TerminalProfileDefinition
+    ) throws -> Bool {
+        let response: ShellCoreTerminalProfileCaptureResponse = try send(
+            operation: "terminal_profile.should_capture_global_default",
+            payload: profile
+        )
+        return response.capture
     }
 
     func resolveTerminalLaunchIntent(
@@ -55,6 +82,23 @@ private struct ShellCoreTerminalProfileValidationResponse: Decodable {
     }
 }
 
+private struct ShellCoreTerminalProfileValidationPayload: Encodable {
+    let document: TerminalProfileDocument
+    let availability: ShellCoreTerminalExecutableAvailabilityPayload
+
+    init(
+        document: TerminalProfileDocument,
+        executablePaths: Set<String>,
+        enforceExecutableAvailability: Bool
+    ) {
+        self.document = document
+        availability = ShellCoreTerminalExecutableAvailabilityPayload(
+            executablePaths: executablePaths,
+            enforce: enforceExecutableAvailability
+        )
+    }
+}
+
 private struct ShellCoreTerminalProfileEditorResponse: Decodable {
     let isValid: Bool
     let definition: TerminalProfileDefinition?
@@ -72,6 +116,29 @@ private struct ShellCoreTerminalProfileEditorResponse: Decodable {
             errors: errors.map(\.swiftError)
         )
     }
+}
+
+private struct ShellCoreTerminalProfileDocumentEditorResponse: Decodable {
+    let isValid: Bool
+    let document: TerminalProfileDocument?
+    let errors: [ShellCoreTerminalProfileValidationError]
+
+    private enum CodingKeys: String, CodingKey {
+        case isValid = "is_valid"
+        case document
+        case errors
+    }
+
+    var documentEditorResult: TerminalProfileDocumentEditorResult {
+        TerminalProfileDocumentEditorResult(
+            document: isValid ? document : nil,
+            errors: errors.map(\.swiftError)
+        )
+    }
+}
+
+private struct ShellCoreTerminalProfileCaptureResponse: Decodable {
+    let capture: Bool
 }
 
 private struct ShellCoreTerminalProfileEditorDraft: Encodable {
@@ -104,6 +171,16 @@ private struct ShellCoreTerminalProfileEditorDraft: Encodable {
         defaultWorkingDirectory = draft.defaultWorkingDirectory
         presentation = draft.presentation
         managedTerminalAccountID = draft.managedTerminalAccountID
+    }
+}
+
+private struct ShellCoreTerminalProfileUpsertPayload: Encodable {
+    let draft: ShellCoreTerminalProfileEditorDraft
+    let document: TerminalProfileDocument
+
+    init(draft: TerminalProfileEditorDraft, document: TerminalProfileDocument) {
+        self.draft = ShellCoreTerminalProfileEditorDraft(draft)
+        self.document = document
     }
 }
 
@@ -181,9 +258,9 @@ private struct ShellCoreTerminalExecutableAvailabilityPayload: Encodable {
         case enforce
     }
 
-    init(executablePaths: Set<String>) {
+    init(executablePaths: Set<String>, enforce: Bool = true) {
         self.executablePaths = executablePaths.sorted()
-        enforce = true
+        self.enforce = enforce
     }
 }
 

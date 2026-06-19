@@ -11,6 +11,16 @@ extension ShellCoreFFIAdapter {
         return response.rows.map(\.settingsRow)
     }
 
+    func managedTerminalAccountRows(
+        _ summary: ManagedTerminalAccountSettingsSummary
+    ) throws -> [ShellSettingsRowModel] {
+        let response: ShellCoreSettingsRowsResponse = try send(
+            operation: "settings.managed_terminal_account_rows",
+            payload: ShellCoreManagedTerminalAccountSettingsSummaryPayload(summary)
+        )
+        return response.rows.map(\.settingsRow)
+    }
+
     func capabilityRows(
         _ summary: ShellSettingsCapabilitiesSummary
     ) throws -> [ShellSettingsRowModel] {
@@ -105,6 +115,198 @@ private struct ShellCoreTerminalProfileSettingsSummaryPayload: Encodable {
         profiles = summary.profiles
         defaultProfileID = summary.defaultProfileID
         recoveryMessage = summary.recoveryMessage
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountSettingsSummaryPayload: Encodable {
+    let plans: [ShellCoreManagedTerminalAccountPlanPayload]
+
+    init(_ summary: ManagedTerminalAccountSettingsSummary) {
+        plans = summary.plans.map(ShellCoreManagedTerminalAccountPlanPayload.init)
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountPlanPayload: Encodable {
+    let request: ShellCoreManagedTerminalAccountRequestPayload
+    let status: ShellCoreManagedTerminalAccountPlanStatusPayload
+    let steps: [ShellCoreManagedTerminalAccountPlanStepPayload]
+
+    init(_ plan: ManagedTerminalAccountPlan) {
+        request = ShellCoreManagedTerminalAccountRequestPayload(plan.request)
+        status = ShellCoreManagedTerminalAccountPlanStatusPayload(plan.status)
+        steps = plan.steps.map(ShellCoreManagedTerminalAccountPlanStepPayload.init)
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountRequestPayload: Encodable {
+    let accountName: String
+    let guiUserName: String
+    let fullName: String?
+    let shell: String
+    let homeDirectory: String
+    let hideFromLoginWindow: Bool
+    let bindCurrentSpaceAfterSuccess: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case accountName = "account_name"
+        case guiUserName = "gui_user_name"
+        case fullName = "full_name"
+        case shell
+        case homeDirectory = "home_directory"
+        case hideFromLoginWindow = "hide_from_login_window"
+        case bindCurrentSpaceAfterSuccess = "bind_current_space_after_success"
+    }
+
+    init(_ request: ManagedTerminalAccountRequest) {
+        accountName = request.accountName
+        guiUserName = request.guiUserName
+        fullName = request.fullName
+        shell = request.shell
+        homeDirectory = request.homeDirectory
+        hideFromLoginWindow = request.hideFromLoginWindow
+        bindCurrentSpaceAfterSuccess = request.bindCurrentSpaceAfterSuccess
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountPlanStatusPayload: Encodable {
+    let type: String
+    let errors: [ShellCoreManagedTerminalAccountValidationErrorPayload]?
+    let path: String?
+    let profileID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case errors
+        case path
+        case profileID = "profile_id"
+    }
+
+    init(_ status: ManagedTerminalAccountPlanStatus) {
+        switch status {
+        case .readyToApply:
+            type = "ready_to_apply"
+            errors = nil
+            path = nil
+            profileID = nil
+        case .alreadyReady:
+            type = "already_ready"
+            errors = nil
+            path = nil
+            profileID = nil
+        case .repair:
+            type = "repair"
+            errors = nil
+            path = nil
+            profileID = nil
+        case let .invalid(validationErrors):
+            type = "invalid"
+            errors = validationErrors.map(
+                ShellCoreManagedTerminalAccountValidationErrorPayload.init
+            )
+            path = nil
+            profileID = nil
+        case .requiresDestructiveConfirmation:
+            type = "requires_destructive_confirmation"
+            errors = nil
+            path = nil
+            profileID = nil
+        case let .sudoersConflict(path):
+            type = "sudoers_conflict"
+            errors = nil
+            self.path = path
+            profileID = nil
+        case let .terminalProfileConflict(profileID):
+            type = "terminal_profile_conflict"
+            errors = nil
+            path = nil
+            self.profileID = profileID
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(errors, forKey: .errors)
+        try container.encodeIfPresent(path, forKey: .path)
+        try container.encodeIfPresent(profileID, forKey: .profileID)
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountValidationErrorPayload: Encodable {
+    let type: String
+    let value: String
+
+    init(_ error: ManagedTerminalAccountValidationError) {
+        switch error {
+        case let .invalidAccountName(value):
+            type = "invalid_account_name"
+            self.value = value
+        case let .invalidGUIUserName(value):
+            type = "invalid_gui_user_name"
+            self.value = value
+        case let .reservedAccountName(value):
+            type = "reserved_account_name"
+            self.value = value
+        case let .invalidShell(value):
+            type = "invalid_shell"
+            self.value = value
+        case let .coreUnavailable(value):
+            type = "invalid_shell"
+            self.value = value
+        }
+    }
+}
+
+private struct ShellCoreManagedTerminalAccountPlanStepPayload: Encodable {
+    let kind: String
+    let summary: String
+    let requiresPrivilege: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case summary
+        case requiresPrivilege = "requires_privilege"
+    }
+
+    init(_ step: ManagedTerminalAccountPlanStep) {
+        kind = step.kind.shellCoreID
+        summary = step.summary
+        requiresPrivilege = step.requiresPrivilege
+    }
+}
+
+private extension ManagedTerminalAccountPlanStepKind {
+    var shellCoreID: String {
+        switch self {
+        case .createStandardAccount:
+            return "create_standard_account"
+        case .repairAccountType:
+            return "repair_account_type"
+        case .repairHomeDirectory:
+            return "repair_home_directory"
+        case .repairShell:
+            return "repair_shell"
+        case .hideAccount:
+            return "hide_account"
+        case .writeSudoersDropIn:
+            return "write_sudoers_drop_in"
+        case .validateSudoers:
+            return "validate_sudoers"
+        case .verifyTerminalEntry:
+            return "verify_terminal_entry"
+        case .createOrUpdateTerminalProfile:
+            return "create_or_update_terminal_profile"
+        case .bindCurrentSpace:
+            return "bind_current_space"
+        case .removeSudoersDropIn:
+            return "remove_sudoers_drop_in"
+        case .removeManagedTerminalProfile:
+            return "remove_managed_terminal_profile"
+        case .deleteAccount:
+            return "delete_account"
+        case .deleteHomeDirectory:
+            return "delete_home_directory"
+        }
     }
 }
 

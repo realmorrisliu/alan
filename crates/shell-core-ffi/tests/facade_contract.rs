@@ -19,6 +19,18 @@ fn facade_describe_reports_c_abi_byte_envelope_boundary() {
             .expect("supported operations")
             .contains(&json!("reducer.apply"))
     );
+    assert!(
+        payload["supported_operations"]
+            .as_array()
+            .expect("supported operations")
+            .contains(&json!("terminal_profile.upsert"))
+    );
+    assert!(
+        payload["supported_operations"]
+            .as_array()
+            .expect("supported operations")
+            .contains(&json!("managed_terminal_account.plan"))
+    );
 }
 
 #[test]
@@ -182,6 +194,47 @@ fn facade_dispatches_control_and_action_registry_calls() {
 
 #[test]
 fn facade_dispatches_terminal_profile_launch_intent() {
+    let capture = request(
+        "terminal_profile.should_capture_global_default",
+        json!({
+            "id": "alan",
+            "title": "Alan",
+            "launch": {
+                "kind": "sudo_user",
+                "unix_user": "alan"
+            },
+            "default_working_directory": "/Users/alan"
+        }),
+    );
+    assert!(capture.error.is_none());
+    assert_eq!(capture.payload.unwrap()["capture"], json!(true));
+
+    let upsert = request(
+        "terminal_profile.upsert",
+        json!({
+            "draft": {
+                "id": " custom ",
+                "title": " Custom ",
+                "launch_kind": "custom_command",
+                "unix_user": "",
+                "custom_command": "  echo hi  ",
+                "default_working_directory": " /repo/custom "
+            },
+            "document": {
+                "default_profile_id": "",
+                "profiles": []
+            }
+        }),
+    );
+    assert!(upsert.error.is_none());
+    let document = &upsert.payload.expect("upsert payload")["document"];
+    assert_eq!(document["default_profile_id"], json!("custom"));
+    assert_eq!(document["profiles"][0]["id"], json!("custom"));
+    assert_eq!(
+        document["profiles"][0]["default_working_directory"],
+        json!("/repo/custom")
+    );
+
     let response = request(
         "terminal_profile.resolve_launch_intent",
         json!({
@@ -231,6 +284,76 @@ fn facade_dispatches_terminal_profile_launch_intent() {
     assert_eq!(
         intent["profile_environment"]["ALAN_TERMINAL_PROFILE_KIND"],
         json!("sudo_user")
+    );
+}
+
+#[test]
+fn facade_dispatches_managed_terminal_account_planning() {
+    let invalid = request(
+        "managed_terminal_account.validate_request",
+        json!({
+            "account_name": "root",
+            "gui_user_name": "morris",
+            "full_name": null,
+            "shell": "/bin/zsh",
+            "home_directory": "/Users/root",
+            "hide_from_login_window": true,
+            "bind_current_space_after_success": false
+        }),
+    );
+    assert!(invalid.error.is_none());
+    assert_eq!(
+        invalid.payload.expect("validation payload")["errors"][0]["type"],
+        json!("reserved_account_name")
+    );
+
+    let plan = request(
+        "managed_terminal_account.plan",
+        json!({
+            "request": {
+                "account_name": "alan",
+                "gui_user_name": "morris",
+                "full_name": "Alan Terminal",
+                "shell": "/bin/zsh",
+                "home_directory": "/Users/alan",
+                "hide_from_login_window": true,
+                "bind_current_space_after_success": true
+            },
+            "state": {
+                "account": {
+                    "state": "missing"
+                },
+                "sudoers": {
+                    "state": "missing"
+                },
+                "terminal_profile": {
+                    "state": "missing"
+                },
+                "verification": {
+                    "status": "not_run"
+                }
+            }
+        }),
+    );
+    assert!(plan.error.is_none());
+    let plan = &plan.payload.expect("plan payload")["plan"];
+    assert_eq!(plan["status"]["type"], json!("ready_to_apply"));
+    assert_eq!(
+        plan["steps"]
+            .as_array()
+            .expect("plan steps")
+            .iter()
+            .map(|step| step["kind"].as_str().expect("step kind"))
+            .collect::<Vec<_>>(),
+        vec![
+            "create_standard_account",
+            "hide_account",
+            "write_sudoers_drop_in",
+            "validate_sudoers",
+            "verify_terminal_entry",
+            "create_or_update_terminal_profile",
+            "bind_current_space",
+        ]
     );
 }
 

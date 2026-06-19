@@ -60,24 +60,6 @@ private enum ShellRuntimeMetadataTests {
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
-        verifiesQuickTerminalShowCreatesAndReusesGlobalPane()
-        verifiesQuickTerminalActionsAndControlCommandsShareControllerPath()
-        verifiesQuickTerminalTerminalCommandsStayRoutable()
-        verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace()
-        verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow()
-        verifiesQuickTerminalPeakPresenterOrdersPresentationBeforeFocus()
-        verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection()
-        verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide()
-        verifiesQuickTerminalPeakPresenterReleasesPresentationAfterPromotion()
-        verifiesQuickTerminalActiveCloseCancelPreservesRuntime()
-        verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh()
-        verifiesQuickTerminalFocusRefocusesExistingVisiblePeak()
-        verifiesQuickTerminalPanelKeyBudgetDoesNotBlockTerminalFocus()
-        verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags()
-        verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering()
-        verifiesQuickTerminalPeakPlacementFitsActiveDisplay()
-        verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal()
-        verifiesQuickTerminalRenderPriorityStaysDetachedFromMainWindowVisibility()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
         verifiesTerminalRenderPrioritiesFollowSelectionAndZoom()
         verifiesTerminalRenderPrioritiesTrackWindowVisibility()
@@ -93,10 +75,10 @@ private enum ShellRuntimeMetadataTests {
         verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs()
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
+        verifiesShellCoreUnavailableFallbackIsReadOnly()
         verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
-        verifiesQuickTerminalFocusSocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -122,6 +104,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
+        verifiesCommandFailureAcknowledgementRequiresFocusedPaneInTab()
         verifiesSpatialFocusAcknowledgesCommandFailure()
         verifiesActivityFreshnessPolicies()
         verifiesActivityAttentionIsReadTimeOnly()
@@ -134,7 +117,6 @@ private enum ShellRuntimeMetadataTests {
         verifiesControllerRoutesActivityNotificationsOnce()
         verifiesControllerRoutesDistinctActivityPayloadsInSameSecond()
         verifiesInactiveAppRoutesFocusedPaneNotifications()
-        verifiesHiddenQuickTerminalRoutesUserActionableActivityNotifications()
         verifiesProcessExitNotificationRoutesBeforeAutoClose()
         verifiesProcessExitRuntimeNotificationRoutesBeforeAutoClose()
         verifiesTerminalChildExitIgnoresStaleForegroundContext()
@@ -151,11 +133,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesConfirmedAppCloseRequestsGracefulShutdownBeforeTranscriptCapture()
         verifiesConfirmedAppCloseCapturesLatestTranscriptAfterGracefulTimeout()
         verifiesWindowAndAppCloseCancelRequireOneConfirmationWithoutMutation()
-        verifiesWindowAndAppCloseIncludeActiveQuickTerminal()
-        verifiesConfirmedAppClosePersistsAndRestoresQuickTerminalTranscript()
         verifiesControlPlaneClosePaneReportsRequiresConfirmation()
         verifiesControlPlaneCloseTabReportsRequiresConfirmation()
-        verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation()
         verifiesControlPlaneCloseIdlePaneSucceeds()
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesShellActionTabNavigationTargetsCurrentSelection()
@@ -1749,200 +1728,7 @@ private enum ShellRuntimeMetadataTests {
         expect(handle.teardownCount == 0, "cancelled app quit must preserve runtime")
     }
 
-    private static func verifiesWindowAndAppCloseIncludeActiveQuickTerminal() {
-        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false, false])
-        let controller = makeController(closeConfirmationPresenter: presenter)
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        controller.updateTerminalMetadata(
-            metadata(title: "python server", activeTaskState: .foregroundCommand),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-        let quickTerminalContentID = ShellContentInstance.terminalContentID(
-            forPaneID: ShellQuickTerminalSlot.globalPaneID
-        )
-        let stateBeforeClose = controller.shellState
 
-        expect(
-            controller.requestCloseWindow() == false,
-            "active quick terminal must guard window close"
-        )
-        expect(
-            controller.requestTerminateApp() == false,
-            "active quick terminal must guard app quit"
-        )
-        expect(
-            presenter.impacts.map(\.scope) == [.window, .app],
-            "window close and app quit must present scoped confirmations for quick terminal work"
-        )
-        expect(
-            presenter.impacts.allSatisfy {
-                $0.activeTerminalContentIDs.contains(quickTerminalContentID)
-                    && $0.affectedTerminalContentIDs.contains(quickTerminalContentID)
-            },
-            "window and app close impacts must include the quick terminal content"
-        )
-        expect(
-            controller.shellState == stateBeforeClose,
-            "cancelled surface close must preserve quick terminal state"
-        )
-        expect(quickHandle.teardownCount == 0, "cancelled surface close must preserve quick runtime")
-    }
-
-    private static func verifiesConfirmedAppClosePersistsAndRestoresQuickTerminalTranscript() {
-        let windowID = "quick_terminal_close_restore_\(UUID().uuidString)"
-        let manifestURL = manifestURL("quick_terminal_close_restore")
-        let service = FakeAlanTerminalRuntimeService()
-        let registry = TerminalRuntimeRegistry(runtimeService: service)
-        let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
-        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [true])
-        let controller = makeController(
-            windowID: windowID,
-            terminalRuntimeRegistry: registry,
-            workspaceManifestStore: store,
-            workspaceManifest: defaultManifestWithShellCore(
-                windowID: windowID,
-                defaultWorkingDirectory: "/repo/app",
-                now: Date(timeIntervalSince1970: 94)
-            ),
-            closeConfirmationPresenter: presenter,
-            gracefulShutdownTimeout: 0
-        )
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        let range = AlanTerminalBufferRange(lowerBound: 0, upperBound: 2)
-        quickHandle.commandOutputTextByRange[range] = "quick ready\nrunning background job"
-        controller.updateTerminalRuntime(
-            TerminalHostRuntimeSnapshot(
-                stage: .windowAttached,
-                contentID: ShellContentInstance.terminalContentID(
-                    forPaneID: ShellQuickTerminalSlot.globalPaneID
-                ),
-                paneID: ShellQuickTerminalSlot.globalPaneID,
-                tabID: ShellQuickTerminalSlot.globalTabID,
-                logicalSize: CGSize(width: 120, height: 2),
-                backingSize: CGSize(width: 120, height: 2),
-                displayName: nil,
-                displayID: nil,
-                attachedWindowTitle: "python server",
-                isFocused: true,
-                renderer: .placeholder,
-                paneMetadata: metadata(
-                    title: "python server",
-                    cwd: "/repo/quick",
-                    activeTaskState: .foregroundCommand
-                ),
-                surfaceState: AlanTerminalSurfaceStateSnapshot(
-                    readiness: .ready,
-                    terminalMode: .normalBuffer,
-                    scrollback: AlanTerminalScrollbackState(
-                        metrics: AlanTerminalScrollbackMetrics(
-                            totalRows: 2,
-                            visibleRows: 2,
-                            firstVisibleRow: 0,
-                            mode: .normalBuffer
-                        ),
-                        nativeScrollbarVisible: false,
-                        thumbRange: 0..<2
-                    ),
-                    search: nil,
-                    semanticCommands: .placeholder,
-                    readonly: false,
-                    secureInput: false,
-                    inputReady: true,
-                    rendererHealth: "ready",
-                    childExited: false,
-                    lastUpdatedAt: Date(timeIntervalSince1970: 94)
-                ),
-                lastUpdatedAt: Date(timeIntervalSince1970: 94)
-            )
-        )
-        controller.updateTerminalMetadata(
-            metadata(title: "python server", cwd: "/repo/quick", activeTaskState: .foregroundCommand),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-
-        expect(controller.requestTerminateApp(), "confirmed app quit with active quick terminal must apply")
-
-        guard let savedManifest = decodeManifest(at: manifestURL),
-              let quickSnapshot = savedManifest.quickTerminal?.liveSnapshot,
-              let quickPayload = terminalPayload(
-                in: quickSnapshot,
-                paneSlotID: ShellQuickTerminalSlot.globalPaneID
-              ),
-              let transcript = quickPayload.transcriptSnapshot
-        else {
-            fail("confirmed app quit must persist quick terminal transcript in workspace manifest")
-        }
-        expect(
-            transcript.transcriptLines == ["quick ready", "running background job"],
-            "quick terminal transcript must preserve close-time output"
-        )
-        expect(quickPayload.cwd == "/repo/quick", "quick terminal restore payload must preserve cwd")
-        expect(
-            savedManifest.spaces.flatMap(\.tabs).allSatisfy {
-                $0.tabID != ShellQuickTerminalSlot.globalTabID
-            },
-            "quick terminal restore must not create a normal workspace tab"
-        )
-
-        let restoredState = materializeManifestWithShellCore(
-            manifest: savedManifest,
-            defaultWorkingDirectory: "/fallback",
-            now: Date(timeIntervalSince1970: 95)
-        )
-        expect(
-            restoredState.quickTerminal?.paneID == ShellQuickTerminalSlot.globalPaneID,
-            "workspace manifest restore must recreate the quick terminal slot"
-        )
-        expect(
-            restoredState.quickTerminal?.presentation == .hidden,
-            "workspace manifest restore must not auto-present the quick terminal peak"
-        )
-        expect(
-            restoredState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.cwd == "/repo/quick",
-            "workspace manifest restore must recreate quick terminal cwd"
-        )
-
-        let restoredController = makeController(
-            windowID: "restored_\(windowID)",
-            shellState: restoredState,
-            terminalRuntimeRegistry: TerminalRuntimeRegistry(
-                runtimeService: FakeAlanTerminalRuntimeService()
-            ),
-            workspaceManifestStore: store,
-            workspaceManifest: savedManifest
-        )
-        restoredController.updateTerminalMetadata(
-            metadata(title: "python server", cwd: "/repo/quick", activeTaskState: .foregroundCommand),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-        let retainedManifest = decodeManifest(at: manifestURL)
-        expect(
-            terminalPayload(
-                in: retainedManifest?.quickTerminal?.liveSnapshot,
-                paneSlotID: ShellQuickTerminalSlot.globalPaneID
-            )?.transcriptSnapshot?.transcriptLines == ["quick ready", "running background job"],
-            "quick terminal manifest sync without a live runtime must preserve restored transcript history"
-        )
-        let restoredHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: restoredController
-        )
-        expect(
-            restoredHandle.seededTranscriptSnapshot?.transcriptLines == [
-                "quick ready",
-                "running background job",
-            ],
-            "restored quick terminal runtime must be seeded with close-time transcript history"
-        )
-    }
 
     private static func verifiesControlPlaneClosePaneReportsRequiresConfirmation() {
         let controller = makeController()
@@ -2421,655 +2207,6 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.selectedPane?.cwd == "/explicit/cwd",
             "explicit new-tab cwd must override focused pane cwd"
-        )
-    }
-
-    private static func verifiesQuickTerminalShowCreatesAndReusesGlobalPane() {
-        let controller = makeController()
-        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/app"), for: "pane_1")
-        let selectedSpaceBefore = controller.selectedSpaceID
-        let selectedTabBefore = controller.selectedTabID
-        let focusedPaneBefore = controller.shellState.focusedPaneID
-
-        let shownPaneID = controller.showQuickTerminal()
-        let hidden = controller.hideQuickTerminal()
-        controller.updateTerminalMetadata(metadata(title: "cwd update", cwd: "/repo/other"), for: "pane_1")
-        let reshownPaneID = controller.showQuickTerminal()
-
-        expect(shownPaneID == "quick_terminal_pane", "quick terminal must use one stable global pane id")
-        expect(hidden == true, "quick terminal hide must apply when the peak is visible")
-        expect(reshownPaneID == shownPaneID, "quick terminal show must reuse the existing global pane")
-        expect(
-            controller.quickTerminalPane?.cwd == "/repo/app",
-            "quick terminal must keep the existing instance cwd across hide/show"
-        )
-        expect(
-            controller.quickTerminalPresentation == .visible,
-            "reshowing quick terminal must make the global slot visible"
-        )
-        expect(
-            controller.shellState.panes.filter(\.isQuickTerminalPane).count == 1,
-            "quick terminal must not create one pane per summon"
-        )
-        expect(controller.selectedSpaceID == selectedSpaceBefore, "show/hide must not move the selected space")
-        expect(controller.selectedTabID == selectedTabBefore, "show/hide must not move the selected tab")
-        expect(
-            controller.shellState.focusedPaneID == focusedPaneBefore,
-            "show/hide must not steal regular pane focus in the shell model"
-        )
-    }
-
-    private static func verifiesQuickTerminalActionsAndControlCommandsShareControllerPath() {
-        let controller = makeController()
-
-        let actionResult = controller.performShellAction(.quickTerminalToggle)
-        let paneIDFromAction = controller.quickTerminalPane?.paneID
-        let hiddenResponse = controller.handleControlPlaneCommand(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-hide-1",
-                  "command": "quick_terminal.hide"
-                }
-                """
-            )
-        )
-
-        expect(actionResult == .executed, "quick terminal action must execute through ShellActionRegistry")
-        expect(paneIDFromAction == "quick_terminal_pane", "quick terminal action must create the global pane")
-        expect(hiddenResponse.applied == true, "quick terminal hide control command must use controller routing")
-        expect(
-            controller.quickTerminalPresentation == .hidden,
-            "quick terminal hide command must preserve the global runtime slot"
-        )
-
-        let focusResponse = controller.handleControlPlaneCommand(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-focus-1",
-                  "command": "quick_terminal.focus"
-                }
-                """
-            )
-        )
-
-        expect(focusResponse.applied == true, "quick terminal focus command must use controller routing")
-        expect(focusResponse.paneID == paneIDFromAction, "focus response must identify the quick pane")
-
-        let closeResponse = controller.handleControlPlaneCommand(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-close-1",
-                  "command": "quick_terminal.close"
-                }
-                """
-            )
-        )
-
-        expect(closeResponse.applied == true, "quick terminal close command must use controller routing")
-        expect(
-            closeResponse.paneID == controller.shellState.focusedPaneID,
-            "quick terminal close response must return the resulting focused pane"
-        )
-        expect(
-            closeResponse.paneID != ShellQuickTerminalSlot.globalPaneID,
-            "quick terminal close response must not return the removed quick pane"
-        )
-        expect(controller.quickTerminalPane == nil, "close must clear the global quick-terminal slot")
-        expect(
-            !controller.terminalRuntimeRegistry.registeredPaneIDs.contains("quick_terminal_pane"),
-            "close must release the quick terminal runtime through regular registry cleanup"
-        )
-    }
-
-    private static func verifiesQuickTerminalTerminalCommandsStayRoutable() {
-        let controller = makeController()
-        guard let quickPaneID = controller.showQuickTerminal() else {
-            fail("quick terminal setup must create the global pane")
-        }
-        let handle = fakeSurfaceHandle(for: quickPaneID, controller: controller)
-        handle.selectedText = "quick terminal selection"
-
-        let contextTarget = ShellTerminalCommandTarget(
-            paneID: quickPaneID,
-            tabID: ShellQuickTerminalSlot.globalTabID,
-            spaceID: ShellQuickTerminalSlot.globalSpaceID,
-            mountedContentID: ShellContentInstance.terminalContentID(forPaneID: quickPaneID)
-        )
-        expect(
-            controller.terminalCommandResolution(
-                for: .copySelection,
-                source: .contextMenu,
-                target: .contextPane(quickPaneID)
-            ) == .terminal(contextTarget),
-            "context-menu terminal commands must remain routable to the quick terminal pane"
-        )
-        expect(
-            controller.shellActionAvailability(.findOpen, target: .contextPane(quickPaneID)) == .available,
-            "terminal action availability must treat the quick terminal as terminal content"
-        )
-
-        controller.focus(paneID: quickPaneID)
-        expect(
-            controller.focusedContentSupportsTerminalCommands,
-            "command palette terminal gating must use the actual focused quick terminal pane"
-        )
-        expect(
-            controller.terminalCommandResolution(for: .copySelection, source: .commandUI)
-                == .terminal(contextTarget),
-            "focused quick terminal commands must not fall back to unrelated projected content"
-        )
-    }
-
-    private static func verifiesQuickTerminalPromotionMovesExistingPaneIntoSpace() {
-        let controller = makeController()
-        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
-        let quickPaneID = controller.showQuickTerminal()
-        let response = controller.handleControlPlaneCommand(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-promote-1",
-                  "command": "quick_terminal.promote",
-                  "target_space_id": "space_2"
-                }
-                """
-            )
-        )
-        let promotedPane = controller.pane(paneID: ShellQuickTerminalSlot.globalPaneID)
-        let targetSpace = controller.shellState.space(spaceID: "space_2")
-        let targetTab = targetSpace?.tabs.first { $0.contains(paneID: ShellQuickTerminalSlot.globalPaneID) }
-
-        expect(quickPaneID == ShellQuickTerminalSlot.globalPaneID, "quick setup must create the global pane")
-        expect(response.applied == true, "quick terminal promote command must use controller routing")
-        expect(response.paneID == ShellQuickTerminalSlot.globalPaneID, "promote response must return the moved pane")
-        expect(controller.quickTerminalPane == nil, "promote must clear the quick-terminal slot")
-        expect(promotedPane?.spaceID == "space_2", "promote must move the existing pane into the target space")
-        expect(promotedPane?.tabID == targetTab?.tabID, "promote must attach the existing pane to the new tab")
-        expect(
-            controller.shellState.panes.filter { $0.paneID == ShellQuickTerminalSlot.globalPaneID }.count == 1,
-            "promote must move the pane instead of copying the process"
-        )
-    }
-
-    private static func verifiesQuickTerminalPeakPresenterShowsDetachedTerminalWindow() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(
-            host: controller,
-            window: window,
-            visibleFrameProvider: {
-                CGRect(x: 80, y: 120, width: 1_440, height: 900)
-            }
-        )
-        let selectedSpaceBefore = controller.selectedSpaceID
-        let selectedTabBefore = controller.selectedTabID
-
-        let paneID = controller.showQuickTerminal()
-        presenter.synchronize()
-
-        expect(paneID == ShellQuickTerminalSlot.globalPaneID, "peak presenter setup must show the global quick pane")
-        expect(window.presentedPaneIDs == [ShellQuickTerminalSlot.globalPaneID], "peak presenter must present the quick pane")
-        expect(window.lastTabID == ShellQuickTerminalSlot.globalTabID, "peak presenter must wrap the quick pane in the quick tab")
-        expect(window.lastPlacement?.requiresMainWindow == false, "peak window must not depend on the main window")
-        expect(window.lastPlacement?.followsActiveSpace == true, "peak window must follow the active macOS Space")
-        expect(window.lastPlacement?.joinsAllSpaces == true, "peak window must be able to appear across macOS Spaces")
-        expect(window.focusedPaneIDs == [ShellQuickTerminalSlot.globalPaneID], "peak presenter must focus terminal input after show")
-        expect(controller.selectedSpaceID == selectedSpaceBefore, "peak presenter must not move the selected Alan space")
-        expect(controller.selectedTabID == selectedTabBefore, "peak presenter must not move the selected Alan tab")
-    }
-
-    private static func verifiesQuickTerminalPeakPresenterOrdersPresentationBeforeFocus() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
-
-        _ = controller.showQuickTerminal()
-        presenter.synchronize()
-
-        expect(
-            window.events == [
-                "present:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-            ],
-            "Peak presenter must present the detached window before requesting terminal focus"
-        )
-
-        controller.updateTerminalMetadata(
-            metadata(title: "regular pane update", cwd: "/repo/app"),
-            for: "pane_1"
-        )
-        presenter.synchronize()
-        expect(
-            window.events == [
-                "present:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-            ],
-            "visible Peak refresh must not continuously reorder or refocus"
-        )
-    }
-
-    private static func verifiesQuickTerminalRuntimeFocusDoesNotCommitWorkspaceSelection() {
-        let controller = makeController()
-        let focusedSpaceBefore = controller.shellState.focusedSpaceID
-        let focusedTabBefore = controller.shellState.focusedTabID
-        let focusedPaneBefore = controller.shellState.focusedPaneID
-        let selectedSpaceBefore = controller.selectedSpaceID
-        let selectedTabBefore = controller.selectedTabID
-
-        _ = controller.showQuickTerminal()
-        controller.updateTerminalRuntime(
-            TerminalHostRuntimeSnapshot(
-                stage: .focused,
-                contentID: ShellContentInstance.terminalContentID(
-                    forPaneID: ShellQuickTerminalSlot.globalPaneID
-                ),
-                paneID: ShellQuickTerminalSlot.globalPaneID,
-                tabID: ShellQuickTerminalSlot.globalTabID,
-                logicalSize: CGSize(width: 840, height: 360),
-                backingSize: CGSize(width: 840, height: 360),
-                displayName: "test-display",
-                displayID: "test-display",
-                attachedWindowTitle: "Quick Terminal",
-                isFocused: true,
-                renderer: .placeholder,
-                paneMetadata: .placeholder,
-                surfaceState: .placeholder,
-                lastUpdatedAt: .now
-            )
-        )
-
-        expect(
-            controller.shellState.focusedSpaceID == focusedSpaceBefore,
-            "quick terminal runtime focus must not commit private Peak space as workspace focus"
-        )
-        expect(
-            controller.shellState.focusedTabID == focusedTabBefore,
-            "quick terminal runtime focus must not commit private Peak tab as workspace focus"
-        )
-        expect(
-            controller.shellState.focusedPaneID == focusedPaneBefore,
-            "quick terminal runtime focus must not replace regular workspace focused pane"
-        )
-        expect(
-            controller.selectedSpaceID == selectedSpaceBefore,
-            "quick terminal runtime focus must not move selected Alan space"
-        )
-        expect(
-            controller.selectedTabID == selectedTabBefore,
-            "quick terminal runtime focus must not move selected Alan tab"
-        )
-    }
-
-    private static func verifiesQuickTerminalPeakPresenterPreservesRuntimeOnExplicitHide() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
-
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        presenter.synchronize()
-        presenter.windowDidResignKey()
-
-        expect(
-            controller.quickTerminalPresentation == .visible,
-            "peak focus loss must not hide the quick terminal"
-        )
-        expect(window.dismissalReasons.isEmpty, "peak focus loss must not dismiss the window")
-
-        expect(controller.hideQuickTerminal(), "explicit quick-terminal hide must apply")
-        presenter.synchronize()
-
-        expect(
-            window.dismissalReasons.last == .hidden,
-            "explicit hide must hide the peak without removing the runtime slot"
-        )
-        expect(controller.quickTerminalPane != nil, "explicit hide must preserve the quick-terminal pane")
-        expect(
-            quickHandle.teardownCount == 0,
-            "explicit hide must keep the hidden quick-terminal runtime alive"
-        )
-
-        expect(controller.closeQuickTerminal(), "explicit quick-terminal close must apply")
-        presenter.synchronize()
-
-        expect(
-            window.dismissalReasons.last == .removed,
-            "explicit close must release the peak presentation"
-        )
-        expect(controller.quickTerminalPane == nil, "explicit close must remove the quick-terminal slot")
-        expect(quickHandle.teardownCount == 1, "explicit close must release the quick-terminal runtime")
-    }
-
-    private static func verifiesQuickTerminalPeakPresenterReleasesPresentationAfterPromotion() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
-        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
-
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        presenter.synchronize()
-
-        expect(controller.promoteQuickTerminal(to: "space_2"), "promotion must move the quick terminal")
-        presenter.synchronize()
-
-        expect(
-            window.dismissalReasons.last == .removed,
-            "promotion must release the detached Peak presentation after the slot clears"
-        )
-        expect(controller.quickTerminalPane == nil, "promotion must clear the quick-terminal slot")
-        expect(
-            quickHandle.teardownCount == 0,
-            "promotion must move the runtime without finalizing the terminal process"
-        )
-        expect(
-            controller.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.spaceID == "space_2",
-            "promotion must move the existing quick-terminal pane into the target Space"
-        )
-    }
-
-    private static func verifiesQuickTerminalActiveCloseCancelPreservesRuntime() {
-        let presenter = FakeShellCloseConfirmationPresenter(nextResponses: [false])
-        let controller = makeController(closeConfirmationPresenter: presenter)
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        controller.updateTerminalMetadata(
-            metadata(title: "python server", activeTaskState: .foregroundCommand),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-        let stateBeforeClose = controller.shellState
-
-        expect(
-            controller.requestCloseQuickTerminal() == false,
-            "active quick terminal close must stop when confirmation is cancelled"
-        )
-        expect(
-            presenter.impacts.map(\.scope) == [.quickTerminal],
-            "active quick terminal close must present one quick-terminal confirmation"
-        )
-        expect(controller.shellState == stateBeforeClose, "cancelled quick close must leave shell state unchanged")
-        expect(controller.quickTerminalPane != nil, "cancelled quick close must preserve the quick terminal pane")
-        expect(quickHandle.teardownCount == 0, "cancelled quick close must preserve the terminal runtime")
-    }
-
-    private static func verifiesControlPlaneQuickTerminalCloseReportsRequiresConfirmation() {
-        let controller = makeController()
-        _ = controller.showQuickTerminal()
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-        controller.updateTerminalMetadata(
-            metadata(title: "python server", activeTaskState: .foregroundCommand),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-        let stateBeforeClose = controller.shellState
-
-        let response = controller.handleControlPlaneCommand(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-close-active-1",
-                  "command": "quick_terminal.close"
-                }
-                """
-            )
-        )
-
-        expect(response.applied == false, "active quick-terminal control close must not apply")
-        expect(
-            response.errorCode == "requires_confirmation",
-            "active quick-terminal control close must report stable confirmation code"
-        )
-        expect(
-            response.paneID == ShellQuickTerminalSlot.globalPaneID,
-            "active quick-terminal control close must identify the guarded pane"
-        )
-        expect(controller.shellState == stateBeforeClose, "guarded quick close must leave shell state unchanged")
-        expect(controller.quickTerminalPane != nil, "guarded quick close must preserve the quick terminal pane")
-        expect(quickHandle.teardownCount == 0, "guarded quick close must preserve the terminal runtime")
-    }
-
-    private static func verifiesQuickTerminalPeakPresenterDoesNotRefocusOnVisibleRefresh() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
-
-        _ = controller.showQuickTerminal()
-        presenter.synchronize()
-        controller.updateTerminalMetadata(metadata(title: "regular pane update", cwd: "/repo/app"), for: "pane_1")
-        presenter.synchronize()
-
-        expect(
-            window.presentedPaneIDs == [ShellQuickTerminalSlot.globalPaneID],
-            "visible state refresh must not bring the Peak window forward again"
-        )
-        expect(
-            window.focusedPaneIDs == [ShellQuickTerminalSlot.globalPaneID],
-            "visible state refresh must not repeatedly focus terminal input"
-        )
-    }
-
-    private static func verifiesQuickTerminalFocusRefocusesExistingVisiblePeak() {
-        let controller = makeController()
-        let window = FakeQuickTerminalPeakWindow()
-        let presenter = ShellQuickTerminalPeakPresenter(host: controller, window: window)
-
-        _ = controller.showQuickTerminal()
-        presenter.synchronize()
-        let requestIDBefore = controller.quickTerminalFocusRequestID
-
-        _ = controller.focusQuickTerminal()
-        presenter.focusVisibleQuickTerminal()
-
-        expect(
-            controller.quickTerminalFocusRequestID == requestIDBefore &+ 1,
-            "explicit quick-terminal focus must emit a focus request when the Peak is already visible"
-        )
-        expect(
-            window.events == [
-                "present:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-            ],
-            "explicit quick-terminal focus must refocus the existing visible Peak"
-        )
-
-        controller.updateTerminalMetadata(
-            metadata(title: "regular pane update", cwd: "/repo/app"),
-            for: "pane_1"
-        )
-        presenter.synchronize()
-        expect(
-            window.events == [
-                "present:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-                "focus:\(ShellQuickTerminalSlot.globalPaneID)",
-            ],
-            "unrelated visible-state refresh must not refocus after explicit quick-terminal focus"
-        )
-    }
-
-    private static func verifiesQuickTerminalPanelKeyBudgetDoesNotBlockTerminalFocus() {
-        var budget = ShellQuickTerminalPanelKeyRequestBudget(maximumPresentationAttempts: 2)
-
-        expect(
-            budget.shouldRequestKey(for: .presentation),
-            "first presentation key request must be allowed"
-        )
-        expect(
-            budget.shouldRequestKey(for: .presentation),
-            "second presentation key request must be allowed"
-        )
-        expect(
-            !budget.shouldRequestKey(for: .presentation),
-            "presentation key requests must remain bounded"
-        )
-        expect(
-            budget.shouldRequestKey(for: .terminalFocus),
-            "terminal focus must still request panel key after presentation attempts are exhausted"
-        )
-        expect(
-            budget.shouldRequestKey(for: .terminalFocus),
-            "repeated terminal focus requests must not consume the presentation budget"
-        )
-        expect(
-            budget.presentationAttemptCount == 2,
-            "terminal focus requests must not advance the presentation attempt count"
-        )
-
-        budget.reset()
-        expect(budget.presentationAttemptCount == 0, "reset must clear presentation key attempts")
-        expect(
-            budget.shouldRequestKey(for: .presentation),
-            "a new presentation must get a fresh key request budget"
-        )
-    }
-
-    private static func verifiesQuickTerminalPeakPlacementFitsActiveDisplay() {
-        let visibleFrame = CGRect(x: 20, y: 40, width: 1_280, height: 760)
-        let placement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrame)
-
-        expect(visibleFrame.contains(placement.frame), "peak frame must fit inside the active display")
-        expect(placement.frame.width >= 720, "normal displays should get a usable terminal width")
-        expect(placement.frame.height >= 320, "normal displays should get a usable terminal height")
-        expect(placement.requiresMainWindow == false, "peak placement must be detached from the main window")
-    }
-
-    private static func verifiesQuickTerminalPeakCollectionBehaviorUsesAppKitValidFlags() {
-        let visibleFrame = CGRect(x: 20, y: 40, width: 1_280, height: 760)
-        let allSpacesPlacement = ShellQuickTerminalPeakPlacement.defaultPlacement(in: visibleFrame)
-        let allSpacesBehavior = allSpacesPlacement.windowCollectionBehavior
-
-        expect(
-            allSpacesBehavior.contains(.canJoinAllSpaces),
-            "all-spaces peak behavior must join Spaces"
-        )
-        expect(
-            !allSpacesBehavior.contains(.moveToActiveSpace),
-            "all-spaces peak behavior must not also move to the active Space"
-        )
-        verifyAppKitAcceptsPeakCollectionBehavior(
-            allSpacesBehavior,
-            "all-spaces peak behavior must be accepted by AppKit"
-        )
-
-        let activeSpacePlacement = ShellQuickTerminalPeakPlacement(
-            frame: allSpacesPlacement.frame,
-            followsActiveSpace: true,
-            joinsAllSpaces: false,
-            requiresMainWindow: false
-        )
-        let activeSpaceBehavior = activeSpacePlacement.windowCollectionBehavior
-        expect(
-            activeSpaceBehavior.contains(.moveToActiveSpace),
-            "active-space peak behavior must move to the active Space"
-        )
-        expect(
-            !activeSpaceBehavior.contains(.canJoinAllSpaces),
-            "active-space peak behavior must not join all Spaces"
-        )
-        verifyAppKitAcceptsPeakCollectionBehavior(
-            activeSpaceBehavior,
-            "active-space peak behavior must be accepted by AppKit"
-        )
-    }
-
-    private static func verifiesQuickTerminalPeakAppKitHarnessCoversVisibilityAndFocusOrdering() {
-        let behavior = ShellQuickTerminalPeakPlacement
-            .defaultPlacement(in: CGRect(x: 20, y: 40, width: 1_280, height: 760))
-            .windowCollectionBehavior
-        let panel = QuickTerminalPeakHarnessPanel(
-            contentRect: CGRect(x: -10_000, y: -10_000, width: 160, height: 100),
-            styleMask: [.titled, .closable, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.collectionBehavior = behavior
-        panel.isReleasedWhenClosed = false
-        panel.orderFrontRegardless()
-        panel.makeKey()
-
-        expect(panel.isVisible, "AppKit Peak harness must make the panel visible after ordering")
-        expect(panel.collectionBehavior == behavior, "AppKit Peak harness must preserve valid collection behavior")
-        expect(
-            panel.events.prefix(2) == ["orderFrontRegardless", "makeKey"],
-            "AppKit Peak harness must order the panel before requesting key focus"
-        )
-
-        panel.orderOut(nil)
-        expect(!panel.isVisible, "AppKit Peak harness must hide the panel on orderOut")
-        panel.close()
-    }
-
-    private static func verifyAppKitAcceptsPeakCollectionBehavior(
-        _ behavior: NSWindow.CollectionBehavior,
-        _ message: String
-    ) {
-        let panel = NSPanel(
-            contentRect: CGRect(x: 0, y: 0, width: 160, height: 100),
-            styleMask: [.titled, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.collectionBehavior = behavior
-        expect(panel.collectionBehavior == behavior, message)
-        panel.close()
-    }
-
-    private static func verifiesQuickTerminalPeakEscapePolicyBelongsToTerminal() {
-        let policy = ShellQuickTerminalPeakInteractionPolicy.terminalFirst
-
-        expect(policy.escapeKeyBehavior == .terminalInput, "Esc must remain terminal input by default")
-        expect(policy.hidesOnFocusLoss == false, "focus loss must not auto-hide the peak")
-        expect(policy.usesMainWindowParenting == false, "peak must not be parented to the main window")
-    }
-
-    private static func verifiesQuickTerminalRenderPriorityStaysDetachedFromMainWindowVisibility() {
-        let service = FakeAlanTerminalRuntimeService()
-        let registry = TerminalRuntimeRegistry(runtimeService: service)
-        let controller = makeController(terminalRuntimeRegistry: registry)
-
-        expect(
-            controller.showQuickTerminal() == ShellQuickTerminalSlot.globalPaneID,
-            "quick terminal setup must show the global pane"
-        )
-        let quickHandle = fakeSurfaceHandle(
-            for: ShellQuickTerminalSlot.globalPaneID,
-            controller: controller
-        )
-
-        controller.updateShellWindowVisibilityForRendering(false)
-        expect(
-            quickHandle.renderPriority == .foregroundInteractive,
-            "visible Peak render priority must stay independent from the main shell window"
-        )
-
-        expect(controller.hideQuickTerminal(), "quick terminal hide must apply")
-        expect(
-            quickHandle.renderPriority == .hiddenBackground,
-            "hidden quick terminal presentation must demote the detached runtime"
-        )
-
-        expect(
-            controller.showQuickTerminal() == ShellQuickTerminalSlot.globalPaneID,
-            "reshowing Peak while the main shell is hidden must still promote the detached runtime"
-        )
-        expect(
-            quickHandle.renderPriority == .foregroundInteractive,
-            "visible detached Peak must remain foreground even when the main shell window is hidden"
         )
     }
 
@@ -3745,6 +2882,49 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesShellCoreUnavailableFallbackIsReadOnly() {
+        let readOnlyFallbackCommands: Set<AlanShellControlCommandKind> = [
+            .state,
+            .spaceList,
+            .tabList,
+            .paneList,
+        ]
+        let mutationCommands: [AlanShellControlCommandKind] = [
+            .spaceCreate,
+            .tabOpen,
+            .tabClose,
+            .tabReorder,
+            .tabPin,
+            .tabUnpin,
+            .tabMoveToSpace,
+            .paneSplit,
+            .paneClose,
+            .paneLift,
+            .paneMove,
+            .paneMoveWithinTab,
+            .paneFocus,
+            .paneSpatialFocus,
+            .paneResizeSplit,
+            .paneEqualizeSplits,
+            .paneZoom,
+            .paneUnzoom,
+            .attentionSet,
+        ]
+
+        for command in readOnlyFallbackCommands {
+            expect(
+                command.canFallThroughToHostWhenShellCoreUnavailable,
+                "\(command.rawValue) must fall through only for host-readable snapshots"
+            )
+        }
+        for command in mutationCommands {
+            expect(
+                !command.canFallThroughToHostWhenShellCoreUnavailable,
+                "\(command.rawValue) must fail closed instead of falling through to host mutation"
+            )
+        }
+    }
+
     private static func verifiesPaneMoveSocketRequestsRequireHostMetadataHandler() {
         let controller = makeController()
         let socketServer = AlanShellSocketServer(
@@ -3840,37 +3020,6 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesQuickTerminalFocusSocketRequestsRequireHostHandler() {
-        let controller = makeController()
-        let socketServer = AlanShellSocketServer(
-            socketURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("quick-terminal-focus-host-\(UUID().uuidString).sock"),
-            commandHandler: { controller.handleControlPlaneCommand($0) },
-            stateAdoptionHandler: { _ in
-                fail("quick_terminal.focus must not mutate through the local executor")
-            },
-            sideEffectHandler: { _ in
-                fail("quick_terminal.focus must not use local side effects")
-            }
-        )
-        _ = socketServer.mergePublishedState(controller.shellState)
-
-        let localResponse = socketServer.handleLocally(
-            decodeControlCommand(
-                """
-                {
-                  "request_id": "quick-terminal-focus-host-routing-1",
-                  "command": "quick_terminal.focus"
-                }
-                """
-            )
-        )
-
-        expect(
-            localResponse == nil,
-            "quick_terminal.focus socket requests must be routed to the host handler"
-        )
-    }
 
     private static func verifiesTerminalActivityProjectsByPaneID() {
         let controller = makeController()
@@ -4422,8 +3571,7 @@ private enum ShellRuntimeMetadataTests {
             spaces: incomingSpaces,
             panes: authoritative.panes,
             paneSlots: authoritative.paneSlots,
-            contents: authoritative.contents,
-            quickTerminal: authoritative.quickTerminal
+            contents: authoritative.contents
         )
 
         let merged = AlanShellPublishedStateMerger.merge(
@@ -4895,6 +4043,45 @@ private enum ShellRuntimeMetadataTests {
         expect(
             acknowledgedProjection.secondaryLine != "Shell · Command failed 2",
             "acknowledged command failure must fall back to tab context instead of resurfacing"
+        )
+    }
+
+    private static func verifiesCommandFailureAcknowledgementRequiresFocusedPaneInTab() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        let now = Date(timeIntervalSince1970: 1_779_008_400)
+        let failure = TerminalActivitySnapshot.commandCompletion(exitCode: 2, now: now)
+
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+        let mismatchedFocusState = ShellStateSnapshot(
+            contractVersion: controller.shellState.contractVersion,
+            windowID: controller.shellState.windowID,
+            focusedSpaceID: "space_main",
+            focusedTabID: "tab_main",
+            focusedPaneID: "pane_2",
+            spaces: controller.shellState.spaces,
+            panes: controller.shellState.panes,
+            paneSlots: controller.shellState.paneSlots,
+            contents: controller.shellState.contents
+        )
+
+        let acknowledged = mismatchedFocusState.acknowledgingCommandFailureActivities(
+            in: "tab_main",
+            focusedPaneID: "pane_2"
+        )
+
+        expect(
+            acknowledged.pane(paneID: "pane_1")?.activity != nil,
+            "mismatched focus acknowledgement must not clear another tab's command failure"
+        )
+        expect(
+            acknowledged.focusedSpaceID == "space_main"
+                && acknowledged.focusedTabID == "tab_main"
+                && acknowledged.focusedPaneID == "pane_2",
+            "mismatched focus acknowledgement must preserve reducer focus metadata"
         )
     }
 
@@ -5537,45 +4724,6 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesHiddenQuickTerminalRoutesUserActionableActivityNotifications() {
-        let controller = makeController()
-        let needsInput = activity(
-            status: .needsInput,
-            source: .codex,
-            sourceLabel: "Codex",
-            stateLabel: "Input needed",
-            agent: .init(
-                kind: .codex,
-                safeSessionLabel: "codex",
-                projectLabel: "alan",
-                workingDirectory: "/Users/morris/Developer/alan"
-            )
-        )
-
-        expect(controller.showQuickTerminal() != nil, "quick terminal must show before hiding")
-        expect(controller.hideQuickTerminal(), "quick terminal hide must preserve the runtime slot")
-        controller.updateTerminalMetadata(
-            metadata(title: "Quick Terminal", cwd: "/repo/app", activity: needsInput),
-            for: ShellQuickTerminalSlot.globalPaneID
-        )
-
-        expect(
-            controller.activityNotifications.count == 1,
-            "hidden quick-terminal activity must still route through notification policy"
-        )
-        expect(
-            controller.activityNotifications.first?.paneID == ShellQuickTerminalSlot.globalPaneID,
-            "hidden quick-terminal notification must point at the global quick-terminal pane"
-        )
-        expect(
-            controller.activityNotifications.first?.kind == .needsInput,
-            "hidden quick-terminal notification must preserve the routed activity kind"
-        )
-        expect(
-            controller.activityNotifications.first?.body == "app",
-            "hidden quick-terminal notification must use the standard pane context body"
-        )
-    }
 
     private static func verifiesProcessExitNotificationRoutesBeforeAutoClose() {
         let controller = makeController()
@@ -6121,31 +5269,6 @@ private enum ShellRuntimeMetadataTests {
             "missing content fallback must not invent a content identity"
         )
 
-        let quickTerminalState = ShellStateSnapshot.bootstrapDefault(workingDirectory: "/tmp")
-            .showingQuickTerminal(workingDirectory: "/tmp")
-            .state
-        let quickTerminalProjection = quickTerminalState.contentStateProjection()
-        let quickTerminalPane = quickTerminalState.pane(paneID: ShellQuickTerminalSlot.globalPaneID)
-        expect(
-            quickTerminalProjection.contentMounted(in: ShellQuickTerminalSlot.globalPaneID) == nil,
-            "quick terminal peak panes must stay outside workspace content projection"
-        )
-        let quickTerminalDescriptor = ShellContentRenderingRegistry.descriptor(
-            forPaneSlotID: ShellQuickTerminalSlot.globalPaneID,
-            in: quickTerminalProjection,
-            fallbackPane: quickTerminalPane
-        )
-        expect(
-            quickTerminalDescriptor.renderKind == .terminal,
-            "quick terminal fallback pane must still route to the terminal renderer"
-        )
-        let expectedQuickTerminalContentID = ShellContentInstance.terminalContentID(
-            forPaneID: ShellQuickTerminalSlot.globalPaneID
-        )
-        expect(
-            quickTerminalDescriptor.contentID == expectedQuickTerminalContentID,
-            "quick terminal fallback must retain the terminal content identity"
-        )
     }
 
     private static func verifiesContentAwareSidebarProjectionUsesNonTerminalLabels() {
@@ -8208,7 +7331,7 @@ private enum ShellRuntimeMetadataTests {
             activeTask: .inactive
         )
 
-        let restored = tab.restoreSnapshot(defaultWorkingDirectory: "/fallback")
+        let restored = tab.pinSnapshot?.overlayingTerminalTranscriptSnapshots(from: tab.liveSnapshot)
         let payload = terminalPayload(in: restored, paneSlotID: "pane_1")
         expect(payload?.cwd == "/pinned", "pinned restore must keep explicit template cwd")
         expect(
@@ -8244,7 +7367,7 @@ private enum ShellRuntimeMetadataTests {
             activeTask: .inactive
         )
         let unmatchedPayload = terminalPayload(
-            in: unmatched.restoreSnapshot(defaultWorkingDirectory: "/fallback"),
+            in: unmatched.pinSnapshot?.overlayingTerminalTranscriptSnapshots(from: unmatched.liveSnapshot),
             paneSlotID: "pane_1"
         )
         expect(
@@ -11475,57 +10598,7 @@ private enum ShellRuntimeMetadataTests {
     }
 
     @MainActor
-    private final class FakeQuickTerminalPeakWindow: ShellQuickTerminalPeakWindowing {
-        var onDismissRequest: (() -> Void)?
-        private(set) var presentedPaneIDs: [String] = []
-        private(set) var focusedPaneIDs: [String] = []
-        private(set) var dismissalReasons: [ShellQuickTerminalPeakDismissalReason] = []
-        private(set) var lastPlacement: ShellQuickTerminalPeakPlacement?
-        private(set) var lastTabID: String?
-        private(set) var events: [String] = []
-        private(set) var isVisible = false
 
-        func presentQuickTerminal(
-            host: ShellHostController,
-            pane: ShellPane,
-            tab: ShellTab,
-            placement: ShellQuickTerminalPeakPlacement
-        ) {
-            isVisible = true
-            presentedPaneIDs.append(pane.paneID)
-            events.append("present:\(pane.paneID)")
-            lastTabID = tab.tabID
-            lastPlacement = placement
-        }
-
-        func dismissQuickTerminalPeak(reason: ShellQuickTerminalPeakDismissalReason) {
-            isVisible = false
-            dismissalReasons.append(reason)
-            events.append("dismiss:\(reason)")
-        }
-
-        func focusTerminal(paneID: String) {
-            focusedPaneIDs.append(paneID)
-            events.append("focus:\(paneID)")
-        }
-    }
-
-    private final class QuickTerminalPeakHarnessPanel: NSPanel {
-        private(set) var events: [String] = []
-
-        override var canBecomeKey: Bool { true }
-        override var canBecomeMain: Bool { false }
-
-        override func orderFrontRegardless() {
-            events.append("orderFrontRegardless")
-            super.orderFrontRegardless()
-        }
-
-        override func makeKey() {
-            events.append("makeKey")
-            super.makeKey()
-        }
-    }
 
     private static func decodeControlCommand(_ json: String) -> AlanShellControlCommand {
         do {
@@ -11643,6 +10716,20 @@ private enum ShellRuntimeMetadataTests {
         expect(
             !(resolution.surfaceCommand?.contains("exit 78") ?? false),
             "default-terminal fallback must launch a login shell, not an immediately-exiting command"
+        )
+
+        let explicitProfileResolution = AlanCommandResolution.resolve(
+            for: .shell,
+            terminalProfileReference: "profile-admin",
+            terminalProfiles: nil
+        )
+        expect(
+            explicitProfileResolution.summary == "Terminal Profile unavailable",
+            "explicit Terminal Profile resolution must fail closed when shell-core is unavailable"
+        )
+        expect(
+            explicitProfileResolution.surfaceCommand?.contains("exit 78") == true,
+            "explicit Terminal Profile fallback must keep the shell-core failure command"
         )
     }
 

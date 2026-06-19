@@ -97,23 +97,34 @@ reject_keydown_programmatic_text_delivery() {
     fi
 }
 
-require_quick_terminal_peak_nonactivating_panel() {
-    local file="clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift"
+require_primary_window_summon_command() {
+    local commands_file="clients/apple/alan-macos/App/AlanMacShellCommands.swift"
+    local presenter_file="clients/apple/alan-macos/App/AlanMacPrimaryWindowPresenter.swift"
 
     reject_pattern \
-        "$file" \
-        "NSApp\\.activate\\(ignoringOtherApps:" \
-        "quick terminal Peak must not activate the whole app when surfacing its detached panel"
+        "clients/apple/alan-macos" \
+        "QuickTerminal|quickTerminal|quick_terminal|Quick Terminal|quick-terminal" \
+        "active macOS app code must not keep quick terminal runtime or UI surfaces"
 
     require_pattern \
-        "$file" \
-        "\\.nonactivatingPanel" \
-        "quick terminal Peak panel must be non-activating so it can surface without raising Alan workspace UI"
+        "$commands_file" \
+        "Button\\(\"Summon Alan Window\"\\)" \
+        "former quick terminal shortcut must become the primary window summon command"
 
     require_pattern \
-        "$file" \
-        "orderFrontRegardless\\(\\)" \
-        "quick terminal Peak panel must order itself forward without depending on app activation"
+        "$commands_file" \
+        "\\.keyboardShortcut\\(\" \", modifiers: \\.option\\)" \
+        "primary window summon must own the former option-space shortcut outside shell actions"
+
+    require_pattern \
+        "$presenter_file" \
+        "\\.moveToActiveSpace" \
+        "primary window summon must move the primary window to the active macOS Space"
+
+    require_pattern \
+        "$presenter_file" \
+        "refocusTerminal" \
+        "primary window summon must request selected terminal focus after presenting"
 }
 
 require_title_bar_full_width_hit_area() {
@@ -572,7 +583,7 @@ require_semantic_terminal_actions_contract() {
 reject_active_shell_radius_drift
 reject_ghosttykit_umbrella_modulemap
 reject_keydown_programmatic_text_delivery
-require_quick_terminal_peak_nonactivating_panel
+require_primary_window_summon_command
 require_title_bar_full_width_hit_area
 require_pane_title_bar_trailing_close
 require_restored_transcript_full_width_layout
@@ -586,6 +597,41 @@ require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
     "hostViewsByContentID" \
     "terminal runtimes must be owned by a content-keyed registry"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "identifierPattern|reservedAccountNames|matchesIdentifier" \
+    "managed terminal account identifier validation must not keep a Swift-owned duplicate"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "shouldRepairUnreadableSudoers|repairNeeded|needsCreate" \
+    "managed terminal account provisioning plans must not keep a Swift-owned duplicate"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.validateManagedTerminalAccountRequest" \
+    "managed terminal account validation must route through shell-core authority"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.managedTerminalAccountPlan" \
+    "managed terminal account provisioning plans must route through shell-core authority"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "managed_terminal_account\\.validate_request" \
+    "managed terminal account validation must have a shell-core FFI operation"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "managed_terminal_account\\.plan" \
+    "managed terminal account provisioning plans must have a shell-core FFI operation"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFITerminalProfileAdapter.swift" \
+    "managed_terminal_account\\." \
+    "managed terminal account FFI operations must not live in the Terminal Profile adapter owner"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
@@ -1248,9 +1294,9 @@ reject_pattern \
     "shell action registry must not register removed Ask alan or New alan Tab actions"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellStateMutations.swift" \
+    "clients/apple/scripts/support" \
     "openingAlanTab|creatingAlanSpace|launchTarget: \\.alan|ShellLaunchTarget\\.alan" \
-    "shell state mutations must not create first-party alan tabs"
+    "shell test support must not create first-party alan tabs"
 
 reject_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
@@ -1618,9 +1664,9 @@ require_pattern \
     "pane title-bar close must route through a controller-owned targeted pane close path"
 
 require_pattern \
-    "clients/apple/scripts/test-shell-split-model.swift" \
-    "verifiesPaneScopedCloseKeepsInactivePaneTargeting" \
-    "split model tests must cover pane-scoped close targeting"
+    "crates/shell-core/tests/reducer_contract.rs" \
+    "closing_selected_pane_removes_content_and_repairs_focus" \
+    "Rust shell-core reducer tests must cover pane-scoped close targeting"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -1813,9 +1859,9 @@ require_pattern \
     "sidebar split topology classification must live in the testable shell model layer"
 
 require_pattern \
-    "clients/apple/scripts/test-shell-split-model.swift" \
-    "verifiesSidebarSplitTopologyProjection" \
-    "split model tests must cover sidebar topology projection"
+    "crates/shell-core/tests/split_tree_contract.rs" \
+    "removing_and_attaching_panes_preserves_binary_tree_shape" \
+    "Rust shell-core split-tree tests must cover split topology projection"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -2483,6 +2529,16 @@ require_pattern \
     "Xcode shell-core FFI build must sign the copied dylib when Xcode signing is enabled"
 
 require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ENABLE_USER_SCRIPT_SANDBOXING" \
+    "Xcode shell-core FFI build must explicitly handle the user script sandbox before rewriting install names"
+
+reject_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "install_name_tool .*\\|\\| true" \
+    "Xcode shell-core FFI build must not suppress install_name_tool failures"
+
+require_pattern \
     "scripts/app-bundle-paths.sh" \
     "alan_sparkle_version_dir" \
     "release scripts must resolve the active Sparkle framework version dynamically"
@@ -2717,6 +2773,21 @@ require_pattern \
     "agentSelector" \
     "Settings Agent group must expose the supported Alan agent affordance"
 
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "terminalAccountSystemName|terminalAccountStatusLabel|terminalAccountDetail" \
+    "managed terminal account settings row projection must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.managedTerminalAccountRows" \
+    "managed terminal account settings rows must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFISettingsAdapter.swift" \
+    "settings\\.managed_terminal_account_rows" \
+    "Swift settings adapter must expose managed terminal account row operation"
+
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
     "ShellSettingsNavigationView\\(" \
@@ -2807,6 +2878,21 @@ reject_pattern \
     "try\\? ShellCoreFFIAdapter\\.shared" \
     "runtime shell-core calls must fail closed instead of using optional Swift fallback"
 
+require_pattern \
+    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "if terminalProfileReference == nil" \
+    "default terminal shell-core-unavailable fallback must stay scoped to the no-explicit-profile path"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "verifiesShellResolverFallsBackToLoginShellWhenCoreUnavailable\\(\\)" \
+    "runtime metadata tests must cover the default-terminal shell-core-unavailable fallback"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-runtime-metadata.swift" \
+    "explicit Terminal Profile resolution must fail closed when shell-core is unavailable" \
+    "runtime metadata tests must prove explicit Terminal Profiles fail closed when shell-core is unavailable"
+
 reject_pattern \
     "clients/apple/alan-macos" \
     "ShellActionRegistry\\.standard" \
@@ -2818,18 +2904,88 @@ reject_pattern \
     "Swift action registry fixture/resolver must live outside production Apple sources"
 
 require_pattern \
-    "clients/apple/scripts/support/ShellActionRegistryParitySupport.swift" \
-    "Script/test parity support only" \
-    "Swift action registry parity fixture must live in explicit script support"
+    "crates/shell-core/tests/action_registry_contract.rs" \
+    "standard_action_ids_shortcuts_and_keyboard_lookup_are_stable" \
+    "Rust shell-core tests must own action registry contract coverage"
 
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
     "SHELL_MANIFEST_PARITY_FIXTURES|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers|ShellManifestLegacyMigration" \
     "Swift manifest parity algorithms must live outside production Apple sources"
 
+reject_pattern \
+    "clients/apple/scripts/support" \
+    "ParitySupport|final class ShellActionRegistry|struct ShellActionDescriptor|ShellWorkspaceMaterializer|migratingTerminalRestoreSnapshotsToContentContainers|migratingTerminalPanesToContentContainers" \
+    "script support must not reintroduce Swift parity implementations after shell-core authority"
+
 require_pattern \
-    "clients/apple/scripts/support/ShellWorkspaceManifestParitySupport.swift" \
-    "Script/test parity support only" \
-    "Swift manifest parity fixture must live in explicit script support"
+    "crates/shell-core/tests/manifest_contract.rs" \
+    "default_manifest_materializes_single_terminal_workspace" \
+    "Rust shell-core tests must own manifest default/materialization contract coverage"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "final class ManagedTerminalAccountFakeExecutor|enum ManagedTerminalAccountProfileHandoff" \
+    "fixture-only managed-account helpers must live outside production Apple sources"
+
+require_pattern \
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
+    "Script/test support only" \
+    "managed-account fake helpers must live in explicit script test support"
+
+require_pattern \
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
+    "ManagedTerminalAccountFakeExecutor" \
+    "managed-account fake executor fixture must live in explicit script support"
+
+require_pattern \
+    "clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
+    "ManagedTerminalAccountProfileHandoff" \
+    "managed-account profile handoff fixture must live in explicit script support"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "enum TerminalProfileValidator[[:space:]]*\\{|enum TerminalProfileEditor[[:space:]]*\\{|struct TerminalProfileStore[[:space:]]*\\{|static func requiredExecutablePath\\(|static func makeDefinition\\(|static func upserting\\(|func load\\(\\) -> TerminalProfileLoadResult|func save\\(_ document: TerminalProfileDocument\\)|var errors: \\[TerminalProfileValidationError\\] = \\[]" \
+    "Swift Terminal Profile validation/editor/store behavior must live outside production value types and route through shell-core"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "document\\.profiles\\.firstIndex\\(where:|document\\.profiles\\.append|defaultProfileID: document\\.defaultProfileID\\.isEmpty" \
+    "Terminal Profile document editor semantics in value types must route through shell-core"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "private func shouldCaptureGlobalDefaultTerminalProfile|nonEmptyTerminalProfileWorkingDirectory" \
+    "global default Terminal Profile capture policy must route through shell-core"
+
+reject_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "var profiles = document\\.profiles|firstIndex\\(where:|profiles\\.append|defaultProfileID: document\\.defaultProfileID\\.isEmpty|TerminalProfileValidator\\.validate\\(nextDocument\\)" \
+    "Terminal Profile document editor semantics must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "struct TerminalProfileStore" \
+    "Terminal Profile store owner must live in Services/Shell"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.validateTerminalProfileDocument" \
+    "Terminal Profile production validation must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.makeTerminalProfileDefinition" \
+    "Terminal Profile production editor semantics must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.upsertTerminalProfileDraft" \
+    "Terminal Profile document editor semantics must route through shell-core"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
+    "ShellCoreFFIAdapter\\.shared\\.shouldCaptureGlobalDefaultTerminalProfile" \
+    "global default Terminal Profile capture policy must route through shell-core"
 
 printf 'Shell contract checks passed.\n'

@@ -6,22 +6,22 @@ launch, reopen, duplicate-process, and New Window paths preserve one alan app
 instance and one shell control plane per user session.
 ## Requirements
 ### Requirement: Native macOS launches use one app instance
-The alan for macOS app bundle SHALL allow only one running alan app instance for
+The Alan for macOS app bundle SHALL allow only one running alan app instance for
 the current user and bundle identifier.
 
 #### Scenario: Initial launch
-- **WHEN** no alan for macOS app instance is running and the user launches the
+- **WHEN** no Alan for macOS app instance is running and the user launches the
   app
 - **THEN** one alan app process starts and acquires the singleton app lock
 
 #### Scenario: Repeated normal launch
-- **WHEN** an alan for macOS app instance is already running and the user
+- **WHEN** an Alan for macOS app instance is already running and the user
   launches the app through normal Finder, Dock, Spotlight, or `open` behavior
 - **THEN** the existing app instance is activated and no additional alan app
   process remains running
 
 #### Scenario: Forced duplicate launch
-- **WHEN** an alan for macOS app instance is already running and a second app
+- **WHEN** an Alan for macOS app instance is already running and a second app
   process is forced with `open -n` or direct executable launch
 - **THEN** the second process activates the existing app and terminates before
   creating a SwiftUI scene, shell window context, control socket, or terminal
@@ -38,7 +38,7 @@ the current user and bundle identifier.
   ownership
 
 ### Requirement: Native macOS presents one primary shell window
-The alan for macOS app SHALL present at most one primary terminal workspace
+The Alan for macOS app SHALL present at most one primary terminal workspace
 window, and all launch, reopen, activation, and New Window paths SHALL focus or
 reopen that window instead of creating another primary terminal workspace
 window.
@@ -65,6 +65,50 @@ window.
   window has been closed
 - **THEN** Dock or application reopen presents one primary terminal workspace
   window and does not create more than one terminal workspace window
+
+### Requirement: Primary Window Summon Targets The Single Primary Shell Window
+The Alan for macOS app SHALL expose a macOS-only Primary Window Summon command
+that targets the process-scoped primary shell window instead of a detached
+terminal panel or shell workspace action.
+
+#### Scenario: Primary window is visible on another Space
+- **WHEN** the user invokes Primary Window Summon while the primary shell window
+  exists on another macOS Space or display
+- **THEN** the app attempts to bring that same primary shell window to the user's
+  current active Space and display
+- **AND** the app activates and brings the primary shell window forward
+- **AND** the app does not create a second primary shell window
+
+#### Scenario: Primary window is closed while app is running
+- **WHEN** the app process is running and the primary shell window has been
+  closed
+- **THEN** Primary Window Summon reopens or creates the one primary shell window
+- **AND** the app activates and focuses the reopened primary shell window
+
+#### Scenario: Workspace selection is preserved
+- **WHEN** the user invokes Primary Window Summon
+- **THEN** the app preserves the current shell Space, Tab, focused PaneSlot, split
+  tree, and mounted content runtime identities
+- **AND** the app does not create a terminal tab, detached terminal runtime, or
+  separate terminal panel as a side effect
+
+#### Scenario: Selected terminal content receives input focus
+- **WHEN** the primary shell window is summoned and the selected content is a
+  terminal
+- **THEN** the app focuses terminal input through the existing terminal runtime
+  focus path after the window is active
+
+#### Scenario: Selected non-terminal content remains selected
+- **WHEN** the primary shell window is summoned and the selected content is not
+  terminal content
+- **THEN** the app focuses the window or selected view without switching to a
+  terminal or creating terminal content
+
+#### Scenario: Active Space movement is best-effort
+- **WHEN** AppKit or macOS Space behavior prevents the app from proving that the
+  primary shell window moved to the current Space
+- **THEN** the app still activates, brings the primary shell window forward,
+  and preserves shell workspace selection
 
 ### Requirement: Primary shell owner is process scoped
 The macOS app SHALL own the primary shell context at app-process scope so scene
@@ -100,7 +144,7 @@ routing, reopen, and lock-release behavior.
 - **WHEN** singleton behavior changes the shell window lifecycle contract
 - **THEN** Apple-client README or related developer docs no longer describe multiple independent macOS windows as the supported default model
 
-### Requirement: Native macOS app identity uses alan for macOS naming
+### Requirement: Native macOS app identity uses Alan for macOS naming
 The native macOS app SHALL align bundle, display, singleton, logging, capture,
 and persisted support identities with the `Alan` product brand and
 `Alan for macOS` platform label, while preserving lowercase command and machine

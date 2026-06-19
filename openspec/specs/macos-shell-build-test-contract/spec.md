@@ -1007,29 +1007,28 @@ profile disclosure, and New Tab placement when the sidebar layout changes.
 - **AND** if collapsed-sidebar rendering is affected, visual evidence also
   covers the collapsed floating sidebar reveal
 
-### Requirement: Quick Terminal boundary refactor has staged verification
-The Apple client SHALL verify the Quick Terminal boundary refactor in stages so
-the implementation can first prove stable launch safety and compilation, then
-add focused behavior coverage.
+### Requirement: Primary Window Summon Replacement Is Verified
+The Apple client SHALL verify that the former global terminal shortcut now
+summons the primary shell window without leaving detached terminal runtime,
+action, control, or presentation paths active.
 
-#### Scenario: First implementation slice is verified
-- **WHEN** the dedicated Quick Terminal presentation boundary is implemented
+#### Scenario: App command replacement is verified
+- **WHEN** the replacement is implemented
 - **THEN** verification includes the focused Apple build needed to prove the
-  refactor compiles
-- **AND** verification proves stable-channel launch does not trap on Quick
-  Terminal Peak setup
-- **AND** verification does not operate the Alan Dev app
+  app command compiles
+- **AND** contract checks prove the former `Option+Space` shortcut is owned by
+  the Primary Window Summon app command rather than the shell action registry
 
-#### Scenario: Full behavior verification follows
-- **WHEN** the follow-up verification slice is performed
-- **THEN** tests cover Quick Terminal presentation state transitions for show,
-  hide, close, attach, focus, and promotion
-- **AND** an AppKit harness or equivalent focused test verifies panel collection
-  behavior, visibility, and focus ordering
-- **AND** runtime attach/focus sequencing tests prove early focus requests do
-  not race host view registration
-- **AND** stable-channel Quick Terminal behavior verification still avoids
-  touching Alan Dev
+#### Scenario: Removed surfaces are scanned
+- **WHEN** shell contract checks inspect active macOS app source, menus,
+  action models, control commands, and automation helpers
+- **THEN** they fail if detached terminal panel, global terminal slot,
+  show/hide/close/promote, or shell-action compatibility paths remain active
+
+#### Scenario: Legacy manifest cleanup is verified
+- **WHEN** a manifest containing an old `quick_terminal` restore record is read
+- **THEN** focused tests prove the record is discarded and omitted from future
+  manifest writes
 
 ### Requirement: Removed Ask alan and alan tab surfaces are verified
 The Apple client SHALL include focused contract checks proving Ask alan,
@@ -1061,7 +1060,7 @@ evidence for terminal close guarding, bounded transcript snapshot persistence,
 and app-restart transcript restore.
 
 #### Scenario: Active close guard tested
-- **WHEN** tests request pane, tab, window, app, or Quick Terminal close for terminal content with active work
+- **WHEN** tests request pane, tab, window, or app close for terminal content with active work
 - **THEN** tests verify that close requires confirmation and does not mutate shell state or finalize runtimes before confirmation
 
 #### Scenario: Idle close bypass tested

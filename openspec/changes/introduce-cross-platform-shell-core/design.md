@@ -23,7 +23,8 @@ privileged OS operations in platform adapters.
 The current Apple architecture checks already identify large Swift files and
 controller/AppKit leakage as maintainability debt. This change treats that debt
 as migration evidence: domain truth should move out of Swift module by module,
-with parity fixtures proving equivalence before each replacement.
+with Rust contract tests and FFI adapter tests proving behavior before each
+replacement.
 
 ## Goals / Non-Goals
 
@@ -35,11 +36,12 @@ with parity fixtures proving equivalence before each replacement.
   file-system persistence, clipboard, file picker, or privileged executor
   dependencies.
 - Use module boundaries that match the domain: model, manifest, reducer,
-  actions, control, terminal profiles, settings summaries, and fixtures.
-- Build a parity-first migration path where Rust behavior is proven against
-  Swift-exported fixture cases before macOS calls are replaced.
+  actions, control, terminal profiles, and settings summaries.
+- Build a contract-first migration path where Rust behavior is proven by
+  focused Rust tests and FFI-backed Swift adapter tests before macOS calls are
+  replaced.
 - Use a coarse-grained, versioned binding facade for Swift integration after
-  Rust parity is established.
+  Rust contract coverage is established.
 - Preserve existing shell control-plane response shapes and stable error codes
   unless a later spec explicitly changes them.
 - Make architecture warning reduction a completion criterion for Swift
@@ -58,8 +60,8 @@ with parity fixtures proving equivalence before each replacement.
   adapters own OS effects.
 - Do not expose async bindings, callbacks, foreign traits, or long-lived Rust
   workspace objects in the first Swift integration path.
-- Do not replace Swift callers before the corresponding Rust module has parity
-  fixtures and adapter tests.
+- Do not replace Swift callers before the corresponding Rust module has Rust
+  contract tests and FFI-backed adapter tests.
 
 ## Decisions
 
@@ -88,8 +90,6 @@ The module layout should be:
   order, and `TerminalLaunchIntent` construction.
 - `settings_summary`: reusable settings/domain summaries that are independent
   from SwiftUI or GTK layout.
-- `fixtures`: test-only fixture loading and comparison helpers.
-
 Alternative considered: put this logic in `crates/tui` or `crates/alan`.
 `crates/tui` is a daemon-backed conversation UI, not the native shell workspace
 domain. `crates/alan` owns daemon/CLI hosting and would couple the core to a
@@ -121,22 +121,21 @@ That would make the model non-portable and would violate the current manifest
 contract that excludes PTYs, process handles, renderer objects, and delivery
 queues.
 
-### Use parity-first migration before Swift replacement
+### Use contract-first migration before Swift replacement
 
 The first line of work should build Rust modules and tests without connecting
-them to the macOS app. Existing Swift script tests become behavior sources for
-fixture generation:
+them to the macOS app. Existing Swift script tests remain adapter and
+UI/service validation sources:
 
-- `test-shell-split-model`
 - `test-shell-workspace-manifest`
 - `test-shell-automation-command-seams`
 - `test-shell-sidebar-tab-rows`
 - `test-shell-settings-surface`
 
-Each migrated module should add fixture cases that include input state or
-manifest, operation input, and expected output. Rust tests should compare
-semantics against those fixtures. When exact JSON ordering is irrelevant, tests
-should compare normalized semantic forms rather than raw bytes.
+Each migrated module should add Rust contract tests that include input state or
+manifest, operation input, expected output, and stable errors. Swift tests
+should validate FFI adapter encoding, decoding, and platform projection without
+keeping a second Swift implementation of Rust-owned behavior.
 
 Alternative considered: replace Swift directly and rely on app smoke tests.
 That would make regressions harder to localize and would turn FFI/debugging
@@ -145,8 +144,8 @@ issues into product behavior uncertainty.
 ### Use a separate binding facade and keep the core binding-agnostic
 
 The pure Rust crate should not be shaped around Swift binding macros. A separate
-facade crate or module should expose cross-language entrypoints after parity
-exists. The first facade should be coarse-grained and versioned, passing
+facade crate or module should expose cross-language entrypoints after contract
+coverage exists. The first facade should be coarse-grained and versioned, passing
 request/response envelopes rather than many small functions.
 
 UniFFI may be used for the generated Swift layer, but it must not determine the
@@ -182,7 +181,7 @@ the platform adapter should execute.
 
 Implementation should follow dependency order:
 
-1. scaffold shell-core, schema/version envelopes, fixture format, and validation
+1. scaffold shell-core, schema/version envelopes, and validation
 2. workspace model and split tree
 3. state reducer
 4. manifest default/upgrade/materialize/prune
@@ -203,35 +202,36 @@ the underlying semantics are stable.
 - UniFFI can generate large Swift/modulemap diffs and has Swift 6 concurrency
   edges -> start with synchronous coarse-grained facade functions and pin the
   generator version in build checks.
-- Rust and Swift semantic drift can hide in fixture gaps -> require fixtures for
-  every removed Swift branch and keep existing focused Swift scripts in the
-  validation matrix.
+- Rust and Swift semantic drift can hide at adapter boundaries -> require Rust
+  contract coverage for every removed Swift branch and keep existing focused
+  Swift scripts in the validation matrix.
 - Large workspace states may make binding calls expensive -> keep high-frequency
   terminal input/rendering outside shell core bindings and reserve core calls for
   workspace mutations, manifest operations, action resolution, and command
   reduction.
 - A compatibility bug in manifest migration could lose user workspace state ->
   preserve current manifest JSON compatibility, keep corrupt evidence, and add
-  fixture cases for old and malformed manifests before replacing Swift manifest
-  logic.
+  Rust contract cases for old and malformed manifests before replacing Swift
+  manifest logic.
 - Architecture warnings might remain unchanged if Swift wrappers simply call
   Rust but old logic stays in place -> each replacement task must remove or
   narrow the replaced Swift implementation and update the architecture ledger.
 
 ## Migration Plan
 
-1. Add the Rust crate and fixture harness without changing the app.
-2. Build Rust modules and parity fixtures in dependency order.
-3. Add a constrained Swift binding facade once at least one module has parity.
-4. Replace Swift call sites module by module, retaining short-lived fallback or
-   oracle paths only while adapter tests are being introduced.
+1. Add the Rust crate and contract-test harness without changing the app.
+2. Build Rust modules and contract tests in dependency order.
+3. Add a constrained Swift binding facade once at least one module has contract
+   coverage.
+4. Replace Swift call sites module by module, retaining short-lived comparison
+   paths only while adapter tests are being introduced.
 5. Delete replaced Swift logic after the Rust-backed path passes focused Swift
    scripts, Rust tests, and binding tests.
 6. Update `clients/apple/ARCHITECTURE.md` and architecture validation
    expectations as warning debt decreases.
 
 Rollback for any app-connected slice should be module-scoped: restore the Swift
-call path for that module while keeping already-proven Rust modules and fixtures
+call path for that module while keeping already-proven Rust modules and tests
 in place. Manifest-affecting slices must keep read compatibility with previously
 written files.
 

@@ -4,7 +4,7 @@
 Alan for macOS SHALL delegate Terminal Profile document validation, editor
 semantics, deterministic resolution order, missing/unavailable profile state,
 and terminal launch-intent construction to the Rust shell core after the
-Terminal Profile module has parity fixtures and adapter tests.
+Terminal Profile module has Rust contract tests and adapter tests.
 
 The macOS platform layer SHALL continue to own profile store file IO, channel
 Application Support path selection, terminal runtime spawn translation, and

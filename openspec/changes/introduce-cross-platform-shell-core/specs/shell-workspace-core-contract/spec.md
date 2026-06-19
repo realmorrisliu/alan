@@ -161,14 +161,14 @@ platform callbacks, or long-lived Rust workspace objects.
 - **AND** ABI or schema version mismatches are reported as explicit errors
   rather than causing silent state corruption
 
-### Requirement: Parity fixtures gate Swift replacement
-Each Swift shell domain module replacement SHALL be gated by parity fixtures
-that compare current Swift behavior against Rust shell core behavior.
+### Requirement: Rust contracts and FFI adapter checks gate Swift replacement
+Each Swift shell domain module replacement SHALL be gated by Rust contract tests
+and FFI adapter checks that prove Rust shell core behavior and Swift projection.
 
 #### Scenario: Swift reducer branch is replaced
 - **WHEN** a Swift workspace reducer branch is removed or replaced by a Rust
   shell core call
-- **THEN** equivalent Swift-exported fixture cases exist
-- **AND** Rust tests pass against those fixtures
+- **THEN** equivalent Rust contract cases exist
+- **AND** Rust tests pass for those cases
 - **AND** Swift adapter tests verify encode, decode, error mapping, and version
   handling for the replacement path

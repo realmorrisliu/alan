@@ -31,37 +31,6 @@ struct ShellAlanBinding: Codable, Equatable {
     }
 }
 
-enum ShellQuickTerminalPresentation: String, Codable, Equatable {
-    case visible
-    case hidden
-}
-
-struct ShellQuickTerminalSlot: Codable, Equatable {
-    static let globalPaneID = "quick_terminal_pane"
-    static let globalTabID = "quick_terminal_tab"
-    static let globalSpaceID = "quick_terminal_space"
-
-    let paneID: String
-    let presentation: ShellQuickTerminalPresentation
-    let lastWorkingDirectory: String?
-
-    init(
-        paneID: String = Self.globalPaneID,
-        presentation: ShellQuickTerminalPresentation,
-        lastWorkingDirectory: String?
-    ) {
-        self.paneID = paneID
-        self.presentation = presentation
-        self.lastWorkingDirectory = lastWorkingDirectory
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case presentation
-        case lastWorkingDirectory = "last_working_directory"
-    }
-}
-
 struct ShellPane: Identifiable, Codable, Equatable {
     let paneID: String
     let tabID: String
@@ -141,12 +110,6 @@ struct ShellPane: Identifiable, Codable, Equatable {
 }
 
 extension ShellPane {
-    var isQuickTerminalPane: Bool {
-        paneID == ShellQuickTerminalSlot.globalPaneID
-            && tabID == ShellQuickTerminalSlot.globalTabID
-            && spaceID == ShellQuickTerminalSlot.globalSpaceID
-    }
-
     var terminalContentID: String {
         ShellContentInstance.terminalContentID(forPaneID: paneID)
     }
@@ -778,6 +741,17 @@ extension ShellPaneTreeNode {
     func node(nodeID targetNodeID: String) -> ShellPaneTreeNode? {
         if nodeID == targetNodeID { return self }
         return (children ?? []).lazy.compactMap { $0.node(nodeID: targetNodeID) }.first
+    }
+
+    func leafNode(containingPaneID targetPaneID: String) -> ShellPaneTreeNode? {
+        switch kind {
+        case .pane:
+            return paneID == targetPaneID ? self : nil
+        case .split:
+            return (children ?? []).lazy.compactMap {
+                $0.leafNode(containingPaneID: targetPaneID)
+            }.first
+        }
     }
 
     func adjacentPaneID(
@@ -1424,7 +1398,6 @@ struct ShellStateSnapshot: Codable, Equatable {
     let panes: [ShellPane]
     var paneSlots: [ShellPaneSlot]? = nil
     var contents: [ShellContentInstance]? = nil
-    var quickTerminal: ShellQuickTerminalSlot? = nil
 
     private enum CodingKeys: String, CodingKey {
         case contractVersion = "contract_version"
@@ -1436,7 +1409,6 @@ struct ShellStateSnapshot: Codable, Equatable {
         case panes
         case paneSlots = "pane_slots"
         case contents
-        case quickTerminal = "quick_terminal"
     }
 
     var prettyPrintedJSON: String {
@@ -1604,11 +1576,6 @@ extension ShellStateSnapshot {
         if let mountedContent = explicitContentMounted(in: pane.paneID) {
             return mountedContent.kind == .terminal
         }
-        if pane.isQuickTerminalPane,
-           quickTerminal?.paneID == pane.paneID
-        {
-            return true
-        }
         return pane.launchTarget != nil
     }
 
@@ -1683,8 +1650,7 @@ extension ShellStateSnapshot {
                 spaces: spaces,
                 panes: panes,
                 paneSlots: paneSlots,
-                contents: nextContents,
-                quickTerminal: quickTerminal
+                contents: nextContents
             ),
             true
         )

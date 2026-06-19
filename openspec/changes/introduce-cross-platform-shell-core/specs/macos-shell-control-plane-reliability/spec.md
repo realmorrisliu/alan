@@ -3,8 +3,8 @@
 ### Requirement: macOS control transport delegates reusable command semantics
 The macOS shell control plane SHALL delegate reusable command validation,
 workspace reducer dispatch, stable error codes, and authoritative response
-projection to the Rust shell core after the control reducer module has parity
-fixtures and adapter tests.
+projection to the Rust shell core after the control reducer module has Rust
+contract tests and adapter tests.
 
 The macOS control plane SHALL continue to own socket transport, file polling,
 request size limits, response deadlines, runtime service calls, event store IO,

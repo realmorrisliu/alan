@@ -9,7 +9,6 @@ struct ShellCorePortableWorkspaceState: Codable {
     let spaces: [ShellCorePortableSpace]
     let paneSlots: [ShellPaneSlot]
     let contents: [ShellCorePortableContentInstance]
-    let quickTerminal: ShellCorePortableQuickTerminalState?
 
     private enum CodingKeys: String, CodingKey {
         case contractVersion = "contract_version"
@@ -20,25 +19,18 @@ struct ShellCorePortableWorkspaceState: Codable {
         case spaces
         case paneSlots = "pane_slots"
         case contents
-        case quickTerminal = "quick_terminal"
     }
 
     init(projecting state: ShellStateSnapshot) {
         let contentState = state.contentStateProjection()
-        let projectedQuickTerminal = ShellCorePortableQuickTerminalState(projecting: state)
         contractVersion = contentState.contractVersion
         windowID = contentState.windowID
         focusedSpaceID = contentState.focusedSpaceID
         focusedTabID = contentState.focusedTabID
-        if projectedQuickTerminal?.paneID == state.focusedPaneID {
-            focusedPaneID = state.focusedPaneID
-        } else {
-            focusedPaneID = contentState.focusedPaneSlotID
-        }
+        focusedPaneID = contentState.focusedPaneSlotID
         spaces = contentState.spaces.map(ShellCorePortableSpace.init(contentSpace:))
         paneSlots = contentState.paneSlots
         contents = contentState.contents.map(ShellCorePortableContentInstance.init(contentInstance:))
-        quickTerminal = projectedQuickTerminal
     }
 
     func materializedShellState() throws -> ShellStateSnapshot {
@@ -52,58 +44,11 @@ struct ShellCorePortableWorkspaceState: Codable {
             paneSlots: paneSlots,
             contents: contents.map(\.contentInstance)
         )
-        guard var shellState = contentState.materializingShellState() else {
+        guard let shellState = contentState.materializingShellState() else {
             throw ShellCoreFFIAdapterError.materializationFailed(
                 "portable workspace state could not be projected into shell state"
             )
         }
-        guard let quickTerminal,
-              let restoredQuickTerminal = quickTerminal.materialized()
-        else {
-            return shellState
-        }
-
-        // shell-core preserves focus on the quick pane (stored under quick_terminal, not in the
-        // content pane slots), but `materializingShellState()` cannot resolve it and repairs focus
-        // to a workspace pane. Restore the quick pane focus when the portable state carried it,
-        // mirroring the projecting side, so an FFI reducer op does not steal focus from the
-        // visible quick terminal.
-        let resolvedFocusedPaneID =
-            focusedPaneID == restoredQuickTerminal.pane.paneID
-            ? restoredQuickTerminal.pane.paneID
-            : shellState.focusedPaneID
-
-        guard !shellState.panes.contains(where: { $0.paneID == restoredQuickTerminal.pane.paneID }) else {
-            return ShellStateSnapshot(
-                contractVersion: shellState.contractVersion,
-                windowID: shellState.windowID,
-                focusedSpaceID: shellState.focusedSpaceID,
-                focusedTabID: shellState.focusedTabID,
-                focusedPaneID: resolvedFocusedPaneID,
-                spaces: shellState.spaces,
-                panes: shellState.panes,
-                paneSlots: shellState.paneSlots,
-                contents: shellState.contents,
-                quickTerminal: restoredQuickTerminal.slot
-            )
-        }
-
-        var materializedContents = shellState.contents ?? []
-        if !materializedContents.contains(where: { $0.contentID == restoredQuickTerminal.content.contentID }) {
-            materializedContents.append(restoredQuickTerminal.content)
-        }
-        shellState = ShellStateSnapshot(
-            contractVersion: shellState.contractVersion,
-            windowID: shellState.windowID,
-            focusedSpaceID: shellState.focusedSpaceID,
-            focusedTabID: shellState.focusedTabID,
-            focusedPaneID: resolvedFocusedPaneID,
-            spaces: shellState.spaces,
-            panes: shellState.panes + [restoredQuickTerminal.pane],
-            paneSlots: shellState.paneSlots,
-            contents: materializedContents.isEmpty ? nil : materializedContents,
-            quickTerminal: restoredQuickTerminal.slot
-        )
         return shellState
     }
 }
@@ -280,104 +225,6 @@ struct ShellCorePortableContentInstance: Codable {
     }
 }
 
-struct ShellCorePortableQuickTerminalState: Codable {
-    let paneID: String
-    let presentation: ShellQuickTerminalPresentation
-    let lastWorkingDirectory: String?
-    let contentID: String
-    let terminalPayload: ShellTerminalContentPayload?
-    let terminalMetadata: ShellCorePortableTerminalMetadata?
-    let attention: ShellAttentionState
-
-    private enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case presentation
-        case lastWorkingDirectory = "last_working_directory"
-        case contentID = "content_id"
-        case terminalPayload = "terminal_payload"
-        case terminalMetadata = "terminal_metadata"
-        case attention
-    }
-
-    init?(projecting state: ShellStateSnapshot) {
-        guard let slot = state.quickTerminal else { return nil }
-        let pane = state.panes.first { $0.paneID == slot.paneID }
-        let contentID = pane?.terminalContentID
-            ?? ShellContentInstance.terminalContentID(forPaneID: slot.paneID)
-        let content = state.contents?.first { $0.contentID == contentID }
-        let terminalPayload = content?.payload.terminal ?? pane.map {
-            ShellTerminalContentPayload(
-                launchTarget: $0.resolvedLaunchTarget,
-                cwd: $0.cwd,
-                title: $0.viewport?.title,
-                terminalProfileID: $0.terminalProfileID
-            )
-        }
-
-        self.paneID = slot.paneID
-        presentation = slot.presentation
-        lastWorkingDirectory = slot.lastWorkingDirectory
-        self.contentID = contentID
-        self.terminalPayload = terminalPayload
-        terminalMetadata = pane.map {
-            ShellCorePortableTerminalMetadata(
-                title: $0.viewport?.title,
-                cwd: $0.cwd,
-                activity: $0.activity
-            )
-        }
-        attention = pane?.attention ?? .idle
-    }
-
-    func materialized() -> (
-        slot: ShellQuickTerminalSlot,
-        pane: ShellPane,
-        content: ShellContentInstance
-    )? {
-        guard let terminalPayload else { return nil }
-        let title = terminalPayload.title ?? terminalMetadata?.title ?? "Shell"
-        let payload = ShellTerminalContentPayload(
-            launchTarget: terminalPayload.launchTarget,
-            cwd: terminalPayload.cwd ?? terminalMetadata?.cwd,
-            title: terminalPayload.title ?? terminalMetadata?.title,
-            transcriptSnapshot: terminalPayload.transcriptSnapshot,
-            terminalProfileID: terminalPayload.terminalProfileID
-        )
-        let content = ShellContentInstance(
-            contentID: contentID,
-            kind: .terminal,
-            title: title,
-            payload: .terminal(payload),
-            rendererState: .placeholder
-        )
-        let pane = ShellPane(
-            paneID: paneID,
-            tabID: ShellQuickTerminalSlot.globalTabID,
-            spaceID: ShellQuickTerminalSlot.globalSpaceID,
-            launchTarget: payload.launchTarget,
-            cwd: payload.cwd,
-            process: nil,
-            attention: attention,
-            context: nil,
-            viewport: ShellViewportSnapshot(
-                title: title,
-                summary: nil,
-                visibleExcerpt: nil,
-                lastActivityAt: nil
-            ),
-            activity: terminalMetadata?.activity,
-            alanBinding: nil,
-            terminalProfileID: payload.terminalProfileID
-        )
-        let slot = ShellQuickTerminalSlot(
-            paneID: paneID,
-            presentation: presentation,
-            lastWorkingDirectory: lastWorkingDirectory ?? payload.cwd
-        )
-        return (slot, pane, content)
-    }
-}
-
 struct ShellCorePortableTerminalMetadata: Codable {
     let title: String?
     let cwd: String?
@@ -402,8 +249,7 @@ extension ShellStateSnapshot {
             spaces: spaces,
             panes: mergedPanes,
             paneSlots: paneSlots,
-            contents: contents,
-            quickTerminal: quickTerminal
+            contents: contents
         )
     }
 }

@@ -286,26 +286,32 @@ ownership.
   surfaces
 - **AND** changing one field does not silently rewrite the other
 
-### Requirement: Quick Terminal launch restore is presentation-hidden
-The macOS shell workspace manifest materializer SHALL restore quick-terminal
-content and last working directory without automatically presenting the detached
-Peak during app launch.
+### Requirement: Legacy Quick Terminal Restore Data Is Discarded
+The macOS shell workspace manifest loader SHALL tolerate old `quick_terminal`
+restore records while discarding them during materialization and omitting them
+from future manifest writes.
 
 #### Scenario: Manifest records visible quick terminal
 - **WHEN** Alan materializes shell state from a workspace manifest whose
-  quick-terminal record has visible presentation
-- **THEN** Alan restores the quick-terminal slot as hidden
-- **AND** Alan preserves the quick-terminal content identity and last working
-  directory when they are restorable
-- **AND** Alan waits for an explicit user show or toggle command before
-  presenting the Peak
+  `quick_terminal` record has visible presentation
+- **THEN** Alan discards the quick-terminal record
+- **AND** Alan does not create a hidden or visible quick-terminal slot
+- **AND** Alan does not create a terminal runtime, tab, pane, or detached panel
+  from that record
 
 #### Scenario: Manifest records hidden quick terminal
 - **WHEN** Alan materializes shell state from a workspace manifest whose
-  quick-terminal record has hidden presentation
-- **THEN** Alan restores the quick-terminal slot as hidden
-- **AND** Alan does not create or show the Peak panel during launch solely
-  because a quick-terminal restore record exists
+  `quick_terminal` record has hidden presentation
+- **THEN** Alan discards the quick-terminal record
+- **AND** Alan restores only normal Spaces, Tabs, PaneSlots, ContentInstances,
+  selected Space, and selected Tab from the manifest
+
+#### Scenario: Manifest is written after legacy quick terminal data is read
+- **WHEN** Alan writes a workspace manifest after reading a manifest that
+  contained `quick_terminal`
+- **THEN** the new manifest omits `quick_terminal`
+- **AND** no quick-terminal transcript snapshot, last working directory, or
+  presentation state is preserved
 
 ### Requirement: Workspace Manifest Stores Space-Local Tab Selection
 The macOS shell workspace manifest SHALL persist each Space's remembered

@@ -53,7 +53,6 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterControlCommands()
             try testProductionAdapterUnscopedPaneListSpansAllTabs()
             try testProductionAdapterTabReorderReportsSectionAndIndex()
-            try testProductionAdapterPreservesFocusedQuickTerminal()
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
@@ -70,8 +69,8 @@ private struct EmptyShellCoreRequest: Encodable {}
 private struct EmptyShellCoreResponse: Decodable {}
 
 private func testShellCoreUnavailableErrorClassification() throws {
-    // Infrastructure failures (shell-core itself unavailable) must let callers fall through to a
-    // host/Swift fallback; structured command errors from a working shell-core must not.
+    // Infrastructure failures identify unavailable shell-core. Structured command errors from a
+    // working shell-core must remain domain failures.
     let unavailable: [ShellCoreFFIAdapterError] = [
         .libraryLoadFailed("/missing.dylib", "dlopen failed"),
         .symbolMissing("alan_shell_core_ffi_handle_request_out", "symbol not found"),
@@ -86,16 +85,16 @@ private func testShellCoreUnavailableErrorClassification() throws {
         )
     }
 
-    let commandErrors: [ShellCoreFFIAdapterError] = [
+    let domainErrors: [ShellCoreFFIAdapterError] = [
         .facadeError(ShellCoreErrorPayload(code: "invalid_payload", message: "bad")),
         .missingPayload("state"),
         .materializationFailed("could not project"),
         .reducerError(code: "pane_not_found", message: "missing pane"),
     ]
-    for error in commandErrors {
+    for error in domainErrors {
         try expect(
             !error.indicatesShellCoreUnavailable,
-            "structured command error must not be treated as shell-core unavailable: \(error)"
+            "structured domain error must not indicate shell-core unavailable: \(error)"
         )
     }
 }
@@ -573,64 +572,6 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must preserve Rust-split markdown payload"
     )
 
-    let quickShown = try adapter.applyReducer(
-        state: attention.state,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    )
-    try expect(
-        quickShown.state.quickTerminal?.presentation == .visible,
-        "production adapter must show quick terminal through Rust"
-    )
-    try expect(
-        quickShown.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.cwd == "/repo/quick",
-        "production adapter must materialize quick terminal cwd from Rust"
-    )
-
-    let quickHidden = try adapter.applyReducer(
-        state: quickShown.state,
-        operation: .hideQuickTerminal
-    )
-    try expect(
-        quickHidden.state.quickTerminal?.presentation == .hidden,
-        "production adapter must hide quick terminal through Rust"
-    )
-
-    let quickPromoted = try adapter.applyReducer(
-        state: quickHidden.state,
-        operation: .promoteQuickTerminal(targetSpaceID: "space_main")
-    )
-    try expect(
-        quickPromoted.state.quickTerminal == nil,
-        "production adapter must clear detached quick terminal after Rust promotion"
-    )
-    try expect(
-        quickPromoted.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID)?.spaceID == "space_main",
-        "production adapter must promote quick terminal pane into target space through Rust"
-    )
-
-    let quickForClose = try adapter.applyReducer(
-        state: attention.state,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    )
-    let quickClosed = try adapter.applyReducer(
-        state: quickForClose.state,
-        operation: .closeQuickTerminal
-    )
-    try expect(
-        quickClosed.state.quickTerminal == nil,
-        "production adapter must close quick terminal through Rust"
-    )
-    try expect(
-        quickClosed.state.pane(paneID: ShellQuickTerminalSlot.globalPaneID) == nil,
-        "production adapter must remove quick terminal pane after Rust close"
-    )
-
     let secondTab = try attention.state.openingTerminalTab(
         in: "space_main",
         title: "Second",
@@ -1034,53 +975,6 @@ private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {
     )
 }
 
-private func testProductionAdapterPreservesFocusedQuickTerminal() throws {
-    let adapter = try ShellCoreFFIAdapter()
-    let base = ShellStateSnapshot.bootstrapDefault(
-        windowID: "window_main",
-        workingDirectory: "/repo/app"
-    )
-    let quickShown = try adapter.applyReducer(
-        state: base,
-        operation: .showQuickTerminal(
-            workingDirectory: "/repo/quick",
-            defaultWorkingDirectory: "/home/test"
-        )
-    ).state
-
-    // Simulate the quick terminal holding focus: the projecting side carries the quick pane as
-    // focused_pane_id even though it lives outside the content pane slots.
-    let focusedQuick = ShellStateSnapshot(
-        contractVersion: quickShown.contractVersion,
-        windowID: quickShown.windowID,
-        focusedSpaceID: quickShown.focusedSpaceID,
-        focusedTabID: quickShown.focusedTabID,
-        focusedPaneID: ShellQuickTerminalSlot.globalPaneID,
-        spaces: quickShown.spaces,
-        panes: quickShown.panes,
-        paneSlots: quickShown.paneSlots,
-        contents: quickShown.contents,
-        quickTerminal: quickShown.quickTerminal
-    )
-    guard let tabID = focusedQuick.spaces.first?.tabs.first?.tabID else {
-        throw TestFailure.message("fixture must expose a tab to pin")
-    }
-
-    // A non-focus-changing reducer round-trips through Rust focus repair and Swift materialization;
-    // both must keep focus on the visible quick terminal.
-    let pinned = try adapter.applyReducer(
-        state: focusedQuick,
-        operation: .pinTab(tabID: tabID)
-    )
-    try expect(
-        pinned.state.focusedPaneID == ShellQuickTerminalSlot.globalPaneID,
-        "FFI tab organization must preserve focus on the visible quick terminal"
-    )
-    try expect(
-        pinned.state.quickTerminal != nil,
-        "quick terminal must survive FFI tab organization"
-    )
-}
 
 private func testProductionAdapterTabReorderReportsSectionAndIndex() throws {
     // Full Swift -> Rust -> Swift round-trip: a tab organization mutation must surface the
@@ -1197,8 +1091,7 @@ private extension ShellStateSnapshot {
             spaces: spaces,
             panes: updatedPanes,
             paneSlots: paneSlots,
-            contents: contents,
-            quickTerminal: quickTerminal
+            contents: contents
         )
     }
 }
@@ -1349,6 +1242,29 @@ private func testProductionAdapterTerminalProfiles() throws {
     try expect(
         editorResult.definition?.managedTerminalAccountID == "account-main",
         "profile editor adapter must normalize managed account id through Rust"
+    )
+
+    let upsertResult = try adapter.upsertTerminalProfileDraft(
+        TerminalProfileEditorDraft(
+            id: " custom ",
+            title: " Custom ",
+            launchKind: .customCommand,
+            customCommand: "  echo hi  ",
+            defaultWorkingDirectory: " /repo/custom "
+        ),
+        into: TerminalProfileDocument(defaultProfileID: "", profiles: [])
+    )
+    try expect(
+        upsertResult.document?.defaultProfileID == "custom",
+        "profile upsert adapter must ask Rust to set the default profile id"
+    )
+    try expect(
+        upsertResult.document?.profiles.first?.id == "custom",
+        "profile upsert adapter must decode the Rust-upserted profile"
+    )
+    try expect(
+        upsertResult.document?.profiles.first?.defaultWorkingDirectory == "/repo/custom",
+        "profile upsert adapter must decode Rust-normalized working directories"
     )
 
     let launchIntent = try adapter.resolveTerminalLaunchIntent(

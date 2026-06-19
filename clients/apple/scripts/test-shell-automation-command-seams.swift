@@ -598,8 +598,7 @@ private enum ShellAutomationCommandSeamsTests {
             spaces: base.spaces,
             panes: updatedPanes,
             paneSlots: base.paneSlots,
-            contents: base.contents,
-            quickTerminal: base.quickTerminal
+            contents: base.contents
         )
     }
 }

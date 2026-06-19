@@ -488,10 +488,6 @@ terminal ContentInstance runtimes.
 - **THEN** Alan presents at most one confirmation for that requested close scope
 - **AND** no affected terminal runtime is finalized until the user confirms
 
-#### Scenario: Quick Terminal close has active work
-- **WHEN** the user requests Quick Terminal close while its terminal content has active work
-- **THEN** Alan applies the same close guard semantics used for regular shell terminal panes
-
 ### Requirement: Confirmed close captures terminal session snapshots
 The macOS shell host SHALL attempt to capture bounded terminal transcript
 snapshots for affected live terminal ContentInstances after a destructive

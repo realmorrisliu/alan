@@ -431,85 +431,17 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func managedTerminalAccountRows(
         _ summary: ManagedTerminalAccountSettingsSummary
     ) -> [ShellSettingsRowModel] {
-        guard !summary.plans.isEmpty else {
+        do {
+            let rows = try ShellCoreFFIAdapter.shared.managedTerminalAccountRows(summary)
+            return rows
+        } catch {
             return [
-                ShellSettingsRowModel(
-                    id: "terminalAccountProvision",
-                    systemName: "person.crop.circle.badge.plus",
-                    title: "Managed terminal account",
-                    detail: "Create a terminal-only local user for passwordless terminal entry.",
-                    value: "Preview…",
-                    mutability: .actionOnly
-                ),
-                ShellSettingsRowModel(
-                    id: "terminalAccountLoginBoundary",
-                    systemName: "macwindow.badge.plus",
-                    title: "Mac login session",
-                    detail: "This flow leaves the Mac login session setting unchanged.",
-                    value: "Not changed"
+                unavailableRow(
+                    id: "terminalAccountsUnavailable",
+                    systemName: "person.crop.circle.badge.exclamationmark",
+                    title: "Managed terminal account"
                 ),
             ]
-        }
-
-        return summary.plans.map { plan in
-            ShellSettingsRowModel(
-                id: "terminalAccount.\(plan.request.accountName)",
-                systemName: terminalAccountSystemName(plan),
-                title: "Managed terminal account",
-                detail: terminalAccountDetail(plan),
-                value: terminalAccountStatusLabel(plan),
-                mutability: .actionOnly
-            )
-        }
-    }
-
-    private static func terminalAccountSystemName(_ plan: ManagedTerminalAccountPlan) -> String {
-        switch plan.status {
-        case .alreadyReady:
-            return "checkmark.seal"
-        case .repair:
-            return "wrench.and.screwdriver"
-        case .requiresDestructiveConfirmation, .invalid, .sudoersConflict, .terminalProfileConflict:
-            return "exclamationmark.triangle"
-        case .readyToApply:
-            return "person.crop.circle.badge.plus"
-        }
-    }
-
-    private static func terminalAccountStatusLabel(_ plan: ManagedTerminalAccountPlan) -> String {
-        switch plan.status {
-        case .alreadyReady:
-            return "Ready"
-        case .repair:
-            return "Repairable"
-        case .invalid:
-            return "Invalid"
-        case .requiresDestructiveConfirmation:
-            return "Confirm"
-        case .sudoersConflict, .terminalProfileConflict:
-            return "Conflict"
-        case .readyToApply:
-            return "Preview"
-        }
-    }
-
-    private static func terminalAccountDetail(_ plan: ManagedTerminalAccountPlan) -> String {
-        let target = plan.request.accountName
-        switch plan.status {
-        case .alreadyReady:
-            return "\(target) is ready for terminal entry and linked to its Terminal Profile."
-        case .repair:
-            return "\(target) needs repair before terminal entry is ready."
-        case .invalid:
-            return "\(target) needs a valid local account identifier."
-        case .requiresDestructiveConfirmation:
-            return "\(target) rollback needs separate destructive confirmation."
-        case .sudoersConflict(let path):
-            return "\(target) has an existing non-Alan sudoers file at \(path)."
-        case .terminalProfileConflict(let profileID):
-            return "\(target) has an existing non-Alan Terminal Profile named \(profileID)."
-        case .readyToApply:
-            return "\(target) terminal entry plan is ready for explicit confirmation."
         }
     }
 

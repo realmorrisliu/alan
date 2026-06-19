@@ -1,11 +1,10 @@
 use alan_shell_core::{
     ContentInstance, ContentKind, ContentLifecycleState, ManifestSyncHint, PaneSlot, PaneTreeNode,
     ReducerErrorCode, ReducerOperation, RuntimeIntent, ShellAttentionState, ShellContentPayload,
-    ShellLaunchTarget, ShellQuickTerminalPresentation, ShellTabActiveTaskState, Space,
-    SplitDirection, SplitPlacement, Tab, TabKind, TabOrganizationSection,
-    TerminalActivityAgentMetadata, TerminalActivityDisplay, TerminalActivityFreshness,
-    TerminalActivityPriority, TerminalActivitySnapshot, TerminalActivitySource,
-    TerminalActivitySourceKind, TerminalActivityStatus, WorkspaceState,
+    ShellLaunchTarget, ShellTabActiveTaskState, Space, SplitDirection, SplitPlacement, Tab,
+    TabKind, TabOrganizationSection, TerminalActivityAgentMetadata, TerminalActivityDisplay,
+    TerminalActivityFreshness, TerminalActivityPriority, TerminalActivitySnapshot,
+    TerminalActivitySource, TerminalActivitySourceKind, TerminalActivityStatus, WorkspaceState,
 };
 use serde_json::json;
 
@@ -558,130 +557,6 @@ fn tab_reducers_duplicate_move_reorder_and_clear_inactive_temporary_tabs() {
             .changed_ids
             .removed_tab_ids
             .contains(&"tab_main".to_string())
-    );
-}
-
-#[test]
-fn quick_terminal_reducers_preserve_detached_state_and_promote_into_workspace() {
-    let shown = base_state()
-        .reduce(ReducerOperation::ShowQuickTerminal {
-            working_directory: Some("/repo/app".to_string()),
-            default_working_directory: Some("/home/user".to_string()),
-        })
-        .expect("show quick terminal succeeds");
-    let quick = shown
-        .state
-        .quick_terminal
-        .as_ref()
-        .expect("quick terminal state");
-    assert_eq!(quick.pane_id, "quick_terminal_pane");
-    assert_eq!(quick.presentation, ShellQuickTerminalPresentation::Visible);
-    assert_eq!(quick.last_working_directory.as_deref(), Some("/repo/app"));
-    assert_eq!(quick.content_id, "content_quick_terminal_pane");
-    assert_eq!(shown.state.focused_pane_id.as_deref(), Some("pane_1"));
-
-    let hidden = shown
-        .state
-        .reduce(ReducerOperation::HideQuickTerminal)
-        .expect("hide quick terminal succeeds");
-    assert_eq!(
-        hidden
-            .state
-            .quick_terminal
-            .as_ref()
-            .map(|quick| quick.presentation),
-        Some(ShellQuickTerminalPresentation::Hidden)
-    );
-
-    let reshown = hidden
-        .state
-        .reduce(ReducerOperation::ShowQuickTerminal {
-            working_directory: Some("/repo/ignored".to_string()),
-            default_working_directory: Some("/home/user".to_string()),
-        })
-        .expect("reshow quick terminal succeeds");
-    assert_eq!(
-        reshown
-            .state
-            .quick_terminal
-            .as_ref()
-            .and_then(|quick| quick.last_working_directory.as_deref()),
-        Some("/repo/app"),
-        "existing quick terminal cwd wins over a new suggested cwd"
-    );
-
-    let promoted = reshown
-        .state
-        .reduce(ReducerOperation::PromoteQuickTerminal {
-            target_space_id: "space_main".to_string(),
-        })
-        .expect("promote quick terminal succeeds");
-    assert!(promoted.state.quick_terminal.is_none());
-    assert_eq!(
-        promoted.state.focused_pane_id.as_deref(),
-        Some("quick_terminal_pane")
-    );
-    assert_eq!(
-        promoted.state.spaces[0].selected_tab_id.as_deref(),
-        promoted.state.focused_tab_id.as_deref()
-    );
-    assert!(
-        promoted.state.spaces[0]
-            .tabs
-            .iter()
-            .any(|tab| tab.pane_tree.contains_pane_id("quick_terminal_pane"))
-    );
-    assert!(
-        promoted
-            .state
-            .pane_slots
-            .iter()
-            .any(|slot| slot.pane_slot_id == "quick_terminal_pane"
-                && slot.space_id == "space_main")
-    );
-    assert!(
-        promoted
-            .state
-            .contents
-            .iter()
-            .any(|content| content.content_id == "content_quick_terminal_pane")
-    );
-
-    let closed = shown
-        .state
-        .reduce(ReducerOperation::CloseQuickTerminal)
-        .expect("close quick terminal succeeds");
-    assert!(closed.state.quick_terminal.is_none());
-    assert_eq!(closed.state.focused_pane_id.as_deref(), Some("pane_1"));
-}
-
-#[test]
-fn tab_organization_preserves_focused_quick_terminal() {
-    let shown = base_state()
-        .reduce(ReducerOperation::ShowQuickTerminal {
-            working_directory: Some("/repo/app".to_string()),
-            default_working_directory: Some("/home/user".to_string()),
-        })
-        .expect("show quick terminal succeeds");
-    // Simulate the Quick Terminal holding focus (Swift projects focused_pane_id as the quick pane,
-    // which shell-core stores under quick_terminal rather than in pane_slots).
-    let mut focused_quick = shown.state;
-    focused_quick.focused_pane_id = Some("quick_terminal_pane".to_string());
-
-    let pinned = focused_quick
-        .reduce(ReducerOperation::PinTab {
-            tab_id: "tab_main".to_string(),
-        })
-        .expect("pin tab succeeds while quick terminal is focused");
-
-    assert_eq!(
-        pinned.state.focused_pane_id.as_deref(),
-        Some("quick_terminal_pane"),
-        "organizing a tab must not steal focus away from the focused Quick Terminal"
-    );
-    assert!(
-        pinned.state.quick_terminal.is_some(),
-        "the Quick Terminal must remain present after tab organization"
     );
 }
 
@@ -1369,6 +1244,5 @@ fn base_state() -> WorkspaceState {
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
         }],
-        quick_terminal: None,
     }
 }

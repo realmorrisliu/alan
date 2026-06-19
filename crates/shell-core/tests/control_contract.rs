@@ -347,7 +347,6 @@ fn base_state() -> WorkspaceState {
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
         }],
-        quick_terminal: None,
     }
 }
 
@@ -408,6 +407,5 @@ fn pinned_and_unpinned_state() -> WorkspaceState {
             pane_slot("pane_unpinned", "content_unpinned", "tab_unpinned"),
         ],
         contents: vec![content("content_pinned"), content("content_unpinned")],
-        quick_terminal: None,
     }
 }

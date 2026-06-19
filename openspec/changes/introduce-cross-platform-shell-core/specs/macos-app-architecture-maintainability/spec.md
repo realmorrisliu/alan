@@ -2,8 +2,8 @@
 
 ### Requirement: Reusable shell domain logic migrates to Rust shell core
 The Apple client architecture SHALL treat reusable shell workspace domain logic
-as Rust shell core ownership once the corresponding shell core module and parity
-fixtures exist.
+as Rust shell core ownership once the corresponding shell core module, Rust
+contract tests, and adapter tests exist.
 
 Swift files in the Apple client SHALL remain platform adapters, presentation
 layers, terminal runtime hosts, and compatibility wrappers rather than the

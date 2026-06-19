@@ -2,7 +2,7 @@
 
 `make-shell-core-authoritative` moves portable shell-domain authority into Rust,
 but it necessarily leaves a large Swift adapter surface behind. The current PR
-adds the core, FFI, fixture, and validation matrix first; the next step is a
+adds the core, FFI, contract tests, and validation matrix first; the next step is a
 separate behavior-preserving architecture slice that turns the now-authoritative
 boundary into smaller, reviewable Swift owners.
 
@@ -16,9 +16,9 @@ boundary into smaller, reviewable Swift owners.
 - Narrow `ShellHostController.swift` by moving shell-core-backed manifest
   startup, action dispatch, reducer command routing, persistence scheduling, and
   platform metadata preservation into named collaborators.
-- Move fixture-only Swift shell-domain helpers out of production-facing files
-  into explicit script/test-support boundaries once Rust core and FFI tests
-  cover the same behavior.
+- Remove obsolete Swift parity helpers once Rust core and FFI tests cover the
+  same behavior; keep only explicit FFI-backed script/test builders where tests
+  need platform-shaped state.
 - Convert the architecture-maintainability report from broad visible debt into
   a regression guard and evidence ledger for the semantic cleanup.
 - Preserve macOS-owned behavior in Swift: SwiftUI/AppKit presentation, Ghostty

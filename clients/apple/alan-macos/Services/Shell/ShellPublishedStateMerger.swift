@@ -48,8 +48,7 @@ enum AlanShellPublishedStateMerger {
             spaces: mergedSpaces,
             panes: mergedPanes,
             paneSlots: incoming.paneSlots,
-            contents: incoming.contents,
-            quickTerminal: incoming.quickTerminal
+            contents: incoming.contents
         )
     }
 

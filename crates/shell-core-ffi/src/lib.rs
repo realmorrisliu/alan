@@ -5,15 +5,17 @@
 //! adapters without shaping the core API around binding-generator constraints.
 
 use alan_shell_core::{
-    EnvelopeVersion, ManagedTerminalAccountSettingsSummary, ReducerError, ReducerOperation,
-    ShellActionId, ShellActionRegistry, ShellActionShortcut, ShellActionTarget,
-    ShellContentWorkspaceManifest, ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope,
-    ShellCoreRequestEnvelope, ShellCoreResponseEnvelope, ShellSettingsCapabilitiesSummary,
-    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsSummaryRows,
-    ShellWorkspaceManifest, TerminalExecutableAvailability, TerminalLaunchEnvironment,
-    TerminalLaunchIntent, TerminalProfileDocument, TerminalProfileEditor,
+    EnvelopeVersion, ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountPlanner,
+    ManagedTerminalAccountRequest, ManagedTerminalAccountSettingsSummary,
+    ManagedTerminalAccountState, ReducerError, ReducerOperation, ShellActionId,
+    ShellActionRegistry, ShellActionShortcut, ShellActionTarget, ShellContentWorkspaceManifest,
+    ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
+    ShellCoreResponseEnvelope, ShellSettingsCapabilitiesSummary, ShellSettingsDiagnosticsSummary,
+    ShellSettingsLocalSummary, ShellSettingsSummaryRows, ShellWorkspaceManifest,
+    TerminalExecutableAvailability, TerminalLaunchEnvironment, TerminalLaunchIntent,
+    TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileEditor,
     TerminalProfileEditorDraft, TerminalProfileSettingsSummary, TerminalProfileValidator,
-    WorkspaceState,
+    WorkspaceState, should_capture_global_default_terminal_profile,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -167,7 +169,15 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
         "actions.execute" => execute_action(request.payload),
         "terminal_profile.validate" => validate_terminal_profile(request.payload),
         "terminal_profile.make_definition" => make_terminal_profile_definition(request.payload),
+        "terminal_profile.upsert" => upsert_terminal_profile(request.payload),
+        "terminal_profile.should_capture_global_default" => {
+            should_capture_global_default(request.payload)
+        }
         "terminal_profile.resolve_launch_intent" => resolve_terminal_launch_intent(request.payload),
+        "managed_terminal_account.validate_request" => {
+            validate_managed_terminal_account_request(request.payload)
+        }
+        "managed_terminal_account.plan" => managed_terminal_account_plan(request.payload),
         "settings.terminal_profile_rows" => terminal_profile_rows(request.payload),
         "settings.managed_terminal_account_rows" => managed_terminal_account_rows(request.payload),
         "settings.capability_rows" => capability_rows(request.payload),
@@ -198,7 +208,11 @@ fn supported_operations() -> &'static [&'static str] {
         "actions.execute",
         "terminal_profile.validate",
         "terminal_profile.make_definition",
+        "terminal_profile.upsert",
+        "terminal_profile.should_capture_global_default",
         "terminal_profile.resolve_launch_intent",
+        "managed_terminal_account.validate_request",
+        "managed_terminal_account.plan",
         "settings.terminal_profile_rows",
         "settings.managed_terminal_account_rows",
         "settings.capability_rows",
@@ -294,8 +308,9 @@ fn execute_action(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
 }
 
 fn validate_terminal_profile(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
-    let document: TerminalProfileDocument = decode_payload(payload, "terminal_profile.validate")?;
-    let result = TerminalProfileValidator::validate(&document);
+    let input: TerminalProfileValidateInput = decode_payload(payload, "terminal_profile.validate")?;
+    let (document, availability) = input.into_parts();
+    let result = TerminalProfileValidator::validate_with_availability(&document, &availability);
     Ok(json!({
         "is_valid": result.is_valid(),
         "errors": result.errors,
@@ -313,6 +328,24 @@ fn make_terminal_profile_definition(payload: Value) -> Result<Value, ShellCoreEr
     }))
 }
 
+fn upsert_terminal_profile(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: TerminalProfileUpsertInput = decode_payload(payload, "terminal_profile.upsert")?;
+    let result = TerminalProfileEditor::upsert(input.draft, &input.document);
+    Ok(json!({
+        "is_valid": result.is_valid(),
+        "document": result.document,
+        "errors": result.errors,
+    }))
+}
+
+fn should_capture_global_default(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let profile: TerminalProfileDefinition =
+        decode_payload(payload, "terminal_profile.should_capture_global_default")?;
+    Ok(json!({
+        "capture": should_capture_global_default_terminal_profile(&profile),
+    }))
+}
+
 fn resolve_terminal_launch_intent(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
     let input: TerminalLaunchIntentInput =
         decode_payload(payload, "terminal_profile.resolve_launch_intent")?;
@@ -323,6 +356,24 @@ fn resolve_terminal_launch_intent(payload: Value) -> Result<Value, ShellCoreErro
             &input.availability,
             &input.environment,
         ),
+    }))
+}
+
+fn validate_managed_terminal_account_request(
+    payload: Value,
+) -> Result<Value, ShellCoreErrorEnvelope> {
+    let request: ManagedTerminalAccountRequest =
+        decode_payload(payload, "managed_terminal_account.validate_request")?;
+    Ok(json!({
+        "errors": ManagedTerminalAccountIdentifierValidator::validate(&request),
+    }))
+}
+
+fn managed_terminal_account_plan(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ManagedTerminalAccountPlanInput =
+        decode_payload(payload, "managed_terminal_account.plan")?;
+    Ok(json!({
+        "plan": ManagedTerminalAccountPlanner::plan(input.request, &input.state),
     }))
 }
 
@@ -464,11 +515,46 @@ struct ActionExecuteInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TerminalProfileValidateInput {
+    WithAvailability {
+        document: TerminalProfileDocument,
+        #[serde(default)]
+        availability: TerminalExecutableAvailability,
+    },
+    Document(TerminalProfileDocument),
+}
+
+impl TerminalProfileValidateInput {
+    fn into_parts(self) -> (TerminalProfileDocument, TerminalExecutableAvailability) {
+        match self {
+            Self::WithAvailability {
+                document,
+                availability,
+            } => (document, availability),
+            Self::Document(document) => (document, TerminalExecutableAvailability::default()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalProfileUpsertInput {
+    draft: TerminalProfileEditorDraft,
+    document: TerminalProfileDocument,
+}
+
+#[derive(Debug, Deserialize)]
 struct TerminalLaunchIntentInput {
     terminal_profile_reference: Option<String>,
     terminal_profiles: Option<TerminalProfileDocument>,
     availability: TerminalExecutableAvailability,
     environment: TerminalLaunchEnvironment,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagedTerminalAccountPlanInput {
+    request: ManagedTerminalAccountRequest,
+    state: ManagedTerminalAccountState,
 }
 
 #[derive(Debug, Deserialize)]
