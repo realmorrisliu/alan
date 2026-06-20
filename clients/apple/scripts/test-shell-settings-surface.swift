@@ -1551,6 +1551,16 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
         plans["legacy"]?.steps.contains { $0.kind == .helperStep(.cleanupLegacySudoers) } == true,
         "legacy helper diagnosis must plan helper-owned sudoers cleanup"
     )
+    let legacyStepKinds = plans["legacy"]?.steps.map(\.kind) ?? []
+    guard let legacyMarkerIndex = legacyStepKinds.firstIndex(of: .helperStep(.writeOwnershipMarker)),
+        let legacyCleanupIndex = legacyStepKinds.firstIndex(of: .helperStep(.cleanupLegacySudoers))
+    else {
+        throw TestFailure.message("legacy helper cleanup must include marker and sudoers cleanup steps")
+    }
+    try expect(
+        legacyMarkerIndex < legacyCleanupIndex,
+        "legacy helper cleanup must write the helper ownership marker before removing sudoers evidence"
+    )
     try expect(
         plans["foreign"]?.status == .sudoersConflict(path: "/etc/sudoers.d/operator-owned-foreign")
             && plans["foreign"]?.steps.contains { $0.kind == .helperStep(.cleanupLegacySudoers) } != true,
@@ -2117,6 +2127,39 @@ private func testManagedUserRollbackRequiresAlanOwnershipForDestructiveDeletion(
         ordinaryDelete.status == .accountNotAlanManaged
             && ordinaryDelete.steps.contains { $0.kind == .deleteAccount || $0.kind == .deleteHomeDirectory } == false,
         "ordinary local accounts must not be deleted through Managed User rollback"
+    )
+
+    let helperDiagnosis = helperDiagnosis(
+        accountName: "lab",
+        readiness: .ready,
+        ownership: .alanManaged
+    )
+    let helperUnconfirmed = ManagedTerminalAccountPlanner.rollbackPlan(
+        request: request,
+        diagnosis: helperDiagnosis,
+        scope: .deleteAccountAndHome(confirmation: nil)
+    )
+    let helperConfirmed = ManagedTerminalAccountPlanner.rollbackPlan(
+        request: request,
+        diagnosis: helperDiagnosis,
+        scope: .deleteAccountAndHome(confirmation: "lab")
+    )
+    let helperConfirmedKinds = helperConfirmed.steps.map(\.kind)
+
+    try expect(
+        helperUnconfirmed.status == .requiresDestructiveConfirmation
+            && !helperUnconfirmed.steps.contains {
+                $0.kind == .helperStep(.removeManagedUserIntegration)
+            },
+        "unconfirmed helper destructive rollback must keep ownership evidence intact"
+    )
+    try expect(
+        helperConfirmedKinds == [
+            .helperStep(.deleteAccount),
+            .helperStep(.deleteHomeDirectory),
+            .helperStep(.removeManagedUserIntegration),
+        ],
+        "confirmed helper destructive rollback must remove integration only after deletes succeed"
     )
 }
 

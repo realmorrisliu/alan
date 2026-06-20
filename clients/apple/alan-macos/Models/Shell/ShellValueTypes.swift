@@ -1960,10 +1960,12 @@ enum ManagedTerminalAccountPlanner {
         {
             steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
         }
-        steps.append(helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration"))
 
         switch scope {
         case .alanIntegrationOnly:
+            steps.append(
+                helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration")
+            )
             return ManagedTerminalAccountPlan(request: request, status: .readyToApply, steps: steps)
         case .deleteAccountAndHome(let confirmation):
             guard diagnosis.ownershipState == .alanManaged else {
@@ -1993,6 +1995,9 @@ enum ManagedTerminalAccountPlanner {
                     helperStep(.deleteHomeDirectory, "Delete terminal account home directory")
                 )
             }
+            destructiveSteps.append(
+                helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration")
+            )
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .readyToApply,
@@ -2120,10 +2125,14 @@ enum ManagedTerminalAccountPlanner {
         if request.hideFromLoginWindow && !diagnosis.hiddenFromLoginWindow {
             steps.append(helperStep(.hideAccount, "Hide terminal account from login window lists"))
         }
-        if diagnosis.ownershipState != .alanManaged {
+        let shouldCleanupLegacySudoers = shouldCleanupLegacySudoers(
+            request: request,
+            diagnosis: diagnosis
+        )
+        if diagnosis.ownershipState != .alanManaged || shouldCleanupLegacySudoers {
             steps.append(helperStep(.writeOwnershipMarker, "Write Alan-managed ownership marker"))
         }
-        if shouldCleanupLegacySudoers(request: request, diagnosis: diagnosis) {
+        if shouldCleanupLegacySudoers {
             steps.append(helperStep(.cleanupLegacySudoers, "Clean up verified legacy Alan sudoers"))
         }
         steps.append(helperStep(.verifyAccount, "Verify helper-managed account state"))
