@@ -693,6 +693,8 @@ final class AlanPrivilegedHelperXPCListenerDelegate: NSObject, NSXPCListenerDele
 }
 
 final class AlanPrivilegedHelperXPCClient {
+    private static let managedUserApplyTimeoutSeconds: TimeInterval = 600
+
     let identity: AlanPrivilegedHelperXPCIdentity
     let timeoutSeconds: TimeInterval
     private var connection: NSXPCConnection?
@@ -753,7 +755,7 @@ final class AlanPrivilegedHelperXPCClient {
             }
         }
 
-        let deadline = DispatchTime.now() + timeoutSeconds
+        let deadline = DispatchTime.now() + timeout(for: request.operation)
         if semaphore.wait(timeout: deadline) == .timedOut {
             return .rejected(
                 request: request,
@@ -769,6 +771,18 @@ final class AlanPrivilegedHelperXPCClient {
                 code: .invalidRequest,
                 message: "Privileged helper returned an invalid XPC response."
             )
+    }
+
+    private func timeout(for operation: AlanPrivilegedHelperXPCOperation?) -> TimeInterval {
+        switch operation {
+        case .applyManagedUserPlan:
+            return max(timeoutSeconds, Self.managedUserApplyTimeoutSeconds)
+        case .helperStatus, .diagnoseManagedUser, .startManagedUserPTY, .readManagedUserPTY,
+                .writeManagedUserPTY, .resizeManagedUserPTY, .closeManagedUserPTYInput,
+                .signalManagedUserPTY, .observeManagedUserPTYExit, .terminatePTY,
+                .removeManagedUserIntegration, .none:
+            return timeoutSeconds
+        }
     }
 
     private func liveConnection() -> NSXPCConnection {
@@ -867,6 +881,7 @@ private struct AlanXPCManagedUserDiagnosis: Codable, Equatable {
     let ownershipState: AlanXPCManagedUserOwnershipState
     let readinessState: AlanXPCManagedUserReadinessState
     let accountExists: Bool
+    let isAdmin: Bool
     let homeDirectoryExists: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
@@ -1401,6 +1416,7 @@ private final class AlanPrivilegedHelperManagedUserService {
             ownershipState: ownershipState,
             readinessState: readinessState,
             accountExists: account != nil,
+            isAdmin: account?.isAdmin == true,
             homeDirectoryExists: fileManager.fileExists(atPath: request.homeDirectory),
             shellMatches: account?.shell == request.shell,
             hiddenFromLoginWindow: account?.hidden == true,

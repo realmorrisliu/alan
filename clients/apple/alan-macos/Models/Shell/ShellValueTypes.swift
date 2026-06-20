@@ -724,6 +724,7 @@ struct AlanManagedUserDiagnosis: Codable, Equatable {
     let ownershipState: AlanManagedUserOwnershipState
     let readinessState: AlanManagedUserReadinessState
     let accountExists: Bool
+    let isAdmin: Bool
     let homeDirectoryExists: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
@@ -743,6 +744,7 @@ extension AlanManagedUserDiagnosis {
             ownershipState: .missing,
             readinessState: .helperUnavailable,
             accountExists: false,
+            isAdmin: false,
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
@@ -1003,6 +1005,7 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
             ownershipState: .missing,
             readinessState: helperStatus.isHealthy ? .accountMissing : .helperUnavailable,
             accountExists: false,
+            isAdmin: false,
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
@@ -2103,6 +2106,9 @@ enum ManagedTerminalAccountPlanner {
         if !diagnosis.accountExists {
             steps.append(helperStep(.createStandardAccount, "Create standard local terminal account"))
         } else {
+            if diagnosis.isAdmin {
+                steps.append(helperStep(.repairAccountType, "Repair terminal account type"))
+            }
             if !diagnosis.homeDirectoryExists {
                 steps.append(helperStep(.repairHomeDirectory, "Repair terminal account home directory"))
             }

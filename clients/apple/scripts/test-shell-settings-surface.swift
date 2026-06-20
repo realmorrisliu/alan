@@ -33,6 +33,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testPrivilegedHelperSettingsRowsExposeLifecycleStates()
             try testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped()
             try testPrivilegedHelperPtyInputPreservesShortWrites()
+            try testPrivilegedHelperManagedUserApplyUsesLongTimeout()
             try testPrivilegedHelperRequestValidationIsNarrowAndSanitized()
             try testManagedUserHelperBackedPathForbidsLegacyExecutorFallback()
             try testLocalSummaryReadsHostConfigForDaemonEndpoint()
@@ -563,6 +564,24 @@ private func testPrivilegedHelperPtyInputPreservesShortWrites() throws {
             && sessionStore.contains("session.pendingInput.removeFirst(written)")
             && sessionStore.contains("errno == EAGAIN || errno == EWOULDBLOCK"),
         "helper PTY input must enqueue text and preserve unwritten suffixes after short nonblocking writes"
+    )
+}
+
+private func testPrivilegedHelperManagedUserApplyUsesLongTimeout() throws {
+    let helperSource = try readRepositoryFile(
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
+    )
+    let client = try sourceSlice(
+        named: "final class AlanPrivilegedHelperXPCClient",
+        in: helperSource,
+        endingBefore: "private struct AlanXPCManagedTerminalAccountRequest"
+    )
+
+    try expect(
+        client.contains("managedUserApplyTimeoutSeconds: TimeInterval = 600")
+            && client.contains("case .applyManagedUserPlan:")
+            && client.contains("return max(timeoutSeconds, Self.managedUserApplyTimeoutSeconds)"),
+        "managed_user helper apply XPC requests must use the long apply budget instead of the 5s default"
     )
 }
 
@@ -1486,6 +1505,12 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
                 ownership: .alanManaged,
                 ptySmokeVerified: false
             ),
+            "adminrepair": helperDiagnosis(
+                accountName: "adminrepair",
+                readiness: .repairable,
+                ownership: .alanManaged,
+                isAdmin: true
+            ),
         ]
     )
     let summary = ManagedTerminalAccountSettingsSummary.current(
@@ -1493,7 +1518,7 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
         guiUserName: "morris",
         helperClient: helper,
         catalog: ManagedTerminalAccountCatalog(
-            entries: ["ready", "stale", "conflict", "manual", "legacy", "foreign", "ptyfail"].map {
+            entries: ["ready", "stale", "conflict", "manual", "legacy", "foreign", "ptyfail", "adminrepair"].map {
                 ManagedTerminalAccountCatalogEntry(accountName: $0, displayLabel: $0)
             }
         )
@@ -1535,6 +1560,11 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
         plans["ptyfail"]?.status == .ptySpawnFailed
             && plans["ptyfail"]?.steps.contains { $0.kind == .helperStep(.verifyManagedUserPTY) } == true,
         "helper PTY failure diagnosis must plan helper-owned PTY verification"
+    )
+    try expect(
+        plans["adminrepair"]?.status == .repair
+            && plans["adminrepair"]?.steps.contains { $0.kind == .helperStep(.repairAccountType) } == true,
+        "helper repairable admin diagnosis must plan helper-owned account-type repair"
     )
     for plan in summary.plans {
         try expect(
@@ -3199,6 +3229,7 @@ private func helperDiagnosis(
     legacySudoersPath: String? = nil,
     terminalProfileID: String? = nil,
     ptySmokeVerified: Bool = false,
+    isAdmin: Bool = false,
     homeDirectoryExists: Bool = true,
     shellMatches: Bool = true,
     hiddenFromLoginWindow: Bool = true
@@ -3213,6 +3244,7 @@ private func helperDiagnosis(
         ownershipState: ownership,
         readinessState: readiness,
         accountExists: readiness != .accountMissing,
+        isAdmin: isAdmin,
         homeDirectoryExists: homeDirectoryExists,
         shellMatches: shellMatches,
         hiddenFromLoginWindow: hiddenFromLoginWindow,
