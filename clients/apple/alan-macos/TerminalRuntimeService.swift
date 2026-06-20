@@ -454,6 +454,7 @@ protocol AlanTerminalPtyRuntime: AnyObject {
     ) -> AlanTerminalPtyHandle
     func existingHandle(forTerminalContentID contentID: String) -> AlanTerminalPtyHandle?
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot?
+    func unregisterHandle(forTerminalContentID contentID: String)
 }
 
 @MainActor
@@ -508,6 +509,10 @@ final class AlanDarwinTerminalPtyRuntime: AlanTerminalPtyRuntime {
 
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot? {
         handlesByContentID[contentID]?.snapshot
+    }
+
+    func unregisterHandle(forTerminalContentID contentID: String) {
+        handlesByContentID.removeValue(forKey: contentID)
     }
 }
 
@@ -3238,7 +3243,9 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
-        return handle.teardown()
+        let status = handle.teardown()
+        ptyRuntime.unregisterHandle(forTerminalContentID: contentID)
+        return status
     }
 
     func finalizeTerminalContents(excluding activeContentIDs: Set<String>) {
@@ -3311,6 +3318,10 @@ final class FakeAlanTerminalPtyRuntime: AlanTerminalPtyRuntime {
 
     func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot? {
         handlesByContentID[contentID]?.snapshot
+    }
+
+    func unregisterHandle(forTerminalContentID contentID: String) {
+        handlesByContentID.removeValue(forKey: contentID)
     }
 }
 

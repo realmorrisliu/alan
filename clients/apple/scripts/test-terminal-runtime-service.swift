@@ -796,6 +796,10 @@ private enum TerminalRuntimeServiceTests {
             helper.writtenPTYInputRequests.map(\.text) == ["pwd\n"],
             "managed_user surface input must call helper writeManagedUserPTY"
         )
+        expect(
+            ptyRuntime.registeredContentIDs.contains(contentID),
+            "managed_user surface creation must register the backing PTY handle"
+        )
 
         surface.updateHostRuntimeSnapshot(
             TerminalHostRuntimeSnapshot(
@@ -885,6 +889,10 @@ private enum TerminalRuntimeServiceTests {
         expect(
             service.finalizeTerminalContent(contentID) == .completed,
             "finalizing managed_user content must complete surface teardown"
+        )
+        expect(
+            !ptyRuntime.registeredContentIDs.contains(contentID),
+            "finalizing managed_user content must unregister the backing PTY handle"
         )
         expect(
             helper.terminatedPTYSessionIDs == ["fake-\(contentID)"],

@@ -715,8 +715,28 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "func unregisterHandle\\(forTerminalContentID contentID: String\\)" \
+    "PTY runtime must expose explicit unregister so finalized panes release PTY handles"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "ptyRuntime\\.unregisterHandle\\(forTerminalContentID: contentID\\)" \
+    "terminal content finalization must release the backing PTY runtime handle"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
     "private var pendingRendererOutput" \
     "renderer PTY output must buffer nonblocking socket short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "let eof = Data\\(\\[UInt8\\(4\\)\\]\\)" \
+    "managed_user helper EOF must send Ctrl-D data instead of closing the PTY master"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "session\\.pendingInput\\.append\\(eof\\)" \
+    "managed_user helper EOF must use the pending input queue"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \

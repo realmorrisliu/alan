@@ -1763,15 +1763,18 @@ private final class AlanPrivilegedHelperPTYSessionStore {
         guard let session = sessions[sessionID] else {
             return rejected(.closeManagedUserPTYInput, sessionID: sessionID, message: "Managed User PTY session is missing.")
         }
+        guard session.masterFileDescriptor >= 0 else {
+            return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: "Managed User PTY input stream is closed.")
+        }
+        let eof = Data([UInt8(4)])
+        guard session.pendingInput.count <= Self.maxPendingInputBytes - eof.count else {
+            return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: "Managed User PTY input queue is full.")
+        }
+        session.pendingInput.append(eof)
         if case .failure(let diagnostic) = drainPendingInput(session) {
             return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: diagnostic.sanitizedMessage)
         }
-        guard session.pendingInput.isEmpty else {
-            return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: "Managed User PTY input is still draining.")
-        }
-        close(session.masterFileDescriptor)
-        session.masterFileDescriptor = -1
-        return accepted(.closeManagedUserPTYInput, session: session, message: "Privileged helper closed PTY input.")
+        return accepted(.closeManagedUserPTYInput, session: session, message: "Privileged helper sent PTY EOF.")
     }
 
     func signal(_ request: AlanXPCManagedUserPTYSignalRequest) -> AlanXPCManagedUserPTYControlResult {
