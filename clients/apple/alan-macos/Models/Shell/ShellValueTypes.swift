@@ -809,6 +809,7 @@ struct AlanManagedUserPTYStartRequest: Codable, Equatable {
     let channelID: String
     let accountName: String
     let homeDirectory: String
+    let workingDirectory: String
     let shell: String
     let contentID: String
     let columns: Int

@@ -33,7 +33,7 @@ source_kind() {
     if [ -n "${ALAN_GHOSTTY_REPO:-}" ]; then
         printf 'override-repo\n'
     elif has_artifact_override; then
-        printf 'submodule-with-artifact-overrides\n'
+        printf 'artifact-overrides\n'
     else
         printf 'submodule\n'
     fi
@@ -98,6 +98,10 @@ ensure_default_ghostty_repo() {
     local mode="${1:-prepare}"
 
     if [ -n "${ALAN_GHOSTTY_REPO:-}" ]; then
+        return 0
+    fi
+
+    if has_artifact_override; then
         return 0
     fi
 

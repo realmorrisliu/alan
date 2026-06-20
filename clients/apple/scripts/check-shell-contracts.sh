@@ -572,6 +572,16 @@ require_semantic_terminal_actions_contract() {
         "verifiesSemanticCommandFallbacksAndInvalidation" \
         "surface controller tests must prove semantic command fallback and invalidation behavior"
 
+    require_pattern \
+        "clients/apple/scripts/setup-local-ghosttykit.sh" \
+        "artifact-overrides" \
+        "Ghostty artifact overrides must be treated as artifact-only sources, not submodule sources"
+
+    require_pattern \
+        "clients/apple/scripts/setup-local-ghosttykit.sh" \
+        "if has_artifact_override; then" \
+        "Ghostty artifact override setup must skip default submodule initialization"
+
     reject_pattern \
         "clients/apple/alan-macos" \
         "CommandBrowser|CommandBlock|CommandOutputSegment|commandBrowser|commandBlocks|outputSegmentation|visibleCommandBlocks" \

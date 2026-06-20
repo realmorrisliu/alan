@@ -574,6 +574,7 @@ final class AlanHelperManagedUserPtyProvider: AlanManagedUserPtyProviding {
             channelID: status.identity.channelID,
             accountName: accountName,
             homeDirectory: ManagedTerminalAccountRequest.canonicalHomeDirectory(for: accountName),
+            workingDirectory: bootRequest.workingDirectory,
             shell: shell,
             contentID: contentID,
             columns: defaultDimensions.columns,

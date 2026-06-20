@@ -896,6 +896,7 @@ private struct AlanXPCManagedUserPTYStartRequest: Codable, Equatable {
     let channelID: String
     let accountName: String
     let homeDirectory: String
+    let workingDirectory: String
     let shell: String
     let contentID: String
     let columns: Int
@@ -1613,8 +1614,11 @@ private final class AlanPrivilegedHelperPTYSessionStore {
             let shellName = URL(fileURLWithPath: request.shell).lastPathComponent
             let argvValues = ["-\(shellName)"]
             let envValues = helperEnvironment(accountName: request.accountName, home: request.homeDirectory, shell: request.shell)
+            let workingDirectory = request.workingDirectory.isEmpty
+                ? request.homeDirectory
+                : request.workingDirectory
             let spawnResult = request.shell.withCString { executable in
-                request.homeDirectory.withCString { workingDirectory in
+                workingDirectory.withCString { workingDirectory in
                     request.accountName.withCString { accountName in
                         withCStringArray(argvValues) { argv in
                             withCStringArray(envValues) { envp in

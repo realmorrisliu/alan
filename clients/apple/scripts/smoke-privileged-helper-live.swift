@@ -99,6 +99,7 @@ struct PrivilegedHelperLiveSmoke {
             channelID: identity.channelID,
             accountName: request.accountName,
             homeDirectory: request.homeDirectory,
+            workingDirectory: request.homeDirectory,
             shell: request.shell,
             contentID: "privileged-helper-live-smoke-\(UUID().uuidString)",
             columns: 80,
