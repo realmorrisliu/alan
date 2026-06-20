@@ -1,4 +1,4 @@
-use alan_runtime::InstallChannel;
+use alan_runtime::{INSTALL_CHANNEL_ENV, InstallChannel};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -550,13 +550,20 @@ fn resolve_target_for_channel_with_env(
 }
 
 fn shell_cli_channel() -> InstallChannel {
+    let env_override = std::env::var(INSTALL_CHANNEL_ENV).ok();
     let argv0 = std::env::args_os().next();
-    let argv0_channel = argv0
+    let argv0_name = argv0
         .as_deref()
         .and_then(|path| Path::new(path).file_name())
-        .and_then(OsStr::to_str)
-        .and_then(InstallChannel::from_executable_name);
-    argv0_channel.unwrap_or_else(InstallChannel::detect_current)
+        .and_then(OsStr::to_str);
+    shell_cli_channel_from_inputs(env_override.as_deref(), argv0_name)
+}
+
+fn shell_cli_channel_from_inputs(
+    env_override: Option<&str>,
+    argv0_name: Option<&str>,
+) -> InstallChannel {
+    InstallChannel::detect_from_env_and_executable(env_override, argv0_name)
 }
 
 fn shell_control_path_is_compatible(path: &Path, channel: InstallChannel) -> bool {
@@ -904,6 +911,22 @@ mod tests {
             target
                 .socket_path
                 .ends_with("alan-dev-shell-control/window_main/shell.sock")
+        );
+    }
+
+    #[test]
+    fn shell_cli_channel_prefers_environment_over_stable_cli_name() {
+        assert_eq!(
+            shell_cli_channel_from_inputs(Some("dev"), Some("alan")),
+            InstallChannel::Dev
+        );
+    }
+
+    #[test]
+    fn shell_cli_channel_prefers_environment_over_dev_cli_name() {
+        assert_eq!(
+            shell_cli_channel_from_inputs(Some("stable"), Some("alan-dev")),
+            InstallChannel::Stable
         );
     }
 
