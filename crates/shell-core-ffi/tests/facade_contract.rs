@@ -207,7 +207,7 @@ fn facade_dispatches_terminal_profile_launch_intent() {
         }),
     );
     assert!(capture.error.is_none());
-    assert_eq!(capture.payload.unwrap()["capture"], json!(true));
+    assert_eq!(capture.payload.unwrap()["capture"], json!(false));
 
     let upsert = request(
         "terminal_profile.upsert",

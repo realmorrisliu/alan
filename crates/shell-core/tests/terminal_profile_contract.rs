@@ -5,12 +5,12 @@ use alan_shell_core::{
     ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
     ManagedTerminalAccountSudoersRule, ManagedTerminalAccountSudoersState,
     ManagedTerminalAccountVerificationStatus, ManagedTerminalAccountVerificationStep,
-    TerminalExecutableAvailability,
-    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalLaunchStrategy,
-    TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileEditor,
-    TerminalProfileEditorDraft, TerminalProfileLaunch, TerminalProfileLaunchKind,
-    TerminalProfilePresentation, TerminalProfileResolutionState, TerminalProfileValidationError,
-    TerminalProfileValidator, shell_quoted, should_capture_global_default_terminal_profile,
+    TerminalExecutableAvailability, TerminalLaunchEnvironment, TerminalLaunchIntent,
+    TerminalLaunchStrategy, TerminalProfileDefinition, TerminalProfileDocument,
+    TerminalProfileEditor, TerminalProfileEditorDraft, TerminalProfileLaunch,
+    TerminalProfileLaunchKind, TerminalProfilePresentation, TerminalProfileResolutionState,
+    TerminalProfileValidationError, TerminalProfileValidator, shell_quoted,
+    should_capture_global_default_terminal_profile,
 };
 use serde_json::json;
 use std::collections::BTreeMap;

@@ -166,6 +166,7 @@ fn move_tab_to_space_requires_explicit_target_and_move_shortcut_stays_unavailabl
     );
 }
 
+#[test]
 fn pane_zoom_and_movement_follow_split_tree_availability() {
     let registry = ShellActionRegistry::standard();
     let single = single_tab_workspace();
