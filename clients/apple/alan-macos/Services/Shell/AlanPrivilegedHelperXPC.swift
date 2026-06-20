@@ -1100,7 +1100,37 @@ private final class AlanPrivilegedHelperManagedUserService {
         }
 
         var completed: [AlanXPCManagedUserHelperPlanStepKind] = []
+        var destructiveAccountRecord: AlanManagedUserAccountRecord?
         for step in plan.steps {
+            switch step.kind {
+            case .deleteAccount:
+                let revalidation = managedAccountRecordForDestructiveDeletion(plan.request)
+                guard let account = revalidation.account else {
+                    return failedApply(
+                        completed: completed,
+                        failed: step.kind,
+                        message: revalidation.message
+                    )
+                }
+                destructiveAccountRecord = account
+            case .deleteHomeDirectory:
+                let revalidation = validateHomeDeletionStillManaged(
+                    plan.request,
+                    originalAccount: destructiveAccountRecord
+                )
+                guard revalidation.succeeded else {
+                    return failedApply(
+                        completed: completed,
+                        failed: step.kind,
+                        message: revalidation.message
+                    )
+                }
+            case .createStandardAccount, .repairAccountType, .repairHomeDirectory, .repairShell,
+                    .hideAccount, .writeOwnershipMarker, .verifyAccount, .cleanupLegacySudoers,
+                    .verifyManagedUserPTY, .removeManagedUserIntegration:
+                break
+            }
+
             let result = apply(step: step, request: plan.request, ptySessions: ptySessions)
             guard result.succeeded else {
                 return failedApply(
@@ -1117,6 +1147,50 @@ private final class AlanPrivilegedHelperManagedUserService {
             cancelled: false,
             visibleDiagnostics: ["Privileged helper applied the Managed User plan. Credentials redacted."]
         )
+    }
+
+    private func managedAccountRecordForDestructiveDeletion(
+        _ request: AlanXPCManagedTerminalAccountRequest
+    ) -> (account: AlanManagedUserAccountRecord?, message: String) {
+        guard let account = accountRecord(for: request.accountName) else {
+            return (nil, "Privileged helper refused destructive deletion for a missing Managed User.")
+        }
+        guard destructiveOwnershipEvidenceExists(for: request) else {
+            return (
+                nil,
+                "Privileged helper refused destructive deletion because Alan ownership could not be revalidated."
+            )
+        }
+        return (account, "Managed User destructive ownership revalidated.")
+    }
+
+    private func validateHomeDeletionStillManaged(
+        _ request: AlanXPCManagedTerminalAccountRequest,
+        originalAccount: AlanManagedUserAccountRecord?
+    ) -> (succeeded: Bool, message: String) {
+        guard destructiveOwnershipEvidenceExists(for: request) else {
+            return (
+                false,
+                "Privileged helper refused home deletion because Alan ownership could not be revalidated."
+            )
+        }
+        if let currentAccount = accountRecord(for: request.accountName),
+           let originalAccount,
+           currentAccount.uid != originalAccount.uid
+        {
+            return (
+                false,
+                "Privileged helper refused home deletion because the Managed User identity changed."
+            )
+        }
+        return (true, "Managed User home deletion ownership revalidated.")
+    }
+
+    private func destructiveOwnershipEvidenceExists(
+        for request: AlanXPCManagedTerminalAccountRequest
+    ) -> Bool {
+        fileManager.fileExists(atPath: ownershipMarkerPath(for: request))
+            || verifiedLegacySudoersPath(for: request) != nil
     }
 
     func removeIntegration(

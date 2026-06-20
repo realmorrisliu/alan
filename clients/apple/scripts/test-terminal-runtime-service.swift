@@ -989,6 +989,28 @@ private enum TerminalRuntimeServiceTests {
             transcriptObserved,
             "managed_user renderer attachment must update the fallback transcript from helper output"
         )
+
+        helper.exitObservationsBySessionID["fake-content_terminal_managed_user_renderer"] =
+            AlanManagedUserPTYExitObservation(
+                sessionID: "fake-content_terminal_managed_user_renderer",
+                final: true,
+                exitCode: 0,
+                terminatingSignal: nil,
+                sanitizedMessage: "Fake helper PTY session exited."
+            )
+        let exitedSnapshot = handle.snapshot
+        expect(
+            exitedSnapshot.exitStatus?.diagnosticsValue == "exit:0",
+            "managed_user renderer attachment must preserve helper-reported exit status"
+        )
+        helper.deniedOperation = .readManagedUserPTY
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let stableExitSnapshot = handle.snapshot
+        expect(
+            stableExitSnapshot.exitStatus?.diagnosticsValue == "exit:0"
+                && stableExitSnapshot.phase == .exited,
+            "managed_user renderer read failures after exit must not replace exited state with failure"
+        )
     }
 
     private static func verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer() {

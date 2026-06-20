@@ -34,6 +34,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped()
             try testPrivilegedHelperPtyInputPreservesShortWrites()
             try testPrivilegedHelperManagedUserApplyUsesLongTimeout()
+            try testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes()
             try testPrivilegedHelperRequestValidationIsNarrowAndSanitized()
             try testManagedUserHelperBackedPathForbidsLegacyExecutorFallback()
             try testLocalSummaryReadsHostConfigForDaemonEndpoint()
@@ -583,6 +584,29 @@ private func testPrivilegedHelperManagedUserApplyUsesLongTimeout() throws {
             && client.contains("case .applyManagedUserPlan:")
             && client.contains("return max(timeoutSeconds, Self.managedUserApplyTimeoutSeconds)"),
         "managed_user helper apply XPC requests must use the long apply budget instead of the 5s default"
+    )
+}
+
+private func testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes() throws {
+    let helperSource = try readRepositoryFile(
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
+    )
+    let apply = try sourceSlice(
+        named: "func apply(\n        plan: AlanXPCManagedUserHelperPlan,",
+        in: helperSource,
+        endingBefore: "func removeIntegration"
+    )
+
+    try expect(
+        apply.contains("var destructiveAccountRecord: AlanManagedUserAccountRecord?")
+            && apply.contains("case .deleteAccount:")
+            && apply.contains("managedAccountRecordForDestructiveDeletion(plan.request)")
+            && apply.contains("destructiveAccountRecord = account")
+            && apply.contains("case .deleteHomeDirectory:")
+            && apply.contains("validateHomeDeletionStillManaged(")
+            && apply.contains("destructiveOwnershipEvidenceExists(for: request)")
+            && apply.contains("currentAccount.uid != originalAccount.uid"),
+        "helper apply must revalidate Alan ownership before destructive account/home deletes"
     )
 }
 

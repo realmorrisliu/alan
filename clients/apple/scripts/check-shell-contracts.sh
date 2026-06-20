@@ -750,8 +750,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \
-    "final PTY output before projecting helper exit" \
-    "managed_user helper PTY tests must cover final output draining before exit projection"
+    "readRequestsBeforeExitSnapshot" \
+    "managed_user helper PTY tests must count reads before exit projection"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "keep reading until the helper reports an idle/final chunk" \
+    "managed_user helper PTY tests must cover full final-output draining before exit projection"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \

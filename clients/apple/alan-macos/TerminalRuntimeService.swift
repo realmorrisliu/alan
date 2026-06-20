@@ -921,6 +921,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         if exitStatus != nil {
             inputClosed = true
             phase = .exited
+            invalidateRendererProxy()
         }
     }
 
@@ -963,6 +964,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
             observedFinalOutputChunk = true
             inputClosed = true
             phase = .exited
+            invalidateRendererProxy()
         }
         guard !chunk.data.isEmpty else { return }
         let text = String(decoding: chunk.data, as: UTF8.self)
@@ -976,15 +978,22 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
 
     @MainActor
     fileprivate func applyHelperOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
+        guard exitStatus == nil else { return }
         inputClosed = true
         phase = .failed
         exitStatus = .unknown
+        invalidateRendererProxy()
         transcriptRingBufferLines.append(diagnostic.sanitizedMessage)
     }
 
     @MainActor
     fileprivate func recordHelperAcceptedInput(byteCount: Int) {
         acceptedInputBytes += byteCount
+    }
+
+    private func invalidateRendererProxy() {
+        rendererProxy?.invalidate()
+        rendererProxy = nil
     }
 
 }
