@@ -150,8 +150,6 @@ extension ShellHostController {
         ratio: Double? = nil,
         changedSplitIDs: [String]? = nil,
         affectedPaneIDs: [String]? = nil,
-        terminalGridLayoutPolicy: TerminalGridLayoutPolicy? = nil,
-        terminalGridLayoutEffects: [TerminalGridLayoutEffect]? = nil,
         zoomedPaneID: String? = nil,
         sourceTabID: String? = nil,
         targetTabID: String? = nil,
@@ -212,8 +210,6 @@ extension ShellHostController {
             ratio: ratio,
             changedSplitIDs: changedSplitIDs,
             affectedPaneIDs: affectedPaneIDs,
-            terminalGridLayoutPolicy: terminalGridLayoutPolicy,
-            terminalGridLayoutEffects: terminalGridLayoutEffects,
             zoomedPaneID: zoomedPaneID,
             sourceTabID: sourceTabID,
             targetTabID: targetTabID,
@@ -1299,14 +1295,6 @@ extension ShellHostController {
             }
 
             let affectedPaneIDs = updatedSplit.paneIDs
-            let gridEffects = terminalGridLayoutEffects(
-                for: affectedPaneIDs,
-                in: result.state
-            )
-            let isTerminalOnly = affectedPaneSlotsAreTerminalOnly(
-                affectedPaneIDs,
-                in: result.state
-            )
             applyMutationResult(result)
             return response(
                 requestID: command.requestID,
@@ -1318,9 +1306,7 @@ extension ShellHostController {
                 splitNodeID: splitNodeID,
                 ratio: updatedSplit.splitRatio,
                 changedSplitIDs: [splitNodeID],
-                affectedPaneIDs: affectedPaneIDs,
-                terminalGridLayoutPolicy: isTerminalOnly ? gridEffects?.first?.layoutPolicy : nil,
-                terminalGridLayoutEffects: gridEffects
+                affectedPaneIDs: affectedPaneIDs
             )
         } catch {
             return response(
@@ -1396,14 +1382,6 @@ extension ShellHostController {
             }
 
             let affectedPaneIDs = updatedTab.paneTree.paneIDs
-            let gridEffects = terminalGridLayoutEffects(
-                for: affectedPaneIDs,
-                in: result.state
-            )
-            let isTerminalOnly = affectedPaneSlotsAreTerminalOnly(
-                affectedPaneIDs,
-                in: result.state
-            )
             applyMutationResult(result)
             controlPlane.recordSplitEqualized(
                 requestID: command.requestID,
@@ -1421,9 +1399,7 @@ extension ShellHostController {
                 latestEventID: controlPlane.latestEventID,
                 ratio: 0.5,
                 changedSplitIDs: changedSplitIDs,
-                affectedPaneIDs: affectedPaneIDs,
-                terminalGridLayoutPolicy: isTerminalOnly ? gridEffects?.first?.layoutPolicy : nil,
-                terminalGridLayoutEffects: gridEffects
+                affectedPaneIDs: affectedPaneIDs
             )
         } catch {
             return response(
@@ -1433,30 +1409,6 @@ extension ShellHostController {
                 errorCode: "tab_not_found",
                 errorMessage: "The requested tab does not exist."
             )
-        }
-    }
-
-    private func terminalGridLayoutEffects(
-        for affectedPaneIDs: [String],
-        in state: ShellStateSnapshot
-    ) -> [TerminalGridLayoutEffect]? {
-        let effects = affectedPaneIDs.compactMap { paneID -> TerminalGridLayoutEffect? in
-            guard let diagnostics = state.pane(paneID: paneID)?.context?.terminalGridDiagnostics else {
-                return nil
-            }
-            return TerminalGridLayoutEffect(paneID: paneID, diagnostics: diagnostics)
-        }
-        return effects.isEmpty ? nil : effects
-    }
-
-    private func affectedPaneSlotsAreTerminalOnly(
-        _ affectedPaneIDs: [String],
-        in state: ShellStateSnapshot
-    ) -> Bool {
-        guard !affectedPaneIDs.isEmpty else { return false }
-        let contentState = state.contentStateProjection()
-        return affectedPaneIDs.allSatisfy { paneID in
-            contentState.contentMounted(in: paneID)?.kind == .terminal
         }
     }
 

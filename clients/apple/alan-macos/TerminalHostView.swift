@@ -137,16 +137,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         publishRuntimeSnapshot()
     }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        let previousSize = frame.size
-        super.setFrameSize(newSize)
-        guard previousSize != newSize else { return }
-        layoutSubtreeIfNeeded()
-        synchronizeLiveHost()
-        syncNativeScrollback()
-        publishRuntimeSnapshot()
-    }
-
     override func layout() {
         super.layout()
         synchronizeLiveHost()
@@ -408,7 +398,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             renderer: rendererSnapshot,
             paneMetadata: paneMetadata,
             surfaceState: surfaceState,
-            terminalGridDiagnostics: surfaceState.terminalGridDiagnostics,
             lastUpdatedAt: .now
         )
         runtimeReporter.publish(snapshot, observer: runtimeObserver)

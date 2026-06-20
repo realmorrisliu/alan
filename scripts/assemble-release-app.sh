@@ -102,6 +102,13 @@ sign_path() {
     codesign "${args[@]}" "$path"
 }
 
+verify_dylib_loadable() {
+    local dylib="$1"
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$dylib" ||
+        fail "shell-core FFI dylib is not loadable: $dylib"
+}
+
 thin_macho_to_arm64() {
     local path="$1"
     local archs
@@ -250,15 +257,22 @@ printf 'Verifying shell-core FFI dylib architecture...\n'
 thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-printf 'Signing embedded binaries...\n'
+printf 'Signing embedded alan binary...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
-sign_path "$SHELL_CORE_FFI_DYLIB"
 
 printf 'Thinning Sparkle framework to arm64...\n'
 thin_sparkle_to_arm64
 
 printf 'Signing Sparkle framework and helper...\n'
 sign_sparkle_code
+
+printf 'Signing shell core FFI library...\n'
+[[ -f "$SHELL_CORE_FFI_DYLIB" ]] ||
+    fail "shell core FFI library was not embedded: $SHELL_CORE_FFI_DYLIB"
+thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
+sign_path "$SHELL_CORE_FFI_DYLIB"
+codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
+verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
 
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
@@ -288,16 +302,10 @@ cat >"$MANIFEST_PATH" <<EOF
 }
 EOF
 
-printf 'Signing shell core FFI library...\n'
-[[ -f "$SHELL_CORE_FFI_DYLIB" ]] ||
-    fail "shell core FFI library was not embedded: $SHELL_CORE_FFI_DYLIB"
-thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
-sign_path "$SHELL_CORE_FFI_DYLIB"
-codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
-
 printf 'Signing app bundle...\n'
 sign_path "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
+verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
 ZIP_PATH=""

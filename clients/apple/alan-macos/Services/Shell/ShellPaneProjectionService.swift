@@ -131,9 +131,6 @@ struct ShellPaneProjectionService {
             inputReady: runtime?.surfaceState.inputReady ?? existing?.inputReady,
             readonly: runtime?.surfaceState.readonly ?? existing?.readonly,
             terminalMode: runtime?.surfaceState.terminalMode.rawValue ?? existing?.terminalMode,
-            terminalGridDiagnostics: runtime?.terminalGridDiagnostics
-                ?? runtime?.surfaceState.terminalGridDiagnostics
-                ?? existing?.terminalGridDiagnostics,
             displayName: runtime?.displayName ?? existing?.displayName,
             displayID: runtime?.displayID ?? existing?.displayID,
             windowTitle: runtime?.attachedWindowTitle ?? existing?.windowTitle,

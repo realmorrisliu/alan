@@ -157,24 +157,6 @@ final class AlanGhosttyLiveHost: NSObject {
         )
     }
 
-    var terminalCellMetrics: TerminalGridCellMetrics? {
-        guard let surface, let canvasView else { return nil }
-        let size = ghostty_surface_size(surface)
-        guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
-        let logicalSize = canvasView.bounds.size
-        let backingSize = canvasView.convertToBacking(canvasView.bounds).size
-        guard logicalSize.width > 0, logicalSize.height > 0 else { return nil }
-        guard backingSize.width > 0, backingSize.height > 0 else { return nil }
-
-        let xScale = Double(backingSize.width / logicalSize.width)
-        let yScale = Double(backingSize.height / logicalSize.height)
-        guard xScale > 0, yScale > 0 else { return nil }
-        return TerminalGridCellMetrics(
-            widthPoints: Double(size.cell_width_px) / xScale,
-            heightPoints: Double(size.cell_height_px) / yScale
-        )
-    }
-
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e {
         guard let surface else { return mods }
         return ghostty_surface_key_translation_mods(surface, mods)

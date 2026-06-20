@@ -36,6 +36,77 @@ enum ShellActionID: String, Codable, CaseIterable, Identifiable, Hashable {
     case spaceSelectByIndex = "shell.space.select_by_index"
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .newTerminalTab:
+            return "New Terminal Tab"
+        case .tabClose:
+            return "Close Tab"
+        case .tabRename:
+            return "Rename..."
+        case .tabDuplicate:
+            return "Duplicate Tab"
+        case .tabOpenInSplitView:
+            return "Open in Split View"
+        case .tabSelectPrevious:
+            return "Previous Tab"
+        case .tabSelectNext:
+            return "Next Tab"
+        case .tabPin:
+            return "Pin Tab"
+        case .tabUnpin:
+            return "Unpin Tab"
+        case .tabUpdatePin:
+            return "Update Pin"
+        case .tabMoveLeft:
+            return "Move Tab Left"
+        case .tabMoveRight:
+            return "Move Tab Right"
+        case .tabMoveToSpace:
+            return "Move Tab to Space..."
+        case .paneSplitLeft:
+            return "Split Left"
+        case .paneSplitRight:
+            return "Split Right"
+        case .paneSplitUp:
+            return "Split Up"
+        case .paneSplitDown:
+            return "Split Down"
+        case .paneFocusLeft:
+            return "Focus Pane Left"
+        case .paneFocusRight:
+            return "Focus Pane Right"
+        case .paneFocusUp:
+            return "Focus Pane Up"
+        case .paneFocusDown:
+            return "Focus Pane Down"
+        case .paneEqualizeSplits:
+            return "Equalize Splits"
+        case .paneZoomToggle:
+            return "Zoom / Unzoom Pane"
+        case .paneMoveLeft:
+            return "Move Pane Left"
+        case .paneMoveRight:
+            return "Move Pane Right"
+        case .paneMoveUp:
+            return "Move Pane Up"
+        case .paneMoveDown:
+            return "Move Pane Down"
+        case .paneClose:
+            return "Close Pane"
+        case .terminalClear:
+            return "Clear Terminal"
+        case .findOpen:
+            return "Find"
+        case .spaceSelectPrevious:
+            return "Previous Space"
+        case .spaceSelectNext:
+            return "Next Space"
+        case .spaceSelectByIndex:
+            return "Select Space"
+        }
+    }
 }
 
 enum ShellActionTarget: Equatable {
@@ -195,6 +266,121 @@ struct ShellActionShortcut: Hashable {
             key: String(index + 1),
             modifiers: [.command, .option],
             context: .shell
+        )
+    }
+}
+
+enum ShellActionMetadataCatalog {
+    static func keyboardAction(for shortcut: ShellActionShortcut) -> ShellKeyboardAction? {
+        let normalized = normalize(shortcut)
+        if normalized.context == .shell,
+           normalized.modifiers == [.command, .option],
+           let value = Int(normalized.key),
+           (1...9).contains(value)
+        {
+            return ShellKeyboardAction(
+                id: .spaceSelectByIndex,
+                target: .spaceIndex(value - 1)
+            )
+        }
+
+        for id in ShellActionID.allCases {
+            guard let defaultShortcut = self.shortcut(id),
+                  normalize(defaultShortcut) == normalized
+            else {
+                continue
+            }
+            return ShellKeyboardAction(id: id, target: .currentSelection)
+        }
+        return nil
+    }
+
+    static func shortcut(
+        _ id: ShellActionID,
+        target: ShellActionTarget = .currentSelection
+    ) -> ShellActionShortcut? {
+        if case .spaceSelectByIndex = id,
+           case .spaceIndex(let index) = target
+        {
+            return ShellActionShortcut.spaceSelection(index: index)
+        }
+
+        switch id {
+        case .newTerminalTab:
+            return shortcut("t", [.command])
+        case .tabClose:
+            return shortcut("w", [.command])
+        case .tabSelectPrevious:
+            return shortcut("[", [.command, .shift])
+        case .tabSelectNext:
+            return shortcut("]", [.command, .shift])
+        case .tabMoveLeft:
+            return shortcut("leftArrow", [.command, .option, .shift])
+        case .tabMoveRight:
+            return shortcut("rightArrow", [.command, .option, .shift])
+        case .paneSplitLeft:
+            return shortcut("d", [.command, .option])
+        case .paneSplitRight:
+            return shortcut("d", [.command])
+        case .paneSplitUp:
+            return shortcut("d", [.command, .option, .shift])
+        case .paneSplitDown:
+            return shortcut("d", [.command, .shift])
+        case .paneFocusLeft:
+            return shortcut("leftArrow", [.command, .control])
+        case .paneFocusRight:
+            return shortcut("rightArrow", [.command, .control])
+        case .paneFocusUp:
+            return shortcut("upArrow", [.command, .control])
+        case .paneFocusDown:
+            return shortcut("downArrow", [.command, .control])
+        case .paneEqualizeSplits:
+            return shortcut("=", [.command, .option])
+        case .paneZoomToggle:
+            return shortcut("return", [.command, .shift])
+        case .paneMoveLeft:
+            return shortcut("leftArrow", [.command, .control, .shift])
+        case .paneMoveRight:
+            return shortcut("rightArrow", [.command, .control, .shift])
+        case .paneMoveUp:
+            return shortcut("upArrow", [.command, .control, .shift])
+        case .paneMoveDown:
+            return shortcut("downArrow", [.command, .control, .shift])
+        case .paneClose:
+            return shortcut("w", [.command, .shift])
+        case .terminalClear:
+            return shortcut("k", [.command])
+        case .findOpen:
+            return shortcut("f", [.command])
+        case .spaceSelectPrevious:
+            return shortcut("leftArrow", [.command, .option])
+        case .spaceSelectNext:
+            return shortcut("rightArrow", [.command, .option])
+        case .tabRename,
+             .tabDuplicate,
+             .tabOpenInSplitView,
+             .tabPin,
+             .tabUnpin,
+             .tabUpdatePin,
+             .tabMoveToSpace,
+             .spaceSelectByIndex:
+            return nil
+        }
+    }
+
+    private static func shortcut(
+        _ key: String,
+        _ modifiers: Set<ShellActionModifier>,
+        context: ShellActionShortcutContext = .shell
+    ) -> ShellActionShortcut {
+        ShellActionShortcut(key: key, modifiers: modifiers, context: context)
+    }
+
+    private static func normalize(_ shortcut: ShellActionShortcut) -> ShellActionShortcut {
+        ShellActionShortcut(
+            key: shortcut.key,
+            modifiers: Set(shortcut.modifiers),
+            context: shortcut.context
         )
     }
 }

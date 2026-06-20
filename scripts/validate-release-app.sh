@@ -64,6 +64,13 @@ require_developer_id_signature() {
     fi
 }
 
+require_dylib_loadable() {
+    local path="$1"
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$path" ||
+        fail "dylib is not loadable: $path"
+}
+
 manifest_value() {
     local key="$1"
 
@@ -107,6 +114,7 @@ require_manifest_checksum() {
 
 require_command codesign
 require_command lipo
+require_command python3
 require_command shasum
 if [[ "${ALAN_VALIDATE_NOTARIZATION:-0}" == "1" ]]; then
     require_command xcrun
@@ -170,6 +178,7 @@ require_manifest_checksum "$SHELL_CORE_FFI_DYLIB_NAME" "$SHELL_CORE_FFI_DYLIB"
 require_arm64_macho "$APP_EXECUTABLE"
 require_arm64_macho "$ALAN_BIN"
 require_arm64_macho "$SHELL_CORE_FFI_DYLIB"
+require_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
 require_arm64_macho "$SPARKLE_AUTOUPDATE"
 require_arm64_macho "$SPARKLE_FRAMEWORK_BIN"
 require_arm64_macho "$SPARKLE_UPDATER_BIN"

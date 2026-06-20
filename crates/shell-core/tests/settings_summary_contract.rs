@@ -57,6 +57,7 @@ fn managed_account_rows_project_plan_status_and_detail() {
         sudoers: ManagedTerminalAccountSudoersState::Missing,
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: false,
     };
     let plan = ManagedTerminalAccountPlanner::plan(request, &state);
     let summary = ManagedTerminalAccountSettingsSummary { plans: vec![plan] };

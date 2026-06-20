@@ -667,6 +667,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     private var cleanupRequested = false
     private var transcriptRingBufferLines: [String] = []
     private var rendererProxy: AlanHelperManagedUserPtyRendererProxy?
+    private let helperQueue: DispatchQueue
 
     init(
         contentID: String,
@@ -680,6 +681,10 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         self.helperClient = helperClient
         self.session = session
         self.dimensions = initialDimensions
+        self.helperQueue = DispatchQueue(
+            label: "dev.alan.terminal.managed-user-pty.\(contentID)",
+            qos: .userInteractive
+        )
     }
 
     deinit {
@@ -687,6 +692,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     }
 
     var snapshot: AlanTerminalPtyRuntimeSnapshot {
+        applyPendingProxyOutput()
         refreshExitObservation()
         _ = drainAvailableOutput()
         return AlanTerminalPtyRuntimeSnapshot(
@@ -845,11 +851,16 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
 
         setNonBlockingFileDescriptor(descriptors[0])
         setNonBlockingFileDescriptor(descriptors[1])
+        setNoSigpipeSocketOption(descriptors[0])
+        setNoSigpipeSocketOption(descriptors[1])
 
         rendererProxy?.invalidate()
         let proxy = AlanHelperManagedUserPtyRendererProxy(
             ptyHandle: self,
-            hostFileDescriptor: descriptors[0]
+            helperClient: helperClient,
+            sessionID: session.sessionID,
+            hostFileDescriptor: descriptors[0],
+            ioQueue: helperQueue
         )
         rendererProxy = proxy
         proxy.start()
@@ -906,63 +917,90 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     @discardableResult
     fileprivate func drainAvailableOutput(maxBytes: Int = 4096) -> Data {
         guard exitStatus == nil else { return Data() }
-        switch helperClient.readManagedUserPTY(
-            AlanManagedUserPTYReadRequest(
-                sessionID: session.sessionID,
-                maxBytes: maxBytes
-            )
-        ) {
-        case .success(let chunk):
-            if chunk.final {
-                inputClosed = true
-                phase = .exited
-                exitStatus = .unknown
-            }
-            guard !chunk.data.isEmpty else { return Data() }
-            let text = String(decoding: chunk.data, as: UTF8.self)
-            transcriptRingBufferLines.append(contentsOf: transcriptLines(from: text))
-            if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
-                transcriptRingBufferLines = Array(
-                    transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+        switch helperQueue.sync(execute: {
+            helperClient.readManagedUserPTY(
+                AlanManagedUserPTYReadRequest(
+                    sessionID: session.sessionID,
+                    maxBytes: maxBytes
                 )
-            }
+            )
+        }) {
+        case .success(let chunk):
+            applyHelperOutputChunk(chunk)
             return chunk.data
         case .failure(let diagnostic):
-            inputClosed = true
-            phase = .failed
-            exitStatus = .unknown
-            transcriptRingBufferLines.append(diagnostic.sanitizedMessage)
+            applyHelperOutputFailure(diagnostic)
             return Data()
         }
     }
 
-    @discardableResult
-    fileprivate func writeRendererInput(_ data: Data) -> Bool {
-        guard !data.isEmpty, exitStatus == nil, !inputClosed else { return false }
-        let text = String(decoding: data, as: UTF8.self)
-        let result = helperClient.writeManagedUserPTY(
-            AlanManagedUserPTYInputRequest(sessionID: session.sessionID, text: text)
-        )
-        guard result.accepted else { return false }
-        acceptedInputBytes += data.count
-        return true
+    @MainActor
+    fileprivate func applyPendingProxyOutput() {
+        guard let rendererProxy else { return }
+        let updates = rendererProxy.drainPendingOutputUpdates()
+        updates.chunks.forEach(applyHelperOutputChunk)
+        updates.failures.forEach(applyHelperOutputFailure)
     }
+
+    @MainActor
+    fileprivate func applyHelperOutputChunk(_ chunk: AlanManagedUserPTYOutputChunk) {
+        if chunk.final {
+            inputClosed = true
+            phase = .exited
+            exitStatus = .unknown
+        }
+        guard !chunk.data.isEmpty else { return }
+        let text = String(decoding: chunk.data, as: UTF8.self)
+        transcriptRingBufferLines.append(contentsOf: transcriptLines(from: text))
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+    }
+
+    @MainActor
+    fileprivate func applyHelperOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
+        inputClosed = true
+        phase = .failed
+        exitStatus = .unknown
+        transcriptRingBufferLines.append(diagnostic.sanitizedMessage)
+    }
+
+    @MainActor
+    fileprivate func recordHelperAcceptedInput(byteCount: Int) {
+        acceptedInputBytes += byteCount
+    }
+
 }
 
 private final class AlanHelperManagedUserPtyRendererProxy {
     private weak var ptyHandle: AlanHelperManagedUserPtyHandle?
+    private let helperClient: AlanPrivilegedHelperClienting
+    private let sessionID: String
     private let hostFileDescriptor: Int32
+    private let ioQueue: DispatchQueue
+    private let invalidationLock = NSLock()
+    private let pendingOutputLock = NSLock()
     private var rendererInputSource: DispatchSourceRead?
     private var helperOutputTimer: DispatchSourceTimer?
     private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var isInvalidated = false
+    private var pendingOutputChunks: [AlanManagedUserPTYOutputChunk] = []
+    private var pendingOutputFailures: [AlanPrivilegedHelperDiagnostic] = []
 
     init(
         ptyHandle: AlanHelperManagedUserPtyHandle,
-        hostFileDescriptor: Int32
+        helperClient: AlanPrivilegedHelperClienting,
+        sessionID: String,
+        hostFileDescriptor: Int32,
+        ioQueue: DispatchQueue
     ) {
         self.ptyHandle = ptyHandle
+        self.helperClient = helperClient
+        self.sessionID = sessionID
         self.hostFileDescriptor = hostFileDescriptor
+        self.ioQueue = ioQueue
     }
 
     deinit {
@@ -972,12 +1010,10 @@ private final class AlanHelperManagedUserPtyRendererProxy {
     func start() {
         let inputSource = DispatchSource.makeReadSource(
             fileDescriptor: hostFileDescriptor,
-            queue: .main
+            queue: ioQueue
         )
         inputSource.setEventHandler { [weak self] in
-            Task { @MainActor in
-                self?.drainRendererInputOnMainActor()
-            }
+            self?.drainRendererInput()
         }
         inputSource.setCancelHandler { [hostFileDescriptor] in
             close(hostFileDescriptor)
@@ -985,35 +1021,76 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         inputSource.resume()
         rendererInputSource = inputSource
 
-        let timer = DispatchSource.makeTimerSource(queue: .main)
+        let timer = DispatchSource.makeTimerSource(queue: ioQueue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(30))
         timer.setEventHandler { [weak self] in
-            Task { @MainActor in
-                self?.pollHelperOutputOnMainActor()
-            }
+            self?.pollHelperOutput()
         }
         timer.resume()
         helperOutputTimer = timer
     }
 
     func invalidate() {
-        guard !isInvalidated else { return }
-        isInvalidated = true
+        guard markInvalidated() else { return }
         rendererInputSource?.cancel()
         rendererInputSource = nil
         helperOutputTimer?.cancel()
         helperOutputTimer = nil
     }
 
-    @MainActor
-    private func drainRendererInputOnMainActor() {
-        guard !isInvalidated, let ptyHandle else { return }
+    private var invalidated: Bool {
+        invalidationLock.lock()
+        defer { invalidationLock.unlock() }
+        return isInvalidated
+    }
+
+    private func markInvalidated() -> Bool {
+        invalidationLock.lock()
+        defer { invalidationLock.unlock() }
+        guard !isInvalidated else { return false }
+        isInvalidated = true
+        return true
+    }
+
+    fileprivate func drainPendingOutputUpdates() -> (
+        chunks: [AlanManagedUserPTYOutputChunk],
+        failures: [AlanPrivilegedHelperDiagnostic]
+    ) {
+        pendingOutputLock.lock()
+        defer { pendingOutputLock.unlock() }
+        let chunks = pendingOutputChunks
+        let failures = pendingOutputFailures
+        pendingOutputChunks.removeAll()
+        pendingOutputFailures.removeAll()
+        return (chunks, failures)
+    }
+
+    private func enqueueOutputChunk(_ chunk: AlanManagedUserPTYOutputChunk) {
+        pendingOutputLock.lock()
+        pendingOutputChunks.append(chunk)
+        pendingOutputLock.unlock()
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.applyPendingProxyOutput()
+        }
+    }
+
+    private func enqueueOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
+        pendingOutputLock.lock()
+        pendingOutputFailures.append(diagnostic)
+        pendingOutputLock.unlock()
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.applyPendingProxyOutput()
+        }
+    }
+
+    private func drainRendererInput() {
+        guard !invalidated else { return }
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
             let count = Darwin.read(hostFileDescriptor, &buffer, buffer.count)
             if count > 0 {
                 let data = Data(buffer.prefix(count))
-                guard ptyHandle.writeRendererInput(data) else {
+                guard writeHelperInput(data) else {
                     invalidate()
                     return
                 }
@@ -1031,17 +1108,28 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         }
     }
 
-    @MainActor
-    private func pollHelperOutputOnMainActor() {
-        guard !isInvalidated, let ptyHandle else {
+    private func pollHelperOutput() {
+        guard !invalidated else { return }
+        let readResult = helperClient.readManagedUserPTY(
+            AlanManagedUserPTYReadRequest(
+                sessionID: sessionID,
+                maxBytes: 4096
+            )
+        )
+        let output: Data
+        switch readResult {
+        case .success(let chunk):
+            output = chunk.data
+            enqueueOutputChunk(chunk)
+        case .failure(let diagnostic):
+            enqueueOutputFailure(diagnostic)
             invalidate()
             return
         }
-        let output = ptyHandle.drainAvailableOutput()
         guard !output.isEmpty else { return }
 
         let response = controlSequenceResponder.process(output)
-        if response.didRespond, !ptyHandle.writeRendererInput(response.ptyResponse) {
+        if response.didRespond, !writeHelperInput(response.ptyResponse) {
             invalidate()
             return
         }
@@ -1068,6 +1156,19 @@ private final class AlanHelperManagedUserPtyRendererProxy {
             }
         }
     }
+
+    private func writeHelperInput(_ data: Data) -> Bool {
+        guard !data.isEmpty, !invalidated else { return false }
+        let text = String(decoding: data, as: UTF8.self)
+        let result = helperClient.writeManagedUserPTY(
+            AlanManagedUserPTYInputRequest(sessionID: sessionID, text: text)
+        )
+        guard result.accepted else { return false }
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.recordHelperAcceptedInput(byteCount: data.count)
+        }
+        return true
+    }
 }
 
 private func helperPTYRejectionCode(
@@ -1081,6 +1182,17 @@ private func setNonBlockingFileDescriptor(_ fileDescriptor: Int32) {
     let flags = fcntl(fileDescriptor, F_GETFL)
     guard flags >= 0 else { return }
     _ = fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK)
+}
+
+private func setNoSigpipeSocketOption(_ fileDescriptor: Int32) {
+    var enabled: Int32 = 1
+    _ = setsockopt(
+        fileDescriptor,
+        SOL_SOCKET,
+        SO_NOSIGPIPE,
+        &enabled,
+        socklen_t(MemoryLayout<Int32>.size)
+    )
 }
 
 private extension AlanManagedUserPTYSignal {
@@ -1977,7 +2089,6 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? { get }
     var fallbackTranscriptLines: [String] { get }
     var terminalDimensions: AlanTerminalPtyDimensions? { get }
-    var terminalGridDiagnostics: TerminalGridDiagnostics? { get }
     var seededTranscriptSnapshot: TerminalTranscriptSnapshot? { get }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
@@ -2104,53 +2215,6 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 
     var terminalDimensions: AlanTerminalPtyDimensions? {
         ptyHandle?.snapshot.dimensions
-    }
-
-    var terminalGridDiagnostics: TerminalGridDiagnostics? {
-        let hostRuntime = latestHostRuntime
-        let ptyGrid = ptyHandle?.snapshot.dimensions?.terminalGridDimensions
-#if canImport(GhosttyKit)
-        let rendererGrid = liveHost.terminalGridDimensions?.terminalGridDimensions
-        let cellMetrics = liveHost.terminalCellMetrics
-#else
-        let rendererGrid = hostRuntime?.terminalGridDiagnostics?.rendererGrid
-        let cellMetrics = hostRuntime?.terminalGridDiagnostics?.cellPoints.map {
-            TerminalGridCellMetrics(widthPoints: $0.width, heightPoints: $0.height)
-        }
-#endif
-
-        guard hostRuntime != nil || ptyGrid != nil || rendererGrid != nil else { return nil }
-
-        let hostDiagnostics = hostRuntime?.terminalGridDiagnostics
-        let plannedGrid = rendererGrid ?? hostDiagnostics?.plannedGrid
-        let mismatchStatus: TerminalGridMismatchStatus = {
-            guard rendererGrid != nil || ptyGrid != nil || plannedGrid != nil else {
-                return .unavailable
-            }
-            guard let rendererGrid else { return .pending }
-            guard let ptyGrid else { return .pending }
-            return rendererGrid == ptyGrid ? .converged : .mismatch
-        }()
-        let canvasPoints = hostRuntime.map { TerminalGridPointSize($0.logicalSize) }
-        let remainder = terminalGridRemainder(
-            canvasPoints: canvasPoints,
-            grid: plannedGrid,
-            cellMetrics: cellMetrics
-        ) ?? hostDiagnostics?.remainder
-
-        return TerminalGridDiagnostics(
-            plannedGrid: plannedGrid,
-            rendererGrid: rendererGrid,
-            ptyGrid: ptyGrid,
-            canvasPoints: canvasPoints,
-            backingPoints: hostRuntime.map { TerminalGridPointSize($0.backingSize) },
-            cellPoints: hostDiagnostics?.cellPoints
-                ?? cellMetrics?.pointSize,
-            layoutPolicy: hostDiagnostics?.layoutPolicy
-                ?? .maxFit,
-            remainder: remainder,
-            mismatchStatus: mismatchStatus
-        )
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
@@ -2492,21 +2556,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             return rendererGrid
         }
 #endif
-        return latestHostRuntime?.terminalGridDiagnostics?.rendererGrid
-    }
-
-    private func terminalGridRemainder(
-        canvasPoints: TerminalGridPointSize?,
-        grid: TerminalGridDimensions?,
-        cellMetrics: TerminalGridCellMetrics?
-    ) -> TerminalGridRemainder? {
-        guard let canvasPoints, let grid, let cellMetrics, cellMetrics.isAvailable else {
-            return nil
-        }
-        return TerminalGridRemainder(
-            widthPoints: max(0, canvasPoints.width - Double(grid.columns) * cellMetrics.widthPoints),
-            heightPoints: max(0, canvasPoints.height - Double(grid.rows) * cellMetrics.heightPoints)
-        )
+        return nil
     }
 
     private func updateSnapshot(
@@ -3243,10 +3293,6 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     var terminalDimensions: AlanTerminalPtyDimensions? {
         terminalDimensionsOverride
-    }
-
-    var terminalGridDiagnostics: TerminalGridDiagnostics? {
-        latestHostRuntime?.terminalGridDiagnostics
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {

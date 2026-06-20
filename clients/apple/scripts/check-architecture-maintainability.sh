@@ -158,7 +158,6 @@ shell_core_ffi_shared_callsite_owner_allowlist=(
     "Services/Shell/ShellWorkspaceManifestStore.swift"
     "Services/Shell/TerminalProfileStore.swift"
     "TerminalHostRuntime.swift"
-    "TerminalSurfaceController.swift"
 )
 
 shell_core_ffi_direct_init_owner_allowlist=(
@@ -203,6 +202,67 @@ require_shell_core_ffi_raw_symbol_owners() {
             fail "raw shell-core FFI symbols must stay in the loader owner; found in $rel"
         fi
     done < <(grep -RIl --include='*.swift' -F "alan_shell_core_ffi_" "$SOURCE_ROOT" || true)
+}
+
+reject_shell_core_action_metadata_query_ffi() {
+    local matched=0
+    local pattern
+
+    for pattern in \
+        "ShellCoreFFIAdapter.shared.actionTitle" \
+        "ShellCoreFFIAdapter.shared.actionAvailability" \
+        "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
+        "ShellCoreFFIAdapter.shared.keyboardAction" \
+        "actions.standard_descriptors" \
+        "actions.default_shortcut" \
+        "actions.keyboard_action"
+    do
+        if grep -RIn --include='*.swift' -F "$pattern" "$SOURCE_ROOT" >&2; then
+            matched=1
+        fi
+    done
+
+    if [[ "$matched" -ne 0 ]]; then
+        fail "shell action metadata, availability, and keyboard lookup must stay Swift-local; only actual action execution may call shell-core FFI"
+    fi
+}
+
+reject_shell_host_published_terminal_runtime() {
+    local file="$SOURCE_ROOT/ShellHostController.swift"
+
+    if grep -En '@Published[^[:cntrl:]]*terminalRuntime' "$file" >&2; then
+        fail "ShellHostController.terminalRuntime must not be @Published; high-frequency terminal runtime state must not invalidate the whole SwiftUI shell"
+    fi
+}
+
+reject_swiftui_shell_hot_path_sync_boundaries() {
+    local matched=0
+    local pattern
+    local search_roots=(
+        "$SOURCE_ROOT/MacShellRootView.swift"
+        "$SOURCE_ROOT/TerminalHostView.swift"
+        "$SOURCE_ROOT/TerminalPaneView.swift"
+        "$SOURCE_ROOT/Views/Shell"
+    )
+
+    for pattern in \
+        "ShellCoreFFIAdapter" \
+        "ShellReducerCommandCoordinator" \
+        "reducerCoordinator.apply" \
+        "AlanShellLocalCommandExecutor.execute" \
+        "actions.execute" \
+        "actions.standard_descriptors" \
+        "JSONEncoder" \
+        "JSONDecoder"
+    do
+        if grep -RIn --include='*.swift' -F "$pattern" "${search_roots[@]}" >&2; then
+            matched=1
+        fi
+    done
+
+    if [[ "$matched" -ne 0 ]]; then
+        fail "SwiftUI shell render/body/context-menu hot paths must not synchronously call shell-core FFI, JSON codecs, local command executors, or reducers"
+    fi
 }
 
 require_rust_reducer_adapter \
@@ -255,29 +315,9 @@ require_single_owner_pattern \
     "shell-core reducer invocation"
 
 require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.actionTitle" \
-    "Services/Shell/ShellActionCoordinator.swift" \
-    "shell-core action title lookup"
-
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.actionAvailability" \
-    "Services/Shell/ShellActionCoordinator.swift" \
-    "shell-core action availability lookup"
-
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
-    "Services/Shell/ShellActionCoordinator.swift" \
-    "shell-core action shortcut lookup"
-
-require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.executeAction" \
     "Services/Shell/ShellActionCoordinator.swift" \
     "shell-core action execution"
-
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.keyboardAction" \
-    "TerminalSurfaceController.swift" \
-    "shell-core keyboard action lookup"
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.handleControlCommand" \
@@ -362,6 +402,9 @@ require_single_owner_pattern \
 require_shell_core_ffi_shared_callsite_owners
 require_shell_core_ffi_direct_init_owners
 require_shell_core_ffi_raw_symbol_owners
+reject_shell_core_action_metadata_query_ffi
+reject_shell_host_published_terminal_runtime
+reject_swiftui_shell_hot_path_sync_boundaries
 
 printf 'Current Swift inventory:\n'
 while IFS= read -r file; do

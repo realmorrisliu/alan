@@ -189,196 +189,6 @@ struct TerminalGridDimensions: Codable, Equatable {
     }
 }
 
-struct TerminalGridPointSize: Codable, Equatable {
-    let width: Double
-    let height: Double
-
-    init(width: Double, height: Double) {
-        self.width = width
-        self.height = height
-    }
-
-    init(_ size: CGSize) {
-        self.init(width: Double(size.width), height: Double(size.height))
-    }
-
-    var cgSize: CGSize {
-        CGSize(width: width, height: height)
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case width
-        case height
-    }
-}
-
-enum TerminalGridLayoutPolicy: String, Codable, Equatable {
-    case maxFit = "max_fit"
-}
-
-enum TerminalGridMismatchStatus: String, Codable, Equatable {
-    case unavailable
-    case pending
-    case converged
-    case mismatch
-}
-
-struct TerminalGridRemainder: Codable, Equatable {
-    let columns: Int
-    let rows: Int
-    let widthPoints: Double
-    let heightPoints: Double
-
-    init(
-        columns: Int = 0,
-        rows: Int = 0,
-        widthPoints: Double = 0,
-        heightPoints: Double = 0
-    ) {
-        self.columns = columns
-        self.rows = rows
-        self.widthPoints = widthPoints
-        self.heightPoints = heightPoints
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case columns
-        case rows
-        case widthPoints = "width_points"
-        case heightPoints = "height_points"
-    }
-}
-
-struct TerminalGridDiagnostics: Codable, Equatable {
-    let plannedGrid: TerminalGridDimensions?
-    let rendererGrid: TerminalGridDimensions?
-    let ptyGrid: TerminalGridDimensions?
-    let canvasPoints: TerminalGridPointSize?
-    let backingPoints: TerminalGridPointSize?
-    let cellPoints: TerminalGridPointSize?
-    let layoutPolicy: TerminalGridLayoutPolicy
-    let remainder: TerminalGridRemainder?
-    let mismatchStatus: TerminalGridMismatchStatus
-
-    init(
-        plannedGrid: TerminalGridDimensions?,
-        rendererGrid: TerminalGridDimensions? = nil,
-        ptyGrid: TerminalGridDimensions? = nil,
-        canvasPoints: TerminalGridPointSize?,
-        backingPoints: TerminalGridPointSize? = nil,
-        cellPoints: TerminalGridPointSize? = nil,
-        layoutPolicy: TerminalGridLayoutPolicy,
-        remainder: TerminalGridRemainder? = nil,
-        mismatchStatus: TerminalGridMismatchStatus
-    ) {
-        self.plannedGrid = plannedGrid
-        self.rendererGrid = rendererGrid
-        self.ptyGrid = ptyGrid
-        self.canvasPoints = canvasPoints
-        self.backingPoints = backingPoints
-        self.cellPoints = cellPoints
-        self.layoutPolicy = layoutPolicy
-        self.remainder = remainder
-        self.mismatchStatus = mismatchStatus
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        plannedGrid = try container.decodeIfPresent(TerminalGridDimensions.self, forKey: .plannedGrid)
-        rendererGrid = try container.decodeIfPresent(TerminalGridDimensions.self, forKey: .rendererGrid)
-        ptyGrid = try container.decodeIfPresent(TerminalGridDimensions.self, forKey: .ptyGrid)
-        canvasPoints = try container.decodeIfPresent(TerminalGridPointSize.self, forKey: .canvasPoints)
-        backingPoints = try container.decodeIfPresent(TerminalGridPointSize.self, forKey: .backingPoints)
-        cellPoints = try container.decodeIfPresent(TerminalGridPointSize.self, forKey: .cellPoints)
-        layoutPolicy = try container.decode(TerminalGridLayoutPolicy.self, forKey: .layoutPolicy)
-        remainder = try container.decodeIfPresent(TerminalGridRemainder.self, forKey: .remainder)
-        mismatchStatus = try container.decode(
-            TerminalGridMismatchStatus.self,
-            forKey: .mismatchStatus
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(plannedGrid, forKey: .plannedGrid)
-        try container.encode(rendererGrid, forKey: .rendererGrid)
-        try container.encode(ptyGrid, forKey: .ptyGrid)
-        try container.encode(canvasPoints, forKey: .canvasPoints)
-        try container.encode(backingPoints, forKey: .backingPoints)
-        try container.encode(cellPoints, forKey: .cellPoints)
-        try container.encode(layoutPolicy, forKey: .layoutPolicy)
-        try container.encode(remainder, forKey: .remainder)
-        try container.encode(mismatchStatus, forKey: .mismatchStatus)
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case plannedGrid = "planned_grid"
-        case rendererGrid = "renderer_grid"
-        case ptyGrid = "pty_grid"
-        case canvasPoints = "canvas_points"
-        case backingPoints = "backing_points"
-        case cellPoints = "cell_points"
-        case layoutPolicy = "layout_policy"
-        case remainder
-        case mismatchStatus = "mismatch_status"
-    }
-}
-
-extension TerminalGridDiagnostics {
-    var authoritativeGrid: TerminalGridDimensions? {
-        rendererGrid ?? ptyGrid ?? plannedGrid
-    }
-
-    var authoritativeTranscriptDimensions: TerminalTranscriptDimensions? {
-        authoritativeGrid?.transcriptDimensions
-    }
-}
-
-struct TerminalGridCellMetrics: Codable, Equatable {
-    let widthPoints: Double
-    let heightPoints: Double
-
-    var pointSize: TerminalGridPointSize {
-        TerminalGridPointSize(width: widthPoints, height: heightPoints)
-    }
-
-    var isAvailable: Bool {
-        widthPoints > 0 && heightPoints > 0
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case widthPoints = "width_points"
-        case heightPoints = "height_points"
-    }
-}
-
-struct TerminalGridLayoutEffect: Codable, Equatable {
-    let paneID: String
-    let plannedGrid: TerminalGridDimensions?
-    let rendererGrid: TerminalGridDimensions?
-    let ptyGrid: TerminalGridDimensions?
-    let layoutPolicy: TerminalGridLayoutPolicy
-    let mismatchStatus: TerminalGridMismatchStatus
-
-    init(paneID: String, diagnostics: TerminalGridDiagnostics) {
-        self.paneID = paneID
-        self.plannedGrid = diagnostics.plannedGrid
-        self.rendererGrid = diagnostics.rendererGrid
-        self.ptyGrid = diagnostics.ptyGrid
-        self.layoutPolicy = diagnostics.layoutPolicy
-        self.mismatchStatus = diagnostics.mismatchStatus
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case paneID = "pane_id"
-        case plannedGrid = "planned_grid"
-        case rendererGrid = "renderer_grid"
-        case ptyGrid = "pty_grid"
-        case layoutPolicy = "layout_policy"
-        case mismatchStatus = "mismatch_status"
-    }
-}
-
 struct TerminalTranscriptViewport: Codable, Equatable {
     let firstVisibleRow: Int?
     let cursorRow: Int?
@@ -633,22 +443,19 @@ struct ShellTerminalContentPayload: Codable, Equatable {
     let title: String?
     let transcriptSnapshot: TerminalTranscriptSnapshot?
     let terminalProfileID: String?
-    let terminalGridDiagnostics: TerminalGridDiagnostics?
 
     init(
         launchTarget: ShellLaunchTarget,
         cwd: String?,
         title: String?,
         transcriptSnapshot: TerminalTranscriptSnapshot? = nil,
-        terminalProfileID: String? = nil,
-        terminalGridDiagnostics: TerminalGridDiagnostics? = nil
+        terminalProfileID: String? = nil
     ) {
         self.launchTarget = launchTarget
         self.cwd = cwd
         self.title = title
         self.transcriptSnapshot = transcriptSnapshot
         self.terminalProfileID = terminalProfileID
-        self.terminalGridDiagnostics = terminalGridDiagnostics
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -657,7 +464,6 @@ struct ShellTerminalContentPayload: Codable, Equatable {
         case title
         case transcriptSnapshot = "transcript_snapshot"
         case terminalProfileID = "terminal_profile_id"
-        case terminalGridDiagnostics = "terminal_grid_diagnostics"
     }
 
     init(from decoder: Decoder) throws {
@@ -673,10 +479,6 @@ struct ShellTerminalContentPayload: Codable, Equatable {
             terminalProfileID: try container.decodeIfPresent(
                 String.self,
                 forKey: .terminalProfileID
-            ),
-            terminalGridDiagnostics: try container.decodeIfPresent(
-                TerminalGridDiagnostics.self,
-                forKey: .terminalGridDiagnostics
             )
         )
     }
@@ -689,8 +491,7 @@ extension ShellTerminalContentPayload {
             cwd: cwd,
             title: title,
             transcriptSnapshot: nil,
-            terminalProfileID: terminalProfileID,
-            terminalGridDiagnostics: terminalGridDiagnostics
+            terminalProfileID: terminalProfileID
         )
     }
 }
@@ -1940,10 +1741,6 @@ extension ShellContentStateSnapshot {
             else {
                 return projected
             }
-            let projectedDiagnostics = terminalPayload.terminalGridDiagnostics
-                ?? content.payload.terminal?.terminalGridDiagnostics
-            let currentDimensions = projectedDiagnostics?
-                .authoritativeTranscriptDimensions
             return ShellContentInstance(
                 contentID: projected.contentID,
                 kind: projected.kind,
@@ -1955,11 +1752,8 @@ extension ShellContentStateSnapshot {
                         launchTarget: terminalPayload.launchTarget,
                         cwd: terminalPayload.cwd,
                         title: terminalPayload.title,
-                        transcriptSnapshot: transcriptSnapshot.replacingDimensions(
-                            currentDimensions ?? transcriptSnapshot.dimensions
-                        ),
-                        terminalProfileID: terminalPayload.terminalProfileID,
-                        terminalGridDiagnostics: projectedDiagnostics
+                        transcriptSnapshot: transcriptSnapshot,
+                        terminalProfileID: terminalPayload.terminalProfileID
                     )
                 ),
                 lifecycle: projected.lifecycle,
@@ -2249,8 +2043,7 @@ extension ShellContentInstance {
                     launchTarget: pane.resolvedLaunchTarget,
                     cwd: pane.cwd,
                     title: title,
-                    terminalProfileID: pane.terminalProfileID,
-                    terminalGridDiagnostics: pane.context?.terminalGridDiagnostics
+                    terminalProfileID: pane.terminalProfileID
                 )
             ),
             rendererState: terminalRendererState(for: pane)

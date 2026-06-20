@@ -382,6 +382,7 @@ fn pinned_and_unpinned_state() -> WorkspaceState {
             payload: ShellContentPayload::terminal(ShellLaunchTarget::Shell, None, Some("Shell")),
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
+            renderer_state: Default::default(),
         }
     }
 

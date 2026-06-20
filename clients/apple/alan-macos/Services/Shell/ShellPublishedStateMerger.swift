@@ -118,9 +118,6 @@ enum AlanShellPublishedStateMerger {
         let inputReady = incomingContext?.inputReady ?? authoritativeContext?.inputReady
         let readonly = incomingContext?.readonly ?? authoritativeContext?.readonly
         let terminalMode = incomingContext?.terminalMode ?? authoritativeContext?.terminalMode
-        let terminalGridDiagnostics =
-            incomingContext?.terminalGridDiagnostics
-            ?? authoritativeContext?.terminalGridDiagnostics
         let displayName = incomingContext?.displayName ?? authoritativeContext?.displayName
         let displayID = incomingContext?.displayID ?? authoritativeContext?.displayID
         let windowTitle = incomingContext?.windowTitle ?? authoritativeContext?.windowTitle
@@ -151,7 +148,6 @@ enum AlanShellPublishedStateMerger {
             inputReady: inputReady,
             readonly: readonly,
             terminalMode: terminalMode,
-            terminalGridDiagnostics: terminalGridDiagnostics,
             displayName: displayName,
             displayID: displayID,
             windowTitle: windowTitle,

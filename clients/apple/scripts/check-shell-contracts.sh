@@ -1380,8 +1380,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "ShellCoreFFIAdapter\\.shared\\.keyboardAction" \
-    "terminal keyboard shortcuts must map through the Rust-backed shared shell action registry"
+    "ShellActionMetadataCatalog\\.keyboardAction" \
+    "terminal keyboard shortcuts must use local shell action metadata before terminal bindings"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
@@ -1407,6 +1407,11 @@ require_pattern \
     "clients/apple/alan-macos/Services/Terminal/TerminalHostWindowObserver.swift" \
     "NSWindow\\.didChangeOcclusionStateNotification" \
     "terminal host window observer must keep occlusion changes connected to surface/runtime refresh"
+
+require_pattern \
+    "clients/apple/scripts/check-architecture-maintainability.sh" \
+    "reject_swiftui_shell_hot_path_sync_boundaries" \
+    "architecture guard must reject synchronous FFI/JSON/reducer calls from SwiftUI shell hot paths"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -2465,6 +2470,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ALAN_SHELL_CORE_FFI_LIBRARY" \
+    "shell-core FFI Xcode build must honor a prebuilt release dylib when assembly provides one"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
     "aarch64-apple-darwin" \
     "shell-core FFI Xcode build must map arm64 to the Apple Silicon Rust target"
 
@@ -2530,6 +2540,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ctypes\\.CDLL\\(sys\\.argv\\[1\\]\\)" \
+    "Xcode shell-core FFI build must verify the copied dylib is actually loadable"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
     "ENABLE_USER_SCRIPT_SANDBOXING" \
     "Xcode shell-core FFI build must explicitly handle the user script sandbox before rewriting install names"
 
@@ -2572,6 +2587,11 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "require_developer_id_signature \"\\\$SHELL_CORE_FFI_DYLIB\"" \
     "release app validation must verify the shell-core FFI dylib signature"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "ctypes\\.CDLL\\(sys\\.argv\\[1\\]\\)" \
+    "release app validation must verify the shell-core FFI dylib is loadable"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \
@@ -3005,7 +3025,7 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
-    "if terminalProfileReference == nil" \
+    "if !hasExplicitTerminalProfileReference" \
     "default terminal shell-core-unavailable fallback must stay scoped to the no-explicit-profile path"
 
 require_pattern \

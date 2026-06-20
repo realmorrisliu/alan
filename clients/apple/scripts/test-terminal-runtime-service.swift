@@ -778,16 +778,6 @@ private enum TerminalRuntimeServiceTests {
             helper.resizedPTYRequests.isEmpty,
             "managed_user surface resize must not treat logical view points as terminal rows and columns"
         )
-        let rendererGrid = TerminalGridDiagnostics(
-            plannedGrid: TerminalGridDimensions(columns: 120, rows: 40),
-            rendererGrid: TerminalGridDimensions(columns: 120, rows: 40),
-            ptyGrid: nil,
-            canvasPoints: TerminalGridPointSize(width: 111, height: 33),
-            backingPoints: TerminalGridPointSize(width: 222, height: 66),
-            cellPoints: TerminalGridPointSize(width: 8.55, height: 18.5),
-            layoutPolicy: .maxFit,
-            mismatchStatus: .pending
-        )
         surface.updateHostRuntimeSnapshot(
             TerminalHostRuntimeSnapshot(
                 stage: .windowAttached,
@@ -804,30 +794,12 @@ private enum TerminalRuntimeServiceTests {
                 renderer: .placeholder,
                 paneMetadata: .placeholder,
                 surfaceState: .placeholder,
-                terminalGridDiagnostics: rendererGrid,
                 lastUpdatedAt: Date(timeIntervalSince1970: 151)
             )
         )
         expect(
-            helper.resizedPTYRequests == [
-                AlanManagedUserPTYResizeRequest(
-                    sessionID: "fake-\(contentID)",
-                    columns: 120,
-                    rows: 40
-                ),
-            ],
-            "managed_user surface resize must follow the renderer terminal grid"
-        )
-
-        let pointOnlyChange = TerminalGridDiagnostics(
-            plannedGrid: TerminalGridDimensions(columns: 120, rows: 40),
-            rendererGrid: TerminalGridDimensions(columns: 120, rows: 40),
-            ptyGrid: TerminalGridDimensions(columns: 120, rows: 40),
-            canvasPoints: TerminalGridPointSize(width: 112, height: 33),
-            backingPoints: TerminalGridPointSize(width: 224, height: 66),
-            cellPoints: TerminalGridPointSize(width: 8.55, height: 18.5),
-            layoutPolicy: .maxFit,
-            mismatchStatus: .converged
+            helper.resizedPTYRequests.isEmpty,
+            "managed_user surface resize must ignore host point-size-only changes without renderer grid"
         )
         surface.updateHostRuntimeSnapshot(
             TerminalHostRuntimeSnapshot(
@@ -845,13 +817,12 @@ private enum TerminalRuntimeServiceTests {
                 renderer: .placeholder,
                 paneMetadata: .placeholder,
                 surfaceState: .placeholder,
-                terminalGridDiagnostics: pointOnlyChange,
                 lastUpdatedAt: Date(timeIntervalSince1970: 152)
             )
         )
         expect(
-            helper.resizedPTYRequests.count == 1,
-            "point-only host frame changes must not repeat PTY resize when planned grid is unchanged"
+            helper.resizedPTYRequests.isEmpty,
+            "repeated point-size-only host frame changes must still not resize PTY"
         )
 
         let eof = surface.sendControlKey(.endOfTransmission)
@@ -914,11 +885,15 @@ private enum TerminalRuntimeServiceTests {
             Data("helper-output\n".utf8),
         ]
 
+        var rendererFileDescriptor: Int32?
+        defer {
+            if let rendererFileDescriptor {
+                close(rendererFileDescriptor)
+            }
+        }
         switch handle.makeRendererAttachment() {
         case .attached(let attachment):
-            defer {
-                close(attachment.readFileDescriptor)
-            }
+            rendererFileDescriptor = attachment.readFileDescriptor
             expect(
                 attachment.readFileDescriptor == attachment.writeFileDescriptor,
                 "managed_user renderer attachment should expose one full-duplex proxy descriptor"
@@ -934,21 +909,23 @@ private enum TerminalRuntimeServiceTests {
             helper.terminatedPTYSessionIDs.isEmpty,
             "managed_user renderer attachment must not terminate a healthy helper PTY session"
         )
+        let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output")
         let snapshot = handle.snapshot
         expect(
-            helper.readPTYRequests.last
-                == AlanManagedUserPTYReadRequest(
+            helper.readPTYRequests.contains(
+                AlanManagedUserPTYReadRequest(
                     sessionID: "fake-content_terminal_managed_user_renderer",
                     maxBytes: 4096
-                ),
-            "managed_user runtime snapshots must read helper PTY output through the typed API"
+                )
+            ),
+            "managed_user renderer attachment must read helper PTY output through the typed API"
         )
         expect(
             snapshot.phase == .running,
             "managed_user renderer attachment must keep the helper lifecycle running"
         )
         expect(
-            snapshot.transcriptLines.contains("helper-output"),
+            transcriptObserved,
             "managed_user renderer attachment must update the fallback transcript from helper output"
         )
     }
@@ -1288,17 +1265,88 @@ private enum TerminalRuntimeServiceTests {
             "hidden runtime title changes must remain publishable for sidebar summaries"
         )
 
+        let foregroundPrevious = sampleRuntimeSnapshot(
+            priority: .foregroundInteractive,
+            metadata: .placeholder,
+            lastUpdatedAt: Date(timeIntervalSince1970: 6),
+            surfaceState: AlanTerminalSurfaceStateSnapshot(
+                readiness: .ready,
+                terminalMode: .normalBuffer,
+                scrollback: AlanTerminalScrollbackState(
+                    metrics: AlanTerminalScrollbackMetrics(
+                        totalRows: 200,
+                        visibleRows: 40,
+                        firstVisibleRow: 160,
+                        mode: .normalBuffer
+                    ),
+                    nativeScrollbarVisible: true,
+                    thumbRange: 160..<200
+                ),
+                search: nil,
+                semanticCommands: .placeholder,
+                readonly: false,
+                secureInput: false,
+                inputReady: true,
+                rendererHealth: "ready",
+                childExited: false,
+                lastUpdatedAt: Date(timeIntervalSince1970: 6)
+            )
+        )
         let foreground = sampleRuntimeSnapshot(
             priority: .foregroundInteractive,
             metadata: .placeholder,
-            lastUpdatedAt: Date(timeIntervalSince1970: 6)
+            lastUpdatedAt: Date(timeIntervalSince1970: 7),
+            surfaceState: AlanTerminalSurfaceStateSnapshot(
+                readiness: .ready,
+                terminalMode: .normalBuffer,
+                scrollback: AlanTerminalScrollbackState(
+                    metrics: AlanTerminalScrollbackMetrics(
+                        totalRows: 240,
+                        visibleRows: 40,
+                        firstVisibleRow: 200,
+                        mode: .normalBuffer
+                    ),
+                    nativeScrollbarVisible: true,
+                    thumbRange: 200..<240
+                ),
+                search: nil,
+                semanticCommands: .placeholder,
+                readonly: false,
+                secureInput: false,
+                inputReady: true,
+                rendererHealth: "ready",
+                childExited: false,
+                lastUpdatedAt: Date(timeIntervalSince1970: 7)
+            )
+        )
+        expect(
+            !TerminalRuntimePublicationPolicy.shouldProjectToShell(
+                previous: foregroundPrevious,
+                next: foreground
+            ),
+            "foreground scrollback churn must stay inside the terminal runtime"
+        )
+
+        let foregroundTitleChange = sampleRuntimeSnapshot(
+            priority: .foregroundInteractive,
+            metadata: TerminalPaneMetadataSnapshot(
+                title: "cargo test",
+                workingDirectory: nil,
+                summary: nil,
+                attention: .idle,
+                processExited: false,
+                lastCommandExitCode: nil,
+                lastUpdatedAt: Date(timeIntervalSince1970: 7)
+            ),
+            lastUpdatedAt: Date(timeIntervalSince1970: 7),
+            surfaceState: foregroundPrevious.surfaceState
         )
         expect(
             TerminalRuntimePublicationPolicy.shouldProjectToShell(
-                previous: previous,
-                next: foreground
+                previous: foregroundPrevious,
+                next: foregroundTitleChange
             ),
-            "foreground runtime updates must publish immediately"
+            "foreground title changes must remain publishable for sidebar summaries"
         )
     }
 
@@ -1989,6 +2037,22 @@ private enum TerminalRuntimeServiceTests {
         return false
     }
 
+    private static func waitForPtyOutput(
+        _ handle: AlanTerminalPtyHandle,
+        contains needle: String,
+        timeout: TimeInterval = 2
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let transcript = handle.snapshot.transcriptLines.joined(separator: "\n")
+            if transcript.contains(needle) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return handle.snapshot.transcriptLines.joined(separator: "\n").contains(needle)
+    }
+
     private static func waitForDarwinPtyExit(
         _ handle: AlanDarwinTerminalPtyHandle,
         timeout: TimeInterval = 2
@@ -2008,7 +2072,8 @@ private enum TerminalRuntimeServiceTests {
         priority: TerminalRuntimeRenderPriority,
         metadata: TerminalPaneMetadataSnapshot,
         renderer: TerminalRendererSnapshot = .placeholder,
-        lastUpdatedAt: Date
+        lastUpdatedAt: Date,
+        surfaceState: AlanTerminalSurfaceStateSnapshot = .placeholder
     ) -> TerminalHostRuntimeSnapshot {
         TerminalHostRuntimeSnapshot(
             stage: .windowAttached,
@@ -2024,7 +2089,7 @@ private enum TerminalRuntimeServiceTests {
             isFocused: priority == .foregroundInteractive,
             renderer: renderer,
             paneMetadata: metadata,
-            surfaceState: .placeholder,
+            surfaceState: surfaceState,
             lastUpdatedAt: lastUpdatedAt
         )
     }

@@ -467,67 +467,18 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     private static func terminalProfileRows(
         _ summary: TerminalProfileSettingsSummary
     ) -> [ShellSettingsRowModel] {
-        if !summary.containsManagedUserProfile,
-           let rows = try? ShellCoreFFIAdapter.shared.terminalProfileRows(summary) {
+        do {
+            let rows = try ShellCoreFFIAdapter.shared.terminalProfileRows(summary)
             return rows
+        } catch {
+            return [
+                unavailableRow(
+                    id: "terminalProfilesUnavailable",
+                    systemName: "terminal",
+                    title: "Terminal Profiles"
+                ),
+            ]
         }
-
-        var rows: [ShellSettingsRowModel] = [
-            ShellSettingsRowModel(
-                id: "terminalProfilesDefault",
-                systemName: "terminal",
-                title: "Default profile",
-                detail: "Used for new terminals.",
-                value: summary.defaultProfileTitle ?? "Login shell",
-                mutability: .editable
-            ),
-            ShellSettingsRowModel(
-                id: "terminalProfilesCreate",
-                systemName: "plus.circle",
-                title: "New profile",
-                detail: "Create a local startup profile.",
-                value: "Create…",
-                mutability: .actionOnly
-            )
-        ]
-
-        if let recoveryMessage = summary.recoveryMessage {
-            rows.append(
-                ShellSettingsRowModel(
-                    id: "terminalProfilesRecovery",
-                    systemName: "exclamationmark.triangle",
-                    title: "Profile store recovery",
-                    detail: recoveryMessage,
-                    value: "Fallback active"
-                )
-            )
-        }
-
-        rows.append(
-            contentsOf: summary.profiles.map { profile in
-                ShellSettingsRowModel(
-                    id: "terminalProfile.\(profile.id)",
-                    systemName: terminalProfileSystemName(profile),
-                    title: profile.title,
-                    detail: Self.nonRepeatingDetail(
-                        profile.redactedDisplayDetail,
-                        title: profile.title
-                    ),
-                    value: terminalProfileValue(profile),
-                    mutability: profile.managedTerminalAccountID == nil ? .editable : .readOnly
-                )
-            }
-        )
-        rows.append(
-            ShellSettingsRowModel(
-                id: "terminalProfilesSudoGuidance",
-                systemName: "lock.shield",
-                title: "Sudo behavior",
-                detail: "Prompts and passwordless sudo are controlled by macOS sudo policy.",
-                value: "System managed"
-            )
-        )
-        return rows
     }
 
     private static func managedTerminalAccountRows(
@@ -547,17 +498,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 actions: [.make(.create)]
             )
         ]
-        let userRows = users.map { user in
-            ShellSettingsRowModel(
-                id: "terminalAccount.\(user.unixUserName)",
-                systemName: terminalAccountSystemName(user),
-                title: user.displayLabel,
-                detail: terminalAccountDetail(user),
-                value: terminalAccountStatusLabel(user),
-                mutability: .actionOnly,
-                actions: terminalAccountActions(user)
-            )
-        }
+        let userRows = managedTerminalAccountUserRows(summary: summary, users: users)
         let boundaryRows = [
             ShellSettingsRowModel(
                 id: "terminalAccountLoginBoundary",
@@ -570,88 +511,38 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         return [helperRow] + createRows + userRows + boundaryRows
     }
 
-    private static func nonRepeatingDetail(_ detail: String?, title: String) -> String? {
-        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let normalizedDetail,
-              !normalizedDetail.isEmpty,
-              normalizedDetail.localizedCaseInsensitiveCompare(normalizedTitle) != .orderedSame
-        else {
-            return nil
-        }
-
-        return normalizedDetail
-    }
-
-    private static func terminalProfileSystemName(_ profile: TerminalProfileDefinition) -> String {
-        switch profile.launch {
-        case .loginShell:
-            return "terminal"
-        case .sudoUser:
-            return "person.crop.circle"
-        case .sudoRoot:
-            return "exclamationmark.triangle"
-        case .managedUser:
-            return "checkmark.seal"
-        case .customCommand:
-            return "chevron.left.forwardslash.chevron.right"
-        }
-    }
-
-    private static func terminalProfileValue(_ profile: TerminalProfileDefinition) -> String {
-        if profile.id == TerminalProfileDefinition.loginShellFallback.id {
-            return "Built-in default"
-        }
-        if profile.managedTerminalAccountID != nil {
-            return "Managed"
-        }
-        return profile.launch.kind.rawValue
-    }
-
-    private static func terminalAccountSystemName(_ user: ManagedTerminalUserSummary) -> String {
-        switch user.readinessState {
-        case .ready:
-            return "checkmark.seal"
-        case .repairable:
-            return "wrench.and.screwdriver"
-        case .accountNotAlanManaged,
-             .helperUnavailable,
-             .ptySpawnFailed,
-             .destructiveConfirmation,
-             .invalid,
-             .sudoersConflict,
-             .terminalProfileConflict:
-            return "exclamationmark.triangle"
-        case .legacySudoersPresent:
-            return "wrench.and.screwdriver"
-        case .readyToApply:
-            return "person.crop.circle.badge.plus"
-        }
-    }
-
-    private static func terminalAccountStatusLabel(_ user: ManagedTerminalUserSummary) -> String {
-        switch user.readinessState {
-        case .ready:
-            return "Ready"
-        case .repairable:
-            return "Repairable"
-        case .helperUnavailable:
-            return "Helper"
-        case .accountNotAlanManaged:
-            return "Not managed"
-        case .legacySudoersPresent:
-            return "Legacy"
-        case .ptySpawnFailed:
-            return "PTY failed"
-        case .invalid:
-            return "Invalid"
-        case .destructiveConfirmation:
-            return "Confirm"
-        case .sudoersConflict, .terminalProfileConflict:
-            return "Conflict"
-        case .readyToApply:
-            return "Preview"
+    private static func managedTerminalAccountUserRows(
+        summary: ManagedTerminalAccountSettingsSummary,
+        users: [ManagedTerminalUserSummary]
+    ) -> [ShellSettingsRowModel] {
+        guard !users.isEmpty else { return [] }
+        do {
+            let coreRows = try ShellCoreFFIAdapter.shared.managedTerminalAccountRows(summary)
+            let rowsByID = Dictionary(uniqueKeysWithValues: coreRows.map { ($0.id, $0) })
+            return users.map { user in
+                let id = "terminalAccount.\(user.unixUserName)"
+                let coreRow = rowsByID[id]
+                return ShellSettingsRowModel(
+                    id: id,
+                    systemName: coreRow?.systemName ?? "exclamationmark.triangle",
+                    title: user.displayLabel,
+                    detail: coreRow?.detail,
+                    value: coreRow?.value ?? "Unavailable",
+                    mutability: .actionOnly,
+                    actions: terminalAccountActions(user)
+                )
+            }
+        } catch {
+            return users.map { user in
+                ShellSettingsRowModel(
+                    id: "terminalAccount.\(user.unixUserName)",
+                    systemName: "exclamationmark.triangle",
+                    title: user.displayLabel,
+                    value: "Unavailable",
+                    mutability: .actionOnly,
+                    actions: [.make(.review)]
+                )
+            }
         }
     }
 
@@ -673,32 +564,6 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
             kinds = [.review]
         }
         return kinds.map(ShellSettingsRowActionModel.make)
-    }
-
-    private static func terminalAccountDetail(_ user: ManagedTerminalUserSummary) -> String {
-        let target = user.unixUserName
-        switch user.readinessState {
-        case .ready:
-            return "\(target) is ready for terminal entry through \(user.managedTerminalProfileID)."
-        case .repairable:
-            return user.repairState ?? "\(target) needs repair before terminal entry is ready."
-        case .helperUnavailable:
-            return user.conflictState ?? "Privileged helper is required before \(target) can be managed."
-        case .accountNotAlanManaged:
-            return user.conflictState ?? "\(target) is an existing local account that Alan does not manage."
-        case .legacySudoersPresent:
-            return user.repairState ?? "\(target) has legacy Alan sudoers state to clean up."
-        case .ptySpawnFailed:
-            return user.repairState ?? "\(target) failed helper-managed PTY verification."
-        case .invalid:
-            return "\(target) needs a valid local account identifier."
-        case .destructiveConfirmation:
-            return "\(target) rollback needs separate destructive confirmation."
-        case .sudoersConflict, .terminalProfileConflict:
-            return user.conflictState ?? "\(target) has conflicting local state."
-        case .readyToApply:
-            return "\(target) terminal entry plan is ready for explicit confirmation."
-        }
     }
 
     private static func accountRows(

@@ -488,6 +488,7 @@ fn terminal_profile_system_name(profile: &TerminalProfileDefinition) -> &'static
         TerminalProfileLaunch::LoginShell => "terminal",
         TerminalProfileLaunch::SudoUser { .. } => "person.crop.circle",
         TerminalProfileLaunch::SudoRoot => "exclamationmark.triangle",
+        TerminalProfileLaunch::ManagedUser { .. } => "checkmark.seal",
         TerminalProfileLaunch::CustomCommand { .. } => "chevron.left.forwardslash.chevron.right",
     }
 }
@@ -499,9 +500,11 @@ fn terminal_account_system_name(plan: &ManagedTerminalAccountPlan) -> &'static s
         ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation
         | ManagedTerminalAccountPlanStatus::Invalid { .. }
         | ManagedTerminalAccountPlanStatus::SudoersConflict { .. }
-        | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. } => {
-            "exclamationmark.triangle"
-        }
+        | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. }
+        | ManagedTerminalAccountPlanStatus::AccountNotAlanManaged
+        | ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. }
+        | ManagedTerminalAccountPlanStatus::PtySpawnFailed => "exclamationmark.triangle",
+        ManagedTerminalAccountPlanStatus::HelperUnavailable => "puzzlepiece.extension",
         ManagedTerminalAccountPlanStatus::ReadyToApply => "person.crop.circle.badge.plus",
     }
 }
@@ -514,6 +517,10 @@ fn terminal_account_status_label(plan: &ManagedTerminalAccountPlan) -> &'static 
         ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation => "Confirm",
         ManagedTerminalAccountPlanStatus::SudoersConflict { .. }
         | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. } => "Conflict",
+        ManagedTerminalAccountPlanStatus::HelperUnavailable => "Unavailable",
+        ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => "Unmanaged",
+        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. } => "Cleanup",
+        ManagedTerminalAccountPlanStatus::PtySpawnFailed => "PTY failed",
         ManagedTerminalAccountPlanStatus::ReadyToApply => "Preview",
     }
 }
@@ -538,6 +545,19 @@ fn terminal_account_detail(plan: &ManagedTerminalAccountPlan) -> String {
         }
         ManagedTerminalAccountPlanStatus::TerminalProfileConflict { profile_id } => {
             format!("{target} has an existing non-Alan Terminal Profile named {profile_id}.")
+        }
+        ManagedTerminalAccountPlanStatus::HelperUnavailable => {
+            "Alan privileged helper is unavailable for Managed Users.".to_string()
+        }
+        ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => {
+            format!("{target} exists but is not Alan-managed.")
+        }
+        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { path } => match path {
+            Some(path) => format!("{target} has a legacy Alan sudoers file at {path}."),
+            None => format!("{target} has a legacy Alan sudoers file."),
+        },
+        ManagedTerminalAccountPlanStatus::PtySpawnFailed => {
+            format!("{target} account exists, but helper-managed PTY startup failed.")
         }
         ManagedTerminalAccountPlanStatus::ReadyToApply => {
             format!("{target} terminal entry plan is ready for explicit confirmation.")
@@ -567,6 +587,7 @@ fn launch_kind_value(kind: TerminalProfileLaunchKind) -> &'static str {
         TerminalProfileLaunchKind::LoginShell => "login_shell",
         TerminalProfileLaunchKind::SudoUser => "sudo_user",
         TerminalProfileLaunchKind::SudoRoot => "sudo_root",
+        TerminalProfileLaunchKind::ManagedUser => "managed_user",
         TerminalProfileLaunchKind::CustomCommand => "custom_command",
     }
 }

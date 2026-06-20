@@ -2,48 +2,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 #if os(macOS)
-private struct ShellTerminalProfileMenuOption: Identifiable {
-    let profile: TerminalProfileDefinition
-    let isEnabled: Bool
-    let guidance: String?
-
-    var id: String { profile.id }
-}
-
-private func shellTerminalProfileMenuOptions() -> [ShellTerminalProfileMenuOption] {
-    let terminalProfiles = TerminalProfileSettingsSummary.current()
-    let managedAccounts = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: terminalProfiles,
-        helperClient: AlanPrivilegedHelperAppClient(channel: .current())
-    )
-    let selectableIDs = Set(
-        TerminalProfileSpaceIdentityFilter.selectableProfiles(
-            terminalProfiles: terminalProfiles,
-            managedTerminalAccounts: managedAccounts
-        ).map(\.id)
-    )
-    return terminalProfiles.profiles
-        .filter { $0.id != TerminalProfileDefinition.loginShellFallback.id }
-        .map { profile in
-            let isEnabled = selectableIDs.contains(profile.id)
-            return ShellTerminalProfileMenuOption(
-                profile: profile,
-                isEnabled: isEnabled,
-                guidance: isEnabled
-                    ? nil
-                    : TerminalProfileSpaceIdentityFilter.repairGuidance(
-                        profileID: profile.id,
-                        terminalProfiles: terminalProfiles,
-                        managedTerminalAccounts: managedAccounts
-                    )
-            )
-        }
-}
-
-private func shellTerminalProfileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
-    "\(profile.title) · \(profile.launch.kind.rawValue)"
-}
-
 struct ShellSidebarView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var host: ShellHostController
@@ -61,6 +19,7 @@ struct ShellSidebarView: View {
     @State private var renamingTabID: String?
     @State private var renameDraftTitle = ""
     @StateObject private var tabListWheelRouter = ShellSidebarTabListWheelRouter()
+    @StateObject private var spaceCreationProfileOptions = ShellSpaceCreationProfileOptionStore()
 
     init(
         host: ShellHostController,
@@ -88,6 +47,14 @@ struct ShellSidebarView: View {
         }
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()
+        }
+        .task {
+            spaceCreationProfileOptions.refresh()
+        }
+        .onChange(of: host.isPresentingSpaceCreation) { _, isPresenting in
+            if isPresenting {
+                spaceCreationProfileOptions.refresh()
+            }
         }
         .alert("Rename Tab", isPresented: renameAlertBinding) {
             TextField("Title", text: $renameDraftTitle)
@@ -117,7 +84,7 @@ struct ShellSidebarView: View {
                 .padding(.bottom, ShellSidebarTabListMetrics.itemSpacing)
             if host.isPresentingSpaceCreation {
                 ShellSpaceCreationForm(
-                    profiles: spaceCreationProfileOptions,
+                    profiles: spaceCreationProfileOptions.options,
                     draftName: $host.spaceDraftName,
                     draftIcon: $host.spaceDraftIcon,
                     draftProfileID: $host.spaceDraftProfileID,
@@ -139,17 +106,6 @@ struct ShellSidebarView: View {
             reduceMotion ? nil : .easeInOut(duration: 0.18),
             value: host.isPresentingSpaceCreation
         )
-    }
-
-    private var spaceCreationProfileOptions: [ShellSpaceCreationForm.ProfileOption] {
-        shellTerminalProfileMenuOptions().map { option in
-            ShellSpaceCreationForm.ProfileOption(
-                id: option.profile.id,
-                name: shellTerminalProfileMenuTitle(option.profile),
-                isEnabled: option.isEnabled,
-                guidance: option.guidance
-            )
-        }
     }
 
     private var fixedSpaceSlider: some View {
@@ -1117,6 +1073,7 @@ private struct ShellSidebarSpaceSlider: View {
     @State private var wheelIntentState = ShellSidebarSpaceSliderWheelIntentState()
     @State private var wheelCommitToken = 0
     @State private var trackScrollOffsetX: CGFloat = 0
+    @StateObject private var spaceCreationProfileOptions = ShellSpaceCreationProfileOptionStore()
 
     var body: some View {
         GeometryReader { proxy in
@@ -1234,11 +1191,17 @@ private struct ShellSidebarSpaceSlider: View {
         .onChange(of: resolvedDisplaySpaceID) { _, _ in
             cancelScrubPreview()
         }
+        .task {
+            spaceCreationProfileOptions.refresh()
+        }
         .onChange(of: creationDraft != nil) { _, creating in
             // Entering the creation form must cancel any pending scrub and
             // invalidate the scheduled wheel-commit so it cannot fire and move
             // the underlying Space behind the draft.
-            if creating { cancelScrubPreview() }
+            if creating {
+                cancelScrubPreview()
+                spaceCreationProfileOptions.refresh()
+            }
         }
     }
 
@@ -1352,20 +1315,20 @@ private struct ShellSidebarSpaceSlider: View {
                 Label("Login shell", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
             }
 
-            ForEach(shellTerminalProfileMenuOptions()) { option in
+            ForEach(spaceCreationProfileOptions.options) { option in
                 Button {
                     cancelScrubPreview()
-                    _ = host.setTerminalProfile(option.profile.id, forSpaceID: space.spaceID)
+                    _ = host.setTerminalProfile(option.id, forSpaceID: space.spaceID)
                 } label: {
                     Label(
-                        profileMenuTitle(option.profile),
-                        systemImage: option.profile.id == space.terminalProfileID
+                        option.name,
+                        systemImage: option.id == space.terminalProfileID
                             ? "checkmark"
-                            : profileSymbol(for: option.profile)
+                            : option.systemName
                     )
                 }
                 .disabled(!option.isEnabled)
-                .help(option.guidance ?? profileMenuTitle(option.profile))
+                .help(option.guidance ?? option.name)
             }
         }
 
@@ -1599,25 +1562,6 @@ private struct ShellSidebarSpaceSlider: View {
         else {
             cancelScrubPreview()
             return
-        }
-    }
-
-    private func profileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
-        "\(profile.title) · \(profile.launch.kind.rawValue)"
-    }
-
-    private func profileSymbol(for profile: TerminalProfileDefinition) -> String {
-        switch profile.launch {
-        case .loginShell:
-            return "terminal"
-        case .sudoUser:
-            return "person.crop.circle"
-        case .sudoRoot:
-            return "exclamationmark.triangle"
-        case .managedUser:
-            return "checkmark.seal"
-        case .customCommand:
-            return "chevron.left.forwardslash.chevron.right"
         }
     }
 

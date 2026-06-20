@@ -226,7 +226,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published var selectedSpaceID: String?
     @Published var selectedTabID: String?
     @Published private(set) var lastCopiedAt: Date?
-    @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
+    private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
@@ -1338,7 +1338,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     ) throws -> ShellStateMutationResult {
         switch launchTarget {
         case .shell:
-            return try ShellCoreFFIAdapter.shared.applyReducer(
+            return try reducerCoordinator.apply(
                 state: shellState,
                 operation: .openTerminalTab(
                     spaceID: spaceID,
@@ -2625,10 +2625,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     /// Assigns the selected-pane runtime snapshot only when it differs from the
-    /// current one in something other than its publish timestamp. The snapshot
-    /// is mirrored into the central `@Published` state, so a redundant write
-    /// would invalidate every view observing the controller at terminal-output
-    /// frequency.
+    /// current one in something other than its publish timestamp. This stays off
+    /// the host's broad `@Published` surface so terminal-output churn does not
+    /// invalidate unrelated SwiftUI chrome.
     private func setSelectedTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
         guard !terminalRuntime.equalsIgnoringTimestamp(runtime) else { return }
         terminalRuntime = runtime
@@ -2891,79 +2890,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         var capturedTranscripts = capturedTerminalTranscriptSnapshots(for: snapshot)
         capturedTranscripts.merge(transcriptSnapshotOverrides) { _, override in override }
         return snapshot.overlayingTerminalTranscriptSnapshots(capturedTranscripts)
-    }
-
-    private func makeQuickTerminalRestoreRecord(
-        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
-    ) -> ShellQuickTerminalRestoreRecord? {
-        guard let quickTerminal = shellState.quickTerminal,
-              let pane = shellState.pane(paneID: quickTerminal.paneID)
-        else {
-            return nil
-        }
-
-        let contentID = pane.terminalContentID
-        let projectedContent = ShellContentInstance.projectingTerminalPane(pane, contentID: contentID)
-        let terminalPayload = projectedContent.payload.terminal
-        let transcriptSnapshot = transcriptSnapshotOverrides[contentID]
-            ?? capturedTerminalTranscriptSnapshot(forContentID: contentID)
-            ?? existingQuickTerminalTranscriptSnapshot(paneID: pane.paneID, contentID: contentID)
-        let title = projectedContent.title
-        let launchTarget = terminalPayload?.launchTarget ?? pane.resolvedLaunchTarget
-        let cwd = terminalPayload?.cwd ?? pane.cwd ?? quickTerminal.lastWorkingDirectory
-        let payloadTitle = terminalPayload?.title ?? title
-        let terminalProfileID = terminalPayload?.terminalProfileID ?? pane.terminalProfileID
-        let payload = ShellTerminalContentPayload(
-            launchTarget: launchTarget,
-            cwd: cwd,
-            title: payloadTitle,
-            transcriptSnapshot: transcriptSnapshot,
-            terminalProfileID: terminalProfileID,
-            terminalGridDiagnostics: terminalPayload?.terminalGridDiagnostics
-        )
-        let content = ShellContentRestoreRecord(
-            contentID: contentID,
-            kind: .terminal,
-            title: title,
-            payload: .terminal(payload)
-        )
-        let snapshot = ShellContentTabRestoreSnapshot(
-            paneTree: ShellPaneSlotTreeNode(
-                nodeID: "node_\(pane.paneID)",
-                kind: .pane,
-                direction: nil,
-                paneSlotID: pane.paneID,
-                children: nil
-            ),
-            paneSlots: [
-                ShellPaneSlotRestoreRecord(
-                    paneSlotID: pane.paneID,
-                    contentID: contentID
-                )
-            ],
-            contents: [content]
-        )
-        return ShellQuickTerminalRestoreRecord(
-            paneID: pane.paneID,
-            presentation: quickTerminal.presentation,
-            lastWorkingDirectory: quickTerminal.lastWorkingDirectory ?? pane.cwd,
-            liveSnapshot: snapshot,
-            activeTask: terminalActiveTasksByPaneID[pane.paneID] ?? .inactive
-        )
-    }
-
-    private func existingQuickTerminalTranscriptSnapshot(
-        paneID: String,
-        contentID: String
-    ) -> TerminalTranscriptSnapshot? {
-        guard let snapshot = workspaceManifest?.quickTerminal?.liveSnapshot,
-              let paneSlot = snapshot.paneSlots.first(where: { $0.paneSlotID == paneID }),
-              paneSlot.contentID == contentID,
-              let content = snapshot.contents.first(where: { $0.contentID == contentID })
-        else {
-            return nil
-        }
-        return content.payload.terminal?.transcriptSnapshot
     }
 
     private func capturedTerminalTranscriptSnapshots(

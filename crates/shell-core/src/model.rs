@@ -221,9 +221,6 @@ pub struct ShellTerminalContentPayload {
     /// Terminal Profile id.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_profile_id: Option<String>,
-    /// Terminal grid diagnostics, preserved opaquely by shell core.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal_grid_diagnostics: Option<Value>,
 }
 
 /// Portable content restore payload.
@@ -263,7 +260,6 @@ impl ShellContentPayload {
                 title: title.map(ToOwned::to_owned),
                 transcript_snapshot: None,
                 terminal_profile_id: terminal_profile_id.map(ToOwned::to_owned),
-                terminal_grid_diagnostics: None,
             }),
             markdown: None,
             settings: None,

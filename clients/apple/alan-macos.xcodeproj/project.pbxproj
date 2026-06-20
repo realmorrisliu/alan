@@ -43,6 +43,7 @@
 		000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */; };
 		000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */; };
 		00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */; };
+		00000000000000000000006C /* Models/Shell/ShellSpaceCreationProfileOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */; };
 		000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */; };
 		000000000000000000000026 /* Services/Shell/ShellStatePersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */; };
 		000000000000000000000027 /* Services/Terminal/TerminalHostRuntimeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */; };
@@ -98,6 +99,7 @@
 		A11000000000000000000005 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */; };
 		A11000000000000000000006 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
 		A11000000000000000000007 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
+		A11000000000000000000008 /* Services/Shell/AlanPrivilegedHelperAppClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000106 /* Services/Shell/AlanPrivilegedHelperAppClient.swift */; };
 		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
 		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
 		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
@@ -175,6 +177,7 @@
 		000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellValueTypes.swift; sourceTree = "<group>"; };
 		000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSnapshots.swift; sourceTree = "<group>"; };
 		00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateRuntimeSupport.swift; sourceTree = "<group>"; };
+		00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSpaceCreationProfileOptions.swift; sourceTree = "<group>"; };
 		000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPaneProjectionService.swift; sourceTree = "<group>"; };
 		000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellStatePersistenceStore.swift; sourceTree = "<group>"; };
 		000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostRuntimeReporter.swift; sourceTree = "<group>"; };
@@ -240,6 +243,7 @@
 		A11000000000000000000103 /* Services/Shell/AlanPrivilegedHelperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/AlanPrivilegedHelperService.swift; sourceTree = "<group>"; };
 		A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/AlanPrivilegedHelperXPC.swift; sourceTree = "<group>"; };
 		A11000000000000000000105 /* AlanDarwinPtySpawn.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = AlanDarwinPtySpawn.c; sourceTree = "<group>"; };
+		A11000000000000000000106 /* Services/Shell/AlanPrivilegedHelperAppClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/AlanPrivilegedHelperAppClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -411,6 +415,7 @@
 				000000000000000000000129 /* Models/Shell/ShellControlPlaneDTOs.swift */,
 				000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */,
 				00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */,
+				00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */,
 				00000000000000000000013E /* Models/Shell/ShellActionRegistry.swift */,
 				000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */,
 				000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */,
@@ -441,6 +446,7 @@
 				00000000000000000000016A /* Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift */,
 				00000000000000000000012F /* Services/Shell/ShellDiagnostics.swift */,
 				00000000000000000000012E /* Services/Shell/ShellEventStore.swift */,
+				A11000000000000000000106 /* Services/Shell/AlanPrivilegedHelperAppClient.swift */,
 				A11000000000000000000103 /* Services/Shell/AlanPrivilegedHelperService.swift */,
 				A11000000000000000000104 /* Services/Shell/AlanPrivilegedHelperXPC.swift */,
 				00000000000000000000012A /* Services/Shell/ShellLocalCommandExecutor.swift */,
@@ -712,6 +718,7 @@
 				000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */,
 				000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */,
 				00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */,
+				00000000000000000000006C /* Models/Shell/ShellSpaceCreationProfileOptions.swift in Sources */,
 				00000000000000000000003E /* Models/Shell/ShellActionRegistry.swift in Sources */,
 				000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */,
 				000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */,
@@ -747,6 +754,7 @@
 				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
 				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
 				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
+				A11000000000000000000008 /* Services/Shell/AlanPrivilegedHelperAppClient.swift in Sources */,
 				A11000000000000000000003 /* Services/Shell/AlanPrivilegedHelperService.swift in Sources */,
 				A11000000000000000000004 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */,
 				00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */,

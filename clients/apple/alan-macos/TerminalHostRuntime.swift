@@ -1323,17 +1323,14 @@ enum TerminalRuntimePublicationPolicy {
         previous: TerminalHostRuntimeSnapshot?,
         next: TerminalHostRuntimeSnapshot
     ) -> Bool {
-        guard next.renderPriority == .hiddenBackground else {
-            return true
-        }
         guard let previous else {
             return true
         }
 
-        return hiddenSummaryChanged(previous: previous, next: next)
+        return shellProjectionChanged(previous: previous, next: next)
     }
 
-    private static func hiddenSummaryChanged(
+    private static func shellProjectionChanged(
         previous: TerminalHostRuntimeSnapshot,
         next: TerminalHostRuntimeSnapshot
     ) -> Bool {
@@ -1342,6 +1339,9 @@ enum TerminalRuntimePublicationPolicy {
             || previous.tabID != next.tabID
             || previous.stage != next.stage
             || previous.renderPriority != next.renderPriority
+            || previous.displayName != next.displayName
+            || previous.displayID != next.displayID
+            || previous.attachedWindowTitle != next.attachedWindowTitle
             || previous.renderer.failureReason != next.renderer.failureReason
             || (previous.renderer.phase != .failed && next.renderer.phase == .failed)
             || previous.paneMetadata.title != next.paneMetadata.title
@@ -1354,7 +1354,11 @@ enum TerminalRuntimePublicationPolicy {
             || previous.paneMetadata.activity != next.paneMetadata.activity
             || previous.paneMetadata.clearsActivity != next.paneMetadata.clearsActivity
             || previous.surfaceState.readiness != next.surfaceState.readiness
+            || previous.surfaceState.rendererHealth != next.surfaceState.rendererHealth
+            || previous.surfaceState.readonly != next.surfaceState.readonly
+            || previous.surfaceState.terminalMode != next.surfaceState.terminalMode
             || previous.surfaceState.inputReady != next.surfaceState.inputReady
+            || previous.surfaceState.childExited != next.surfaceState.childExited
     }
 }
 
@@ -1466,7 +1470,6 @@ struct TerminalHostRuntimeSnapshot: Equatable {
     let renderer: TerminalRendererSnapshot
     let paneMetadata: TerminalPaneMetadataSnapshot
     let surfaceState: AlanTerminalSurfaceStateSnapshot
-    let terminalGridDiagnostics: TerminalGridDiagnostics?
     let lastUpdatedAt: Date
 
     init(
@@ -1484,7 +1487,6 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         renderer: TerminalRendererSnapshot,
         paneMetadata: TerminalPaneMetadataSnapshot,
         surfaceState: AlanTerminalSurfaceStateSnapshot,
-        terminalGridDiagnostics: TerminalGridDiagnostics? = nil,
         lastUpdatedAt: Date
     ) {
         self.stage = stage
@@ -1501,7 +1503,6 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         self.renderer = renderer
         self.paneMetadata = paneMetadata
         self.surfaceState = surfaceState
-        self.terminalGridDiagnostics = terminalGridDiagnostics
         self.lastUpdatedAt = lastUpdatedAt
     }
 
@@ -1528,7 +1529,6 @@ struct TerminalHostRuntimeSnapshot: Equatable {
             && renderer == other.renderer
             && paneMetadata == other.paneMetadata
             && surfaceState.equalsIgnoringTimestamp(other.surfaceState)
-            && terminalGridDiagnostics == other.terminalGridDiagnostics
     }
 
     static let placeholder = TerminalHostRuntimeSnapshot(
@@ -1546,7 +1546,6 @@ struct TerminalHostRuntimeSnapshot: Equatable {
         renderer: .placeholder,
         paneMetadata: .placeholder,
         surfaceState: .placeholder,
-        terminalGridDiagnostics: nil,
         lastUpdatedAt: .now
     )
 }

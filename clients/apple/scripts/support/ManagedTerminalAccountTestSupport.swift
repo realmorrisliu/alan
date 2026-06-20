@@ -39,7 +39,7 @@ enum ManagedTerminalAccountProfileHandoff {
         return TerminalProfileDefinition(
             id: request.terminalProfileID,
             title: request.fullName ?? request.accountName,
-            launch: .sudoUser(unixUser: request.accountName),
+            launch: .managedUser(unixUser: request.accountName),
             defaultWorkingDirectory: request.homeDirectory,
             presentation: TerminalProfilePresentation(
                 symbolName: "person.crop.circle",

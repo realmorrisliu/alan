@@ -1,50 +1,6 @@
 import Foundation
 
 extension ShellCoreFFIAdapter {
-    func actionTitle(for id: ShellActionID) throws -> String? {
-        let response: ShellCoreStandardActionDescriptorsResponse = try send(
-            operation: "actions.standard_descriptors",
-            payload: ShellCoreEmptyPayload()
-        )
-        return response.actions.first { $0.id == id }?.title
-    }
-
-    func defaultActionShortcut(
-        for id: ShellActionID,
-        target: ShellActionTarget = .currentSelection
-    ) throws -> ShellActionShortcut? {
-        let response: ShellCoreDefaultActionShortcutResponse = try send(
-            operation: "actions.default_shortcut",
-            payload: ShellCoreActionDefaultShortcutPayload(
-                id: id,
-                target: ShellCoreActionTarget(target)
-            )
-        )
-        return response.shortcut?.shellShortcut
-    }
-
-    func keyboardAction(for shortcut: ShellActionShortcut) throws -> ShellKeyboardAction? {
-        let response: ShellCoreKeyboardActionResponse = try send(
-            operation: "actions.keyboard_action",
-            payload: ShellCoreKeyboardActionPayload(shortcut: ShellCoreActionShortcut(shortcut))
-        )
-        return response.keyboardAction?.shellKeyboardAction
-    }
-
-    func actionAvailability(
-        _ id: ShellActionID,
-        target: ShellActionTarget,
-        state: ShellStateSnapshot
-    ) throws -> ShellActionAvailability {
-        let result = try coreActionExecutionResult(id, target: target, state: state)
-        switch result.status {
-        case .executed:
-            return .available
-        case .failed, .unavailable:
-            return .unavailable(reason: result.reason ?? "Action is unavailable")
-        }
-    }
-
     func executeAction(
         _ id: ShellActionID,
         target: ShellActionTarget,
@@ -83,47 +39,6 @@ extension ShellCoreFFIAdapter {
 
 }
 
-private struct ShellCoreEmptyPayload: Encodable {}
-
-private struct ShellCoreStandardActionDescriptorsResponse: Decodable {
-    let actions: [ShellCoreActionDescriptor]
-}
-
-private struct ShellCoreActionDescriptor: Decodable {
-    let id: ShellActionID
-    let title: String
-}
-
-private struct ShellCoreActionDefaultShortcutPayload: Encodable {
-    let id: ShellActionID
-    let target: ShellCoreActionTarget
-}
-
-private struct ShellCoreDefaultActionShortcutResponse: Decodable {
-    let shortcut: ShellCoreActionShortcut?
-}
-
-private struct ShellCoreKeyboardActionPayload: Encodable {
-    let shortcut: ShellCoreActionShortcut
-}
-
-private struct ShellCoreKeyboardActionResponse: Decodable {
-    let keyboardAction: ShellCoreKeyboardAction?
-
-    private enum CodingKeys: String, CodingKey {
-        case keyboardAction = "keyboard_action"
-    }
-}
-
-private struct ShellCoreKeyboardAction: Decodable {
-    let id: ShellActionID
-    let target: ShellCoreActionTarget
-
-    var shellKeyboardAction: ShellKeyboardAction {
-        ShellKeyboardAction(id: id, target: target.shellTarget)
-    }
-}
-
 private struct ShellCoreActionExecutePayload: Encodable {
     let state: ShellCorePortableWorkspaceState
     let id: ShellActionID
@@ -144,22 +59,6 @@ private enum ShellCoreActionExecutionStatus: String, Decodable {
     case executed
     case failed
     case unavailable
-}
-
-private struct ShellCoreActionShortcut: Codable {
-    let key: String
-    let modifiers: [ShellActionModifier]
-    let context: ShellActionShortcutContext
-
-    init(_ shortcut: ShellActionShortcut) {
-        key = shortcut.key
-        modifiers = shortcut.modifiers.sorted()
-        context = shortcut.context
-    }
-
-    var shellShortcut: ShellActionShortcut {
-        ShellActionShortcut(key: key, modifiers: Set(modifiers), context: context)
-    }
 }
 
 private enum ShellCoreActionTarget: Codable {

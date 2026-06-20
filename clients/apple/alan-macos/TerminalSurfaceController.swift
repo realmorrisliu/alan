@@ -736,11 +736,7 @@ final class AlanTerminalInputRouter {
         guard input.phase == .down, !input.isRepeat else { return nil }
 
         guard let shortcut = shellActionShortcut(for: input) else { return nil }
-        do {
-            return try ShellCoreFFIAdapter.shared.keyboardAction(for: shortcut)
-        } catch {
-            return nil
-        }
+        return ShellActionMetadataCatalog.keyboardAction(for: shortcut)
     }
 
     private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {
@@ -996,7 +992,6 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
     let inputReady: Bool
     let rendererHealth: String
     let childExited: Bool
-    let terminalGridDiagnostics: TerminalGridDiagnostics?
     let lastUpdatedAt: Date
 
     init(
@@ -1010,7 +1005,6 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
         inputReady: Bool,
         rendererHealth: String,
         childExited: Bool,
-        terminalGridDiagnostics: TerminalGridDiagnostics? = nil,
         lastUpdatedAt: Date
     ) {
         self.readiness = readiness
@@ -1023,7 +1017,6 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
         self.inputReady = inputReady
         self.rendererHealth = rendererHealth
         self.childExited = childExited
-        self.terminalGridDiagnostics = terminalGridDiagnostics
         self.lastUpdatedAt = lastUpdatedAt
     }
 
@@ -1038,7 +1031,6 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
         inputReady: false,
         rendererHealth: "pending",
         childExited: false,
-        terminalGridDiagnostics: nil,
         lastUpdatedAt: .now
     )
 
@@ -1053,7 +1045,6 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
             && inputReady == other.inputReady
             && rendererHealth == other.rendererHealth
             && childExited == other.childExited
-            && terminalGridDiagnostics == other.terminalGridDiagnostics
     }
 }
 
@@ -1180,7 +1171,6 @@ final class AlanTerminalSurfaceController {
             inputReady: isSurfaceReady,
             rendererHealth: latestRenderer.phase == .failed ? "failed" : latestRenderer.phase.rawValue,
             childExited: latestMetadata.processExited,
-            terminalGridDiagnostics: surfaceHandle?.terminalGridDiagnostics,
             lastUpdatedAt: .now
         )
     }

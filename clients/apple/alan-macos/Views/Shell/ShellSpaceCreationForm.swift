@@ -8,25 +8,8 @@ import SwiftUI
 /// indistinguishable auto-named Spaces.
 struct ShellSpaceCreationForm: View {
     /// Decoupled profile option so the form does not depend on
-    /// `TerminalProfileDefinition` or ShellSidebarView's private name helper.
-    struct ProfileOption: Identifiable, Equatable {
-        let id: String
-        let name: String
-        let isEnabled: Bool
-        let guidance: String?
-
-        init(
-            id: String,
-            name: String,
-            isEnabled: Bool = true,
-            guidance: String? = nil
-        ) {
-            self.id = id
-            self.name = name
-            self.isEnabled = isEnabled
-            self.guidance = guidance
-        }
-    }
+    /// `TerminalProfileDefinition` or sidebar-private naming helpers.
+    typealias ProfileOption = ShellSpaceCreationProfileOption
 
     let profiles: [ProfileOption]
     let onCreate: () -> Void

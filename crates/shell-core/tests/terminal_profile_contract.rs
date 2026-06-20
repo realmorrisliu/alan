@@ -4,7 +4,8 @@ use alan_shell_core::{
     ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
     ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
     ManagedTerminalAccountSudoersRule, ManagedTerminalAccountSudoersState,
-    ManagedTerminalAccountVerificationStatus, TerminalExecutableAvailability,
+    ManagedTerminalAccountVerificationStatus, ManagedTerminalAccountVerificationStep,
+    TerminalExecutableAvailability,
     TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalLaunchStrategy,
     TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileEditor,
     TerminalProfileEditorDraft, TerminalProfileLaunch, TerminalProfileLaunchKind,
@@ -162,6 +163,45 @@ fn terminal_profile_editor_trims_and_upserts_definitions() {
 }
 
 #[test]
+fn terminal_profile_editor_rejects_existing_managed_profile_updates() {
+    let document = TerminalProfileDocument {
+        default_profile_id: "alan".to_string(),
+        profiles: vec![TerminalProfileDefinition {
+            id: "alan".to_string(),
+            title: "Alan".to_string(),
+            launch: TerminalProfileLaunch::ManagedUser {
+                unix_user: "alan".to_string(),
+            },
+            default_working_directory: Some("/Users/alan".to_string()),
+            presentation: None,
+            managed_terminal_account_id: Some("alan".to_string()),
+        }],
+    };
+    let result = TerminalProfileEditor::upsert(
+        TerminalProfileEditorDraft {
+            id: " alan ".to_string(),
+            title: "Alan Root".to_string(),
+            launch_kind: TerminalProfileLaunchKind::SudoRoot,
+            unix_user: String::new(),
+            custom_command: String::new(),
+            default_working_directory: Some("/var/root".to_string()),
+            presentation: None,
+            managed_terminal_account_id: Some("alan".to_string()),
+        },
+        &document,
+    );
+
+    assert!(!result.is_valid());
+    assert!(result.document.is_none());
+    assert_eq!(
+        result.errors,
+        vec![TerminalProfileValidationError::ManagedProfileReadOnly {
+            id: "alan".to_string()
+        }]
+    );
+}
+
+#[test]
 fn launch_intent_resolves_profiles_and_projected_environment() {
     let document = profile_document();
     let availability = TerminalExecutableAvailability::enforcing(["/usr/bin/sudo", "/bin/zsh"]);
@@ -273,8 +313,8 @@ fn global_default_capture_matches_swift_policy() {
     assert!(!should_capture_global_default_terminal_profile(
         &login_shell
     ));
-    assert!(should_capture_global_default_terminal_profile(&sudo));
-    assert!(should_capture_global_default_terminal_profile(
+    assert!(!should_capture_global_default_terminal_profile(&sudo));
+    assert!(!should_capture_global_default_terminal_profile(
         &login_with_cwd
     ));
 }
@@ -287,6 +327,7 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
         sudoers: ManagedTerminalAccountSudoersState::Missing,
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: false,
     };
 
     let plan = ManagedTerminalAccountPlanner::plan(request.clone(), &missing_state);
@@ -304,6 +345,46 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
             ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
             ManagedTerminalAccountPlanStepKind::BindCurrentSpace,
         ]
+    );
+
+    let partial_state = ManagedTerminalAccountState {
+        account: ManagedTerminalAccountRecord::Invalid {
+            reason: "Local account record is incomplete.".to_string(),
+        },
+        sudoers: ManagedTerminalAccountSudoersState::Missing,
+        terminal_profile: ManagedTerminalAccountProfileState::Missing,
+        verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: false,
+    };
+    let partial_plan = ManagedTerminalAccountPlanner::plan(request.clone(), &partial_state);
+    assert_eq!(
+        partial_plan.steps.first().map(|step| step.kind),
+        Some(ManagedTerminalAccountPlanStepKind::CreateStandardAccount)
+    );
+
+    let missing_home_state = ManagedTerminalAccountState {
+        account: ManagedTerminalAccountRecord::Standard {
+            home_directory: "/Users/alan_smoke".to_string(),
+            shell: "/bin/zsh".to_string(),
+            hidden: true,
+        },
+        sudoers: ManagedTerminalAccountSudoersState::AlanOwnedValid {
+            path: "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string(),
+        },
+        terminal_profile: ManagedTerminalAccountProfileState::Missing,
+        verification: ManagedTerminalAccountVerificationStatus::Failed {
+            step: ManagedTerminalAccountVerificationStep::HomeDirectory,
+            message: "Home directory is missing.".to_string(),
+        },
+        home_directory_exists: false,
+    };
+    let missing_home_plan =
+        ManagedTerminalAccountPlanner::plan(request.clone(), &missing_home_state);
+    assert!(
+        missing_home_plan
+            .steps
+            .iter()
+            .any(|step| step.kind == ManagedTerminalAccountPlanStepKind::RepairHomeDirectory)
     );
 
     let rule = ManagedTerminalAccountSudoersRule::new(&request);
@@ -337,6 +418,7 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
         },
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::Passed,
+        home_directory_exists: true,
     };
     let handoff = ManagedTerminalAccountProfileHandoff::profile_definition(&request, &ready_state)
         .expect("ready state produces profile handoff");

@@ -12,6 +12,10 @@ mkdir -p "$MODULE_CACHE_DIR"
 
 cargo build -p alan-shell-core-ffi
 
+clang -c \
+    "$REPO_ROOT/clients/apple/alan-macos/AlanDarwinPtySpawn.c" \
+    -o "$BUILD_DIR/AlanDarwinPtySpawn.o"
+
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     -parse-as-library \
     -D ALAN_SHELL_CORE_FFI_TESTING \
@@ -24,6 +28,9 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellWorkspaceManifest.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellActionCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIActionAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIControlAdapter.swift" \
@@ -38,6 +45,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-core-ffi-adapter.swift" \
+    "$BUILD_DIR/AlanDarwinPtySpawn.o" \
     -L "$REPO_ROOT/target/debug" \
     -lalan_shell_core_ffi \
     -o "$TEST_BINARY"

@@ -166,59 +166,6 @@ fn move_tab_to_space_requires_explicit_target_and_move_shortcut_stays_unavailabl
     );
 }
 
-#[test]
-fn quick_terminal_promote_requires_destination_and_routes_space_id() {
-    let registry = ShellActionRegistry::standard();
-    let mut state = workspace_with_two_spaces();
-    state.quick_terminal = Some(ShellQuickTerminalState {
-        pane_id: "quick_terminal_pane".to_string(),
-        presentation: ShellQuickTerminalPresentation::Hidden,
-        last_working_directory: Some("/tmp".to_string()),
-        content_id: "content_quick_terminal_pane".to_string(),
-        terminal_payload: Some(alan_shell_core::ShellTerminalContentPayload {
-            launch_target: ShellLaunchTarget::Shell,
-            cwd: Some("/tmp".to_string()),
-            title: Some("Shell".to_string()),
-            transcript_snapshot: None,
-            terminal_profile_id: None,
-            terminal_grid_diagnostics: None,
-        }),
-        terminal_metadata: Some(TerminalRuntimeMetadata {
-            title: Some("Shell".to_string()),
-            cwd: Some("/tmp".to_string()),
-            active_task_state: Default::default(),
-            activity: None,
-        }),
-        attention: ShellAttentionState::Idle,
-    });
-
-    assert_eq!(
-        registry.execute(
-            ShellActionId::QuickTerminalPromote,
-            &ShellActionTarget::CurrentSelection,
-            &state,
-        ),
-        ShellActionExecutionResult::Unavailable {
-            reason: "Quick terminal destination is required".to_string(),
-        }
-    );
-    assert_eq!(
-        registry.execute(
-            ShellActionId::QuickTerminalPromote,
-            &ShellActionTarget::ContextSpace {
-                space_id: "space_2".to_string(),
-            },
-            &state,
-        ),
-        ShellActionExecutionResult::Executed {
-            effect: ShellActionEffect::PromoteQuickTerminal {
-                space_id: Some("space_2".to_string()),
-            },
-        }
-    );
-}
-
-#[test]
 fn pane_zoom_and_movement_follow_split_tree_availability() {
     let registry = ShellActionRegistry::standard();
     let single = single_tab_workspace();

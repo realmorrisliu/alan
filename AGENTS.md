@@ -859,6 +859,23 @@ Resolved skill execution may be `inline` or
 `delegate(target=package-launch-target)`; the full contract material lives in
 OpenSpec.
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for `realmorrisliu/Alan` via `gh`.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels directly, with no aliases or remapping.
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout for repo domain docs.
+See `docs/agents/domain.md`.
+
 ---
 
 ## Development Workflow

@@ -205,6 +205,26 @@ private struct ShellCoreManagedTerminalAccountPlanStatusPayload: Encodable {
             )
             path = nil
             profileID = nil
+        case .helperUnavailable:
+            type = "helper_unavailable"
+            errors = nil
+            path = nil
+            profileID = nil
+        case .accountNotAlanManaged:
+            type = "account_not_alan_managed"
+            errors = nil
+            path = nil
+            profileID = nil
+        case let .legacySudoersPresent(legacyPath):
+            type = "legacy_sudoers_present"
+            errors = nil
+            path = legacyPath
+            profileID = nil
+        case .ptySpawnFailed:
+            type = "pty_spawn_failed"
+            errors = nil
+            path = nil
+            profileID = nil
         case .requiresDestructiveConfirmation:
             type = "requires_destructive_confirmation"
             errors = nil
@@ -306,6 +326,8 @@ private extension ManagedTerminalAccountPlanStepKind {
             return "delete_account"
         case .deleteHomeDirectory:
             return "delete_home_directory"
+        case let .helperStep(kind):
+            return kind.rawValue
         }
     }
 }

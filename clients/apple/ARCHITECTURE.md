@@ -285,7 +285,7 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode with
-13 known large-file / bridge-boundary warnings after the post-core cleanup
+15 known large-file / bridge-boundary warnings after the post-core cleanup
 slice moved Swift reducer parity support out of the app target. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
@@ -317,7 +317,7 @@ the app target, and
 extracting manifest startup, persistence, action, reducer, and platform metadata
 coordinators from `ShellHostController.swift`, the warning classes are:
 
-- 12 large Swift files over the report threshold.
+- 14 large Swift files over the report threshold.
 - 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
   while still outside a narrow bridge owner.
 

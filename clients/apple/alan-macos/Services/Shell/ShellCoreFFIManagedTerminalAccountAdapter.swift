@@ -88,12 +88,14 @@ private struct ShellCoreManagedAccountStatePayload: Encodable {
     let sudoers: ShellCoreManagedAccountSudoersStatePayload
     let terminalProfile: ShellCoreManagedAccountProfileStatePayload
     let verification: ShellCoreManagedAccountVerificationStatusPayload
+    let homeDirectoryExists: Bool
 
     private enum CodingKeys: String, CodingKey {
         case account
         case sudoers
         case terminalProfile = "terminal_profile"
         case verification
+        case homeDirectoryExists = "home_directory_exists"
     }
 
     init(_ state: ManagedTerminalAccountState) {
@@ -101,6 +103,7 @@ private struct ShellCoreManagedAccountStatePayload: Encodable {
         sudoers = ShellCoreManagedAccountSudoersStatePayload(state.sudoers)
         terminalProfile = ShellCoreManagedAccountProfileStatePayload(state.terminalProfile)
         verification = ShellCoreManagedAccountVerificationStatusPayload(state.verification)
+        homeDirectoryExists = state.homeDirectoryExists
     }
 }
 
