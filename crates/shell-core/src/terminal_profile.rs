@@ -666,15 +666,15 @@ impl TerminalProfileEditor {
             profile.id == draft_id
                 && normalized_non_empty(profile.managed_terminal_account_id.as_deref()).is_some()
         });
-        if let Some(existing_profile) = existing_managed_profile {
-            if !allows_managed_profile_repair_upsert(existing_profile, &draft) {
-                return TerminalProfileDocumentEditorResult {
-                    document: None,
-                    errors: vec![TerminalProfileValidationError::ManagedProfileReadOnly {
-                        id: draft_id.to_string(),
-                    }],
-                };
-            }
+        if let Some(existing_profile) = existing_managed_profile
+            && !allows_managed_profile_repair_upsert(existing_profile, &draft)
+        {
+            return TerminalProfileDocumentEditorResult {
+                document: None,
+                errors: vec![TerminalProfileValidationError::ManagedProfileReadOnly {
+                    id: draft_id.to_string(),
+                }],
+            };
         }
 
         let editor_result = Self::make_definition(draft);

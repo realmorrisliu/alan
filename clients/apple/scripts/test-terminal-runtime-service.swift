@@ -21,6 +21,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesFakePtyRuntimeCapturesLaunchAndLifecycle()
         verifiesManagedUserPtyRuntimeFailsClosedWithoutSudoFallback()
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
+        verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
         verifiesManagedUserRendererAttachmentBridgesHelperSession()
         verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer()
@@ -705,6 +706,38 @@ private enum TerminalRuntimeServiceTests {
         expect(
             postExitDelivery.errorCode == "terminal_child_exited",
             "helper-backed handle must use the stable exited error code after helper exit"
+        )
+    }
+
+    private static func verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider() {
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": "content_terminal_default_helper",
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanWindowTerminalRuntimeService.makeDefaultPtyRuntime(helperClient: helper)
+        let handle = runtime.handle(
+            forTerminalContentID: "content_terminal_default_helper",
+            bootRequest: request
+        )
+
+        expect(
+            handle is AlanHelperManagedUserPtyHandle,
+            "window runtime defaults must wire managed_user launches to the helper-backed PTY provider"
+        )
+        expect(
+            helper.startedPTYRequests.first?.accountName == "lab",
+            "window runtime default PTY runtime must issue helper startManagedUserPTY requests"
         )
     }
 

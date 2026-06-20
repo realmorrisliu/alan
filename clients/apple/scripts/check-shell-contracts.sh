@@ -2510,6 +2510,11 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must verify the privileged helper is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "mktemp \"\\\${path}\\.arm64\\.XXXXXX\"" \
     "release assembly must thin universal inputs into a temporary sibling binary"
 
@@ -2532,6 +2537,16 @@ require_pattern \
     "scripts/assemble-release-app.sh" \
     "sign_path \"\\\$SHELL_CORE_FFI_DYLIB\"" \
     "release assembly must sign the shell-core FFI dylib before the final app bundle"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "sign_path \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must sign the privileged helper before the final app bundle"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "codesign --verify --strict --verbose=2 \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must verify the privileged helper signature before the final app bundle"
 
 require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
@@ -2577,6 +2592,16 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "require_arm64_macho \"\\\$ALAN_BIN\"" \
     "release app validation must reject non-arm64 embedded CLI binaries"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_arm64_macho \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release app validation must reject non-arm64 privileged helper binaries"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_developer_id_signature \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release app validation must verify the privileged helper signature"
 
 require_pattern \
     "scripts/validate-release-app.sh" \

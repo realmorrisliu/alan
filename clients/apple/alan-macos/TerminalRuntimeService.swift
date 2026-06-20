@@ -2869,7 +2869,7 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     ) {
         self.renderCoordinator = renderCoordinator
         self.bootstrap = AlanDefaultGhosttyProcessBootstrap.shared
-        let ptyRuntime = ptyRuntime ?? AlanDarwinTerminalPtyRuntime()
+        let ptyRuntime = ptyRuntime ?? Self.makeDefaultPtyRuntime()
         self.ptyRuntime = ptyRuntime
         let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
@@ -2891,7 +2891,7 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     ) {
         self.renderCoordinator = renderCoordinator
         self.bootstrap = bootstrap
-        let ptyRuntime = ptyRuntime ?? AlanDarwinTerminalPtyRuntime()
+        let ptyRuntime = ptyRuntime ?? Self.makeDefaultPtyRuntime()
         self.ptyRuntime = ptyRuntime
         let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
@@ -2903,6 +2903,14 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
                 renderCoordinator: coordinator
             )
         }
+    }
+
+    static func makeDefaultPtyRuntime(
+        helperClient: AlanPrivilegedHelperClienting = AlanPrivilegedHelperAppClient()
+    ) -> AlanTerminalPtyRuntime {
+        AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helperClient)
+        )
     }
 
     var diagnostics: AlanGhosttyBootstrapDiagnostics {

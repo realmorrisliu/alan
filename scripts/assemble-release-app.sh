@@ -26,6 +26,7 @@ APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 SHELL_CORE_FFI_DYLIB_NAME="libalan_shell_core_ffi.dylib"
 SHELL_CORE_FFI_DYLIB="$APP_BUNDLE/Contents/Frameworks/$SHELL_CORE_FFI_DYLIB_NAME"
+PRIVILEGED_HELPER_EXECUTABLE="$APP_BUNDLE/Contents/Library/LaunchServices/$ALAN_PRIVILEGED_HELPER_LABEL"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 SIGNING_IDENTITY="${ALAN_DEVELOPER_ID_APPLICATION:-${ALAN_SIGNING_IDENTITY:-}}"
 NOTARIZE="${ALAN_NOTARIZE:-0}"
@@ -242,6 +243,9 @@ fi
 if [[ ! -f "$SHELL_CORE_FFI_DYLIB" ]]; then
     fail "Release build did not produce $SHELL_CORE_FFI_DYLIB"
 fi
+if [[ ! -f "$PRIVILEGED_HELPER_EXECUTABLE" ]]; then
+    fail "Release build did not produce $PRIVILEGED_HELPER_EXECUTABLE"
+fi
 BUNDLE_VERSION="$(plutil -extract CFBundleVersion raw -o - "$APP_BUNDLE/Contents/Info.plist")" ||
     fail "could not read CFBundleVersion from $APP_BUNDLE"
 
@@ -255,6 +259,10 @@ thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 
 printf 'Verifying shell-core FFI dylib architecture...\n'
 thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
+
+printf 'Verifying privileged helper architecture...\n'
+chmod +x "$PRIVILEGED_HELPER_EXECUTABLE"
+thin_macho_to_arm64 "$PRIVILEGED_HELPER_EXECUTABLE"
 
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded alan binary...\n'
@@ -274,9 +282,14 @@ sign_path "$SHELL_CORE_FFI_DYLIB"
 codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
 verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
 
+printf 'Signing privileged helper...\n'
+sign_path "$PRIVILEGED_HELPER_EXECUTABLE"
+codesign --verify --strict --verbose=2 "$PRIVILEGED_HELPER_EXECUTABLE"
+
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
 SHELL_CORE_FFI_SHA="$(sha256 "$SHELL_CORE_FFI_DYLIB")"
+PRIVILEGED_HELPER_SHA="$(sha256 "$PRIVILEGED_HELPER_EXECUTABLE")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
@@ -297,6 +310,10 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")": {
       "path": "Contents/Frameworks/$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")",
       "sha256": "$(json_escape "$SHELL_CORE_FFI_SHA")"
+    },
+    "$(json_escape "$ALAN_PRIVILEGED_HELPER_LABEL")": {
+      "path": "Contents/Library/LaunchServices/$(json_escape "$ALAN_PRIVILEGED_HELPER_LABEL")",
+      "sha256": "$(json_escape "$PRIVILEGED_HELPER_SHA")"
     }
   }
 }
@@ -306,6 +323,7 @@ printf 'Signing app bundle...\n'
 sign_path "$APP_BUNDLE"
 codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
 verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
+codesign --verify --strict --verbose=2 "$PRIVILEGED_HELPER_EXECUTABLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
 ZIP_PATH=""
