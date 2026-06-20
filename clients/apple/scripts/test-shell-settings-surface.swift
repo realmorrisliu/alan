@@ -1423,6 +1423,21 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
                 presentation: nil,
                 managedTerminalAccountID: "ready"
             ),
+            TerminalProfileDefinition(
+                id: "stale",
+                title: "Stale User",
+                launch: .managedUser(unixUser: "stale"),
+                defaultWorkingDirectory: "/tmp/stale",
+                presentation: nil,
+                managedTerminalAccountID: "stale"
+            ),
+            TerminalProfileDefinition(
+                id: "conflict",
+                title: "Manual Conflict",
+                launch: .customCommand("/bin/zsh"),
+                defaultWorkingDirectory: "/Users/conflict",
+                presentation: nil
+            ),
         ],
         defaultProfileID: "ready",
         recoveryMessage: nil
@@ -1434,7 +1449,18 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
                 accountName: "ready",
                 readiness: .ready,
                 ownership: .alanManaged,
-                terminalProfileID: "ready",
+                ptySmokeVerified: true
+            ),
+            "stale": helperDiagnosis(
+                accountName: "stale",
+                readiness: .ready,
+                ownership: .alanManaged,
+                ptySmokeVerified: true
+            ),
+            "conflict": helperDiagnosis(
+                accountName: "conflict",
+                readiness: .ready,
+                ownership: .alanManaged,
                 ptySmokeVerified: true
             ),
             "manual": helperDiagnosis(
@@ -1467,7 +1493,7 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
         guiUserName: "morris",
         helperClient: helper,
         catalog: ManagedTerminalAccountCatalog(
-            entries: ["ready", "manual", "legacy", "foreign", "ptyfail"].map {
+            entries: ["ready", "stale", "conflict", "manual", "legacy", "foreign", "ptyfail"].map {
                 ManagedTerminalAccountCatalogEntry(accountName: $0, displayLabel: $0)
             }
         )
@@ -1476,6 +1502,16 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
     let users = Dictionary(uniqueKeysWithValues: summary.users.map { ($0.unixUserName, $0) })
 
     try expect(plans["ready"]?.status == .alreadyReady, "helper-ready diagnosis must produce ready state")
+    try expect(
+        plans["stale"]?.status == .readyToApply
+            && plans["stale"]?.steps.contains { $0.kind == .createOrUpdateTerminalProfile } == true,
+        "helper-ready diagnosis must refresh stale local Terminal Profiles"
+    )
+    try expect(
+        plans["conflict"]?.status == .terminalProfileConflict(profileID: "conflict")
+            && plans["conflict"]?.steps.isEmpty == true,
+        "helper-ready diagnosis must not overwrite unmanaged local Terminal Profiles"
+    )
     try expect(
         plans["manual"]?.status == .accountNotAlanManaged
             && plans["manual"]?.steps.isEmpty == true,

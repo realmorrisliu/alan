@@ -684,6 +684,26 @@ require_pattern \
     "terminal runtime service must expose content-keyed registration state"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "setNoSigpipeSocketOption\\(descriptors\\[0\\]\\)" \
+    "local renderer socketpairs must disable SIGPIPE before Ghostty attachment"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingPtyInputChunks" \
+    "local renderer PTY input must buffer nonblocking short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "DispatchSource\\.makeWriteSource" \
+    "local renderer PTY input must retry buffered input when the PTY becomes writable"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "fileDescriptor: ptyFileDescriptor" \
+    "local renderer PTY input retry source must watch the PTY file descriptor"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
     "final class AlanTerminalSurfaceController" \
     "terminal surface behavior must be owned by a controller boundary"

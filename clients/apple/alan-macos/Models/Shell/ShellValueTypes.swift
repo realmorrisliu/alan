@@ -1332,6 +1332,26 @@ enum ManagedTerminalAccountProfileState: Equatable {
     case existingUnmanaged(profileID: String)
 }
 
+private extension ManagedTerminalAccountProfileState {
+    var managedProfileID: String? {
+        switch self {
+        case .existingManaged(let profileID):
+            return profileID
+        case .missing, .existingManagedOutdated, .existingUnmanaged:
+            return nil
+        }
+    }
+
+    var unmanagedProfileID: String? {
+        switch self {
+        case .existingUnmanaged(let profileID):
+            return profileID
+        case .missing, .existingManaged, .existingManagedOutdated:
+            return nil
+        }
+    }
+}
+
 enum ManagedTerminalAccountVerificationStep: String, Equatable {
     case accountLookup = "account_lookup"
     case nonAdminAccount = "non_admin_account"
@@ -1773,6 +1793,26 @@ enum ManagedTerminalAccountPlanner {
         request: ManagedTerminalAccountRequest,
         diagnosis: AlanManagedUserDiagnosis
     ) -> ManagedTerminalAccountPlan {
+        plan(request: request, diagnosis: diagnosis, terminalProfile: nil)
+    }
+
+    static func plan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfiles: TerminalProfileDocument
+    ) -> ManagedTerminalAccountPlan {
+        plan(
+            request: request,
+            diagnosis: diagnosis,
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles)
+        )
+    }
+
+    private static func plan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> ManagedTerminalAccountPlan {
         let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
         guard validationErrors.isEmpty else {
             return ManagedTerminalAccountPlan(request: request, status: .invalid(validationErrors), steps: [])
@@ -1783,14 +1823,30 @@ enum ManagedTerminalAccountPlanner {
             return ManagedTerminalAccountPlan(request: request, status: .helperUnavailable, steps: [])
         case .accountNotAlanManaged:
             return ManagedTerminalAccountPlan(request: request, status: .accountNotAlanManaged, steps: [])
+        case _ where terminalProfile?.unmanagedProfileID != nil:
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .terminalProfileConflict(
+                    profileID: terminalProfile?.unmanagedProfileID ?? request.terminalProfileID
+                ),
+                steps: []
+            )
         case .destructiveConfirmationRequired:
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .requiresDestructiveConfirmation,
-                steps: helperBackedSteps(request: request, diagnosis: diagnosis)
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
             )
         case .ready:
-            let steps = terminalProfileHandoffSteps(request: request, diagnosis: diagnosis)
+            let steps = terminalProfileHandoffSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: steps.isEmpty ? .alreadyReady : .readyToApply,
@@ -1807,16 +1863,28 @@ enum ManagedTerminalAccountPlanner {
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .legacySudoersPresent(path: diagnosis.legacySudoersPath),
-                steps: helperBackedSteps(request: request, diagnosis: diagnosis)
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
             )
         case .ptySpawnFailed:
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: .ptySpawnFailed,
-                steps: helperBackedSteps(request: request, diagnosis: diagnosis)
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
             )
         case .accountMissing, .repairable:
-            let steps = helperBackedSteps(request: request, diagnosis: diagnosis)
+            let steps = helperBackedSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
             return ManagedTerminalAccountPlan(
                 request: request,
                 status: diagnosis.accountExists ? .repair : .readyToApply,
@@ -1848,6 +1916,29 @@ enum ManagedTerminalAccountPlanner {
         diagnosis: AlanManagedUserDiagnosis,
         scope: ManagedTerminalAccountRollbackScope
     ) -> ManagedTerminalAccountPlan {
+        rollbackPlan(request: request, diagnosis: diagnosis, scope: scope, terminalProfile: nil)
+    }
+
+    static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope,
+        terminalProfiles: TerminalProfileDocument
+    ) -> ManagedTerminalAccountPlan {
+        rollbackPlan(
+            request: request,
+            diagnosis: diagnosis,
+            scope: scope,
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles)
+        )
+    }
+
+    private static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> ManagedTerminalAccountPlan {
         if diagnosis.readinessState == .helperUnavailable {
             return ManagedTerminalAccountPlan(request: request, status: .helperUnavailable, steps: [])
         }
@@ -1861,7 +1952,9 @@ enum ManagedTerminalAccountPlanner {
         if shouldCleanupLegacySudoers(request: request, diagnosis: diagnosis) {
             steps.append(helperStep(.cleanupLegacySudoers, "Clean up verified legacy Alan sudoers"))
         }
-        if diagnosis.terminalProfileID == request.terminalProfileID {
+        if terminalProfile?.managedProfileID == request.terminalProfileID
+            || diagnosis.terminalProfileID == request.terminalProfileID
+        {
             steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
         }
         steps.append(helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration"))
@@ -2002,7 +2095,8 @@ enum ManagedTerminalAccountPlanner {
 
     private static func helperBackedSteps(
         request: ManagedTerminalAccountRequest,
-        diagnosis: AlanManagedUserDiagnosis
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
     ) -> [ManagedTerminalAccountPlanStep] {
         var steps: [ManagedTerminalAccountPlanStep] = []
 
@@ -2030,20 +2124,48 @@ enum ManagedTerminalAccountPlanner {
         if !diagnosis.ptySmokeVerified {
             steps.append(helperStep(.verifyManagedUserPTY, "Verify helper-managed PTY startup"))
         }
-        steps.append(contentsOf: terminalProfileHandoffSteps(request: request, diagnosis: diagnosis))
+        steps.append(
+            contentsOf: terminalProfileHandoffSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
+        )
         return steps
     }
 
     private static func terminalProfileHandoffSteps(
         request: ManagedTerminalAccountRequest,
-        diagnosis: AlanManagedUserDiagnosis
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
     ) -> [ManagedTerminalAccountPlanStep] {
+        if terminalProfile?.managedProfileID == request.terminalProfileID {
+            return []
+        }
         guard diagnosis.terminalProfileID == request.terminalProfileID else {
             return [
                 step(.createOrUpdateTerminalProfile, "Create matching Terminal Profile", false),
             ]
         }
         return []
+    }
+
+    private static func terminalProfileState(
+        for request: ManagedTerminalAccountRequest,
+        document: TerminalProfileDocument
+    ) -> ManagedTerminalAccountProfileState {
+        guard let profile = document.profile(id: request.terminalProfileID) else {
+            return .missing
+        }
+        guard profile.managedTerminalAccountID == request.accountName else {
+            return .existingUnmanaged(profileID: profile.id)
+        }
+        guard profile.launch == .managedUser(unixUser: request.accountName),
+            profile.defaultWorkingDirectory == request.homeDirectory
+        else {
+            return .existingManagedOutdated(profileID: profile.id)
+        }
+        return .existingManaged(profileID: profile.id)
     }
 
     private static func shouldCleanupLegacySudoers(

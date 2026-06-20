@@ -583,7 +583,7 @@ private enum TerminalRuntimeServiceTests {
             strategy: .terminalProfileManagedUser,
             executablePath: "",
             arguments: [],
-            workingDirectory: "/Users/lab",
+            workingDirectory: "/Users/lab/project",
             environment: [
                 "ALAN_SHELL_CONTENT_ID": "content_terminal_managed_user_helper",
                 "ALAN_MANAGED_USER_ACCOUNT": "lab",
@@ -616,9 +616,10 @@ private enum TerminalRuntimeServiceTests {
         expect(
             helper.startedPTYRequests.first?.accountName == "lab"
                 && helper.startedPTYRequests.first?.contentID == "content_terminal_managed_user_helper"
+                && helper.startedPTYRequests.first?.homeDirectory == "/Users/lab"
                 && helper.startedPTYRequests.first?.columns == 100
                 && helper.startedPTYRequests.first?.rows == 30,
-            "helper PTY provider must send typed startManagedUserPTY requests"
+            "helper PTY provider must send typed startManagedUserPTY requests with canonical account home"
         )
         expect(handle.snapshot.phase == .running, "helper-backed managed_user handle must snapshot running")
         expect(

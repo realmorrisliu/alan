@@ -1536,7 +1536,8 @@ private struct ShellSettingsContentView: View {
             let rollbackPlan = ManagedTerminalAccountPlanner.rollbackPlan(
                 request: plan.request,
                 diagnosis: diagnosis,
-                scope: .alanIntegrationOnly
+                scope: .alanIntegrationOnly,
+                terminalProfiles: terminalProfilesSummary.document
             )
             managedUserActionSheet = ShellManagedUserActionSheetState(
                 action: action,

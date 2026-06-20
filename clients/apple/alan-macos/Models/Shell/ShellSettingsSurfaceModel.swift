@@ -876,7 +876,11 @@ struct ManagedTerminalAccountSettingsSummary: Equatable {
                 let diagnosis = status.isHealthy
                     ? helperClient.diagnoseManagedUser(request)
                     : AlanManagedUserDiagnosis.helperUnavailable(request: request, status: status)
-                return ManagedTerminalAccountPlanner.plan(request: request, diagnosis: diagnosis)
+                return ManagedTerminalAccountPlanner.plan(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfiles: terminalProfiles.document
+                )
             }
             let discoveredState = discoverer.discover(
                 request: request,
@@ -1218,7 +1222,11 @@ enum ManagedTerminalUserCreationPreviewBuilder {
             terminalProfiles: terminalProfiles,
             accountIsUnavailable: diagnosis.accountExists
                 && diagnosis.ownershipState != .alanManaged,
-            plan: ManagedTerminalAccountPlanner.plan(request: draft.request, diagnosis: diagnosis)
+            plan: ManagedTerminalAccountPlanner.plan(
+                request: draft.request,
+                diagnosis: diagnosis,
+                terminalProfiles: terminalProfiles.document
+            )
         )
     }
 
