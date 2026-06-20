@@ -927,20 +927,25 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     @discardableResult
     fileprivate func drainAvailableOutput(maxBytes: Int = 4096) -> Data {
         guard exitStatus == nil else { return Data() }
-        switch helperQueue.sync(execute: {
-            helperClient.readManagedUserPTY(
-                AlanManagedUserPTYReadRequest(
-                    sessionID: session.sessionID,
-                    maxBytes: maxBytes
+        var collected = Data()
+
+        while true {
+            switch helperQueue.sync(execute: {
+                helperClient.readManagedUserPTY(
+                    AlanManagedUserPTYReadRequest(
+                        sessionID: session.sessionID,
+                        maxBytes: maxBytes
+                    )
                 )
-            )
-        }) {
-        case .success(let chunk):
-            applyHelperOutputChunk(chunk)
-            return chunk.data
-        case .failure(let diagnostic):
-            applyHelperOutputFailure(diagnostic)
-            return Data()
+            }) {
+            case .success(let chunk):
+                applyHelperOutputChunk(chunk)
+                guard !chunk.data.isEmpty else { return collected }
+                collected.append(chunk.data)
+            case .failure(let diagnostic):
+                applyHelperOutputFailure(diagnostic)
+                return collected
+            }
         }
     }
 

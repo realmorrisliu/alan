@@ -1082,11 +1082,12 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
         var queued = outputChunksBySessionID[request.sessionID] ?? []
         let data = queued.isEmpty ? Data() : queued.removeFirst()
         outputChunksBySessionID[request.sessionID] = queued
+        let final = data.isEmpty && exitObservationsBySessionID[request.sessionID]?.final == true
         return .success(
             AlanManagedUserPTYOutputChunk(
                 sessionID: request.sessionID,
                 data: data,
-                final: exitObservationsBySessionID[request.sessionID]?.final == true,
+                final: final,
                 sanitizedMessage: data.isEmpty ? nil : "Privileged helper returned PTY output."
             )
         )
