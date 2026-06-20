@@ -826,7 +826,20 @@ struct AlanManagedUserPTYSession: Codable, Equatable {
 
 struct AlanManagedUserPTYInputRequest: Codable, Equatable {
     let sessionID: String
-    let text: String
+    let data: Data
+
+    init(sessionID: String, data: Data) {
+        self.sessionID = sessionID
+        self.data = data
+    }
+
+    init(sessionID: String, text: String) {
+        self.init(sessionID: sessionID, data: Data(text.utf8))
+    }
+
+    var text: String {
+        String(decoding: data, as: UTF8.self)
+    }
 }
 
 struct AlanManagedUserPTYReadRequest: Codable, Equatable {

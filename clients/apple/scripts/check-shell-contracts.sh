@@ -759,6 +759,21 @@ require_pattern \
     "managed_user helper PTY tests must cover full final-output draining before exit projection"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "AlanManagedUserPTYInputRequest\\(sessionID: sessionID, data: data\\)" \
+    "managed_user renderer helper input must preserve raw bytes instead of re-encoding String"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "binaryRendererInput" \
+    "managed_user renderer tests must cover binary input preservation"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "helper-output-b" \
+    "managed_user renderer tests must cover draining more than one helper output chunk"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
     "final class AlanTerminalSurfaceController" \
     "terminal surface behavior must be owned by a controller boundary"

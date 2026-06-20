@@ -913,7 +913,7 @@ private struct AlanXPCManagedUserPTYSession: Codable, Equatable {
 
 private struct AlanXPCManagedUserPTYInputRequest: Codable, Equatable {
     let sessionID: String
-    let text: String
+    let data: Data
 }
 
 private struct AlanXPCManagedUserPTYReadRequest: Codable, Equatable {
@@ -1822,9 +1822,7 @@ private final class AlanPrivilegedHelperPTYSessionStore {
         guard let session = sessions[request.sessionID] else {
             return rejected(.writeManagedUserPTY, sessionID: request.sessionID, message: "Managed User PTY session is missing.")
         }
-        guard let data = request.text.data(using: .utf8) else {
-            return rejected(.writeManagedUserPTY, sessionID: request.sessionID, message: "Managed User PTY input was invalid.")
-        }
+        let data = request.data
         guard data.count <= Self.maxPendingInputBytes,
               session.pendingInput.count <= Self.maxPendingInputBytes - data.count
         else {

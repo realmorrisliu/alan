@@ -943,7 +943,8 @@ private enum TerminalRuntimeServiceTests {
             bootRequest: request
         )
         helper.outputChunksBySessionID["fake-content_terminal_managed_user_renderer"] = [
-            Data("helper-output\n".utf8),
+            Data("helper-output-a\n".utf8),
+            Data("helper-output-b\n".utf8),
         ]
 
         var rendererFileDescriptor: Int32?
@@ -970,16 +971,20 @@ private enum TerminalRuntimeServiceTests {
             helper.terminatedPTYSessionIDs.isEmpty,
             "managed_user renderer attachment must not terminate a healthy helper PTY session"
         )
-        let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output")
+        guard let rendererFileDescriptor else {
+            fail("managed_user renderer attachment must expose a renderer file descriptor")
+        }
+        let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output-b")
         let snapshot = handle.snapshot
+        let helperReadCount = helper.readPTYRequests.filter {
+            $0 == AlanManagedUserPTYReadRequest(
+                sessionID: "fake-content_terminal_managed_user_renderer",
+                maxBytes: 4096
+            )
+        }.count
         expect(
-            helper.readPTYRequests.contains(
-                AlanManagedUserPTYReadRequest(
-                    sessionID: "fake-content_terminal_managed_user_renderer",
-                    maxBytes: 4096
-                )
-            ),
-            "managed_user renderer attachment must read helper PTY output through the typed API"
+            helperReadCount >= 3,
+            "managed_user renderer attachment must drain helper PTY output until idle"
         )
         expect(
             snapshot.phase == .running,
@@ -988,6 +993,26 @@ private enum TerminalRuntimeServiceTests {
         expect(
             transcriptObserved,
             "managed_user renderer attachment must update the fallback transcript from helper output"
+        )
+
+        let binaryRendererInput = Data([0xff, 0x00, 0x1b, 0x7f])
+        let writtenBytes = binaryRendererInput.withUnsafeBytes { rawBuffer -> Int in
+            guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(rendererFileDescriptor, baseAddress, rawBuffer.count)
+        }
+        expect(
+            writtenBytes == binaryRendererInput.count,
+            "managed_user renderer attachment test must write binary renderer input"
+        )
+        let inputDeadline = Date().addingTimeInterval(1)
+        while Date() < inputDeadline
+            && !helper.writtenPTYInputRequests.contains(where: { $0.data == binaryRendererInput })
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(
+            helper.writtenPTYInputRequests.contains(where: { $0.data == binaryRendererInput }),
+            "managed_user renderer input must preserve raw bytes when writing through the helper"
         )
 
         helper.exitObservationsBySessionID["fake-content_terminal_managed_user_renderer"] =

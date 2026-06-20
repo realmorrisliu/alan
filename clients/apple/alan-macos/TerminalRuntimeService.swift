@@ -1139,42 +1139,53 @@ private final class AlanHelperManagedUserPtyRendererProxy {
 
     private func pollHelperOutput() {
         guard !invalidated else { return }
-        let readResult = helperClient.readManagedUserPTY(
-            AlanManagedUserPTYReadRequest(
-                sessionID: sessionID,
-                maxBytes: 4096
+        while true {
+            let readResult = helperClient.readManagedUserPTY(
+                AlanManagedUserPTYReadRequest(
+                    sessionID: sessionID,
+                    maxBytes: 4096
+                )
             )
-        )
-        let output: Data
-        switch readResult {
-        case .success(let chunk):
-            output = chunk.data
-            enqueueOutputChunk(chunk)
-        case .failure(let diagnostic):
-            enqueueOutputFailure(diagnostic)
-            invalidate()
-            return
-        }
-        guard !output.isEmpty else { return }
+            let output: Data
+            let isFinal: Bool
+            switch readResult {
+            case .success(let chunk):
+                output = chunk.data
+                isFinal = chunk.final
+                enqueueOutputChunk(chunk)
+            case .failure(let diagnostic):
+                enqueueOutputFailure(diagnostic)
+                invalidate()
+                return
+            }
+            guard !output.isEmpty else {
+                if isFinal {
+                    invalidate()
+                }
+                return
+            }
 
-        let response = controlSequenceResponder.process(output)
-        if response.didRespond, !writeHelperInput(response.ptyResponse) {
-            invalidate()
-            return
-        }
+            let response = controlSequenceResponder.process(output)
+            if response.didRespond, !writeHelperInput(response.ptyResponse) {
+                invalidate()
+                return
+            }
 
-        guard !response.rendererOutput.isEmpty else { return }
-        guard forwardRendererOutput(response.rendererOutput) else {
-            invalidate()
-            return
+            if !response.rendererOutput.isEmpty, !forwardRendererOutput(response.rendererOutput) {
+                invalidate()
+                return
+            }
+            if isFinal {
+                invalidate()
+                return
+            }
         }
     }
 
     private func writeHelperInput(_ data: Data) -> Bool {
         guard !data.isEmpty, !invalidated else { return false }
-        let text = String(decoding: data, as: UTF8.self)
         let result = helperClient.writeManagedUserPTY(
-            AlanManagedUserPTYInputRequest(sessionID: sessionID, text: text)
+            AlanManagedUserPTYInputRequest(sessionID: sessionID, data: data)
         )
         guard result.accepted else { return false }
         Task { @MainActor [weak self] in
