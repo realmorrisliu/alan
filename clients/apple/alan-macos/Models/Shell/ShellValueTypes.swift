@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 enum TerminalRuntimeControlKey: String, Codable, Equatable {
     case interrupt
@@ -563,8 +564,61 @@ struct AlanPrivilegedHelperIdentity: Codable, Equatable {
     let expectedClientRequirement: String
 }
 
+enum AlanCodeSigningRequirement {
+    private static let unsignedTeamIdentifier = "ALAN_UNSIGNED_HELPER_DENY"
+
+    static func clientRequirement(
+        bundleIdentifier: String,
+        signingTeamIdentifier: String?
+    ) -> String {
+        let teamIdentifier = normalized(signingTeamIdentifier) ?? unsignedTeamIdentifier
+        return "anchor apple generic and identifier \"\(requirementStringLiteral(bundleIdentifier))\" and certificate leaf[subject.OU] = \"\(requirementStringLiteral(teamIdentifier))\""
+    }
+
+    static func currentTeamIdentifier() -> String? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let code else {
+            return nil
+        }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode
+        else {
+            return nil
+        }
+
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
+              let dictionary = information as? [String: Any]
+        else {
+            return nil
+        }
+        return normalized(dictionary[kSecCodeInfoTeamIdentifier as String] as? String)
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func requirementStringLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
+
 extension AlanInstallChannel {
     var privilegedHelperIdentity: AlanPrivilegedHelperIdentity {
+        privilegedHelperIdentity(signingTeamIdentifier: AlanCodeSigningRequirement.currentTeamIdentifier())
+    }
+
+    func privilegedHelperIdentity(signingTeamIdentifier: String?) -> AlanPrivilegedHelperIdentity {
         let helperBundleID = "\(bundleIdentifier).privileged-helper"
         return AlanPrivilegedHelperIdentity(
             channelID: installChannelID,
@@ -575,7 +629,10 @@ extension AlanInstallChannel {
             machServiceName: "\(helperBundleID).xpc",
             plistName: "\(helperBundleID).plist",
             dataRootPath: "/Library/Application Support/\(applicationSupportDirectoryName)/privileged-helper",
-            expectedClientRequirement: "identifier \"\(bundleIdentifier)\""
+            expectedClientRequirement: AlanCodeSigningRequirement.clientRequirement(
+                bundleIdentifier: bundleIdentifier,
+                signingTeamIdentifier: signingTeamIdentifier
+            )
         )
     }
 }

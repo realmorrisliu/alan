@@ -76,6 +76,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellLocalFolderOpener.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-settings-surface.swift" \
     "$BUILD_DIR/AlanDarwinPtySpawn.o" \
     -o "$TEST_BINARY"

@@ -325,10 +325,18 @@ impl ShellSettingsSummaryRows {
         }
 
         rows.extend(summary.profiles.iter().map(|profile| {
-            let value = if profile.id == summary.default_profile_id {
+            let is_managed_profile = is_managed_terminal_profile(profile);
+            let value = if is_managed_profile {
+                "Managed".to_string()
+            } else if profile.id == summary.default_profile_id {
                 "Default".to_string()
             } else {
                 launch_kind_value(profile.launch.kind()).to_string()
+            };
+            let mutability = if is_managed_profile {
+                ShellSettingsRowMutability::ReadOnly
+            } else {
+                ShellSettingsRowMutability::Editable
             };
             ShellSettingsRowSummary::read_only(
                 format!("terminalProfile.{}", profile.id),
@@ -340,7 +348,7 @@ impl ShellSettingsSummaryRows {
                 &profile.title,
             ))
             .with_value(value)
-            .with_mutability(ShellSettingsRowMutability::Editable)
+            .with_mutability(mutability)
         }));
 
         rows.push(
@@ -493,6 +501,13 @@ fn terminal_profile_system_name(profile: &TerminalProfileDefinition) -> &'static
     }
 }
 
+fn is_managed_terminal_profile(profile: &TerminalProfileDefinition) -> bool {
+    profile
+        .managed_terminal_account_id
+        .as_deref()
+        .is_some_and(|account_id| !account_id.trim().is_empty())
+}
+
 fn terminal_account_system_name(plan: &ManagedTerminalAccountPlan) -> &'static str {
     match plan.status {
         ManagedTerminalAccountPlanStatus::AlreadyReady => "checkmark.seal",
@@ -518,8 +533,8 @@ fn terminal_account_status_label(plan: &ManagedTerminalAccountPlan) -> &'static 
         ManagedTerminalAccountPlanStatus::SudoersConflict { .. }
         | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. } => "Conflict",
         ManagedTerminalAccountPlanStatus::HelperUnavailable => "Unavailable",
-        ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => "Unmanaged",
-        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. } => "Cleanup",
+        ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => "Not managed",
+        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. } => "Legacy",
         ManagedTerminalAccountPlanStatus::PtySpawnFailed => "PTY failed",
         ManagedTerminalAccountPlanStatus::ReadyToApply => "Preview",
     }
@@ -550,11 +565,11 @@ fn terminal_account_detail(plan: &ManagedTerminalAccountPlan) -> String {
             "Alan privileged helper is unavailable for Managed Users.".to_string()
         }
         ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => {
-            format!("{target} exists but is not Alan-managed.")
+            format!("{target} is an existing local account outside Alan management.")
         }
         ManagedTerminalAccountPlanStatus::LegacySudoersPresent { path } => match path {
-            Some(path) => format!("{target} has a legacy Alan sudoers file at {path}."),
-            None => format!("{target} has a legacy Alan sudoers file."),
+            Some(path) => format!("{target} has legacy Alan sudoers state at {path}."),
+            None => format!("{target} has legacy Alan sudoers state."),
         },
         ManagedTerminalAccountPlanStatus::PtySpawnFailed => {
             format!("{target} account exists, but helper-managed PTY startup failed.")

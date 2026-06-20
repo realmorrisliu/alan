@@ -662,16 +662,19 @@ impl TerminalProfileEditor {
         document: &TerminalProfileDocument,
     ) -> TerminalProfileDocumentEditorResult {
         let draft_id = draft.id.trim();
-        if document.profiles.iter().any(|profile| {
+        let existing_managed_profile = document.profiles.iter().find(|profile| {
             profile.id == draft_id
                 && normalized_non_empty(profile.managed_terminal_account_id.as_deref()).is_some()
-        }) {
-            return TerminalProfileDocumentEditorResult {
-                document: None,
-                errors: vec![TerminalProfileValidationError::ManagedProfileReadOnly {
-                    id: draft_id.to_string(),
-                }],
-            };
+        });
+        if let Some(existing_profile) = existing_managed_profile {
+            if !allows_managed_profile_repair_upsert(existing_profile, &draft) {
+                return TerminalProfileDocumentEditorResult {
+                    document: None,
+                    errors: vec![TerminalProfileValidationError::ManagedProfileReadOnly {
+                        id: draft_id.to_string(),
+                    }],
+                };
+            }
         }
 
         let editor_result = Self::make_definition(draft);
@@ -1271,6 +1274,12 @@ pub enum ManagedTerminalAccountRecord {
     },
 }
 
+impl ManagedTerminalAccountRecord {
+    fn requires_alan_managed_ownership(&self) -> bool {
+        matches!(self, Self::Standard { .. } | Self::Admin { .. })
+    }
+}
+
 /// Discovered sudoers drop-in state supplied by a platform adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1299,6 +1308,47 @@ pub enum ManagedTerminalAccountSudoersState {
         /// Drop-in path.
         path: String,
     },
+}
+
+/// Evidence that an existing account is owned by Alan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ManagedTerminalAccountOwnershipEvidence {
+    /// Helper-owned marker file.
+    HelperMarker {
+        /// Marker path.
+        path: String,
+    },
+    /// Legacy Alan sudoers state.
+    LegacyAlanSudoers {
+        /// Sudoers path.
+        path: String,
+    },
+}
+
+/// Ownership state for an existing managed terminal account.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ManagedTerminalAccountOwnershipState {
+    /// No ownership evidence is present.
+    #[default]
+    Missing,
+    /// Alan owns this account.
+    AlanManaged {
+        /// Ownership evidence.
+        evidence: ManagedTerminalAccountOwnershipEvidence,
+    },
+    /// The account exists but is outside Alan management.
+    NotAlanManaged {
+        /// Redacted reason.
+        reason: String,
+    },
+}
+
+impl ManagedTerminalAccountOwnershipState {
+    fn is_alan_managed(&self) -> bool {
+        matches!(self, Self::AlanManaged { .. })
+    }
 }
 
 /// Discovered managed Terminal Profile state.
@@ -1336,6 +1386,8 @@ pub enum ManagedTerminalAccountVerificationStep {
     HomeDirectory,
     /// Shell check.
     Shell,
+    /// Alan ownership check.
+    Ownership,
     /// Sudoers syntax check.
     SudoersValidation,
     /// Non-interactive sudo check.
@@ -1366,6 +1418,9 @@ pub struct ManagedTerminalAccountState {
     pub account: ManagedTerminalAccountRecord,
     /// Sudoers record.
     pub sudoers: ManagedTerminalAccountSudoersState,
+    /// Alan ownership evidence for existing accounts.
+    #[serde(default)]
+    pub ownership: ManagedTerminalAccountOwnershipState,
     /// Terminal Profile record.
     pub terminal_profile: ManagedTerminalAccountProfileState,
     /// Verification status.
@@ -1516,6 +1571,13 @@ impl ManagedTerminalAccountPlanner {
                 status: ManagedTerminalAccountPlanStatus::Invalid {
                     errors: validation_errors,
                 },
+                steps: Vec::new(),
+            };
+        }
+        if state.account.requires_alan_managed_ownership() && !state.ownership.is_alan_managed() {
+            return ManagedTerminalAccountPlan {
+                request,
+                status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
                 steps: Vec::new(),
             };
         }
@@ -1822,7 +1884,7 @@ impl ManagedTerminalAccountProfileHandoff {
                     .full_name
                     .clone()
                     .unwrap_or_else(|| request.account_name.clone()),
-                launch: TerminalProfileLaunch::SudoUser {
+                launch: TerminalProfileLaunch::ManagedUser {
                     unix_user: request.account_name.clone(),
                 },
                 default_working_directory: Some(request.home_directory.clone()),
@@ -1838,6 +1900,24 @@ impl ManagedTerminalAccountProfileHandoff {
 
 fn normalized_optional(value: Option<String>) -> Option<String> {
     normalized_non_empty(value.as_deref())
+}
+
+fn allows_managed_profile_repair_upsert(
+    existing: &TerminalProfileDefinition,
+    draft: &TerminalProfileEditorDraft,
+) -> bool {
+    let Some(existing_account_id) =
+        normalized_non_empty(existing.managed_terminal_account_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(draft_account_id) = normalized_non_empty(draft.managed_terminal_account_id.as_deref())
+    else {
+        return false;
+    };
+    draft.launch_kind == TerminalProfileLaunchKind::ManagedUser
+        && draft_account_id == existing_account_id
+        && draft.unix_user.trim() == existing_account_id
 }
 
 fn matches_managed_account_identifier(value: &str) -> bool {

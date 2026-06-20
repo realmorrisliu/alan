@@ -26,12 +26,13 @@ struct ShellSettingsSurfaceTestRunner {
         do {
             try testDefaultSectionOrderAndInterfaceMutability()
             try testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted()
-    try testDevChannelLocalRowsUseDevIdentity()
-    try testPrivilegedHelperIdentityIsChannelScoped()
-    try testPrivilegedHelperCurrentIdentityUsesLaunchdServiceName()
-    try testPrivilegedHelperLifecycleServiceUsesSMAppServiceIdentityAndFakeStates()
-    try testPrivilegedHelperSettingsRowsExposeLifecycleStates()
-    try testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped()
+            try testDevChannelLocalRowsUseDevIdentity()
+            try testPrivilegedHelperIdentityIsChannelScoped()
+            try testPrivilegedHelperCurrentIdentityUsesLaunchdServiceName()
+            try testPrivilegedHelperLifecycleServiceUsesSMAppServiceIdentityAndFakeStates()
+            try testPrivilegedHelperSettingsRowsExposeLifecycleStates()
+            try testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped()
+            try testPrivilegedHelperPtyInputPreservesShortWrites()
             try testPrivilegedHelperRequestValidationIsNarrowAndSanitized()
             try testManagedUserHelperBackedPathForbidsLegacyExecutorFallback()
             try testLocalSummaryReadsHostConfigForDaemonEndpoint()
@@ -225,8 +226,12 @@ private func testDevChannelLocalRowsUseDevIdentity() throws {
 }
 
 private func testPrivilegedHelperIdentityIsChannelScoped() throws {
-    let stable = AlanInstallChannel.stable.privilegedHelperIdentity
-    let dev = AlanInstallChannel.dev.privilegedHelperIdentity
+    let stable = AlanInstallChannel.stable.privilegedHelperIdentity(
+        signingTeamIdentifier: "TEAMID1234"
+    )
+    let dev = AlanInstallChannel.dev.privilegedHelperIdentity(
+        signingTeamIdentifier: "TEAMID1234"
+    )
 
     try expect(
         stable.registrationAPI == .smAppServiceDaemon && dev.registrationAPI == .smAppServiceDaemon,
@@ -247,9 +252,11 @@ private func testPrivilegedHelperIdentityIsChannelScoped() throws {
         "stable and dev helpers must use separate service labels, Mach services, and data roots"
     )
     try expect(
-        stable.expectedClientRequirement == #"identifier "app.alanworks.macos""#
-            && dev.expectedClientRequirement == #"identifier "app.alanworks.macos.dev""#,
-        "helper client requirements must be scoped to the matching app bundle"
+        stable.expectedClientRequirement
+            == #"anchor apple generic and identifier "app.alanworks.macos" and certificate leaf[subject.OU] = "TEAMID1234""#
+            && dev.expectedClientRequirement
+            == #"anchor apple generic and identifier "app.alanworks.macos.dev" and certificate leaf[subject.OU] = "TEAMID1234""#,
+        "helper client requirements must be scoped to the matching app bundle and signing team"
     )
 }
 
@@ -257,7 +264,8 @@ private func testPrivilegedHelperCurrentIdentityUsesLaunchdServiceName() throws 
     let identity = AlanPrivilegedHelperXPCIdentity.current(
         bundleIdentifier: nil,
         environment: ["XPC_SERVICE_NAME": "app.alanworks.macos.dev.privileged-helper"],
-        executablePath: "/Users/morris/Applications/Alan Dev.app/Contents/Library/LaunchServices/app.alanworks.macos.dev.privileged-helper"
+        executablePath: "/Users/morris/Applications/Alan Dev.app/Contents/Library/LaunchServices/app.alanworks.macos.dev.privileged-helper",
+        signingTeamIdentifier: "TEAMID1234"
     )
     try expect(
         identity.channelID == "dev"
@@ -265,11 +273,16 @@ private func testPrivilegedHelperCurrentIdentityUsesLaunchdServiceName() throws 
             && identity.machServiceName == "app.alanworks.macos.dev.privileged-helper.xpc",
         "privileged helper must derive the dev identity from launchd service name when Bundle.main.bundleIdentifier is unavailable"
     )
+    try expect(
+        identity.expectedClientRequirement.contains(#"certificate leaf[subject.OU] = "TEAMID1234""#),
+        "privileged helper runtime identity must include the signing team requirement"
+    )
 
     let stableIdentity = AlanPrivilegedHelperXPCIdentity.current(
         bundleIdentifier: nil,
         environment: ["XPC_SERVICE_NAME": "app.alanworks.macos.privileged-helper.xpc"],
-        executablePath: nil
+        executablePath: nil,
+        signingTeamIdentifier: "TEAMID1234"
     )
     try expect(
         stableIdentity.channelID == "stable"
@@ -375,7 +388,9 @@ private func testPrivilegedHelperSettingsRowsExposeLifecycleStates() throws {
 }
 
 private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
-    let identity = AlanInstallChannel.dev.privilegedHelperIdentity.xpcIdentity
+    let identity = AlanInstallChannel.dev.privilegedHelperIdentity(
+        signingTeamIdentifier: "TEAMID1234"
+    ).xpcIdentity
     let request = AlanPrivilegedHelperXPCRequest.helperStatus(
         identity: identity,
         operationID: "op-xpc-status"
@@ -398,7 +413,9 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
         "helper XPC success response must stay sanitized"
     )
 
-    let stableIdentity = AlanInstallChannel.stable.privilegedHelperIdentity.xpcIdentity
+    let stableIdentity = AlanInstallChannel.stable.privilegedHelperIdentity(
+        signingTeamIdentifier: "TEAMID1234"
+    ).xpcIdentity
     let mismatch = try invokeXPCStatus(
         service: AlanPrivilegedHelperXPCService(identity: identity),
         request: .helperStatus(identity: stableIdentity, operationID: "op-wrong-channel")
@@ -529,6 +546,26 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
     }
 }
 
+private func testPrivilegedHelperPtyInputPreservesShortWrites() throws {
+    let helperSource = try readRepositoryFile(
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
+    )
+    let sessionStore = try sourceSlice(
+        named: "private final class AlanPrivilegedHelperPTYSessionStore",
+        in: helperSource,
+        endingBefore: "private final class AlanPrivilegedHelperPTYSession"
+    )
+
+    try expect(
+        sessionStore.contains("pendingInput.append(data)")
+            && sessionStore.contains("drainPendingInput(session)")
+            && sessionStore.contains("while !session.pendingInput.isEmpty")
+            && sessionStore.contains("session.pendingInput.removeFirst(written)")
+            && sessionStore.contains("errno == EAGAIN || errno == EWOULDBLOCK"),
+        "helper PTY input must enqueue text and preserve unwritten suffixes after short nonblocking writes"
+    )
+}
+
 private func testPrivilegedHelperRequestValidationIsNarrowAndSanitized() throws {
     let valid = ManagedTerminalAccountRequest(
         accountName: "lab",
@@ -606,9 +643,9 @@ private func testManagedUserHelperBackedPathForbidsLegacyExecutorFallback() thro
     let terminalPane = try readRepositoryFile("clients/apple/alan-macos/TerminalPaneView.swift")
     let shellValues = try readRepositoryFile("clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift")
     let helperExecutor = try sourceSlice(
-        named: "ManagedTerminalAccountHelperExecutor",
+        named: "struct ManagedTerminalAccountHelperExecutor",
         in: shellValues,
-        endingBefore: "enum ManagedTerminalAccountProfileHandoff"
+        endingBefore: "enum ShellTabActiveTaskState"
     )
 
     try expect(
@@ -1354,7 +1391,10 @@ private func testManagedUserExistingOrdinaryAccountReportsNotAlanManaged() throw
     let accountSection = try requireSection(.terminalAccounts, in: snapshot)
     let ordinaryRow = accountSection.rows.first { $0.id == "terminalAccount.univer" }
 
-    try expect(plan.status == .accountNotAlanManaged, "ordinary account plan must not be repairable")
+    try expect(
+        plan.status == .accountNotAlanManaged,
+        "ordinary account plan must not be repairable, got \(plan.status)"
+    )
     try expect(plan.steps.isEmpty, "ordinary accounts must not produce privileged repair steps")
     try expect(
         user.readinessState == .accountNotAlanManaged,

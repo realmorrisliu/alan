@@ -26,7 +26,8 @@ struct AlanPrivilegedHelperXPCIdentity: Codable, Equatable {
     static func current(
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        executablePath: String? = Bundle.main.executablePath
+        executablePath: String? = Bundle.main.executablePath,
+        signingTeamIdentifier: String? = currentSigningTeamIdentifier()
     ) -> AlanPrivilegedHelperXPCIdentity {
         let helperBundleIdentifier = helperBundleIdentifier(
             bundleIdentifier: bundleIdentifier,
@@ -39,7 +40,10 @@ struct AlanPrivilegedHelperXPCIdentity: Codable, Equatable {
             channelID: channelID,
             helperBundleIdentifier: helperBundleIdentifier,
             machServiceName: "\(helperBundleIdentifier).xpc",
-            expectedClientRequirement: "identifier \"\(appBundleIdentifier)\""
+            expectedClientRequirement: clientRequirement(
+                bundleIdentifier: appBundleIdentifier,
+                signingTeamIdentifier: signingTeamIdentifier
+            )
         )
     }
 
@@ -80,6 +84,42 @@ struct AlanPrivilegedHelperXPCIdentity: Codable, Equatable {
             return nil
         }
         return value
+    }
+
+    private static func clientRequirement(
+        bundleIdentifier: String,
+        signingTeamIdentifier: String?
+    ) -> String {
+        let teamIdentifier = normalized(signingTeamIdentifier) ?? "ALAN_UNSIGNED_HELPER_DENY"
+        return "anchor apple generic and identifier \"\(requirementStringLiteral(bundleIdentifier))\" and certificate leaf[subject.OU] = \"\(requirementStringLiteral(teamIdentifier))\""
+    }
+
+    private static func currentSigningTeamIdentifier() -> String? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let code else {
+            return nil
+        }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode
+        else {
+            return nil
+        }
+
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
+              let dictionary = information as? [String: Any]
+        else {
+            return nil
+        }
+        return normalized(dictionary[kSecCodeInfoTeamIdentifier as String] as? String)
+    }
+
+    private static func requirementStringLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     var dataRootPath: String {
@@ -1531,6 +1571,7 @@ private struct AlanManagedUserAccountRecord {
 }
 
 private final class AlanPrivilegedHelperPTYSessionStore {
+    private static let maxPendingInputBytes = 4 * 1024 * 1024
     private let identity: AlanPrivilegedHelperXPCIdentity
     private var sessions: [String: AlanPrivilegedHelperPTYSession] = [:]
 
@@ -1636,6 +1677,9 @@ private final class AlanPrivilegedHelperPTYSessionStore {
                 )
             )
         }
+        if case .failure(let diagnostic) = drainPendingInput(session) {
+            return .failure(diagnostic)
+        }
 
         let maxBytes = max(1, min(request.maxBytes, 64 * 1024))
         var buffer = [UInt8](repeating: 0, count: maxBytes)
@@ -1687,12 +1731,14 @@ private final class AlanPrivilegedHelperPTYSessionStore {
         guard let data = request.text.data(using: .utf8) else {
             return rejected(.writeManagedUserPTY, sessionID: request.sessionID, message: "Managed User PTY input was invalid.")
         }
-        let count = data.withUnsafeBytes { buffer -> Int in
-            guard let base = buffer.baseAddress else { return 0 }
-            return Darwin.write(session.masterFileDescriptor, base, buffer.count)
+        guard data.count <= Self.maxPendingInputBytes,
+              session.pendingInput.count <= Self.maxPendingInputBytes - data.count
+        else {
+            return rejected(.writeManagedUserPTY, sessionID: request.sessionID, accountName: session.accountName, message: "Managed User PTY input queue is full.")
         }
-        guard count >= 0 else {
-            return rejected(.writeManagedUserPTY, sessionID: request.sessionID, accountName: session.accountName, message: "Managed User PTY input failed.")
+        session.pendingInput.append(data)
+        if case .failure(let diagnostic) = drainPendingInput(session) {
+            return rejected(.writeManagedUserPTY, sessionID: request.sessionID, accountName: session.accountName, message: diagnostic.sanitizedMessage)
         }
         return accepted(.writeManagedUserPTY, session: session, message: "Privileged helper accepted PTY input.")
     }
@@ -1716,6 +1762,12 @@ private final class AlanPrivilegedHelperPTYSessionStore {
     func closeInput(sessionID: String) -> AlanXPCManagedUserPTYControlResult {
         guard let session = sessions[sessionID] else {
             return rejected(.closeManagedUserPTYInput, sessionID: sessionID, message: "Managed User PTY session is missing.")
+        }
+        if case .failure(let diagnostic) = drainPendingInput(session) {
+            return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: diagnostic.sanitizedMessage)
+        }
+        guard session.pendingInput.isEmpty else {
+            return rejected(.closeManagedUserPTYInput, sessionID: sessionID, accountName: session.accountName, message: "Managed User PTY input is still draining.")
         }
         close(session.masterFileDescriptor)
         session.masterFileDescriptor = -1
@@ -1803,6 +1855,39 @@ private final class AlanPrivilegedHelperPTYSessionStore {
         let flags = fcntl(fileDescriptor, F_GETFL)
         guard flags >= 0 else { return }
         _ = fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK)
+    }
+
+    private func drainPendingInput(
+        _ session: AlanPrivilegedHelperPTYSession
+    ) -> Result<Void, AlanXPCPrivilegedHelperDiagnostic> {
+        while !session.pendingInput.isEmpty {
+            let written = session.pendingInput.withUnsafeBytes { buffer -> Int in
+                guard let base = buffer.baseAddress else { return 0 }
+                return Darwin.write(session.masterFileDescriptor, base, buffer.count)
+            }
+            if written > 0 {
+                session.pendingInput.removeFirst(written)
+                continue
+            }
+            if written == 0 {
+                return .success(())
+            }
+            if errno == EINTR {
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return .success(())
+            }
+            return .failure(
+                diagnostic(
+                    operation: .writeManagedUserPTY,
+                    accountName: session.accountName,
+                    code: .helperUnavailable,
+                    message: "Managed User PTY input failed."
+                )
+            )
+        }
+        return .success(())
     }
 
     private func accepted(
@@ -1893,6 +1978,7 @@ private final class AlanPrivilegedHelperPTYSession {
     var masterFileDescriptor: Int32
     let processID: pid_t
     var finalObservation: AlanXPCManagedUserPTYExitObservation?
+    var pendingInput = Data()
 
     init(
         sessionID: String,

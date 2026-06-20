@@ -63,7 +63,8 @@ pub use settings_summary::{
 };
 pub use terminal_profile::{
     ManagedTerminalAccountApplyResult, ManagedTerminalAccountFakeExecutor,
-    ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountPlan,
+    ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountOwnershipEvidence,
+    ManagedTerminalAccountOwnershipState, ManagedTerminalAccountPlan,
     ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanStep,
     ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
     ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
