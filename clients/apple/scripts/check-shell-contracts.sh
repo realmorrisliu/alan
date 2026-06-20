@@ -704,6 +704,26 @@ require_pattern \
     "local renderer PTY input retry source must watch the PTY file descriptor"
 
 require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingDirectPtyInputChunks" \
+    "local PTY control-plane input must buffer nonblocking short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "fileDescriptor: masterFileDescriptor" \
+    "local PTY control-plane input retry source must watch the master PTY file descriptor"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingRendererOutput" \
+    "renderer PTY output must buffer nonblocking socket short writes"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "final PTY output before projecting helper exit" \
+    "managed_user helper PTY tests must cover final output draining before exit projection"
+
+require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
     "final class AlanTerminalSurfaceController" \
     "terminal surface behavior must be owned by a controller boundary"

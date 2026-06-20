@@ -696,10 +696,18 @@ private enum TerminalRuntimeServiceTests {
                 terminatingSignal: 9,
                 sanitizedMessage: "Fake helper PTY session exited."
             )
-        expect(handle.snapshot.phase == .exited, "helper-backed handle must project helper exit observation")
+        helper.outputChunksBySessionID["fake-content_terminal_managed_user_helper"] = [
+            Data("final helper output\n".utf8),
+        ]
+        let exitedSnapshot = handle.snapshot
+        expect(exitedSnapshot.phase == .exited, "helper-backed handle must project helper exit observation")
         expect(
-            handle.snapshot.exitStatus?.diagnosticsValue == "signal:9",
+            exitedSnapshot.exitStatus?.diagnosticsValue == "signal:9",
             "helper-backed handle must snapshot helper-reported exit status"
+        )
+        expect(
+            exitedSnapshot.transcriptLines.contains("final helper output"),
+            "helper-backed handle must drain final PTY output before projecting helper exit"
         )
 
         let postExitDelivery = handle.writeInput("after exit")

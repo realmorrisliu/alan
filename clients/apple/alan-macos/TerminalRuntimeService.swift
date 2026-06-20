@@ -667,6 +667,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     private var cleanupRequested = false
     private var transcriptRingBufferLines: [String] = []
     private var rendererProxy: AlanHelperManagedUserPtyRendererProxy?
+    private var observedFinalOutputChunk = false
     private let helperQueue: DispatchQueue
 
     init(
@@ -693,8 +694,11 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
 
     var snapshot: AlanTerminalPtyRuntimeSnapshot {
         applyPendingProxyOutput()
-        refreshExitObservation()
         _ = drainAvailableOutput()
+        refreshExitObservation()
+        if observedFinalOutputChunk, exitStatus == nil {
+            exitStatus = .unknown
+        }
         return AlanTerminalPtyRuntimeSnapshot(
             contentID: contentID,
             bootRequest: bootRequest,
@@ -945,9 +949,9 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     @MainActor
     fileprivate func applyHelperOutputChunk(_ chunk: AlanManagedUserPTYOutputChunk) {
         if chunk.final {
+            observedFinalOutputChunk = true
             inputClosed = true
             phase = .exited
-            exitStatus = .unknown
         }
         guard !chunk.data.isEmpty else { return }
         let text = String(decoding: chunk.data, as: UTF8.self)
@@ -984,10 +988,12 @@ private final class AlanHelperManagedUserPtyRendererProxy {
     private let pendingOutputLock = NSLock()
     private var rendererInputSource: DispatchSourceRead?
     private var helperOutputTimer: DispatchSourceTimer?
+    private var rendererOutputWriteSource: DispatchSourceWrite?
     private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var isInvalidated = false
     private var pendingOutputChunks: [AlanManagedUserPTYOutputChunk] = []
     private var pendingOutputFailures: [AlanPrivilegedHelperDiagnostic] = []
+    private var pendingRendererOutput = Data()
 
     init(
         ptyHandle: AlanHelperManagedUserPtyHandle,
@@ -1036,6 +1042,9 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         rendererInputSource = nil
         helperOutputTimer?.cancel()
         helperOutputTimer = nil
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
+        pendingRendererOutput.removeAll()
     }
 
     private var invalidated: Bool {
@@ -1135,25 +1144,9 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         }
 
         guard !response.rendererOutput.isEmpty else { return }
-        response.rendererOutput.withUnsafeBytes { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            var offset = 0
-            while offset < buffer.count {
-                let written = Darwin.write(
-                    hostFileDescriptor,
-                    baseAddress.advanced(by: offset),
-                    buffer.count - offset
-                )
-                if written > 0 {
-                    offset += written
-                    continue
-                }
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    return
-                }
-                invalidate()
-                return
-            }
+        guard forwardRendererOutput(response.rendererOutput) else {
+            invalidate()
+            return
         }
     }
 
@@ -1168,6 +1161,60 @@ private final class AlanHelperManagedUserPtyRendererProxy {
             self?.ptyHandle?.recordHelperAcceptedInput(byteCount: data.count)
         }
         return true
+    }
+
+    private func forwardRendererOutput(_ data: Data) -> Bool {
+        guard !data.isEmpty, !invalidated else { return false }
+        pendingRendererOutput.append(data)
+        return drainPendingRendererOutput()
+    }
+
+    private func drainPendingRendererOutput() -> Bool {
+        guard !invalidated else { return false }
+
+        while !pendingRendererOutput.isEmpty {
+            let result = pendingRendererOutput.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(hostFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                pendingRendererOutput.removeFirst(result)
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                ensureRendererOutputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingRendererOutput.isEmpty {
+            cancelRendererOutputWriteSource()
+        }
+        return true
+    }
+
+    private func ensureRendererOutputWriteSource() {
+        guard !invalidated, rendererOutputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        writeSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.drainPendingRendererOutput() else {
+                self.invalidate()
+                return
+            }
+        }
+        writeSource.resume()
+        rendererOutputWriteSource = writeSource
+    }
+
+    private func cancelRendererOutputWriteSource() {
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
     }
 }
 
@@ -1210,6 +1257,11 @@ private extension AlanManagedUserPTYSignal {
 
 @MainActor
 final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
+    private struct PendingDirectPtyInputChunk {
+        var data: Data
+        var countedBytesRemaining: Int
+    }
+
     let contentID: String
     let bootRequest: AlanTerminalBootRequest
     private(set) var processID: pid_t?
@@ -1225,6 +1277,8 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private var acceptedInputBytes = 0
     private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var rendererProxy: AlanDarwinTerminalPtyRendererProxy?
+    private var pendingDirectPtyInputChunks: [PendingDirectPtyInputChunk] = []
+    private var directPtyInputWriteSource: DispatchSourceWrite?
 
     init(contentID: String, bootRequest: AlanTerminalBootRequest) {
         self.contentID = contentID
@@ -1234,6 +1288,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
 
     deinit {
         rendererProxy?.invalidate()
+        directPtyInputWriteSource?.cancel()
         if masterFileDescriptor >= 0 {
             close(masterFileDescriptor)
         }
@@ -1276,11 +1331,8 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
             )
         }
 
-        let bytes = Array(text.utf8)
-        let written = bytes.withUnsafeBytes { buffer in
-            writeRawInput(buffer)
-        }
-        guard written >= 0 else {
+        let data = Data(text.utf8)
+        guard enqueueDirectPtyInput(data, countedBytes: data.count) else {
             return .rejected(
                 errorCode: "terminal_pty_write_failed",
                 errorMessage: String(cString: strerror(errno)),
@@ -1288,7 +1340,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
             )
         }
 
-        return .accepted(byteCount: written, runtimePhase: phase.rawValue)
+        return .accepted(byteCount: data.count, runtimePhase: phase.rawValue)
     }
 
     func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult {
@@ -1326,11 +1378,8 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
                 message: "The terminal PTY file descriptor is closed."
             )
         }
-        let eof = [UInt8(4)]
-        let written = eof.withUnsafeBytes { buffer in
-            Darwin.write(masterFileDescriptor, buffer.baseAddress, buffer.count)
-        }
-        guard written >= 0 else {
+        let eof = Data([UInt8(4)])
+        guard enqueueDirectPtyInput(eof, countedBytes: 0) else {
             return .rejected(
                 "terminal_pty_eof_failed",
                 message: String(cString: strerror(errno))
@@ -1485,24 +1534,87 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
 
     @discardableResult
     fileprivate func writePtyProtocolResponse(_ data: Data) -> Int {
-        data.withUnsafeBytes { buffer -> Int in
-            guard masterFileDescriptor >= 0, let baseAddress = buffer.baseAddress else {
-                return -1
-            }
-            return Darwin.write(masterFileDescriptor, baseAddress, buffer.count)
-        }
+        enqueueDirectPtyInput(data, countedBytes: 0) ? data.count : -1
     }
 
-    @discardableResult
-    fileprivate func writeRawInput(_ buffer: UnsafeRawBufferPointer) -> Int {
-        guard masterFileDescriptor >= 0, let baseAddress = buffer.baseAddress else {
-            return -1
+    private func enqueueDirectPtyInput(_ data: Data, countedBytes: Int) -> Bool {
+        guard !data.isEmpty else { return true }
+        pendingDirectPtyInputChunks.append(
+            PendingDirectPtyInputChunk(
+                data: data,
+                countedBytesRemaining: max(0, min(countedBytes, data.count))
+            )
+        )
+        return drainPendingDirectPtyInput()
+    }
+
+    private func drainPendingDirectPtyInput() -> Bool {
+        guard masterFileDescriptor >= 0 else { return false }
+
+        while !pendingDirectPtyInputChunks.isEmpty {
+            var chunk = pendingDirectPtyInputChunks.removeFirst()
+            let result = chunk.data.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(masterFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                let countedBytes = min(chunk.countedBytesRemaining, result)
+                acceptedInputBytes += countedBytes
+                if result < chunk.data.count {
+                    chunk.data.removeFirst(result)
+                    chunk.countedBytesRemaining -= countedBytes
+                    pendingDirectPtyInputChunks.insert(chunk, at: 0)
+                    ensureDirectPtyInputWriteSource()
+                    break
+                }
+                continue
+            }
+
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                pendingDirectPtyInputChunks.insert(chunk, at: 0)
+                ensureDirectPtyInputWriteSource()
+                break
+            }
+            return false
         }
-        let written = Darwin.write(masterFileDescriptor, baseAddress, buffer.count)
-        if written > 0 {
-            acceptedInputBytes += written
+
+        if pendingDirectPtyInputChunks.isEmpty {
+            cancelDirectPtyInputWriteSource()
         }
-        return written
+        return true
+    }
+
+    private func ensureDirectPtyInputWriteSource() {
+        guard masterFileDescriptor >= 0, directPtyInputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: masterFileDescriptor,
+            queue: .main
+        )
+        writeSource.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.drainPendingDirectPtyInput() else {
+                    self.failPendingDirectPtyInput()
+                    return
+                }
+            }
+        }
+        writeSource.resume()
+        directPtyInputWriteSource = writeSource
+    }
+
+    private func cancelDirectPtyInputWriteSource() {
+        directPtyInputWriteSource?.cancel()
+        directPtyInputWriteSource = nil
+    }
+
+    private func failPendingDirectPtyInput() {
+        pendingDirectPtyInputChunks.removeAll()
+        cancelDirectPtyInputWriteSource()
+        inputClosed = true
+        phase = .failed
+        launchError = String(cString: strerror(errno))
     }
 
     fileprivate func recordRendererInputBytes(_ byteCount: Int) {
@@ -1641,7 +1753,9 @@ private final class AlanDarwinTerminalPtyRendererProxy {
     private var rendererInputSource: DispatchSourceRead?
     private var ptyOutputSource: DispatchSourceRead?
     private var ptyInputWriteSource: DispatchSourceWrite?
+    private var rendererOutputWriteSource: DispatchSourceWrite?
     private var pendingPtyInputChunks: [PendingPtyInputChunk] = []
+    private var pendingRendererOutput = Data()
     private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
     private var isInvalidated = false
 
@@ -1695,30 +1809,18 @@ private final class AlanDarwinTerminalPtyRendererProxy {
         ptyOutputSource = nil
         ptyInputWriteSource?.cancel()
         ptyInputWriteSource = nil
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
         pendingPtyInputChunks.removeAll()
+        pendingRendererOutput.removeAll()
     }
 
     func forwardPtyOutput(_ data: Data) {
         guard !isInvalidated, !data.isEmpty else { return }
-        data.withUnsafeBytes { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            var offset = 0
-            while offset < buffer.count {
-                let written = Darwin.write(
-                    hostFileDescriptor,
-                    baseAddress.advanced(by: offset),
-                    buffer.count - offset
-                )
-                if written > 0 {
-                    offset += written
-                    continue
-                }
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    return
-                }
-                invalidate()
-                return
-            }
+        pendingRendererOutput.append(data)
+        guard drainPendingRendererOutput() else {
+            invalidate()
+            return
         }
     }
 
@@ -1867,6 +1969,54 @@ private final class AlanDarwinTerminalPtyRendererProxy {
     private func cancelPtyInputWriteSource() {
         ptyInputWriteSource?.cancel()
         ptyInputWriteSource = nil
+    }
+
+    private func drainPendingRendererOutput() -> Bool {
+        guard !isInvalidated else { return false }
+
+        while !pendingRendererOutput.isEmpty {
+            let result = pendingRendererOutput.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(hostFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                pendingRendererOutput.removeFirst(result)
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                ensureRendererOutputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingRendererOutput.isEmpty {
+            cancelRendererOutputWriteSource()
+        }
+        return true
+    }
+
+    private func ensureRendererOutputWriteSource() {
+        guard !isInvalidated, rendererOutputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        writeSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.drainPendingRendererOutput() else {
+                self.invalidate()
+                return
+            }
+        }
+        writeSource.resume()
+        rendererOutputWriteSource = writeSource
+    }
+
+    private func cancelRendererOutputWriteSource() {
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
     }
 }
 
