@@ -69,18 +69,11 @@ pub fn tool_presentation(
                 }],
             })
         }
-        "read_file" => {
-            let path = result.get("path").and_then(Value::as_str)?.to_string();
-            let content = result.get("content").and_then(Value::as_str).unwrap_or("");
-            Some(ToolResultPresentation::FileContent {
-                path,
-                lines: content.lines().count() as u64,
-                truncated: result
-                    .get("truncated")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            })
-        }
+        // read_file: the `FileContent` form carries only a path + line count, so
+        // emitting it would hide the actual contents (the TUI prefers a
+        // presentation over the preview). Return None so the content-bearing flat
+        // preview renders instead.
+        "read_file" => None,
         "bash" => {
             let (stdout, stdout_truncated) =
                 cap_text(result.get("stdout").and_then(Value::as_str).unwrap_or(""));
@@ -283,17 +276,17 @@ mod tests {
     }
 
     #[test]
-    fn read_maps_to_file_content() {
-        let p = tool_presentation(
-            "read_file",
-            &json!({"path": "a.rs"}),
-            &json!({"path": "a.rs", "content": "l1\nl2\nl3"}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::FileContent { lines, .. } => assert_eq!(lines, 3),
-            _ => panic!("expected file content"),
-        }
+    fn read_file_uses_preview_to_keep_contents_visible() {
+        // No presentation → the content-bearing flat preview renders instead of
+        // hiding the file behind a path + line count.
+        assert!(
+            tool_presentation(
+                "read_file",
+                &json!({"path": "a.rs"}),
+                &json!({"path": "a.rs", "content": "l1\nl2\nl3"}),
+            )
+            .is_none()
+        );
     }
 
     #[test]
