@@ -54,16 +54,18 @@ pub fn tool_presentation(
         "write_file" => {
             let path = result_path(result, args)?;
             let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+            let mut lines: Vec<DiffLine> = content
+                .lines()
+                .map(|line| DiffLine::Added {
+                    text: line.to_string(),
+                })
+                .collect();
+            cap_diff_lines(&mut lines);
             Some(ToolResultPresentation::Diff {
                 path,
                 hunks: vec![DiffHunk {
                     header: Some("(new file)".to_string()),
-                    lines: content
-                        .lines()
-                        .map(|line| DiffLine::Added {
-                            text: line.to_string(),
-                        })
-                        .collect(),
+                    lines,
                 }],
             })
         }
@@ -79,37 +81,63 @@ pub fn tool_presentation(
                     .unwrap_or(false),
             })
         }
-        "bash" => Some(ToolResultPresentation::Command {
-            cmdline: args
-                .get("command")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            exit_code: result
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .map(|code| code as i32),
-            stdout: result
-                .get("stdout")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            stderr: result
-                .get("stderr")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            truncated: result
-                .get("truncated")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        }),
-        "grep" | "glob" | "list_dir" => Some(ToolResultPresentation::Listing {
-            rows: listing_rows(result),
-        }),
+        "bash" => {
+            let (stdout, stdout_truncated) =
+                cap_text(result.get("stdout").and_then(Value::as_str).unwrap_or(""));
+            let (stderr, stderr_truncated) =
+                cap_text(result.get("stderr").and_then(Value::as_str).unwrap_or(""));
+            Some(ToolResultPresentation::Command {
+                cmdline: args
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                exit_code: result
+                    .get("exit_code")
+                    .and_then(Value::as_i64)
+                    .map(|code| code as i32),
+                stdout,
+                stderr,
+                truncated: stdout_truncated
+                    || stderr_truncated
+                    || result
+                        .get("truncated")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+            })
+        }
+        "grep" | "glob" | "list_dir" => {
+            let rows = listing_rows(result);
+            // An empty listing carries no information the preview lacks; let the
+            // flat preview render instead of an empty tool body.
+            if rows.is_empty() {
+                None
+            } else {
+                Some(ToolResultPresentation::Listing { rows })
+            }
+        }
         // Dynamic/MCP/unknown tools: fall back to the flat preview.
         _ => None,
     }
+}
+
+/// Maximum characters carried per text stream in a presentation payload, so a
+/// single tool event cannot balloon to megabytes over the wire.
+const PRESENTATION_MAX_STREAM_CHARS: usize = 16_000;
+/// Maximum rows carried in a `Listing` / lines in a `Diff` presentation.
+const PRESENTATION_MAX_ROWS: usize = 1_000;
+
+/// Cap a text stream to a byte budget (on a char boundary). Returns the capped
+/// text and whether it was truncated.
+fn cap_text(text: &str) -> (String, bool) {
+    if text.len() <= PRESENTATION_MAX_STREAM_CHARS {
+        return (text.to_string(), false);
+    }
+    let mut end = PRESENTATION_MAX_STREAM_CHARS;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}\n… (output truncated)", &text[..end]), true)
 }
 
 fn result_path(result: &Value, args: &Value) -> Option<String> {
@@ -121,28 +149,53 @@ fn result_path(result: &Value, args: &Value) -> Option<String> {
 }
 
 fn listing_rows(result: &Value) -> Vec<String> {
-    let Some(matches) = result.get("matches").and_then(Value::as_array) else {
-        return Vec::new();
+    // grep/glob use `matches`; list_dir uses `entries` ({name, type, size}).
+    let rows: Vec<String> = if let Some(matches) = result.get("matches").and_then(Value::as_array) {
+        matches.iter().map(match_row).collect()
+    } else if let Some(entries) = result.get("entries").and_then(Value::as_array) {
+        entries.iter().map(entry_row).collect()
+    } else {
+        Vec::new()
     };
-    matches
-        .iter()
-        .map(|entry| {
-            if let Some(text) = entry.as_str() {
-                return text.to_string();
-            }
-            let path = entry.get("path").and_then(Value::as_str).unwrap_or("");
-            let content = entry.get("content").and_then(Value::as_str);
-            match (entry.get("line").and_then(Value::as_i64), content) {
-                (Some(line), Some(content)) => format!("{path}:{line}: {content}"),
-                (Some(line), None) => format!("{path}:{line}"),
-                (None, Some(content)) => format!("{path}: {content}"),
-                (None, None) => path.to_string(),
-            }
-        })
-        .collect()
+
+    if rows.len() > PRESENTATION_MAX_ROWS {
+        let hidden = rows.len() - PRESENTATION_MAX_ROWS;
+        let mut capped: Vec<String> = rows.into_iter().take(PRESENTATION_MAX_ROWS).collect();
+        capped.push(format!("… (+{hidden} more)"));
+        capped
+    } else {
+        rows
+    }
 }
 
-/// A coarse line-level diff: removed `old` lines followed by added `new` lines.
+fn match_row(entry: &Value) -> String {
+    if let Some(text) = entry.as_str() {
+        return text.to_string();
+    }
+    let path = entry.get("path").and_then(Value::as_str).unwrap_or("");
+    let content = entry.get("content").and_then(Value::as_str);
+    match (entry.get("line").and_then(Value::as_i64), content) {
+        (Some(line), Some(content)) => format!("{path}:{line}: {content}"),
+        (Some(line), None) => format!("{path}:{line}"),
+        (None, Some(content)) => format!("{path}: {content}"),
+        (None, None) => path.to_string(),
+    }
+}
+
+fn entry_row(entry: &Value) -> String {
+    if let Some(text) = entry.as_str() {
+        return text.to_string();
+    }
+    let name = entry.get("name").and_then(Value::as_str).unwrap_or("");
+    if entry.get("type").and_then(Value::as_str) == Some("directory") {
+        format!("{name}/")
+    } else {
+        name.to_string()
+    }
+}
+
+/// A coarse line-level diff: removed `old` lines followed by added `new` lines,
+/// capped so a huge edit cannot balloon the event.
 fn line_diff(old: &str, new: &str) -> DiffHunk {
     let mut lines = Vec::new();
     for line in old.lines() {
@@ -155,9 +208,21 @@ fn line_diff(old: &str, new: &str) -> DiffHunk {
             text: line.to_string(),
         });
     }
+    cap_diff_lines(&mut lines);
     DiffHunk {
         header: None,
         lines,
+    }
+}
+
+/// Cap the number of diff lines carried in a presentation.
+fn cap_diff_lines(lines: &mut Vec<DiffLine>) {
+    if lines.len() > PRESENTATION_MAX_ROWS {
+        let hidden = lines.len() - PRESENTATION_MAX_ROWS;
+        lines.truncate(PRESENTATION_MAX_ROWS);
+        lines.push(DiffLine::Context {
+            text: format!("… (+{hidden} more lines)"),
+        });
     }
 }
 
@@ -250,5 +315,72 @@ mod tests {
     #[test]
     fn unknown_tool_has_no_presentation() {
         assert!(tool_presentation("mcp_custom", &json!({}), &json!({"ok": true})).is_none());
+    }
+
+    #[test]
+    fn list_dir_maps_entries_to_rows() {
+        let p = tool_presentation(
+            "list_dir",
+            &json!({"path": "."}),
+            &json!({"path": ".", "entries": [
+                {"name": "src", "type": "directory", "size": 0},
+                {"name": "Cargo.toml", "type": "file", "size": 12}
+            ], "total": 2}),
+        )
+        .unwrap();
+        match p {
+            ToolResultPresentation::Listing { rows } => {
+                assert_eq!(rows, vec!["src/".to_string(), "Cargo.toml".to_string()]);
+            }
+            _ => panic!("expected listing"),
+        }
+    }
+
+    #[test]
+    fn empty_listing_falls_back_to_preview() {
+        // No matches/entries → no presentation, so the flat preview renders.
+        assert!(
+            tool_presentation("list_dir", &json!({"path": "."}), &json!({"entries": []})).is_none()
+        );
+        assert!(
+            tool_presentation("grep", &json!({"pattern": "x"}), &json!({"matches": []})).is_none()
+        );
+    }
+
+    #[test]
+    fn bash_caps_large_stdout() {
+        let huge = "x".repeat(PRESENTATION_MAX_STREAM_CHARS * 2);
+        let p = tool_presentation("bash", &json!({"command": "gen"}), &json!({"stdout": huge}))
+            .unwrap();
+        match p {
+            ToolResultPresentation::Command {
+                stdout, truncated, ..
+            } => {
+                assert!(truncated);
+                assert!(stdout.len() < PRESENTATION_MAX_STREAM_CHARS + 100);
+                assert!(stdout.contains("output truncated"));
+            }
+            _ => panic!("expected command"),
+        }
+    }
+
+    #[test]
+    fn large_diff_is_capped() {
+        let new = (0..PRESENTATION_MAX_ROWS + 500)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let p = tool_presentation(
+            "write_file",
+            &json!({"path": "a.rs", "content": new}),
+            &json!({"path": "a.rs"}),
+        )
+        .unwrap();
+        match p {
+            ToolResultPresentation::Diff { hunks, .. } => {
+                assert!(hunks[0].lines.len() <= PRESENTATION_MAX_ROWS + 1);
+            }
+            _ => panic!("expected diff"),
+        }
     }
 }

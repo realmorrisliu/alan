@@ -311,8 +311,15 @@ impl TuiApp {
                 true
             }
             KeyCode::Esc => {
-                self.completion = None;
-                true
+                // When a turn is running or input is pending, Esc must still
+                // interrupt (the UI advertises "esc to interrupt"); let it bubble
+                // to the global interrupt branch. Otherwise it dismisses the popup.
+                if self.reducer.turn_active || self.reducer.pending_yield.is_some() {
+                    false
+                } else {
+                    self.completion = None;
+                    true
+                }
             }
             KeyCode::Tab => {
                 self.accept_completion();
@@ -620,6 +627,30 @@ mod tests {
         assert_eq!(state.matches[0].value, "code-review");
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.composer.text(), "use $code-review ");
+    }
+
+    #[test]
+    fn esc_interrupts_during_turn_even_with_completion_open() {
+        let mut app = app();
+        app.reducer.turn_active = true;
+        // Open a command completion popup.
+        press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert!(app.completion.is_some());
+        // Esc must interrupt the running turn, not merely dismiss the popup.
+        let action = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(action, Some(AppAction::Interrupt));
+    }
+
+    #[test]
+    fn esc_dismisses_completion_when_idle() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert!(app.completion.is_some());
+        let action = press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(action, None);
+        assert!(app.completion.is_none());
     }
 
     #[test]
