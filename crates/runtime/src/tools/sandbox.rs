@@ -184,7 +184,7 @@ impl Sandbox {
         cmd: &str,
         cwd: &Path,
         timeout: Option<Duration>,
-        _capability: Option<alan_protocol::ToolCapability>,
+        capability: Option<alan_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
@@ -198,7 +198,12 @@ impl Sandbox {
         self.validate_shell_features(cmd)?;
         self.validate_command_paths(cmd, cwd)?;
 
-        let mut command = self.build_confined_command(cmd);
+        // A command only reaches execution after policy/reviewer/human clearance.
+        // If it is classified as a network capability, run it with the sandbox's
+        // network restriction lifted (still filesystem-confined) so an approved
+        // network call actually runs instead of failing under a deny-all profile.
+        let allow_network = matches!(capability, Some(alan_protocol::ToolCapability::Network));
+        let mut command = self.build_confined_command(cmd, allow_network);
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -228,11 +233,12 @@ impl Sandbox {
     /// available. On macOS with Seatbelt this wraps the shell in `sandbox-exec`
     /// with a workspace-write/no-network profile; otherwise it runs the shell
     /// directly under the best-effort path guard.
-    fn build_confined_command(&self, cmd: &str) -> tokio::process::Command {
+    fn build_confined_command(&self, cmd: &str, allow_network: bool) -> tokio::process::Command {
         // Defense in depth: start the shell with pathname expansion disabled.
         match super::sandbox_backend::detect_backend() {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
-                let profile = super::sandbox_backend::seatbelt_profile(&self.workspace_root);
+                let profile =
+                    super::sandbox_backend::seatbelt_profile(&self.workspace_root, allow_network);
                 let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
                 command
                     .arg("-p")
@@ -252,8 +258,9 @@ impl Sandbox {
                 // SAFETY: pre_exec runs in the forked child before exec; it only
                 // applies a Landlock ruleset (no shared-state mutation).
                 unsafe {
-                    command
-                        .pre_exec(move || super::sandbox_backend::apply_landlock(&workspace_root));
+                    command.pre_exec(move || {
+                        super::sandbox_backend::apply_landlock(&workspace_root, allow_network)
+                    });
                 }
                 tokio::process::Command::from(command)
             }

@@ -73,11 +73,28 @@ pub(super) fn evaluate_tool_policy(
         cwd: current_cwd,
     });
     let capability_kind = capability_label(capability).to_string();
-    let policy_source = policy_decision.source.to_string();
-    let rule_id = policy_decision.rule_id.clone();
-    let policy_reason = policy_decision.reason.clone();
+    let mut policy_source = policy_decision.source.to_string();
+    let mut rule_id = policy_decision.rule_id.clone();
+    let mut policy_reason = policy_decision.reason.clone();
+    let mut action = policy_decision.action;
 
-    match policy_decision.action {
+    // Safe degradation: under the builtin autonomous posture, without an
+    // OS-enforced sandbox bash can do arbitrary uncontained effects, so it must
+    // not auto-run — escalate to a human. (`human-` rule ids route to a person,
+    // never the reviewer.) Explicit operator policies are left as configured.
+    if should_degrade_bash(
+        action,
+        tool_name,
+        &policy_source,
+        crate::tools::os_backend_active(),
+    ) {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("human-no-os-sandbox".to_string());
+        policy_reason = Some("no OS sandbox active; bash requires human approval".to_string());
+        policy_source = "safe_degradation".to_string();
+    }
+
+    match action {
         crate::policy::PolicyAction::Allow => ToolPolicyDecision::Allow {
             audit: alan_protocol::ToolDecisionAudit {
                 policy_source: policy_source.clone(),
@@ -140,6 +157,20 @@ pub(super) fn evaluate_tool_policy(
     }
 }
 
+/// Whether a builtin-autonomous bash allow must be downgraded to a human
+/// escalation because no OS sandbox can contain it on this host.
+fn should_degrade_bash(
+    action: crate::policy::PolicyAction,
+    tool_name: &str,
+    policy_source: &str,
+    os_backend_active: bool,
+) -> bool {
+    action == crate::policy::PolicyAction::Allow
+        && tool_name == "bash"
+        && policy_source == "builtin_autonomous"
+        && !os_backend_active
+}
+
 fn bash_shape_preflight_reason(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
     if tool_name != "bash" {
         return None;
@@ -188,6 +219,39 @@ mod tests {
             }
             other => panic!("expected escalation, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn bash_degrades_to_human_only_without_os_backend_under_builtin() {
+        use crate::policy::PolicyAction;
+        // Builtin autonomous + bash + no OS backend → escalate to a human.
+        assert!(should_degrade_bash(
+            PolicyAction::Allow,
+            "bash",
+            "builtin_autonomous",
+            false
+        ));
+        // With an OS backend, bash auto-runs (sandbox contains it).
+        assert!(!should_degrade_bash(
+            PolicyAction::Allow,
+            "bash",
+            "builtin_autonomous",
+            true
+        ));
+        // Explicit operator policies are respected (not downgraded).
+        assert!(!should_degrade_bash(
+            PolicyAction::Allow,
+            "bash",
+            "workspace_policy_file",
+            false
+        ));
+        // Non-bash tools (contained by the path guard) are unaffected.
+        assert!(!should_degrade_bash(
+            PolicyAction::Allow,
+            "edit_file",
+            "builtin_autonomous",
+            false
+        ));
     }
 
     #[test]
