@@ -26,13 +26,20 @@ pub(super) enum EscalationRoute {
 }
 
 /// Classify an escalation's route. Always-human applies to the red-line rules
-/// (rule ids prefixed `human-`) and to network when the active sandbox cannot
-/// confine it on this platform.
+/// (rule ids prefixed `human-`), to force-push in any token ordering, and to
+/// network when the active sandbox cannot confine it on this platform.
 pub(super) fn escalation_route(
     rule_id: Option<&str>,
     capability: alan_protocol::ToolCapability,
+    command: &str,
 ) -> EscalationRoute {
     if rule_id.is_some_and(|id| id.starts_with("human-")) {
+        return EscalationRoute::AlwaysHuman;
+    }
+    // Force-push rewrites remote history regardless of flag ordering; the
+    // substring rule only catches `git push --force`, so token-check here so the
+    // reviewer can never approve a force-push.
+    if is_force_push(command) {
         return EscalationRoute::AlwaysHuman;
     }
     if matches!(capability, alan_protocol::ToolCapability::Network)
@@ -41,6 +48,19 @@ pub(super) fn escalation_route(
         return EscalationRoute::AlwaysHuman;
     }
     EscalationRoute::Reviewer
+}
+
+/// Detect a `git push` with a force flag in any token ordering (errs toward
+/// always-human). Coarse whitespace tokenization is sufficient — obfuscated
+/// commands are caught by the sandbox/reviewer backstops.
+fn is_force_push(command: &str) -> bool {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let has_git = tokens.contains(&"git");
+    let has_push = tokens.contains(&"push");
+    let has_force = tokens
+        .iter()
+        .any(|t| *t == "-f" || *t == "--force" || t.starts_with("--force-with-lease"));
+    has_git && has_push && has_force
 }
 
 pub(super) fn evaluate_tool_policy(
@@ -119,7 +139,14 @@ pub(super) fn evaluate_tool_policy(
             },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
-            route: escalation_route(rule_id.as_deref(), capability),
+            route: escalation_route(
+                rule_id.as_deref(),
+                capability,
+                arguments
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(""),
+            ),
             summary: format!("Escalate tool call '{}'? ", tool_name)
                 .trim()
                 .to_string(),
@@ -294,21 +321,52 @@ mod tests {
 
     #[test]
     fn test_force_push_red_line_precedes_normal_push() {
+        use alan_protocol::ToolCapability::{Read, Unknown};
         // human- rules always route to a human regardless of capability.
         assert_eq!(
-            escalation_route(
-                Some("human-git-force-push"),
-                alan_protocol::ToolCapability::Read
-            ),
+            escalation_route(Some("human-git-force-push"), Read, ""),
             EscalationRoute::AlwaysHuman
         );
         assert_eq!(
-            escalation_route(
-                Some("review-git-push"),
-                alan_protocol::ToolCapability::Unknown
-            ),
+            escalation_route(Some("review-git-push"), Unknown, "git push origin main"),
             EscalationRoute::Reviewer
         );
+        // Force-push in any token ordering routes to a human, even when the
+        // matched rule is the plain `review-git-push` rule.
+        for cmd in [
+            "git push --force",
+            "git push origin main --force",
+            "git -C repo push --force",
+            "git push -f origin main",
+            "git push --force-with-lease=origin/main",
+        ] {
+            assert_eq!(
+                escalation_route(Some("review-git-push"), Unknown, cmd),
+                EscalationRoute::AlwaysHuman,
+                "force-push not routed to human: {cmd}"
+            );
+        }
+        // A plain push is not misclassified as force.
+        assert!(!is_force_push("git push origin main"));
+    }
+
+    #[test]
+    fn test_force_push_any_ordering_routes_to_human_end_to_end() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({"command":"git push origin main --force"}),
+            alan_protocol::ToolCapability::Unknown,
+            None,
+        );
+        match result {
+            ToolPolicyDecision::Escalate { route, .. } => {
+                assert_eq!(route, EscalationRoute::AlwaysHuman)
+            }
+            other => panic!("expected escalation, got {:?}", other),
+        }
     }
 
     #[test]
@@ -322,7 +380,8 @@ mod tests {
         assert_eq!(
             escalation_route(
                 Some("review-network"),
-                alan_protocol::ToolCapability::Network
+                alan_protocol::ToolCapability::Network,
+                "curl https://example.com"
             ),
             expected
         );
