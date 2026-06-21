@@ -198,9 +198,8 @@ impl Sandbox {
         self.validate_shell_features(cmd)?;
         self.validate_command_paths(cmd, cwd)?;
 
-        let mut command = tokio::process::Command::new("sh");
-        // Defense in depth: start the shell with pathname expansion disabled.
-        command.arg("-f").arg("-c").arg(cmd).current_dir(cwd);
+        let mut command = self.build_confined_command(cmd);
+        command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
                 Ok(result) => result.map_err(|e| anyhow!("Failed to execute command: {}", e))?,
@@ -223,6 +222,47 @@ impl Sandbox {
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
             exit_code: output.status.code().unwrap_or(-1),
         })
+    }
+
+    /// Build the shell command, confined by an OS sandbox backend when one is
+    /// available. On macOS with Seatbelt this wraps the shell in `sandbox-exec`
+    /// with a workspace-write/no-network profile; otherwise it runs the shell
+    /// directly under the best-effort path guard.
+    fn build_confined_command(&self, cmd: &str) -> tokio::process::Command {
+        // Defense in depth: start the shell with pathname expansion disabled.
+        match super::sandbox_backend::detect_backend() {
+            super::sandbox_backend::SandboxBackendKind::Seatbelt => {
+                let profile = super::sandbox_backend::seatbelt_profile(&self.workspace_root);
+                let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
+                command
+                    .arg("-p")
+                    .arg(profile)
+                    .arg("sh")
+                    .arg("-f")
+                    .arg("-c")
+                    .arg(cmd);
+                command
+            }
+            #[cfg(target_os = "linux")]
+            super::sandbox_backend::SandboxBackendKind::Landlock => {
+                use std::os::unix::process::CommandExt;
+                let workspace_root = self.workspace_root.clone();
+                let mut command = std::process::Command::new("sh");
+                command.arg("-f").arg("-c").arg(cmd);
+                // SAFETY: pre_exec runs in the forked child before exec; it only
+                // applies a Landlock ruleset (no shared-state mutation).
+                unsafe {
+                    command
+                        .pre_exec(move || super::sandbox_backend::apply_landlock(&workspace_root));
+                }
+                tokio::process::Command::from(command)
+            }
+            _ => {
+                let mut command = tokio::process::Command::new("sh");
+                command.arg("-f").arg("-c").arg(cmd);
+                command
+            }
+        }
     }
 
     /// List directory contents

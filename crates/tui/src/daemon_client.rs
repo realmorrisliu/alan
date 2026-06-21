@@ -193,6 +193,11 @@ impl DaemonClient {
             .await
     }
 
+    pub async fn read_skills_catalog(&self) -> Result<serde_json::Value> {
+        self.get_json(self.endpoints.skills_catalog().to_string())
+            .await
+    }
+
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
         let history = self.read_history(session_id).await?;
         let reconnect = self.read_reconnect_snapshot(session_id).await?;

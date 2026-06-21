@@ -84,6 +84,7 @@ where
     match tool_call.name.as_str() {
         "request_confirmation" => {
             emit(Event::ToolCallStarted {
+                title: None,
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
                 audit: None,
@@ -100,6 +101,7 @@ where
                     "request_id": pending.checkpoint_id
                 });
                 emit(Event::ToolCallCompleted {
+                    presentation: None,
                     id: tool_call.id.clone(),
                     name: Some(tool_call.name.clone()),
                     success: Some(true),
@@ -139,6 +141,7 @@ where
                     "error": "Invalid confirmation request."
                 });
                 emit(Event::ToolCallCompleted {
+                    presentation: None,
                     id: tool_call.id.clone(),
                     name: Some(tool_call.name.clone()),
                     success: Some(false),
@@ -163,6 +166,7 @@ where
         }
         "request_user_input" => {
             emit(Event::ToolCallStarted {
+                title: None,
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
                 audit: None,
@@ -176,6 +180,7 @@ where
                 let pending_payload =
                     json!({"status": "pending_structured_input", "request_id": request_id});
                 emit(Event::ToolCallCompleted {
+                    presentation: None,
                     id: tool_call.id.clone(),
                     name: Some(tool_call.name.clone()),
                     success: Some(true),
@@ -208,6 +213,7 @@ where
                     "error": "Invalid structured user input request."
                 });
                 emit(Event::ToolCallCompleted {
+                    presentation: None,
                     id: tool_call.id.clone(),
                     name: Some(tool_call.name.clone()),
                     success: Some(false),
@@ -232,6 +238,7 @@ where
         }
         "update_plan" => {
             emit(Event::ToolCallStarted {
+                title: None,
                 id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
                 audit: None,
@@ -249,6 +256,7 @@ where
                         "items_count": items.len()
                     });
                     emit(Event::ToolCallCompleted {
+                        presentation: None,
                         id: tool_call.id.clone(),
                         name: Some(tool_call.name.clone()),
                         success: Some(true),
@@ -280,6 +288,7 @@ where
                         "error": "Invalid plan update payload."
                     });
                     emit(Event::ToolCallCompleted {
+                        presentation: None,
                         id: tool_call.id.clone(),
                         name: Some(tool_call.name.clone()),
                         success: Some(false),
@@ -357,6 +366,7 @@ where
             "error": "Invalid child-run termination payload."
         });
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(false),
@@ -396,6 +406,7 @@ where
     };
 
     emit(Event::ToolCallStarted {
+        title: None,
         id: tool_call.id.clone(),
         name: tool_call.name.clone(),
         audit: Some(audit.clone()),
@@ -435,6 +446,7 @@ where
     };
 
     emit(Event::ToolCallCompleted {
+        presentation: None,
         id: tool_call.id.clone(),
         name: Some(tool_call.name.clone()),
         success: Some(success),
@@ -521,6 +533,7 @@ where
             summary,
             mut details,
             audit,
+            route: _,
         } => {
             details["replay_tool_call"] = json!({
                 "call_id": tool_call.id,
@@ -573,6 +586,7 @@ where
             })
             .await;
             emit(Event::ToolCallCompleted {
+                presentation: None,
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
                 success: Some(false),
@@ -635,6 +649,7 @@ where
     >,
 {
     emit(Event::ToolCallStarted {
+        title: None,
         id: tool_call.id.clone(),
         name: tool_call.name.clone(),
         audit: None,
@@ -647,6 +662,7 @@ where
             "error": "Invalid delegated skill invocation payload."
         });
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(false),
@@ -679,6 +695,7 @@ where
             "error": "Delegated skill invocation is not available in this runtime."
         });
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(false),
@@ -770,6 +787,7 @@ where
         DelegatedSkillResultStatus::Completed
     );
     emit(Event::ToolCallCompleted {
+        presentation: None,
         id: tool_call.id.clone(),
         name: Some(tool_call.name.clone()),
         success: Some(invocation_succeeded),

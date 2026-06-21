@@ -2974,7 +2974,7 @@ required = true
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             }),
         };
@@ -2983,7 +2983,7 @@ required = true
 
         assert_eq!(
             config.agent_config.runtime_config.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
     }
 

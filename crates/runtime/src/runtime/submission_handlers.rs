@@ -304,6 +304,7 @@ where
                         .and_then(|value| value.as_bool())
                         .unwrap_or_else(|| result.get("error").is_none());
                     emit(Event::ToolCallCompleted {
+                        presentation: None,
                         id: pending.call_id.clone(),
                         name: Some(pending.tool_name.clone()),
                         success: Some(success),

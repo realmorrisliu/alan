@@ -2699,7 +2699,7 @@ Body
             "gpt-5.4".to_string(),
             Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             alan_runtime::StreamingMode::Auto,

@@ -67,7 +67,7 @@ pub use manager::{
 };
 pub use models::{ModelCatalog, ModelInfo};
 pub use paths::AlanHomePaths;
-pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyProfile, PolicyRule};
+pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
 pub use prompts::PromptLoader;
 pub use request_controls::{
     RequestControlDiagnostic, RequestControlIntent, RequestControlResolutionInput,

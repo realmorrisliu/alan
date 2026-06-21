@@ -195,11 +195,13 @@ fn simulate_tool_call_turn() -> Vec<Event> {
             is_final: true,
         },
         Event::ToolCallStarted {
+            title: None,
             id: "call_1".to_string(),
             name: "read_file".to_string(),
             audit: None,
         },
         Event::ToolCallCompleted {
+            presentation: None,
             id: "call_1".to_string(),
             name: Some("read_file".to_string()),
             success: Some(true),

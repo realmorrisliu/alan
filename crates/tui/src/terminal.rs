@@ -1,8 +1,5 @@
 use anyhow::{Context, Result};
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event as TerminalEvent,
-};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, Event as TerminalEvent};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -31,8 +28,7 @@ impl TerminalSession {
         crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
         let startup_guard = TerminalStartupGuard::new();
         let mut out = stdout();
-        execute!(out, EnableBracketedPaste, EnableMouseCapture)
-            .context("failed to enable terminal input modes")?;
+        execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
         let backend = CrosstermBackend::new(out);
         let mut terminal = Terminal::new(backend).context("failed to initialize terminal")?;
         terminal.clear().context("failed to clear terminal")?;
@@ -94,7 +90,7 @@ impl Drop for TerminalStartupGuard {
             return;
         }
         let mut out = stdout();
-        let _ = execute!(out, DisableMouseCapture, DisableBracketedPaste);
+        let _ = execute!(out, DisableBracketedPaste);
         let _ = crossterm_terminal::disable_raw_mode();
     }
 }
@@ -102,11 +98,7 @@ impl Drop for TerminalStartupGuard {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = crossterm_terminal::disable_raw_mode();
-        let _ = execute!(
-            self.terminal.backend_mut(),
-            DisableMouseCapture,
-            DisableBracketedPaste
-        );
+        let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
         let _ = self.terminal.show_cursor();
     }
 }

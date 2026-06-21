@@ -2562,7 +2562,7 @@ Body
             "gpt-5.4".to_string(),
             Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             alan_runtime::StreamingMode::Auto,
@@ -3648,7 +3648,7 @@ Body
         assert!(resp.sessions.iter().all(|s| s.active));
         assert_eq!(
             resp.sessions[0].governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.sessions[0].streaming_mode,
@@ -3785,7 +3785,7 @@ Body
         assert_eq!(resp.workspace_id, expected_workspace_id);
         assert_eq!(
             resp.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.execution_backend,
@@ -4482,7 +4482,7 @@ Body
         );
         assert_eq!(
             info.0.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(info.0.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(info.0.durability.durable);

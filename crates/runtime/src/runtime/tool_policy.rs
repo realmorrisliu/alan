@@ -9,11 +9,38 @@ pub(super) enum ToolPolicyDecision {
         summary: String,
         details: serde_json::Value,
         audit: alan_protocol::ToolDecisionAudit,
+        route: EscalationRoute,
     },
     Forbidden {
         reason: String,
         audit: alan_protocol::ToolDecisionAudit,
     },
+}
+
+/// Where an escalation goes: to the guardian reviewer, or straight to a human
+/// (the always-human red line, or effects the sandbox cannot contain).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EscalationRoute {
+    Reviewer,
+    AlwaysHuman,
+}
+
+/// Classify an escalation's route. Always-human applies to the red-line rules
+/// (rule ids prefixed `human-`) and to network when the active sandbox cannot
+/// confine it on this platform.
+pub(super) fn escalation_route(
+    rule_id: Option<&str>,
+    capability: alan_protocol::ToolCapability,
+) -> EscalationRoute {
+    if rule_id.is_some_and(|id| id.starts_with("human-")) {
+        return EscalationRoute::AlwaysHuman;
+    }
+    if matches!(capability, alan_protocol::ToolCapability::Network)
+        && !crate::tools::confines_network()
+    {
+        return EscalationRoute::AlwaysHuman;
+    }
+    EscalationRoute::Reviewer
 }
 
 pub(super) fn evaluate_tool_policy(
@@ -75,6 +102,7 @@ pub(super) fn evaluate_tool_policy(
             },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
+            route: escalation_route(rule_id.as_deref(), capability),
             summary: format!("Escalate tool call '{}'? ", tool_name)
                 .trim()
                 .to_string(),
@@ -83,6 +111,14 @@ pub(super) fn evaluate_tool_policy(
                 "tool_name": tool_name,
                 "arguments": arguments,
                 "capability": capability_label(capability),
+                // Derived from arguments alone (pre-execution) so the approval
+                // surface can show the diff/command being approved.
+                "presentation": super::tool_presentation::tool_presentation(
+                    tool_name,
+                    arguments,
+                    &serde_json::Value::Null,
+                )
+                .and_then(|p| serde_json::to_value(p).ok()),
                 "governance": governance,
                 "policy": {
                     "source": policy_source,
@@ -132,13 +168,12 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_conservative_unknown_capability_escalates() {
-        let policy =
-            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Conservative);
+    fn test_unknown_capability_escalates() {
+        let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
             &policy,
             &alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             "dynamic_tool",
@@ -156,9 +191,82 @@ mod tests {
     }
 
     #[test]
-    fn test_autonomous_network_is_allowed_by_default() {
-        let policy =
-            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Autonomous);
+    fn test_force_push_routes_to_always_human() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({"command":"git push --force origin main"}),
+            alan_protocol::ToolCapability::Unknown,
+            None,
+        );
+        match result {
+            ToolPolicyDecision::Escalate { route, .. } => {
+                assert_eq!(route, EscalationRoute::AlwaysHuman)
+            }
+            other => panic!("expected escalation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_normal_git_push_routes_to_reviewer() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({"command":"git push origin main"}),
+            alan_protocol::ToolCapability::Unknown,
+            None,
+        );
+        match result {
+            ToolPolicyDecision::Escalate { route, .. } => {
+                assert_eq!(route, EscalationRoute::Reviewer)
+            }
+            other => panic!("expected escalation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_force_push_red_line_precedes_normal_push() {
+        // human- rules always route to a human regardless of capability.
+        assert_eq!(
+            escalation_route(
+                Some("human-git-force-push"),
+                alan_protocol::ToolCapability::Read
+            ),
+            EscalationRoute::AlwaysHuman
+        );
+        assert_eq!(
+            escalation_route(
+                Some("review-git-push"),
+                alan_protocol::ToolCapability::Unknown
+            ),
+            EscalationRoute::Reviewer
+        );
+    }
+
+    #[test]
+    fn test_network_route_follows_platform_containment() {
+        // Network is reviewer-judged only when the active sandbox confines it.
+        let expected = if crate::tools::confines_network() {
+            EscalationRoute::Reviewer
+        } else {
+            EscalationRoute::AlwaysHuman
+        };
+        assert_eq!(
+            escalation_route(
+                Some("review-network"),
+                alan_protocol::ToolCapability::Network
+            ),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_network_escalates_under_autonomous() {
+        let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
             &policy,
             &alan_protocol::GovernanceConfig {
@@ -171,18 +279,17 @@ mod tests {
             None,
         );
         match result {
-            ToolPolicyDecision::Allow { audit } => {
-                assert_eq!(audit.action, "allow");
+            ToolPolicyDecision::Escalate { audit, .. } => {
+                assert_eq!(audit.action, "escalate");
                 assert_eq!(audit.capability, "network");
             }
-            other => panic!("expected allow, got {:?}", other),
+            other => panic!("expected escalation, got {:?}", other),
         }
     }
 
     #[test]
     fn test_bash_shape_preflight_blocks_unsupported_wrapper_before_policy_allow() {
-        let policy =
-            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Autonomous);
+        let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
             &policy,
             &alan_protocol::GovernanceConfig {
@@ -208,13 +315,12 @@ mod tests {
     }
 
     #[test]
-    fn test_conservative_write_escalates() {
-        let policy =
-            crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Conservative);
+    fn test_in_workspace_write_auto_approves() {
+        let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
             &policy,
             &alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             "write_file",
@@ -223,11 +329,11 @@ mod tests {
             None,
         );
         match result {
-            ToolPolicyDecision::Escalate { audit, .. } => {
-                assert_eq!(audit.action, "escalate");
+            ToolPolicyDecision::Allow { audit } => {
+                assert_eq!(audit.action, "allow");
                 assert_eq!(audit.capability, "write");
             }
-            other => panic!("expected escalation, got {:?}", other),
+            other => panic!("expected allow, got {:?}", other),
         }
     }
 
@@ -250,10 +356,7 @@ default_action: allow
 "#,
         )
         .unwrap();
-        let policy = crate::policy::PolicyEngine::load_or_profile(
-            Some(policy_dir.as_path()),
-            crate::policy::PolicyProfile::Autonomous,
-        );
+        let policy = crate::policy::PolicyEngine::load_or_default(Some(policy_dir.as_path()));
         let result = evaluate_tool_policy(
             &policy,
             &alan_protocol::GovernanceConfig {
