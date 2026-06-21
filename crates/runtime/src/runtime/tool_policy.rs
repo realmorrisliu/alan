@@ -63,6 +63,12 @@ fn is_force_push(command: &str) -> bool {
     has_git && has_push && has_force
 }
 
+/// Detect a `git reset --hard` in any token ordering (errs toward escalation).
+fn is_reset_hard(command: &str) -> bool {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    tokens.contains(&"git") && tokens.contains(&"reset") && tokens.contains(&"--hard")
+}
+
 pub(super) fn evaluate_tool_policy(
     policy_engine: &crate::policy::PolicyEngine,
     governance: &alan_protocol::GovernanceConfig,
@@ -97,6 +103,26 @@ pub(super) fn evaluate_tool_policy(
     let mut rule_id = policy_decision.rule_id.clone();
     let mut policy_reason = policy_decision.reason.clone();
     let mut action = policy_decision.action;
+
+    // Token-aware irreversible-git gate under the builtin posture: variant
+    // orderings (e.g. `git -C repo reset --hard`, `git reset HEAD --hard`) miss
+    // the substring rules and would fall through to allow, so escalate them for
+    // review. (Force-push is already escalated via the `git push` rule and routed
+    // to a human in `escalation_route`.)
+    if action == crate::policy::PolicyAction::Allow
+        && tool_name == "bash"
+        && policy_source == "builtin_autonomous"
+        && is_reset_hard(
+            arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        )
+    {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("review-git-reset-hard".to_string());
+        policy_reason = Some("irreversible git reset requires review".to_string());
+    }
 
     // Safe degradation: under the builtin autonomous posture, without an
     // OS-enforced sandbox bash can do arbitrary uncontained effects, so it must
@@ -348,6 +374,31 @@ mod tests {
         }
         // A plain push is not misclassified as force.
         assert!(!is_force_push("git push origin main"));
+    }
+
+    #[test]
+    fn test_reset_hard_variants_escalate_under_builtin() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "git reset --hard",
+            "git -C repo reset --hard",
+            "git reset HEAD --hard",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+            );
+            assert!(
+                matches!(result, ToolPolicyDecision::Escalate { .. }),
+                "reset --hard variant not escalated: {cmd}"
+            );
+        }
+        assert!(is_reset_hard("git -C repo reset --hard"));
+        assert!(!is_reset_hard("git reset HEAD~1")); // soft reset is not gated
     }
 
     #[test]
