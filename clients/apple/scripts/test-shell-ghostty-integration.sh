@@ -8,6 +8,11 @@ SETUP_SCRIPT="$SCRIPT_DIR/setup-local-ghosttykit.sh"
 REQUIRE_GHOSTTY="${ALAN_REQUIRE_GHOSTTY_INTEGRATION:-0}"
 DERIVED_DATA_PATH="${ALAN_GHOSTTY_DERIVED_DATA_PATH:-$REPO_ROOT/debug/DerivedData/apple-shell-ghostty-integration}"
 DESTINATION="${ALAN_GHOSTTY_XCODE_DESTINATION:-platform=macOS}"
+CLONED_SOURCE_PACKAGES_DIR="${ALAN_GHOSTTY_CLONED_SOURCE_PACKAGES_DIR:-}"
+PACKAGE_ARGS=(-skipPackageUpdates -disableAutomaticPackageResolution)
+if [ -n "$CLONED_SOURCE_PACKAGES_DIR" ]; then
+    PACKAGE_ARGS+=(-clonedSourcePackagesDirPath "$CLONED_SOURCE_PACKAGES_DIR")
+fi
 
 if ! check_output="$("$SETUP_SCRIPT" --check 2>&1)"; then
     printf '%s\n' "$check_output" >&2
@@ -22,6 +27,7 @@ if ! check_output="$("$SETUP_SCRIPT" --check 2>&1)"; then
 fi
 
 printf '%s\n' "$check_output"
+bash "$SCRIPT_DIR/check-ghostty-external-pty-seam.sh"
 
 bash "$SCRIPT_DIR/test-terminal-runtime-service.sh"
 bash "$SCRIPT_DIR/test-terminal-surface-controller.sh"
@@ -32,4 +38,5 @@ xcodebuild \
     -configuration Debug \
     -destination "$DESTINATION" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    "${PACKAGE_ARGS[@]}" \
     build

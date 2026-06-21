@@ -9,7 +9,7 @@ require_pattern() {
     local pattern="$2"
     local message="$3"
 
-    if ! grep -Eq "$pattern" "$REPO_ROOT/$file"; then
+    if ! grep -Eq -- "$pattern" "$REPO_ROOT/$file"; then
         printf 'error: %s\n' "$message" >&2
         printf '       expected pattern %s in %s\n' "$pattern" "$file" >&2
         exit 1
@@ -21,7 +21,7 @@ reject_pattern() {
     local pattern="$2"
     local message="$3"
 
-    if grep -ERq "$pattern" "$REPO_ROOT/$file"; then
+    if grep -ERq -- "$pattern" "$REPO_ROOT/$file"; then
         printf 'error: %s\n' "$message" >&2
         printf '       rejected pattern %s in %s\n' "$pattern" "$file" >&2
         exit 1
@@ -572,6 +572,16 @@ require_semantic_terminal_actions_contract() {
         "verifiesSemanticCommandFallbacksAndInvalidation" \
         "surface controller tests must prove semantic command fallback and invalidation behavior"
 
+    require_pattern \
+        "clients/apple/scripts/setup-local-ghosttykit.sh" \
+        "artifact-overrides" \
+        "Ghostty artifact overrides must be treated as artifact-only sources, not submodule sources"
+
+    require_pattern \
+        "clients/apple/scripts/setup-local-ghosttykit.sh" \
+        "if has_artifact_override; then" \
+        "Ghostty artifact override setup must skip default submodule initialization"
+
     reject_pattern \
         "clients/apple/alan-macos" \
         "CommandBrowser|CommandBlock|CommandOutputSegment|commandBrowser|commandBlocks|outputSegmentation|visibleCommandBlocks" \
@@ -682,6 +692,86 @@ require_pattern \
     "clients/apple/alan-macos/TerminalRuntimeService.swift" \
     "var registeredContentIDs: Set<String>" \
     "terminal runtime service must expose content-keyed registration state"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "setNoSigpipeSocketOption\\(descriptors\\[0\\]\\)" \
+    "local renderer socketpairs must disable SIGPIPE before Ghostty attachment"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingPtyInputChunks" \
+    "local renderer PTY input must buffer nonblocking short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "DispatchSource\\.makeWriteSource" \
+    "local renderer PTY input must retry buffered input when the PTY becomes writable"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "fileDescriptor: ptyFileDescriptor" \
+    "local renderer PTY input retry source must watch the PTY file descriptor"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingDirectPtyInputChunks" \
+    "local PTY control-plane input must buffer nonblocking short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "fileDescriptor: masterFileDescriptor" \
+    "local PTY control-plane input retry source must watch the master PTY file descriptor"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "func unregisterHandle\\(forTerminalContentID contentID: String\\)" \
+    "PTY runtime must expose explicit unregister so finalized panes release PTY handles"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "ptyRuntime\\.unregisterHandle\\(forTerminalContentID: contentID\\)" \
+    "terminal content finalization must release the backing PTY runtime handle"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "private var pendingRendererOutput" \
+    "renderer PTY output must buffer nonblocking socket short writes"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "let eof = Data\\(\\[UInt8\\(4\\)\\]\\)" \
+    "managed_user helper EOF must send Ctrl-D data instead of closing the PTY master"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "session\\.pendingInput\\.append\\(eof\\)" \
+    "managed_user helper EOF must use the pending input queue"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "readRequestsBeforeExitSnapshot" \
+    "managed_user helper PTY tests must count reads before exit projection"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "keep reading until the helper reports an idle/final chunk" \
+    "managed_user helper PTY tests must cover full final-output draining before exit projection"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "AlanManagedUserPTYInputRequest\\(sessionID: sessionID, data: data\\)" \
+    "managed_user renderer helper input must preserve raw bytes instead of re-encoding String"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "binaryRendererInput" \
+    "managed_user renderer tests must cover binary input preservation"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "helper-output-b" \
+    "managed_user renderer tests must cover draining more than one helper output chunk"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
@@ -840,7 +930,7 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
-    "host\\.setTerminalProfile\\([^\\n]+forSpaceID: space\\.spaceID\\)" \
+    "host\\.setTerminalProfile\\(.*forSpaceID: space\\.spaceID\\)" \
     "Space context-menu profile actions must target the Space whose menu was opened"
 
 require_pattern \
@@ -1380,8 +1470,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "ShellCoreFFIAdapter\\.shared\\.keyboardAction" \
-    "terminal keyboard shortcuts must map through the Rust-backed shared shell action registry"
+    "ShellActionMetadataCatalog\\.keyboardAction" \
+    "terminal keyboard shortcuts must use local shell action metadata before terminal bindings"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
@@ -1407,6 +1497,11 @@ require_pattern \
     "clients/apple/alan-macos/Services/Terminal/TerminalHostWindowObserver.swift" \
     "NSWindow\\.didChangeOcclusionStateNotification" \
     "terminal host window observer must keep occlusion changes connected to surface/runtime refresh"
+
+require_pattern \
+    "clients/apple/scripts/check-architecture-maintainability.sh" \
+    "reject_swiftui_shell_hot_path_sync_boundaries" \
+    "architecture guard must reject synchronous FFI/JSON/reducer calls from SwiftUI shell hot paths"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalPaneView.swift" \
@@ -2465,6 +2560,11 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ALAN_SHELL_CORE_FFI_LIBRARY" \
+    "shell-core FFI Xcode build must honor a prebuilt release dylib when assembly provides one"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
     "aarch64-apple-darwin" \
     "shell-core FFI Xcode build must map arm64 to the Apple Silicon Rust target"
 
@@ -2500,6 +2600,11 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must verify the privileged helper is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "mktemp \"\\\${path}\\.arm64\\.XXXXXX\"" \
     "release assembly must thin universal inputs into a temporary sibling binary"
 
@@ -2524,9 +2629,24 @@ require_pattern \
     "release assembly must sign the shell-core FFI dylib before the final app bundle"
 
 require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "sign_path \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must sign the privileged helper before the final app bundle"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    "codesign --verify --strict --verbose=2 \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release assembly must verify the privileged helper signature before the final app bundle"
+
+require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
     "/usr/bin/codesign" \
     "Xcode shell-core FFI build must sign the copied dylib when Xcode signing is enabled"
+
+require_pattern \
+    "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
+    "ctypes\\.CDLL\\(sys\\.argv\\[1\\]\\)" \
+    "Xcode shell-core FFI build must verify the copied dylib is actually loadable"
 
 require_pattern \
     "clients/apple/scripts/build-shell-core-ffi-dylib.sh" \
@@ -2565,6 +2685,16 @@ require_pattern \
 
 require_pattern \
     "scripts/validate-release-app.sh" \
+    "require_arm64_macho \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release app validation must reject non-arm64 privileged helper binaries"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "require_developer_id_signature \"\\\$PRIVILEGED_HELPER_EXECUTABLE\"" \
+    "release app validation must verify the privileged helper signature"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
     "require_arm64_macho \"\\\$SHELL_CORE_FFI_DYLIB\"" \
     "release app validation must reject non-arm64 shell-core FFI dylibs"
 
@@ -2572,6 +2702,11 @@ require_pattern \
     "scripts/validate-release-app.sh" \
     "require_developer_id_signature \"\\\$SHELL_CORE_FFI_DYLIB\"" \
     "release app validation must verify the shell-core FFI dylib signature"
+
+require_pattern \
+    "scripts/validate-release-app.sh" \
+    "ctypes\\.CDLL\\(sys\\.argv\\[1\\]\\)" \
+    "release app validation must verify the shell-core FFI dylib is loadable"
 
 reject_pattern \
     "scripts/validate-release-app.sh" \
@@ -2629,6 +2764,66 @@ require_pattern \
     "dev channel install contract checks must cover the dev app bundle"
 
 require_pattern \
+    "scripts/install-channel.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="app\.alanworks\.macos\.dev\.privileged-helper"' \
+    "dev channel install contract must expose the dev privileged helper label"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="\$ALAN_PRIVILEGED_HELPER_LABEL"' \
+    "release/dev app assembly must pass the channel-scoped privileged helper label into Xcode"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
+    'CURRENT_PROJECT_VERSION="\$ALAN_BUNDLE_VERSION"' \
+    "release/dev app assembly must pass explicit bundle versions into Xcode for helper update registration"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
+    "unregisterForUpdate" \
+    "privileged helper update must unregister stale SMAppService jobs before re-registering"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
+    "shouldRetryRegistration" \
+    "privileged helper update must retry transient SMAppService registration denial after unregister"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "PRODUCT_MODULE_NAME = AlanPrivilegedHelper;" \
+    "privileged helper target must keep a stable Swift module name when app PRODUCT_NAME is overridden"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    "Copy Privileged Helper" \
+    "app target must copy the channel-scoped privileged helper executable"
+
+require_pattern \
+    "clients/apple/alan-macos.xcodeproj/project.pbxproj" \
+    'helper_source=.*BUILT_PRODUCTS_DIR.*helper_label' \
+    "privileged helper copy phase must use the channel-scoped helper build product"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    'diagnose\(request: \$0, verifyPTY: true\)' \
+    "helper-backed Managed User diagnosis must run PTY smoke before reporting ready"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "readManagedUserPTY" \
+    "helper-backed Managed User PTY sessions must expose a typed output-read operation for renderer attachment"
+
+require_pattern \
+    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "AlanHelperManagedUserPtyRendererProxy" \
+    "managed_user terminal runtime must bridge helper PTY sessions into the Ghostty external-PTY attachment seam"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserRendererAttachmentBridgesHelperSession" \
+    "terminal runtime tests must prove managed_user renderer attachment bridges helper PTY sessions"
+
+require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
     'DEFAULT_APP_HOME="\$\{HOME:-/Users/\$\{USER:-\$\(id -un\)\}\}"' \
     "UI smoke must derive the installed Alan Dev app root from HOME like install-dev"
@@ -2652,6 +2847,71 @@ require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
     'SMOKE_BUNDLE_ID="\$\{SMOKE_BUNDLE_ID:-app\.alanworks\.macos\.dev\}"' \
     "UI smoke build mode must default to the Alan Dev bundle id"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'ALAN_PRIVILEGED_HELPER_LABEL="\$SMOKE_BUNDLE_ID\.privileged-helper"' \
+    "UI smoke build mode must embed the dev-channel privileged helper label"
+
+require_pattern \
+    "clients/apple/scripts/test-shell-ui-smoke.sh" \
+    'ALAN_APP_PRODUCT_NAME="Alan Dev"' \
+    "UI smoke build mode must override only the app product name"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    'ALAN_INSTALL_CHANNEL="\$\{ALAN_INSTALL_CHANNEL:-dev\}"' \
+    "privileged helper live smoke must default to the dev helper channel"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    "--compile-only" \
+    "privileged helper live smoke must support compile-only validation without touching launchd"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.sh" \
+    "--alan-dev-privileged-helper-smoke-and-exit" \
+    "privileged helper live smoke must connect through the signed Alan Dev app client"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.swift" \
+    "ALAN_PRIVILEGED_HELPER_LIVE_SMOKE_ALLOW_STABLE" \
+    "privileged helper live smoke must refuse stable helper access by default"
+
+require_pattern \
+    "clients/apple/scripts/smoke-privileged-helper-live.swift" \
+    "ALAN_PRIVILEGED_HELPER_SMOKE_START_PTY" \
+    "privileged helper live smoke must keep live PTY startup explicitly opt-in"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-install-and-exit" \
+    "Alan Dev must expose a dev-only helper install smoke command"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-restart-and-exit" \
+    "Alan Dev must expose a dev-only helper restart smoke command through SMAppService"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "--alan-dev-privileged-helper-smoke-and-exit" \
+    "Alan Dev must expose a dev-only helper live smoke command"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "ALAN_PRIVILEGED_HELPER_SMOKE_APPLY_REPAIR" \
+    "Alan Dev helper live smoke must keep repair apply behind an explicit environment flag"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "AlanInstallChannel\\.current\\(\\) == \\.dev" \
+    "helper install smoke command must refuse the stable channel"
+
+require_pattern \
+    "clients/apple/alan-macos/App/AlanMacAppStartup.swift" \
+    "AlanPrivilegedHelperAppServiceManager\\(channel: \\.dev\\)" \
+    "helper install smoke command must call the dev helper lifecycle manager"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \
@@ -2880,7 +3140,7 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostRuntime.swift" \
-    "if terminalProfileReference == nil" \
+    "if !hasExplicitTerminalProfileReference" \
     "default terminal shell-core-unavailable fallback must stay scoped to the no-explicit-profile path"
 
 require_pattern \

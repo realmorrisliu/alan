@@ -324,6 +324,9 @@ private enum ShellCoreTerminalProfileValidationError: Decodable {
     case missingTitle(String)
     case missingUnixUser(String)
     case missingCustomCommand(String)
+    case missingManagedAccount(String)
+    case managedAccountMismatch(profileID: String, accountID: String, unixUser: String)
+    case managedProfileReadOnly(String)
     case missingDefaultProfile(String)
     case unavailableExecutable(profileID: String, path: String)
 
@@ -331,6 +334,8 @@ private enum ShellCoreTerminalProfileValidationError: Decodable {
         case type
         case id
         case profileID = "profile_id"
+        case accountID = "account_id"
+        case unixUser = "unix_user"
         case path
     }
 
@@ -347,6 +352,16 @@ private enum ShellCoreTerminalProfileValidationError: Decodable {
             self = .missingUnixUser(try container.decode(String.self, forKey: .id))
         case "missing_custom_command":
             self = .missingCustomCommand(try container.decode(String.self, forKey: .id))
+        case "missing_managed_account":
+            self = .missingManagedAccount(try container.decode(String.self, forKey: .id))
+        case "managed_account_mismatch":
+            self = .managedAccountMismatch(
+                profileID: try container.decode(String.self, forKey: .profileID),
+                accountID: try container.decode(String.self, forKey: .accountID),
+                unixUser: try container.decode(String.self, forKey: .unixUser)
+            )
+        case "managed_profile_read_only":
+            self = .managedProfileReadOnly(try container.decode(String.self, forKey: .id))
         case "missing_default_profile":
             self = .missingDefaultProfile(try container.decode(String.self, forKey: .id))
         case "unavailable_executable":
@@ -376,6 +391,16 @@ private enum ShellCoreTerminalProfileValidationError: Decodable {
             return .missingUnixUser(id)
         case .missingCustomCommand(let id):
             return .missingCustomCommand(id)
+        case .missingManagedAccount(let id):
+            return .missingManagedAccount(id)
+        case .managedAccountMismatch(let profileID, let accountID, let unixUser):
+            return .managedAccountMismatch(
+                profileID: profileID,
+                accountID: accountID,
+                unixUser: unixUser
+            )
+        case .managedProfileReadOnly(let id):
+            return .managedProfileReadOnly(id)
         case .missingDefaultProfile(let id):
             return .missingDefaultProfile(id)
         case .unavailableExecutable(let profileID, let path):

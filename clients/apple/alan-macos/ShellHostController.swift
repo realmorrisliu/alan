@@ -226,7 +226,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     @Published var selectedSpaceID: String?
     @Published var selectedTabID: String?
     @Published private(set) var lastCopiedAt: Date?
-    @Published private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
+    private(set) var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published private(set) var controlPlaneDiagnostics: [String] = []
     @Published private(set) var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published private(set) var zoomedPaneIDByTabID: [String: String] = [:]
@@ -924,7 +924,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         presentationIconSystemName: String? = nil
     ) -> String? {
         let resolvedTerminalProfileID = terminalProfileID
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
         let result: ShellStateMutationResult
         do {
             switch launchTarget {
@@ -1315,26 +1314,41 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        let result: ShellStateMutationResult
         do {
-            switch launchTarget {
-            case .shell:
-                result = try reducerCoordinator.apply(
-                    state: shellState,
-                    operation: .openTerminalTab(
-                        spaceID: spaceID,
-                        title: title,
-                        workingDirectory: workingDirectory,
-                        terminalProfileID: terminalProfileID,
-                        reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
-                    )
-                )
-            }
+            let result = try openTabMutation(
+                launchTarget: launchTarget,
+                in: spaceID,
+                title: title,
+                workingDirectory: workingDirectory,
+                terminalProfileID: terminalProfileID
+            )
+            applyMutationResult(result)
+            return result.tabID
         } catch {
             return nil
         }
-        applyMutationResult(result)
-        return result.tabID
+    }
+
+    private func openTabMutation(
+        launchTarget: ShellLaunchTarget = .shell,
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
+    ) throws -> ShellStateMutationResult {
+        switch launchTarget {
+        case .shell:
+            return try reducerCoordinator.apply(
+                state: shellState,
+                operation: .openTerminalTab(
+                    spaceID: spaceID,
+                    title: title,
+                    workingDirectory: workingDirectory,
+                    terminalProfileID: terminalProfileID,
+                    reservedPaneSlotIDs: terminalRuntimeRegistry.registeredPaneIDs.sorted()
+                )
+            )
+        }
     }
 
     @discardableResult
@@ -1354,6 +1368,30 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 ? focusedPaneWorkingDirectory()
                 : nil)
         return openTab(
+            launchTarget: .shell,
+            in: spaceID,
+            title: title,
+            workingDirectory: resolvedWorkingDirectory,
+            terminalProfileID: resolvedTerminalProfileID
+        )
+    }
+
+    private func openTerminalTabMutation(
+        in spaceID: String? = nil,
+        title: String? = nil,
+        workingDirectory: String? = nil,
+        terminalProfileID: String? = nil
+    ) throws -> ShellStateMutationResult {
+        let resolvedTerminalProfileID = targetTerminalProfileID(
+            in: spaceID,
+            explicit: terminalProfileID
+        )
+        let resolvedWorkingDirectory =
+            workingDirectory
+            ?? (resolvedTerminalProfileID == nil
+                ? focusedPaneWorkingDirectory()
+                : nil)
+        return try openTabMutation(
             launchTarget: .shell,
             in: spaceID,
             title: title,
@@ -2587,10 +2625,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     /// Assigns the selected-pane runtime snapshot only when it differs from the
-    /// current one in something other than its publish timestamp. The snapshot
-    /// is mirrored into the central `@Published` state, so a redundant write
-    /// would invalidate every view observing the controller at terminal-output
-    /// frequency.
+    /// current one in something other than its publish timestamp. This stays off
+    /// the host's broad `@Published` surface so terminal-output churn does not
+    /// invalidate unrelated SwiftUI chrome.
     private func setSelectedTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
         guard !terminalRuntime.equalsIgnoringTimestamp(runtime) else { return }
         terminalRuntime = runtime
@@ -3334,20 +3371,10 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewTerminal(in: requestedSpaceID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
     }
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
-            ?? globalDefaultTerminalProfileIDForPaneCapture()
-    }
-
-    private func globalDefaultTerminalProfileIDForPaneCapture() -> String? {
-        terminalProfileIDForGlobalDefaultPaneCapture(
-            channelApplicationSupportDirectoryName: windowContext.installChannel
-                .applicationSupportDirectoryName,
-            fileManager: fileManager
-        )
     }
 
     func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {
@@ -3648,28 +3675,37 @@ extension ShellHostController: ShellAutomationCommandHandling {
     ) -> ShellAutomationCommandResult {
         switch command {
         case .createTab(let request):
-            let tabID: String?
-            switch request.launchTarget {
-            case .shell:
-                tabID = openTerminalTab(
-                    in: request.spaceID,
-                    title: request.title,
-                    workingDirectory: request.workingDirectory,
-                    terminalProfileID: request.terminalProfileID
-                )
-            }
-            guard let tabID else {
+            let result: ShellStateMutationResult
+            do {
+                switch request.launchTarget {
+                case .shell:
+                    result = try openTerminalTabMutation(
+                        in: request.spaceID,
+                        title: request.title,
+                        workingDirectory: request.workingDirectory,
+                        terminalProfileID: request.terminalProfileID
+                    )
+                }
+            } catch let error as ShellStateMutationError {
                 return shellAutomationResult(
                     code: .missingTarget,
                     spaceID: request.spaceID,
-                    errorCode: "space_not_found",
-                    errorMessage: "The requested space does not exist."
+                    errorCode: error.rawValue,
+                    errorMessage: shellStateMutationErrorMessage(error)
+                )
+            } catch {
+                return shellAutomationResult(
+                    code: .rejected,
+                    spaceID: request.spaceID,
+                    errorCode: "shell_mutation_failed",
+                    errorMessage: String(describing: error)
                 )
             }
+            applyMutationResult(result)
             return shellAutomationResult(
                 code: .accepted,
                 spaceID: shellState.focusedSpaceID,
-                tabID: tabID,
+                tabID: result.tabID,
                 paneID: shellState.focusedPaneID
             )
 
@@ -3863,6 +3899,31 @@ extension ShellHostController: ShellAutomationCommandHandling {
             errorCode: "requires_confirmation",
             errorMessage: "The requested close contains active terminal work and requires confirmation."
         )
+    }
+
+    private func shellStateMutationErrorMessage(_ error: ShellStateMutationError) -> String {
+        switch error {
+        case .spaceNotFound:
+            return "The requested space does not exist."
+        case .tabNotFound:
+            return "The requested tab does not exist."
+        case .paneNotFound:
+            return "The requested pane does not exist."
+        case .unsupportedContent:
+            return "This action requires terminal content."
+        case .splitNotFound:
+            return "The requested split does not exist."
+        case .spatialFocusTargetNotFound:
+            return "There is no pane in that direction."
+        case .lastTab:
+            return "alan terminal workspace must keep at least one tab open."
+        case .lastPane:
+            return "alan terminal workspace must keep at least one pane open."
+        case .invalidMoveTarget:
+            return "The requested move target is not available."
+        case .invalidTabOrganizationTarget:
+            return "The requested tab organization target is not available."
+        }
     }
 
     private func shellAutomationResult(

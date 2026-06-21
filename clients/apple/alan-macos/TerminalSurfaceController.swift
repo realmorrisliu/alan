@@ -736,11 +736,7 @@ final class AlanTerminalInputRouter {
         guard input.phase == .down, !input.isRepeat else { return nil }
 
         guard let shortcut = shellActionShortcut(for: input) else { return nil }
-        do {
-            return try ShellCoreFFIAdapter.shared.keyboardAction(for: shortcut)
-        } catch {
-            return nil
-        }
+        return ShellActionMetadataCatalog.keyboardAction(for: shortcut)
     }
 
     private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {
@@ -997,6 +993,32 @@ struct AlanTerminalSurfaceStateSnapshot: Equatable {
     let rendererHealth: String
     let childExited: Bool
     let lastUpdatedAt: Date
+
+    init(
+        readiness: AlanTerminalSurfaceReadiness,
+        terminalMode: AlanTerminalMode,
+        scrollback: AlanTerminalScrollbackState,
+        search: AlanTerminalSearchState?,
+        semanticCommands: AlanTerminalSemanticCommandState,
+        readonly: Bool,
+        secureInput: Bool,
+        inputReady: Bool,
+        rendererHealth: String,
+        childExited: Bool,
+        lastUpdatedAt: Date
+    ) {
+        self.readiness = readiness
+        self.terminalMode = terminalMode
+        self.scrollback = scrollback
+        self.search = search
+        self.semanticCommands = semanticCommands
+        self.readonly = readonly
+        self.secureInput = secureInput
+        self.inputReady = inputReady
+        self.rendererHealth = rendererHealth
+        self.childExited = childExited
+        self.lastUpdatedAt = lastUpdatedAt
+    }
 
     static let placeholder = AlanTerminalSurfaceStateSnapshot(
         readiness: .unready(reason: .missingSurface),

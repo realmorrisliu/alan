@@ -8,11 +8,8 @@ import SwiftUI
 /// indistinguishable auto-named Spaces.
 struct ShellSpaceCreationForm: View {
     /// Decoupled profile option so the form does not depend on
-    /// `TerminalProfileDefinition` or ShellSidebarView's private name helper.
-    struct ProfileOption: Identifiable, Equatable {
-        let id: String
-        let name: String
-    }
+    /// `TerminalProfileDefinition` or sidebar-private naming helpers.
+    typealias ProfileOption = ShellSpaceCreationProfileOption
 
     let profiles: [ProfileOption]
     let onCreate: () -> Void
@@ -89,9 +86,11 @@ struct ShellSpaceCreationForm: View {
             VStack(alignment: .leading, spacing: ShellSpacing.tight) {
                 ShellFormSectionLabel("Profile")
                 ShellSelectField(value: selectedProfileName) {
-                    Button("Default") { selectedProfileID = nil }
+                    Button("Login shell") { selectedProfileID = nil }
                     ForEach(profiles) { profile in
                         Button(profile.name) { selectedProfileID = profile.id }
+                            .disabled(!profile.isEnabled)
+                            .help(profile.guidance ?? profile.name)
                     }
                 }
             }
@@ -115,7 +114,7 @@ struct ShellSpaceCreationForm: View {
     private var selectedProfileName: String {
         guard let id = selectedProfileID,
               let match = profiles.first(where: { $0.id == id })
-        else { return "Default" }
+        else { return "Login shell" }
         return match.name
     }
 

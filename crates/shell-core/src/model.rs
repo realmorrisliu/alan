@@ -360,6 +360,37 @@ pub enum ContentLifecycleState {
     Failed,
 }
 
+/// Presentation/runtime renderer state for mounted content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentRendererState {
+    /// Renderer phase such as placeholder or surface_ready.
+    pub phase: String,
+    /// Optional renderer detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl ContentRendererState {
+    /// Placeholder renderer state used before live runtime information exists.
+    pub fn placeholder() -> Self {
+        Self {
+            phase: "placeholder".to_string(),
+            detail: None,
+        }
+    }
+
+    /// True when this state carries no live renderer information.
+    pub fn is_placeholder(&self) -> bool {
+        self.phase == "placeholder" && self.detail.is_none()
+    }
+}
+
+impl Default for ContentRendererState {
+    fn default() -> Self {
+        Self::placeholder()
+    }
+}
+
 /// Mounted content instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentInstance {
@@ -381,6 +412,9 @@ pub struct ContentInstance {
     pub terminal_metadata: Option<TerminalRuntimeMetadata>,
     /// Lifecycle state.
     pub lifecycle: ContentLifecycleState,
+    /// Renderer state projected from the host runtime.
+    #[serde(default, skip_serializing_if = "ContentRendererState::is_placeholder")]
+    pub renderer_state: ContentRendererState,
 }
 
 /// Pane slot mounting a content instance.

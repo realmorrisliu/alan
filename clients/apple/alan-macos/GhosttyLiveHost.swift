@@ -47,6 +47,7 @@ final class AlanGhosttyLiveHost: NSObject {
     func attach(
         to canvasView: AlanGhosttyCanvasView,
         bootProfile: AlanShellBootProfile?,
+        ptyAttachmentProvider: () -> AlanTerminalPtyRendererAttachmentResult,
         focused: Bool,
         renderPriority: TerminalRuntimeRenderPriority
     ) {
@@ -85,7 +86,25 @@ final class AlanGhosttyLiveHost: NSObject {
         }
 
         if surface == nil || needsSurfaceRecreation || canvasChanged {
-            createSurface(on: canvasView, bootProfile: bootProfile)
+            let ptyAttachment: AlanTerminalPtyRendererAttachment
+            switch ptyAttachmentProvider() {
+            case .attached(let attachment):
+                ptyAttachment = attachment
+            case .rejected(let result):
+                transition(
+                    kind: .ghosttyLive,
+                    phase: .failed,
+                    summary: "Ghostty external PTY attachment is unavailable.",
+                    detail: result.message,
+                    failureReason: result.code
+                )
+                return
+            }
+            createSurface(
+                on: canvasView,
+                bootProfile: bootProfile,
+                ptyAttachment: ptyAttachment
+            )
         }
 
         synchronizeViewState(focused: focused, renderPriority: renderPriority)
@@ -126,6 +145,16 @@ final class AlanGhosttyLiveHost: NSObject {
 
     var isSurfaceReady: Bool {
         surface != nil
+    }
+
+    var terminalGridDimensions: AlanTerminalPtyDimensions? {
+        guard let surface else { return nil }
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0, size.rows > 0 else { return nil }
+        return AlanTerminalPtyDimensions(
+            columns: Int(size.columns),
+            rows: Int(size.rows)
+        )
     }
 
     func keyTranslationMods(for mods: ghostty_input_mods_e) -> ghostty_input_mods_e {
@@ -446,7 +475,8 @@ final class AlanGhosttyLiveHost: NSObject {
 
     private func createSurface(
         on canvasView: AlanGhosttyCanvasView,
-        bootProfile: AlanShellBootProfile
+        bootProfile: AlanShellBootProfile,
+        ptyAttachment: AlanTerminalPtyRendererAttachment
     ) {
         guard let app else { return }
 
@@ -485,6 +515,14 @@ final class AlanGhosttyLiveHost: NSObject {
                 ?? 2
         )
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
+        if let displayID = (canvasView.window?.screen ?? NSScreen.main)?.displayID,
+           displayID != 0
+        {
+            surfaceConfig.initial_macos_display_id = displayID
+        }
+        surfaceConfig.external_pty_read_fd = ptyAttachment.readFileDescriptor
+        surfaceConfig.external_pty_write_fd = ptyAttachment.writeFileDescriptor
+        surfaceConfig.external_pty_close_fds = ptyAttachment.closeFileDescriptors
 
         envStorage = makeEnvStorage(bootProfile.environment)
         var envVars = envStorage.map { ghostty_env_var_s(key: UnsafePointer($0.0), value: UnsafePointer($0.1)) }
@@ -504,15 +542,8 @@ final class AlanGhosttyLiveHost: NSObject {
 
         bootProfile.workingDirectory.withCString { cwdCString in
             surfaceConfig.working_directory = cwdCString
-            if let surfaceCommand = bootProfile.surfaceCommand, !surfaceCommand.isEmpty {
-                surfaceCommand.withCString { commandCString in
-                    surfaceConfig.command = commandCString
-                    createSurface()
-                }
-            } else {
-                surfaceConfig.command = nil
-                createSurface()
-            }
+            surfaceConfig.command = nil
+            createSurface()
         }
 
         guard surface != nil else {

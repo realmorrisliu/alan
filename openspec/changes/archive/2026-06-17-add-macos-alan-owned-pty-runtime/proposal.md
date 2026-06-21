@@ -12,14 +12,17 @@ through a reviewed integration boundary.
 
 ## What Changes
 
-- Define an Alan-owned PTY/process runtime below terminal ContentInstances.
+- Define a macOS Alan-owned PTY/process runtime below terminal ContentInstances.
 - Move shell launch, PTY allocation, process-group tracking, resize, input
   delivery, EOF, signal, and exit observation into Alan-owned runtime services.
 - Make Ghostty attach to an Alan-provided PTY endpoint rather than acting as the
   primary owner of the child process tree.
 - Add a repository-managed Ghostty dependency strategy: an Alan-maintained
-  Ghostty fork is vendored as a git submodule, with generated framework,
+  Ghostty fork is vendored under `third_party/ghostty` as a git submodule, with generated framework,
   resources, and terminfo produced from that pinned source.
+- Sequence the implementation so Alan boot requests, fake PTY/runtime seams,
+  real POSIX PTY ownership, Ghostty fork attachment support, and production
+  cutover can be reviewed independently.
 - Replace the current Ghostty-owned process boundary on the implementation
   branch; do not add a long-lived fallback runtime selector.
 - Add verification requirements for PTY lifecycle, process-group signaling,
@@ -46,9 +49,10 @@ None.
 - Apple client terminal runtime services, terminal host adapters, Ghostty
   bridge code, shell launch profiles, transcript capture, close guards, and
   control-plane text delivery.
-- Repository dependency layout, likely through a `third_party/ghostty` or
-  equivalent submodule path plus scripts that build or cache
+- Repository dependency layout through `third_party/ghostty` plus scripts that build or cache
   `GhosttyKit.xcframework`, `ghostty-resources`, and `ghostty-terminfo` from the
   pinned fork.
 - Build documentation, CI or focused local checks for Ghostty dependency
   preparation, and tests that can run with fake PTY and fake Ghostty adapters.
+- The privileged helper / managed-user PTY provider remains a dependent follow-up
+  change and is not implemented by this change.

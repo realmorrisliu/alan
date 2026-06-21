@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 #if os(macOS)
@@ -5,6 +6,18 @@ import AppKit
 #if canImport(GhosttyKit)
 import GhosttyKit
 #endif
+
+@_silgen_name("alan_darwin_pty_spawn")
+private func alanDarwinPtySpawn(
+    _ executablePath: UnsafePointer<CChar>,
+    _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ workingDirectory: UnsafePointer<CChar>,
+    _ rows: UInt16,
+    _ columns: UInt16,
+    _ masterFileDescriptor: UnsafeMutablePointer<Int32>,
+    _ processID: UnsafeMutablePointer<pid_t>
+) -> Int32
 
 enum TerminalRuntimeDeliveryCode: String, Codable, Equatable {
     case accepted
@@ -104,6 +117,1976 @@ struct TerminalRuntimeDeliveryResult: Codable, Equatable {
             errorMessage: errorMessage
         )
     }
+}
+
+enum AlanTerminalPtyRuntimePhase: String, Equatable {
+    case pending
+    case running
+    case inputClosed = "input_closed"
+    case exited
+    case failed
+}
+
+enum AlanTerminalPtySignal: String, Equatable {
+    case interrupt = "interrupt"
+    case terminate = "terminate"
+    case kill = "kill"
+}
+
+struct AlanTerminalPtyDimensions: Equatable {
+    let columns: Int
+    let rows: Int
+}
+
+private extension AlanTerminalPtyDimensions {
+    var terminalGridDimensions: TerminalGridDimensions {
+        TerminalGridDimensions(columns: columns, rows: rows)
+    }
+}
+
+enum AlanTerminalProcessExitStatus: Equatable {
+    case exitCode(Int32)
+    case signal(Int32)
+    case unknown
+
+    var diagnosticsValue: String {
+        switch self {
+        case .exitCode(let code):
+            return "exit:\(code)"
+        case .signal(let signal):
+            return "signal:\(signal)"
+        case .unknown:
+            return "unknown"
+        }
+    }
+}
+
+struct AlanTerminalPtyOperationResult: Equatable {
+    let accepted: Bool
+    let code: String
+    let message: String?
+
+    static func accepted(_ code: String) -> AlanTerminalPtyOperationResult {
+        AlanTerminalPtyOperationResult(accepted: true, code: code, message: nil)
+    }
+
+    static func rejected(
+        _ code: String,
+        message: String
+    ) -> AlanTerminalPtyOperationResult {
+        AlanTerminalPtyOperationResult(accepted: false, code: code, message: message)
+    }
+}
+
+struct AlanTerminalPtyRendererAttachment: Equatable {
+    let readFileDescriptor: Int32
+    let writeFileDescriptor: Int32
+    let closeFileDescriptors: Bool
+}
+
+struct AlanTerminalPtyControlSequenceResponse: Equatable {
+    let rendererOutput: Data
+    let ptyResponse: Data
+
+    var didRespond: Bool {
+        !ptyResponse.isEmpty
+    }
+}
+
+struct AlanTerminalPtyControlSequenceResponder: Equatable {
+    private enum ParserState: Equatable {
+        case normal
+        case escape
+        case csi
+        case osc
+        case oscEscape
+    }
+
+    private static let escapeByte: UInt8 = 0x1B
+    private static let bellByte: UInt8 = 0x07
+    private static let csiByte: UInt8 = 0x9B
+    private static let oscByte: UInt8 = 0x9D
+    private static let leftBracketByte: UInt8 = 0x5B
+    private static let rightBracketByte: UInt8 = 0x5D
+    private static let backslashByte: UInt8 = 0x5C
+    private static let zeroByte: UInt8 = 0x30
+    private static let maxBufferedControlSequenceBytes = 512
+    private static let primaryDeviceAttributesResponse = Array("\u{1B}[?62;22c".utf8)
+    private static let cursorPositionReportResponse = Array("\u{1B}[1;1R".utf8)
+    private static let backgroundColorResponse = Array("\u{1B}]11;rgb:0a0a/0c0c/1010\u{1B}\\".utf8)
+
+    private var state: ParserState = .normal
+    private var pendingControlSequence: [UInt8] = []
+    private var suppressedPrimaryDeviceAttributesResponses: Int
+
+    init(suppressedPrimaryDeviceAttributesResponses: Int = 0) {
+        self.suppressedPrimaryDeviceAttributesResponses = max(
+            0,
+            suppressedPrimaryDeviceAttributesResponses
+        )
+    }
+
+    static var primaryDeviceAttributesResponseData: Data {
+        Data(primaryDeviceAttributesResponse)
+    }
+
+    mutating func suppressNextPrimaryDeviceAttributesResponse() {
+        suppressedPrimaryDeviceAttributesResponses += 1
+    }
+
+    mutating func process(_ data: Data) -> AlanTerminalPtyControlSequenceResponse {
+        var rendererOutput: [UInt8] = []
+        var ptyResponse: [UInt8] = []
+
+        for byte in data {
+            switch state {
+            case .normal:
+                if byte == Self.escapeByte {
+                    pendingControlSequence = [byte]
+                    state = .escape
+                } else if byte == Self.csiByte {
+                    pendingControlSequence = [byte]
+                    state = .csi
+                } else if byte == Self.oscByte {
+                    pendingControlSequence = [byte]
+                    state = .osc
+                } else {
+                    rendererOutput.append(byte)
+                }
+
+            case .escape:
+                if byte == Self.leftBracketByte {
+                    pendingControlSequence.append(byte)
+                    state = .csi
+                } else if byte == Self.rightBracketByte {
+                    pendingControlSequence.append(byte)
+                    state = .osc
+                } else {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    rendererOutput.append(byte)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .csi:
+                pendingControlSequence.append(byte)
+                if Self.isCSIFinalByte(byte) {
+                    if Self.isPrimaryDeviceAttributesQuery(pendingControlSequence) {
+                        if suppressedPrimaryDeviceAttributesResponses > 0 {
+                            suppressedPrimaryDeviceAttributesResponses -= 1
+                        } else {
+                            ptyResponse.append(contentsOf: Self.primaryDeviceAttributesResponse)
+                        }
+                    } else if Self.isCursorPositionReportQuery(pendingControlSequence) {
+                        ptyResponse.append(contentsOf: Self.cursorPositionReportResponse)
+                    } else {
+                        rendererOutput.append(contentsOf: pendingControlSequence)
+                    }
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .osc:
+                pendingControlSequence.append(byte)
+                if byte == Self.bellByte {
+                    Self.completeOSCSequence(
+                        pendingControlSequence,
+                        rendererOutput: &rendererOutput,
+                        ptyResponse: &ptyResponse
+                    )
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if byte == Self.escapeByte {
+                    state = .oscEscape
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                }
+
+            case .oscEscape:
+                pendingControlSequence.append(byte)
+                if byte == Self.backslashByte {
+                    Self.completeOSCSequence(
+                        pendingControlSequence,
+                        rendererOutput: &rendererOutput,
+                        ptyResponse: &ptyResponse
+                    )
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
+                    rendererOutput.append(contentsOf: pendingControlSequence)
+                    pendingControlSequence.removeAll(keepingCapacity: true)
+                    state = .normal
+                } else {
+                    state = .osc
+                }
+            }
+        }
+
+        return AlanTerminalPtyControlSequenceResponse(
+            rendererOutput: Data(rendererOutput),
+            ptyResponse: Data(ptyResponse)
+        )
+    }
+
+    private static func isCSIFinalByte(_ byte: UInt8) -> Bool {
+        (0x40...0x7E).contains(byte)
+    }
+
+    private static func isPrimaryDeviceAttributesQuery(_ bytes: [UInt8]) -> Bool {
+        guard bytes.last == UInt8(ascii: "c") else { return false }
+
+        let parameterStartIndex: Int
+        if bytes.first == escapeByte {
+            guard bytes.count >= 3, bytes[1] == leftBracketByte else { return false }
+            parameterStartIndex = 2
+        } else if bytes.first == csiByte {
+            guard bytes.count >= 2 else { return false }
+            parameterStartIndex = 1
+        } else {
+            return false
+        }
+
+        let parameters = bytes[parameterStartIndex..<(bytes.count - 1)]
+        return parameters.isEmpty || (parameters.count == 1 && parameters.first == zeroByte)
+    }
+
+    private static func isCursorPositionReportQuery(_ bytes: [UInt8]) -> Bool {
+        guard bytes.last == UInt8(ascii: "n") else { return false }
+
+        let parameterStartIndex: Int
+        if bytes.first == escapeByte {
+            guard bytes.count >= 4, bytes[1] == leftBracketByte else { return false }
+            parameterStartIndex = 2
+        } else if bytes.first == csiByte {
+            guard bytes.count >= 3 else { return false }
+            parameterStartIndex = 1
+        } else {
+            return false
+        }
+
+        let parameters = bytes[parameterStartIndex..<(bytes.count - 1)]
+        return parameters.count == 1 && parameters.first == UInt8(ascii: "6")
+    }
+
+    private static func completeOSCSequence(
+        _ bytes: [UInt8],
+        rendererOutput: inout [UInt8],
+        ptyResponse: inout [UInt8]
+    ) {
+        if isBackgroundColorQuery(bytes) {
+            ptyResponse.append(contentsOf: backgroundColorResponse)
+        } else {
+            rendererOutput.append(contentsOf: bytes)
+        }
+    }
+
+    private static func isBackgroundColorQuery(_ bytes: [UInt8]) -> Bool {
+        let payloadRange: Range<Int>
+        if bytes.first == escapeByte {
+            guard bytes.count >= 6, bytes[1] == rightBracketByte else { return false }
+            if bytes.last == bellByte {
+                payloadRange = 2..<(bytes.count - 1)
+            } else if bytes.count >= 7,
+                bytes[bytes.count - 2] == escapeByte,
+                bytes.last == backslashByte
+            {
+                payloadRange = 2..<(bytes.count - 2)
+            } else {
+                return false
+            }
+        } else if bytes.first == oscByte {
+            guard bytes.count >= 5, bytes.last == bellByte else { return false }
+            payloadRange = 1..<(bytes.count - 1)
+        } else {
+            return false
+        }
+
+        let payload = String(decoding: bytes[payloadRange], as: UTF8.self)
+        return payload == "11;?"
+    }
+}
+
+enum AlanTerminalPtyRendererAttachmentResult: Equatable {
+    case attached(AlanTerminalPtyRendererAttachment)
+    case rejected(AlanTerminalPtyOperationResult)
+}
+
+struct AlanTerminalPtyRuntimeSnapshot: Equatable {
+    let contentID: String
+    let bootRequest: AlanTerminalBootRequest
+    let phase: AlanTerminalPtyRuntimePhase
+    let dimensions: AlanTerminalPtyDimensions?
+    let acceptedInputBytes: Int
+    let inputClosed: Bool
+    let lastSignal: AlanTerminalPtySignal?
+    let exitStatus: AlanTerminalProcessExitStatus?
+    let transcriptLines: [String]
+}
+
+@MainActor
+protocol AlanTerminalPtyHandle: AnyObject {
+    var contentID: String { get }
+    var bootRequest: AlanTerminalBootRequest { get }
+    var snapshot: AlanTerminalPtyRuntimeSnapshot { get }
+    var isInputReady: Bool { get }
+
+    func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult
+    func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult
+    func closeInput() -> AlanTerminalPtyOperationResult
+    func sendSignal(_ signal: AlanTerminalPtySignal) -> AlanTerminalPtyOperationResult
+    func makeRendererAttachment() -> AlanTerminalPtyRendererAttachmentResult
+    func terminateForCleanup() -> AlanTerminalPtyOperationResult
+}
+
+@MainActor
+protocol AlanTerminalPtyRuntime: AnyObject {
+    var registeredContentIDs: Set<String> { get }
+
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle
+    func existingHandle(forTerminalContentID contentID: String) -> AlanTerminalPtyHandle?
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot?
+    func unregisterHandle(forTerminalContentID contentID: String)
+}
+
+@MainActor
+protocol AlanManagedUserPtyProviding: AnyObject {
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle
+}
+
+@MainActor
+final class AlanDarwinTerminalPtyRuntime: AlanTerminalPtyRuntime {
+    private var handlesByContentID: [String: AlanTerminalPtyHandle] = [:]
+    private let managedUserPtyProvider: AlanManagedUserPtyProviding
+
+    init(
+        managedUserPtyProvider: AlanManagedUserPtyProviding? = nil
+    ) {
+        self.managedUserPtyProvider = managedUserPtyProvider ?? AlanUnavailableManagedUserPtyProvider()
+    }
+
+    var registeredContentIDs: Set<String> {
+        Set(handlesByContentID.keys)
+    }
+
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle {
+        if let existing = handlesByContentID[contentID] {
+            return existing
+        }
+        let handle: AlanTerminalPtyHandle
+        if bootRequest.strategy == .terminalProfileManagedUser {
+            handle = managedUserPtyProvider.handle(
+                forTerminalContentID: contentID,
+                bootRequest: bootRequest
+            )
+        } else {
+            handle = AlanDarwinTerminalPtyHandle(
+                contentID: contentID,
+                bootRequest: bootRequest
+            )
+        }
+        handlesByContentID[contentID] = handle
+        return handle
+    }
+
+    func existingHandle(forTerminalContentID contentID: String) -> AlanTerminalPtyHandle? {
+        handlesByContentID[contentID]
+    }
+
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot? {
+        handlesByContentID[contentID]?.snapshot
+    }
+
+    func unregisterHandle(forTerminalContentID contentID: String) {
+        handlesByContentID.removeValue(forKey: contentID)
+    }
+}
+
+@MainActor
+final class AlanUnavailableManagedUserPtyProvider: AlanManagedUserPtyProviding {
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle {
+        AlanUnavailableManagedUserPtyHandle(
+            contentID: contentID,
+            bootRequest: bootRequest,
+            reason: "Managed User helper PTY provider is unavailable."
+        )
+    }
+}
+
+@MainActor
+final class AlanHelperManagedUserPtyProvider: AlanManagedUserPtyProviding {
+    let helperClient: AlanPrivilegedHelperClienting
+    let defaultDimensions: AlanTerminalPtyDimensions
+    let shell: String
+
+    init(
+        helperClient: AlanPrivilegedHelperClienting,
+        defaultDimensions: AlanTerminalPtyDimensions = AlanTerminalPtyDimensions(columns: 80, rows: 24),
+        shell: String = "/bin/zsh"
+    ) {
+        self.helperClient = helperClient
+        self.defaultDimensions = defaultDimensions
+        self.shell = shell
+    }
+
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle {
+        guard let accountName = bootRequest.managedUserAccountName?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !accountName.isEmpty else {
+            return AlanUnavailableManagedUserPtyHandle(
+                contentID: contentID,
+                bootRequest: bootRequest,
+                reason: "Managed User helper PTY request is missing an account."
+            )
+        }
+
+        let status = helperClient.status()
+        guard status.isHealthy else {
+            return AlanUnavailableManagedUserPtyHandle(
+                contentID: contentID,
+                bootRequest: bootRequest,
+                reason: status.sanitizedMessage ?? "Managed User helper is unavailable."
+            )
+        }
+
+        let request = AlanManagedUserPTYStartRequest(
+            operationID: UUID().uuidString,
+            channelID: status.identity.channelID,
+            accountName: accountName,
+            homeDirectory: ManagedTerminalAccountRequest.canonicalHomeDirectory(for: accountName),
+            workingDirectory: bootRequest.workingDirectory,
+            shell: shell,
+            contentID: contentID,
+            columns: defaultDimensions.columns,
+            rows: defaultDimensions.rows
+        )
+        switch helperClient.startManagedUserPTY(request) {
+        case .success(let session):
+            return AlanHelperManagedUserPtyHandle(
+                contentID: contentID,
+                bootRequest: bootRequest,
+                helperClient: helperClient,
+                session: session,
+                initialDimensions: defaultDimensions
+            )
+        case .failure(let diagnostic):
+            return AlanUnavailableManagedUserPtyHandle(
+                contentID: contentID,
+                bootRequest: bootRequest,
+                reason: diagnostic.sanitizedMessage
+            )
+        }
+    }
+}
+
+@MainActor
+final class AlanUnavailableManagedUserPtyHandle: AlanTerminalPtyHandle {
+    let contentID: String
+    let bootRequest: AlanTerminalBootRequest
+    private let reason: String
+
+    init(
+        contentID: String,
+        bootRequest: AlanTerminalBootRequest,
+        reason: String
+    ) {
+        self.contentID = contentID
+        self.bootRequest = bootRequest
+        self.reason = reason
+    }
+
+    var snapshot: AlanTerminalPtyRuntimeSnapshot {
+        AlanTerminalPtyRuntimeSnapshot(
+            contentID: contentID,
+            bootRequest: bootRequest,
+            phase: .failed,
+            dimensions: nil,
+            acceptedInputBytes: 0,
+            inputClosed: true,
+            lastSignal: nil,
+            exitStatus: .unknown,
+            transcriptLines: [reason]
+        )
+    }
+
+    var isInputReady: Bool {
+        false
+    }
+
+    func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult {
+        .unavailable(errorMessage: reason, runtimePhase: AlanTerminalPtyRuntimePhase.failed.rawValue)
+    }
+
+    func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult {
+        .rejected("managed_user_helper_unavailable", message: reason)
+    }
+
+    func closeInput() -> AlanTerminalPtyOperationResult {
+        .rejected("managed_user_helper_unavailable", message: reason)
+    }
+
+    func sendSignal(_ signal: AlanTerminalPtySignal) -> AlanTerminalPtyOperationResult {
+        .rejected("managed_user_helper_unavailable", message: reason)
+    }
+
+    func makeRendererAttachment() -> AlanTerminalPtyRendererAttachmentResult {
+        .rejected(.rejected("managed_user_helper_unavailable", message: reason))
+    }
+
+    func terminateForCleanup() -> AlanTerminalPtyOperationResult {
+        .accepted("managed_user_helper_unavailable")
+    }
+}
+
+@MainActor
+final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
+    let contentID: String
+    let bootRequest: AlanTerminalBootRequest
+    let helperClient: AlanPrivilegedHelperClienting
+    let session: AlanManagedUserPTYSession
+    private(set) var dimensions: AlanTerminalPtyDimensions
+    private(set) var phase: AlanTerminalPtyRuntimePhase = .running
+    private(set) var inputClosed = false
+    private(set) var lastSignal: AlanTerminalPtySignal?
+    private(set) var exitStatus: AlanTerminalProcessExitStatus?
+    private var acceptedInputBytes = 0
+    private var cleanupRequested = false
+    private var transcriptRingBufferLines: [String] = []
+    private var rendererProxy: AlanHelperManagedUserPtyRendererProxy?
+    private var observedFinalOutputChunk = false
+    private let helperQueue: DispatchQueue
+
+    init(
+        contentID: String,
+        bootRequest: AlanTerminalBootRequest,
+        helperClient: AlanPrivilegedHelperClienting,
+        session: AlanManagedUserPTYSession,
+        initialDimensions: AlanTerminalPtyDimensions
+    ) {
+        self.contentID = contentID
+        self.bootRequest = bootRequest
+        self.helperClient = helperClient
+        self.session = session
+        self.dimensions = initialDimensions
+        self.helperQueue = DispatchQueue(
+            label: "dev.alan.terminal.managed-user-pty.\(contentID)",
+            qos: .userInteractive
+        )
+    }
+
+    deinit {
+        rendererProxy?.invalidate()
+    }
+
+    var snapshot: AlanTerminalPtyRuntimeSnapshot {
+        applyPendingProxyOutput()
+        _ = drainAvailableOutput()
+        refreshExitObservation()
+        if observedFinalOutputChunk, exitStatus == nil {
+            exitStatus = .unknown
+        }
+        return AlanTerminalPtyRuntimeSnapshot(
+            contentID: contentID,
+            bootRequest: bootRequest,
+            phase: phase,
+            dimensions: dimensions,
+            acceptedInputBytes: acceptedInputBytes,
+            inputClosed: inputClosed,
+            lastSignal: lastSignal,
+            exitStatus: exitStatus,
+            transcriptLines: transcriptRingBufferLines.isEmpty
+                ? [session.sanitizedMessage]
+                : transcriptRingBufferLines
+        )
+    }
+
+    var isInputReady: Bool {
+        phase == .running && !inputClosed && exitStatus == nil
+    }
+
+    func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult {
+        refreshExitObservation()
+        guard exitStatus == nil else {
+            return .rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The managed-user terminal process has exited.",
+                runtimePhase: phase.rawValue
+            )
+        }
+        guard !inputClosed else {
+            return .rejected(
+                errorCode: "terminal_pty_input_closed",
+                errorMessage: "The managed-user terminal PTY input stream is closed.",
+                runtimePhase: phase.rawValue
+            )
+        }
+
+        let result = helperClient.writeManagedUserPTY(
+            AlanManagedUserPTYInputRequest(sessionID: session.sessionID, text: text)
+        )
+        guard result.accepted else {
+            return .rejected(
+                errorCode: helperPTYRejectionCode(result, fallback: "managed_user_helper_pty_input_rejected"),
+                errorMessage: result.diagnostic.sanitizedMessage,
+                runtimePhase: phase.rawValue
+            )
+        }
+        let byteCount = text.lengthOfBytes(using: .utf8)
+        acceptedInputBytes += byteCount
+        return .accepted(byteCount: byteCount, runtimePhase: phase.rawValue)
+    }
+
+    func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult {
+        refreshExitObservation()
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The managed-user terminal process has exited."
+            )
+        }
+        let nextDimensions = AlanTerminalPtyDimensions(columns: max(0, columns), rows: max(0, rows))
+        let result = helperClient.resizeManagedUserPTY(
+            AlanManagedUserPTYResizeRequest(
+                sessionID: session.sessionID,
+                columns: nextDimensions.columns,
+                rows: nextDimensions.rows
+            )
+        )
+        guard result.accepted else {
+            return .rejected(
+                helperPTYRejectionCode(result, fallback: "managed_user_helper_pty_resize_rejected"),
+                message: result.diagnostic.sanitizedMessage
+            )
+        }
+        dimensions = nextDimensions
+        return .accepted("resized")
+    }
+
+    func closeInput() -> AlanTerminalPtyOperationResult {
+        refreshExitObservation()
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The managed-user terminal process has exited."
+            )
+        }
+        guard !inputClosed else {
+            return .accepted("input_closed")
+        }
+        let result = helperClient.closeManagedUserPTYInput(sessionID: session.sessionID)
+        guard result.accepted else {
+            return .rejected(
+                helperPTYRejectionCode(result, fallback: "managed_user_helper_pty_eof_rejected"),
+                message: result.diagnostic.sanitizedMessage
+            )
+        }
+        inputClosed = true
+        phase = .inputClosed
+        return .accepted("input_closed")
+    }
+
+    func sendSignal(_ signal: AlanTerminalPtySignal) -> AlanTerminalPtyOperationResult {
+        refreshExitObservation()
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The managed-user terminal process has exited."
+            )
+        }
+        let result = helperClient.signalManagedUserPTY(
+            AlanManagedUserPTYSignalRequest(
+                sessionID: session.sessionID,
+                signal: AlanManagedUserPTYSignal(signal)
+            )
+        )
+        guard result.accepted else {
+            return .rejected(
+                helperPTYRejectionCode(result, fallback: "managed_user_helper_pty_signal_rejected"),
+                message: result.diagnostic.sanitizedMessage
+            )
+        }
+        lastSignal = signal
+        refreshExitObservation()
+        return .accepted(signal.rawValue)
+    }
+
+    func makeRendererAttachment() -> AlanTerminalPtyRendererAttachmentResult {
+        refreshExitObservation()
+        guard exitStatus == nil else {
+            return .rejected(
+                .rejected(
+                    "terminal_child_exited",
+                    message: "The managed-user terminal process has exited."
+                )
+            )
+        }
+        guard phase == .running || phase == .inputClosed else {
+            return .rejected(
+                .rejected(
+                    "managed_user_helper_pty_unavailable",
+                    message: "Managed User helper PTY session is unavailable."
+                )
+            )
+        }
+
+        var descriptors = [Int32](repeating: -1, count: 2)
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+            return .rejected(
+                .rejected(
+                    "managed_user_helper_renderer_socketpair_failed",
+                    message: String(cString: strerror(errno))
+                )
+            )
+        }
+
+        setNonBlockingFileDescriptor(descriptors[0])
+        setNonBlockingFileDescriptor(descriptors[1])
+        setNoSigpipeSocketOption(descriptors[0])
+        setNoSigpipeSocketOption(descriptors[1])
+
+        rendererProxy?.invalidate()
+        let proxy = AlanHelperManagedUserPtyRendererProxy(
+            ptyHandle: self,
+            helperClient: helperClient,
+            sessionID: session.sessionID,
+            hostFileDescriptor: descriptors[0],
+            ioQueue: helperQueue
+        )
+        rendererProxy = proxy
+        proxy.start()
+
+        return .attached(
+            AlanTerminalPtyRendererAttachment(
+                readFileDescriptor: descriptors[1],
+                writeFileDescriptor: descriptors[1],
+                closeFileDescriptors: true
+            )
+        )
+    }
+
+    func terminateForCleanup() -> AlanTerminalPtyOperationResult {
+        guard !cleanupRequested else { return .accepted("terminated") }
+        cleanupRequested = true
+        if exitStatus != nil {
+            return .accepted("already_exited")
+        }
+        let diagnostic = helperClient.terminatePTY(sessionID: session.sessionID)
+        guard diagnostic.code == nil else {
+            return .rejected(
+                diagnostic.code?.rawValue ?? "managed_user_helper_pty_terminate_rejected",
+                message: diagnostic.sanitizedMessage
+            )
+        }
+        refreshExitObservation()
+        if exitStatus == nil {
+            inputClosed = true
+            phase = .exited
+            exitStatus = .unknown
+        }
+        return .accepted("terminated")
+    }
+
+    private func refreshExitObservation() {
+        guard exitStatus == nil else { return }
+        guard let observation = helperClient.observeManagedUserPTYExit(sessionID: session.sessionID) else {
+            return
+        }
+        if let code = observation.exitCode {
+            exitStatus = .exitCode(code)
+        } else if let signal = observation.terminatingSignal {
+            exitStatus = .signal(signal)
+        } else if observation.final {
+            exitStatus = .unknown
+        }
+        if exitStatus != nil {
+            inputClosed = true
+            phase = .exited
+            invalidateRendererProxy()
+        }
+    }
+
+    @discardableResult
+    fileprivate func drainAvailableOutput(maxBytes: Int = 4096) -> Data {
+        guard exitStatus == nil else { return Data() }
+        var collected = Data()
+
+        while true {
+            switch helperQueue.sync(execute: {
+                helperClient.readManagedUserPTY(
+                    AlanManagedUserPTYReadRequest(
+                        sessionID: session.sessionID,
+                        maxBytes: maxBytes
+                    )
+                )
+            }) {
+            case .success(let chunk):
+                applyHelperOutputChunk(chunk)
+                guard !chunk.data.isEmpty else { return collected }
+                collected.append(chunk.data)
+            case .failure(let diagnostic):
+                applyHelperOutputFailure(diagnostic)
+                return collected
+            }
+        }
+    }
+
+    @MainActor
+    fileprivate func applyPendingProxyOutput() {
+        guard let rendererProxy else { return }
+        let updates = rendererProxy.drainPendingOutputUpdates()
+        updates.chunks.forEach(applyHelperOutputChunk)
+        updates.failures.forEach(applyHelperOutputFailure)
+    }
+
+    @MainActor
+    fileprivate func applyHelperOutputChunk(_ chunk: AlanManagedUserPTYOutputChunk) {
+        if chunk.final {
+            observedFinalOutputChunk = true
+            inputClosed = true
+            phase = .exited
+            invalidateRendererProxy()
+        }
+        guard !chunk.data.isEmpty else { return }
+        let text = String(decoding: chunk.data, as: UTF8.self)
+        transcriptRingBufferLines.append(contentsOf: transcriptLines(from: text))
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+    }
+
+    @MainActor
+    fileprivate func applyHelperOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
+        guard exitStatus == nil else { return }
+        inputClosed = true
+        phase = .failed
+        exitStatus = .unknown
+        invalidateRendererProxy()
+        transcriptRingBufferLines.append(diagnostic.sanitizedMessage)
+    }
+
+    @MainActor
+    fileprivate func recordHelperAcceptedInput(byteCount: Int) {
+        acceptedInputBytes += byteCount
+    }
+
+    private func invalidateRendererProxy() {
+        rendererProxy?.invalidate()
+        rendererProxy = nil
+    }
+
+}
+
+private final class AlanHelperManagedUserPtyRendererProxy {
+    private weak var ptyHandle: AlanHelperManagedUserPtyHandle?
+    private let helperClient: AlanPrivilegedHelperClienting
+    private let sessionID: String
+    private let hostFileDescriptor: Int32
+    private let ioQueue: DispatchQueue
+    private let invalidationLock = NSLock()
+    private let pendingOutputLock = NSLock()
+    private var rendererInputSource: DispatchSourceRead?
+    private var helperOutputTimer: DispatchSourceTimer?
+    private var rendererOutputWriteSource: DispatchSourceWrite?
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
+    private var isInvalidated = false
+    private var pendingOutputChunks: [AlanManagedUserPTYOutputChunk] = []
+    private var pendingOutputFailures: [AlanPrivilegedHelperDiagnostic] = []
+    private var pendingRendererOutput = Data()
+
+    init(
+        ptyHandle: AlanHelperManagedUserPtyHandle,
+        helperClient: AlanPrivilegedHelperClienting,
+        sessionID: String,
+        hostFileDescriptor: Int32,
+        ioQueue: DispatchQueue
+    ) {
+        self.ptyHandle = ptyHandle
+        self.helperClient = helperClient
+        self.sessionID = sessionID
+        self.hostFileDescriptor = hostFileDescriptor
+        self.ioQueue = ioQueue
+    }
+
+    deinit {
+        invalidate()
+    }
+
+    func start() {
+        let inputSource = DispatchSource.makeReadSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        inputSource.setEventHandler { [weak self] in
+            self?.drainRendererInput()
+        }
+        inputSource.setCancelHandler { [hostFileDescriptor] in
+            close(hostFileDescriptor)
+        }
+        inputSource.resume()
+        rendererInputSource = inputSource
+
+        let timer = DispatchSource.makeTimerSource(queue: ioQueue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(30))
+        timer.setEventHandler { [weak self] in
+            self?.pollHelperOutput()
+        }
+        timer.resume()
+        helperOutputTimer = timer
+    }
+
+    func invalidate() {
+        guard markInvalidated() else { return }
+        rendererInputSource?.cancel()
+        rendererInputSource = nil
+        helperOutputTimer?.cancel()
+        helperOutputTimer = nil
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
+        pendingRendererOutput.removeAll()
+    }
+
+    private var invalidated: Bool {
+        invalidationLock.lock()
+        defer { invalidationLock.unlock() }
+        return isInvalidated
+    }
+
+    private func markInvalidated() -> Bool {
+        invalidationLock.lock()
+        defer { invalidationLock.unlock() }
+        guard !isInvalidated else { return false }
+        isInvalidated = true
+        return true
+    }
+
+    fileprivate func drainPendingOutputUpdates() -> (
+        chunks: [AlanManagedUserPTYOutputChunk],
+        failures: [AlanPrivilegedHelperDiagnostic]
+    ) {
+        pendingOutputLock.lock()
+        defer { pendingOutputLock.unlock() }
+        let chunks = pendingOutputChunks
+        let failures = pendingOutputFailures
+        pendingOutputChunks.removeAll()
+        pendingOutputFailures.removeAll()
+        return (chunks, failures)
+    }
+
+    private func enqueueOutputChunk(_ chunk: AlanManagedUserPTYOutputChunk) {
+        pendingOutputLock.lock()
+        pendingOutputChunks.append(chunk)
+        pendingOutputLock.unlock()
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.applyPendingProxyOutput()
+        }
+    }
+
+    private func enqueueOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
+        pendingOutputLock.lock()
+        pendingOutputFailures.append(diagnostic)
+        pendingOutputLock.unlock()
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.applyPendingProxyOutput()
+        }
+    }
+
+    private func drainRendererInput() {
+        guard !invalidated else { return }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = Darwin.read(hostFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                let data = Data(buffer.prefix(count))
+                guard writeHelperInput(data) else {
+                    invalidate()
+                    return
+                }
+                continue
+            }
+            if count == 0 {
+                invalidate()
+                return
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return
+            }
+            invalidate()
+            return
+        }
+    }
+
+    private func pollHelperOutput() {
+        guard !invalidated else { return }
+        while true {
+            let readResult = helperClient.readManagedUserPTY(
+                AlanManagedUserPTYReadRequest(
+                    sessionID: sessionID,
+                    maxBytes: 4096
+                )
+            )
+            let output: Data
+            let isFinal: Bool
+            switch readResult {
+            case .success(let chunk):
+                output = chunk.data
+                isFinal = chunk.final
+                enqueueOutputChunk(chunk)
+            case .failure(let diagnostic):
+                enqueueOutputFailure(diagnostic)
+                invalidate()
+                return
+            }
+            guard !output.isEmpty else {
+                if isFinal {
+                    invalidate()
+                }
+                return
+            }
+
+            let response = controlSequenceResponder.process(output)
+            if response.didRespond, !writeHelperInput(response.ptyResponse) {
+                invalidate()
+                return
+            }
+
+            if !response.rendererOutput.isEmpty, !forwardRendererOutput(response.rendererOutput) {
+                invalidate()
+                return
+            }
+            if isFinal {
+                invalidate()
+                return
+            }
+        }
+    }
+
+    private func writeHelperInput(_ data: Data) -> Bool {
+        guard !data.isEmpty, !invalidated else { return false }
+        let result = helperClient.writeManagedUserPTY(
+            AlanManagedUserPTYInputRequest(sessionID: sessionID, data: data)
+        )
+        guard result.accepted else { return false }
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.recordHelperAcceptedInput(byteCount: data.count)
+        }
+        return true
+    }
+
+    private func forwardRendererOutput(_ data: Data) -> Bool {
+        guard !data.isEmpty, !invalidated else { return false }
+        pendingRendererOutput.append(data)
+        return drainPendingRendererOutput()
+    }
+
+    private func drainPendingRendererOutput() -> Bool {
+        guard !invalidated else { return false }
+
+        while !pendingRendererOutput.isEmpty {
+            let result = pendingRendererOutput.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(hostFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                pendingRendererOutput.removeFirst(result)
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                ensureRendererOutputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingRendererOutput.isEmpty {
+            cancelRendererOutputWriteSource()
+        }
+        return true
+    }
+
+    private func ensureRendererOutputWriteSource() {
+        guard !invalidated, rendererOutputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        writeSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.drainPendingRendererOutput() else {
+                self.invalidate()
+                return
+            }
+        }
+        writeSource.resume()
+        rendererOutputWriteSource = writeSource
+    }
+
+    private func cancelRendererOutputWriteSource() {
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
+    }
+}
+
+private func helperPTYRejectionCode(
+    _ result: AlanManagedUserPTYControlResult,
+    fallback: String
+) -> String {
+    result.diagnostic.code?.rawValue ?? fallback
+}
+
+private func setNonBlockingFileDescriptor(_ fileDescriptor: Int32) {
+    let flags = fcntl(fileDescriptor, F_GETFL)
+    guard flags >= 0 else { return }
+    _ = fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK)
+}
+
+private func setNoSigpipeSocketOption(_ fileDescriptor: Int32) {
+    var enabled: Int32 = 1
+    _ = setsockopt(
+        fileDescriptor,
+        SOL_SOCKET,
+        SO_NOSIGPIPE,
+        &enabled,
+        socklen_t(MemoryLayout<Int32>.size)
+    )
+}
+
+private extension AlanManagedUserPTYSignal {
+    init(_ signal: AlanTerminalPtySignal) {
+        switch signal {
+        case .interrupt:
+            self = .interrupt
+        case .terminate:
+            self = .terminate
+        case .kill:
+            self = .kill
+        }
+    }
+}
+
+@MainActor
+final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
+    private struct PendingDirectPtyInputChunk {
+        var data: Data
+        var countedBytesRemaining: Int
+    }
+
+    let contentID: String
+    let bootRequest: AlanTerminalBootRequest
+    private(set) var processID: pid_t?
+    private(set) var processGroupID: pid_t?
+    private(set) var launchError: String?
+    private(set) var phase: AlanTerminalPtyRuntimePhase = .pending
+    private(set) var inputClosed = false
+    private(set) var exitStatus: AlanTerminalProcessExitStatus?
+    private(set) var resizeRequests: [AlanTerminalPtyDimensions] = []
+    private(set) var signalRequests: [AlanTerminalPtySignal] = []
+    fileprivate var masterFileDescriptor: Int32 = -1
+    private var transcriptRingBufferLines: [String] = []
+    private var acceptedInputBytes = 0
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
+    private var rendererProxy: AlanDarwinTerminalPtyRendererProxy?
+    private var pendingDirectPtyInputChunks: [PendingDirectPtyInputChunk] = []
+    private var directPtyInputWriteSource: DispatchSourceWrite?
+
+    init(contentID: String, bootRequest: AlanTerminalBootRequest) {
+        self.contentID = contentID
+        self.bootRequest = bootRequest
+        launch()
+    }
+
+    deinit {
+        rendererProxy?.invalidate()
+        directPtyInputWriteSource?.cancel()
+        if masterFileDescriptor >= 0 {
+            close(masterFileDescriptor)
+        }
+    }
+
+    var snapshot: AlanTerminalPtyRuntimeSnapshot {
+        refreshExitStatus()
+        drainAvailableOutput()
+        return AlanTerminalPtyRuntimeSnapshot(
+            contentID: contentID,
+            bootRequest: bootRequest,
+            phase: phase,
+            dimensions: resizeRequests.last,
+            acceptedInputBytes: acceptedInputBytes,
+            inputClosed: inputClosed,
+            lastSignal: signalRequests.last,
+            exitStatus: exitStatus,
+            transcriptLines: transcriptRingBufferLines
+        )
+    }
+
+    var isInputReady: Bool {
+        phase == .running && !inputClosed && exitStatus == nil && masterFileDescriptor >= 0
+    }
+
+    func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult {
+        refreshExitStatus()
+        guard exitStatus == nil else {
+            return .rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The terminal process has exited.",
+                runtimePhase: phase.rawValue
+            )
+        }
+        guard !inputClosed, masterFileDescriptor >= 0 else {
+            return .rejected(
+                errorCode: "terminal_pty_input_closed",
+                errorMessage: "The terminal PTY input stream is closed.",
+                runtimePhase: phase.rawValue
+            )
+        }
+
+        let data = Data(text.utf8)
+        guard enqueueDirectPtyInput(data, countedBytes: data.count) else {
+            return .rejected(
+                errorCode: "terminal_pty_write_failed",
+                errorMessage: String(cString: strerror(errno)),
+                runtimePhase: phase.rawValue
+            )
+        }
+
+        return .accepted(byteCount: data.count, runtimePhase: phase.rawValue)
+    }
+
+    func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult {
+        guard masterFileDescriptor >= 0 else {
+            return .rejected(
+                "terminal_pty_closed",
+                message: "The terminal PTY file descriptor is closed."
+            )
+        }
+
+        let dimensions = AlanTerminalPtyDimensions(
+            columns: max(0, columns),
+            rows: max(0, rows)
+        )
+        var size = winsize(
+            ws_row: UInt16(clamping: dimensions.rows),
+            ws_col: UInt16(clamping: dimensions.columns),
+            ws_xpixel: 0,
+            ws_ypixel: 0
+        )
+        guard ioctl(masterFileDescriptor, TIOCSWINSZ, &size) == 0 else {
+            return .rejected(
+                "terminal_pty_resize_failed",
+                message: String(cString: strerror(errno))
+            )
+        }
+        resizeRequests.append(dimensions)
+        return .accepted("resized")
+    }
+
+    func closeInput() -> AlanTerminalPtyOperationResult {
+        guard masterFileDescriptor >= 0 else {
+            return .rejected(
+                "terminal_pty_closed",
+                message: "The terminal PTY file descriptor is closed."
+            )
+        }
+        let eof = Data([UInt8(4)])
+        guard enqueueDirectPtyInput(eof, countedBytes: 0) else {
+            return .rejected(
+                "terminal_pty_eof_failed",
+                message: String(cString: strerror(errno))
+            )
+        }
+        inputClosed = true
+        phase = .inputClosed
+        return .accepted("input_closed")
+    }
+
+    func sendSignal(_ signal: AlanTerminalPtySignal) -> AlanTerminalPtyOperationResult {
+        refreshExitStatus()
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The terminal process has exited."
+            )
+        }
+        guard let processID else {
+            return .rejected(
+                "terminal_child_missing",
+                message: "No terminal child process is available."
+            )
+        }
+
+        let rawSignal: Int32
+        switch signal {
+        case .interrupt:
+            rawSignal = SIGINT
+        case .terminate:
+            rawSignal = SIGTERM
+        case .kill:
+            rawSignal = SIGKILL
+        }
+
+        let target = processGroupID.map { -$0 } ?? processID
+        var result = Darwin.kill(target, rawSignal)
+        if result != 0, processGroupID != nil {
+            result = Darwin.kill(processID, rawSignal)
+        }
+        guard result == 0 else {
+            return .rejected(
+                "terminal_signal_failed",
+                message: String(cString: strerror(errno))
+            )
+        }
+        signalRequests.append(signal)
+        return .accepted(signal.rawValue)
+    }
+
+    func makeRendererAttachment() -> AlanTerminalPtyRendererAttachmentResult {
+        refreshExitStatus()
+        guard exitStatus == nil else {
+            return .rejected(
+                .rejected(
+                    "terminal_child_exited",
+                    message: "The terminal process has exited."
+                )
+            )
+        }
+        guard masterFileDescriptor >= 0 else {
+            return .rejected(
+                .rejected(
+                    "terminal_pty_closed",
+                    message: "The terminal PTY file descriptor is closed."
+                )
+            )
+        }
+
+        var descriptors = [Int32](repeating: -1, count: 2)
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+            return .rejected(
+                .rejected(
+                    "terminal_renderer_socketpair_failed",
+                    message: String(cString: strerror(errno))
+                )
+            )
+        }
+
+        setNonBlocking(descriptors[0])
+        setNonBlocking(descriptors[1])
+        setNoSigpipeSocketOption(descriptors[0])
+        setNoSigpipeSocketOption(descriptors[1])
+
+        rendererProxy?.invalidate()
+        let rendererControlSequenceResponder = controlSequenceResponder
+        controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
+        let proxy = AlanDarwinTerminalPtyRendererProxy(
+            ptyHandle: self,
+            hostFileDescriptor: descriptors[0],
+            ptyFileDescriptor: masterFileDescriptor,
+            controlSequenceResponder: rendererControlSequenceResponder
+        )
+        rendererProxy = proxy
+        proxy.start()
+
+        return .attached(
+            AlanTerminalPtyRendererAttachment(
+                readFileDescriptor: descriptors[1],
+                writeFileDescriptor: descriptors[1],
+                closeFileDescriptors: true
+            )
+        )
+    }
+
+    func terminateForCleanup() -> AlanTerminalPtyOperationResult {
+        refreshExitStatus()
+        guard exitStatus == nil else { return .accepted("already_exited") }
+        return sendSignal(.terminate)
+    }
+
+    @discardableResult
+    func drainAvailableOutput() -> [String] {
+        guard masterFileDescriptor >= 0 else { return [] }
+        var collected = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            let count = Darwin.read(masterFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                collected.append(buffer, count: count)
+                continue
+            }
+            if count == 0 {
+                refreshExitStatus()
+                break
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                break
+            }
+            break
+        }
+
+        guard !collected.isEmpty else { return [] }
+        let response = controlSequenceResponder.process(collected)
+        if response.didRespond {
+            _ = writePtyProtocolResponse(response.ptyResponse)
+        }
+
+        guard !response.rendererOutput.isEmpty else { return [] }
+        rendererProxy?.forwardPtyOutput(response.rendererOutput)
+        let text = String(decoding: response.rendererOutput, as: UTF8.self)
+        let lines = transcriptLines(from: text)
+        transcriptRingBufferLines.append(contentsOf: lines)
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+        return lines
+    }
+
+    @discardableResult
+    fileprivate func writePtyProtocolResponse(_ data: Data) -> Int {
+        enqueueDirectPtyInput(data, countedBytes: 0) ? data.count : -1
+    }
+
+    private func enqueueDirectPtyInput(_ data: Data, countedBytes: Int) -> Bool {
+        guard !data.isEmpty else { return true }
+        pendingDirectPtyInputChunks.append(
+            PendingDirectPtyInputChunk(
+                data: data,
+                countedBytesRemaining: max(0, min(countedBytes, data.count))
+            )
+        )
+        return drainPendingDirectPtyInput()
+    }
+
+    private func drainPendingDirectPtyInput() -> Bool {
+        guard masterFileDescriptor >= 0 else { return false }
+
+        while !pendingDirectPtyInputChunks.isEmpty {
+            var chunk = pendingDirectPtyInputChunks.removeFirst()
+            let result = chunk.data.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(masterFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                let countedBytes = min(chunk.countedBytesRemaining, result)
+                acceptedInputBytes += countedBytes
+                if result < chunk.data.count {
+                    chunk.data.removeFirst(result)
+                    chunk.countedBytesRemaining -= countedBytes
+                    pendingDirectPtyInputChunks.insert(chunk, at: 0)
+                    ensureDirectPtyInputWriteSource()
+                    break
+                }
+                continue
+            }
+
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                pendingDirectPtyInputChunks.insert(chunk, at: 0)
+                ensureDirectPtyInputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingDirectPtyInputChunks.isEmpty {
+            cancelDirectPtyInputWriteSource()
+        }
+        return true
+    }
+
+    private func ensureDirectPtyInputWriteSource() {
+        guard masterFileDescriptor >= 0, directPtyInputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: masterFileDescriptor,
+            queue: .main
+        )
+        writeSource.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.drainPendingDirectPtyInput() else {
+                    self.failPendingDirectPtyInput()
+                    return
+                }
+            }
+        }
+        writeSource.resume()
+        directPtyInputWriteSource = writeSource
+    }
+
+    private func cancelDirectPtyInputWriteSource() {
+        directPtyInputWriteSource?.cancel()
+        directPtyInputWriteSource = nil
+    }
+
+    private func failPendingDirectPtyInput() {
+        pendingDirectPtyInputChunks.removeAll()
+        cancelDirectPtyInputWriteSource()
+        inputClosed = true
+        phase = .failed
+        launchError = String(cString: strerror(errno))
+    }
+
+    fileprivate func recordRendererInputBytes(_ byteCount: Int) {
+        guard byteCount > 0 else { return }
+        acceptedInputBytes += byteCount
+    }
+
+    fileprivate func recordPtyOutput(_ data: Data) {
+        guard !data.isEmpty else { return }
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = transcriptLines(from: text)
+        transcriptRingBufferLines.append(contentsOf: lines)
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+    }
+
+    @discardableResult
+    func refreshExitStatus() -> AlanTerminalProcessExitStatus? {
+        guard exitStatus == nil, let processID else {
+            return exitStatus
+        }
+
+        var status: Int32 = 0
+        let result = waitpid(processID, &status, WNOHANG)
+        if result < 0, errno == ECHILD {
+            let probe = Darwin.kill(processID, 0)
+            if probe != 0, errno == ESRCH {
+                exitStatus = .unknown
+                phase = .exited
+            }
+            return exitStatus
+        }
+        guard result == processID else {
+            return exitStatus
+        }
+
+        if waitStatusExited(status) {
+            exitStatus = .exitCode(waitStatusExitCode(status))
+        } else if waitStatusSignaled(status) {
+            exitStatus = .signal(waitStatusTermSignal(status))
+        } else {
+            exitStatus = .exitCode(status)
+        }
+        phase = .exited
+        return exitStatus
+    }
+
+    private func launch() {
+        var master: Int32 = -1
+        var spawnedPid: pid_t = 0
+        let arguments = [bootRequest.executablePath] + bootRequest.arguments
+        let environment = ProcessInfo.processInfo.environment.merging(bootRequest.environment) {
+            _, newValue in newValue
+        }
+
+        let spawnResult = bootRequest.executablePath.withCString { executablePath in
+            bootRequest.workingDirectory.withCString { workingDirectory in
+                withCStringArray(arguments) { argv in
+                    withCStringArray(environment.map { "\($0.key)=\($0.value)" }.sorted()) { envp in
+                        alanDarwinPtySpawn(
+                            executablePath,
+                            argv,
+                            envp,
+                            workingDirectory,
+                            24,
+                            80,
+                            &master,
+                            &spawnedPid
+                        )
+                    }
+                }
+            }
+        }
+
+        guard spawnResult == 0 else {
+            if master >= 0 {
+                close(master)
+            }
+            masterFileDescriptor = -1
+            launchError = String(cString: strerror(spawnResult))
+            phase = .failed
+            return
+        }
+
+        guard master >= 0 else {
+            masterFileDescriptor = -1
+            launchError = "forkpty did not return a master PTY file descriptor."
+            phase = .failed
+            return
+        }
+
+        setNonBlocking(master)
+        processID = spawnedPid
+        processGroupID = spawnedPid
+        masterFileDescriptor = master
+        preseedFishPrimaryDeviceAttributesResponseIfNeeded()
+        phase = .running
+        resizeRequests.append(AlanTerminalPtyDimensions(columns: 80, rows: 24))
+    }
+
+    private func preseedFishPrimaryDeviceAttributesResponseIfNeeded() {
+        let executableName = URL(fileURLWithPath: bootRequest.executablePath).lastPathComponent
+        guard executableName == "fish" else { return }
+        let response = AlanTerminalPtyControlSequenceResponder.primaryDeviceAttributesResponseData
+        let written = response.withUnsafeBytes { buffer -> Int in
+            guard let baseAddress = buffer.baseAddress else { return -1 }
+            return Darwin.write(masterFileDescriptor, baseAddress, buffer.count)
+        }
+        guard written == response.count else { return }
+        controlSequenceResponder.suppressNextPrimaryDeviceAttributesResponse()
+    }
+
+    private func setNonBlocking(_ fileDescriptor: Int32) {
+        let flags = fcntl(fileDescriptor, F_GETFL)
+        guard flags >= 0 else { return }
+        _ = fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK)
+    }
+}
+
+private final class AlanDarwinTerminalPtyRendererProxy {
+    private struct PendingPtyInputChunk {
+        var data: Data
+        var countedBytesRemaining: Int
+    }
+
+    private weak var ptyHandle: AlanDarwinTerminalPtyHandle?
+    private let hostFileDescriptor: Int32
+    private let ptyFileDescriptor: Int32
+    private let ioQueue = DispatchQueue(
+        label: "dev.alan.terminal.pty.renderer",
+        qos: .userInitiated
+    )
+    private var rendererInputSource: DispatchSourceRead?
+    private var ptyOutputSource: DispatchSourceRead?
+    private var ptyInputWriteSource: DispatchSourceWrite?
+    private var rendererOutputWriteSource: DispatchSourceWrite?
+    private var pendingPtyInputChunks: [PendingPtyInputChunk] = []
+    private var pendingRendererOutput = Data()
+    private var controlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
+    private var isInvalidated = false
+
+    init(
+        ptyHandle: AlanDarwinTerminalPtyHandle,
+        hostFileDescriptor: Int32,
+        ptyFileDescriptor: Int32,
+        controlSequenceResponder: AlanTerminalPtyControlSequenceResponder = AlanTerminalPtyControlSequenceResponder()
+    ) {
+        self.ptyHandle = ptyHandle
+        self.hostFileDescriptor = hostFileDescriptor
+        self.ptyFileDescriptor = ptyFileDescriptor
+        self.controlSequenceResponder = controlSequenceResponder
+    }
+
+    deinit {
+        invalidate()
+    }
+
+    func start() {
+        let inputSource = DispatchSource.makeReadSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        inputSource.setEventHandler { [weak self] in
+            self?.drainRendererInput()
+        }
+        inputSource.setCancelHandler { [hostFileDescriptor] in
+            close(hostFileDescriptor)
+        }
+        inputSource.resume()
+        rendererInputSource = inputSource
+
+        let outputSource = DispatchSource.makeReadSource(
+            fileDescriptor: ptyFileDescriptor,
+            queue: ioQueue
+        )
+        outputSource.setEventHandler { [weak self] in
+            self?.drainPtyOutput()
+        }
+        outputSource.resume()
+        ptyOutputSource = outputSource
+    }
+
+    func invalidate() {
+        guard !isInvalidated else { return }
+        isInvalidated = true
+        rendererInputSource?.cancel()
+        rendererInputSource = nil
+        ptyOutputSource?.cancel()
+        ptyOutputSource = nil
+        ptyInputWriteSource?.cancel()
+        ptyInputWriteSource = nil
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
+        pendingPtyInputChunks.removeAll()
+        pendingRendererOutput.removeAll()
+    }
+
+    func forwardPtyOutput(_ data: Data) {
+        guard !isInvalidated, !data.isEmpty else { return }
+        pendingRendererOutput.append(data)
+        guard drainPendingRendererOutput() else {
+            invalidate()
+            return
+        }
+    }
+
+    private func drainRendererInput() {
+        guard !isInvalidated else { return }
+        guard drainPendingPtyInput() else {
+            invalidate()
+            return
+        }
+        guard pendingPtyInputChunks.isEmpty else { return }
+
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = Darwin.read(hostFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                let data = Data(buffer.prefix(count))
+                guard enqueuePtyInput(data, countedBytes: data.count) else {
+                    invalidate()
+                    return
+                }
+                guard pendingPtyInputChunks.isEmpty else { return }
+                continue
+            }
+            if count == 0 {
+                invalidate()
+                return
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return
+            }
+            invalidate()
+            return
+        }
+    }
+
+    private func drainPtyOutput() {
+        guard !isInvalidated else { return }
+        var collected = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            let count = Darwin.read(ptyFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                collected.append(buffer, count: count)
+                continue
+            }
+            if count == 0 {
+                Task { @MainActor [weak self] in
+                    _ = self?.ptyHandle?.refreshExitStatus()
+                }
+                break
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                break
+            }
+            break
+        }
+
+        guard !collected.isEmpty else { return }
+        let response = controlSequenceResponder.process(collected)
+        if response.didRespond {
+            guard enqueuePtyInput(response.ptyResponse, countedBytes: 0) else {
+                invalidate()
+                return
+            }
+        }
+
+        guard !response.rendererOutput.isEmpty else { return }
+        forwardPtyOutput(response.rendererOutput)
+        Task { @MainActor [weak self] in
+            self?.ptyHandle?.recordPtyOutput(response.rendererOutput)
+        }
+    }
+
+    private func enqueuePtyInput(_ data: Data, countedBytes: Int) -> Bool {
+        guard !data.isEmpty else { return true }
+        pendingPtyInputChunks.append(
+            PendingPtyInputChunk(
+                data: data,
+                countedBytesRemaining: max(0, min(countedBytes, data.count))
+            )
+        )
+        return drainPendingPtyInput()
+    }
+
+    private func drainPendingPtyInput() -> Bool {
+        guard !isInvalidated else { return false }
+        var acceptedInputBytes = 0
+
+        while !pendingPtyInputChunks.isEmpty {
+            var chunk = pendingPtyInputChunks.removeFirst()
+            let result = chunk.data.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(ptyFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                let countedBytes = min(chunk.countedBytesRemaining, result)
+                acceptedInputBytes += countedBytes
+                if result < chunk.data.count {
+                    chunk.data.removeFirst(result)
+                    chunk.countedBytesRemaining -= countedBytes
+                    pendingPtyInputChunks.insert(chunk, at: 0)
+                    ensurePtyInputWriteSource()
+                    break
+                }
+                continue
+            }
+
+            pendingPtyInputChunks.insert(chunk, at: 0)
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                ensurePtyInputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingPtyInputChunks.isEmpty {
+            cancelPtyInputWriteSource()
+        }
+        if acceptedInputBytes > 0 {
+            Task { @MainActor [weak self] in
+                self?.ptyHandle?.recordRendererInputBytes(acceptedInputBytes)
+            }
+        }
+        return true
+    }
+
+    private func ensurePtyInputWriteSource() {
+        guard !isInvalidated, ptyInputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: ptyFileDescriptor,
+            queue: ioQueue
+        )
+        writeSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.drainPendingPtyInput() else {
+                self.invalidate()
+                return
+            }
+        }
+        writeSource.resume()
+        ptyInputWriteSource = writeSource
+    }
+
+    private func cancelPtyInputWriteSource() {
+        ptyInputWriteSource?.cancel()
+        ptyInputWriteSource = nil
+    }
+
+    private func drainPendingRendererOutput() -> Bool {
+        guard !isInvalidated else { return false }
+
+        while !pendingRendererOutput.isEmpty {
+            let result = pendingRendererOutput.withUnsafeBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+                return Darwin.write(hostFileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if result > 0 {
+                pendingRendererOutput.removeFirst(result)
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                ensureRendererOutputWriteSource()
+                break
+            }
+            return false
+        }
+
+        if pendingRendererOutput.isEmpty {
+            cancelRendererOutputWriteSource()
+        }
+        return true
+    }
+
+    private func ensureRendererOutputWriteSource() {
+        guard !isInvalidated, rendererOutputWriteSource == nil else { return }
+        let writeSource = DispatchSource.makeWriteSource(
+            fileDescriptor: hostFileDescriptor,
+            queue: ioQueue
+        )
+        writeSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.drainPendingRendererOutput() else {
+                self.invalidate()
+                return
+            }
+        }
+        writeSource.resume()
+        rendererOutputWriteSource = writeSource
+    }
+
+    private func cancelRendererOutputWriteSource() {
+        rendererOutputWriteSource?.cancel()
+        rendererOutputWriteSource = nil
+    }
+}
+
+private func withCStringArray<Result>(
+    _ values: [String],
+    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Result
+) -> Result {
+    let cStrings = values.map { strdup($0) }
+    let argv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(
+        capacity: cStrings.count + 1
+    )
+    for index in cStrings.indices {
+        argv[index] = cStrings[index]
+    }
+    argv[cStrings.count] = nil
+    defer {
+        for cString in cStrings {
+            free(cString)
+        }
+        argv.deallocate()
+    }
+    return body(argv)
+}
+
+private func waitStatusTermSignal(_ status: Int32) -> Int32 {
+    status & 0x7f
+}
+
+private func waitStatusExited(_ status: Int32) -> Bool {
+    waitStatusTermSignal(status) == 0
+}
+
+private func waitStatusSignaled(_ status: Int32) -> Bool {
+    let signal = waitStatusTermSignal(status)
+    return signal != 0 && signal != 0x7f
+}
+
+private func waitStatusExitCode(_ status: Int32) -> Int32 {
+    (status >> 8) & 0xff
 }
 
 enum TerminalTranscriptCaptureFailureCode: String, Equatable {
@@ -340,6 +2323,7 @@ protocol AlanTerminalSurfaceHandle: AnyObject {
     var renderPriority: TerminalRuntimeRenderPriority { get }
     var latestHostRuntimeSnapshot: TerminalHostRuntimeSnapshot? { get }
     var fallbackTranscriptLines: [String] { get }
+    var terminalDimensions: AlanTerminalPtyDimensions? { get }
     var seededTranscriptSnapshot: TerminalTranscriptSnapshot? { get }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?)
@@ -408,9 +2392,12 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private(set) var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
 
     private let bootstrap: AlanGhosttyProcessBootstrap
+    private let ptyRuntime: AlanTerminalPtyRuntime
+    private var ptyHandle: AlanTerminalPtyHandle?
     private var bootProfile: AlanShellBootProfile?
     private var currentSnapshot: AlanTerminalSurfaceSnapshot
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
+    private var lastAppliedPtyGrid: AlanTerminalPtyDimensions?
     private var transcriptRingBufferLines: [String] = []
     private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
 #if canImport(GhosttyKit)
@@ -421,11 +2408,13 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         contentID: String,
         paneID: String,
         bootstrap: AlanGhosttyProcessBootstrap,
+        ptyRuntime: AlanTerminalPtyRuntime,
         renderCoordinator: TerminalRenderCoordinator? = nil
     ) {
         self.contentID = contentID
         self.paneID = paneID
         self.bootstrap = bootstrap
+        self.ptyRuntime = ptyRuntime
         self.currentSnapshot = .pending(contentID: contentID, paneID: paneID)
 #if canImport(GhosttyKit)
         self.liveHost.renderCoordinator = renderCoordinator
@@ -448,13 +2437,31 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         latestHostRuntime
     }
 
+    private var ptyRuntimePhase: String? {
+        ptyHandle?.snapshot.phase.rawValue ?? currentSnapshot.runtimePhase
+    }
+
     var fallbackTranscriptLines: [String] {
-        transcriptRingBufferLines
+        if let ptyLines = ptyHandle?.snapshot.transcriptLines, !ptyLines.isEmpty {
+            return ptyLines
+        }
+        return transcriptRingBufferLines
+    }
+
+    var terminalDimensions: AlanTerminalPtyDimensions? {
+        ptyHandle?.snapshot.dimensions
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {
         self.paneID = paneID
         self.bootProfile = bootProfile
+        if let bootProfile {
+            ptyHandle = ptyRuntime.handle(
+                forTerminalContentID: contentID,
+                bootRequest: bootProfile.bootRequest
+            )
+            lastAppliedPtyGrid = nil
+        }
         guard currentSnapshot.teardownStatus != .completed else { return }
         updateSnapshot(
             lifecyclePhase: bootProfile == nil ? .pending : .attachable,
@@ -542,9 +2549,21 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         liveHost.attach(
             to: canvasView,
             bootProfile: bootProfile,
+            ptyAttachmentProvider: { [weak self] in
+                guard let ptyHandle = self?.ptyHandle else {
+                    return .rejected(
+                        .rejected(
+                            "terminal_pty_runtime_missing",
+                            message: "Alan-owned PTY runtime is required before renderer attachment."
+                        )
+                    )
+                }
+                return ptyHandle.makeRendererAttachment()
+            },
             focused: focused,
             renderPriority: renderPriority
         )
+        resizePtyToRendererGridIfAvailable()
         updateSnapshot(
             lifecyclePhase: liveHost.isSurfaceReady ? .attached : .attachable,
             metadata: liveHost.latestMetadata
@@ -569,6 +2588,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 
     func updateHostRuntimeSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
         latestHostRuntime = snapshot
+        resizePtyToRendererGridIfAvailable()
     }
 
     func captureTranscriptText(in range: AlanTerminalBufferRange) -> String? {
@@ -592,69 +2612,27 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 
     func sendControlText(_ text: String) -> TerminalRuntimeDeliveryResult {
         guard !text.isEmpty else {
-            return recordDelivery(.accepted(byteCount: 0, runtimePhase: currentSnapshot.runtimePhase))
+            return recordDelivery(.accepted(byteCount: 0, runtimePhase: ptyRuntimePhase))
         }
         guard currentSnapshot.teardownStatus != .completed else {
             return recordDelivery(
                 .rejected(
                     errorCode: "terminal_runtime_closed",
                     errorMessage: "The requested pane runtime has already closed.",
-                    runtimePhase: currentSnapshot.runtimePhase
+                    runtimePhase: ptyRuntimePhase
                 )
             )
         }
-        guard !currentSnapshot.metadata.processExited else {
-            return recordDelivery(
-                .rejected(
-                    errorCode: "terminal_child_exited",
-                    errorMessage: "The terminal process has exited.",
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard currentSnapshot.renderer.phase != .failed else {
-            return recordDelivery(
-                .rejected(
-                    errorCode: "terminal_renderer_failed",
-                    errorMessage: "The terminal renderer is not available.",
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard bootstrap.ensureReady().isReady else {
+        guard let ptyHandle else {
             return recordDelivery(
                 .unavailable(
-                    errorMessage: bootstrap.diagnostics.failureReason ?? bootstrap.diagnostics.summary,
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard isSurfaceReady else {
-            return recordDelivery(
-                .unavailable(
-                    errorMessage: "The requested pane is not ready to receive terminal input.",
-                    runtimePhase: currentSnapshot.runtimePhase
+                    errorMessage: "The requested pane does not have an Alan-owned PTY runtime.",
+                    runtimePhase: ptyRuntimePhase
                 )
             )
         }
 
-#if canImport(GhosttyKit)
-        liveHost.sendProgrammaticText(text)
-        return recordDelivery(
-            .accepted(
-                byteCount: text.lengthOfBytes(using: .utf8),
-                runtimePhase: currentSnapshot.runtimePhase
-            )
-        )
-#else
-        return recordDelivery(
-            .rejected(
-                errorCode: "ghostty_unavailable",
-                errorMessage: "GhosttyKit is not linked into this build.",
-                runtimePhase: currentSnapshot.runtimePhase
-            )
-        )
-#endif
+        return recordDelivery(ptyHandle.writeInput(text))
     }
 
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
@@ -663,71 +2641,48 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
                 .rejected(
                     errorCode: "terminal_runtime_closed",
                     errorMessage: "The requested pane runtime has already closed.",
-                    runtimePhase: currentSnapshot.runtimePhase
+                    runtimePhase: ptyRuntimePhase
                 )
             )
         }
-        guard !currentSnapshot.metadata.processExited else {
-            return recordDelivery(
-                .rejected(
-                    errorCode: "terminal_child_exited",
-                    errorMessage: "The terminal process has exited.",
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard currentSnapshot.renderer.phase != .failed else {
-            return recordDelivery(
-                .rejected(
-                    errorCode: "terminal_renderer_failed",
-                    errorMessage: "The terminal renderer is not available.",
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard bootstrap.ensureReady().isReady else {
+        guard let ptyHandle else {
             return recordDelivery(
                 .unavailable(
-                    errorMessage: bootstrap.diagnostics.failureReason ?? bootstrap.diagnostics.summary,
-                    runtimePhase: currentSnapshot.runtimePhase
-                )
-            )
-        }
-        guard isSurfaceReady else {
-            return recordDelivery(
-                .unavailable(
-                    errorMessage: "The requested pane is not ready to receive terminal input.",
-                    runtimePhase: currentSnapshot.runtimePhase
+                    errorMessage: "The requested pane does not have an Alan-owned PTY runtime.",
+                    runtimePhase: ptyRuntimePhase
                 )
             )
         }
 
-#if canImport(GhosttyKit)
-        guard liveHost.sendControlKey(key) else {
-            return recordDelivery(
-                .rejected(
-                    errorCode: "terminal_key_rejected",
-                    errorMessage: "The terminal did not accept the requested key.",
-                    runtimePhase: currentSnapshot.runtimePhase
+        if key == .endOfTransmission {
+            let eof = ptyHandle.closeInput()
+            let delivery: TerminalRuntimeDeliveryResult = eof.accepted
+                ? .accepted(byteCount: 0, runtimePhase: ptyHandle.snapshot.phase.rawValue)
+                : .rejected(
+                    errorCode: eof.code,
+                    errorMessage: eof.message ?? "Alan-owned PTY EOF delivery failed.",
+                    runtimePhase: ptyHandle.snapshot.phase.rawValue
                 )
-            )
+            return recordDelivery(delivery)
         }
-        return recordDelivery(.accepted(byteCount: 0, runtimePhase: currentSnapshot.runtimePhase))
-#else
-        return recordDelivery(
-            .rejected(
-                errorCode: "ghostty_unavailable",
-                errorMessage: "GhosttyKit is not linked into this build.",
-                runtimePhase: currentSnapshot.runtimePhase
-            )
-        )
-#endif
+
+        let text: String
+        switch key {
+        case .interrupt:
+            text = "\u{3}"
+        case .endOfTransmission:
+            text = ""
+        case .returnKey:
+            text = "\r"
+        }
+        return recordDelivery(ptyHandle.writeInput(text))
     }
 
     func requestGracefulShutdown(
         reason: TerminalRuntimeGracefulShutdownReason
     ) -> TerminalRuntimeGracefulShutdownRequestResult {
-        if currentSnapshot.metadata.processExited {
+        let ptySnapshot = ptyHandle?.snapshot
+        if currentSnapshot.metadata.processExited || ptySnapshot?.exitStatus != nil {
             return TerminalRuntimeGracefulShutdownRequestResult(
                 contentID: contentID,
                 reason: reason,
@@ -745,19 +2700,26 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
                 message: "The terminal runtime has already closed."
             )
         }
-
-        let delivery = sendControlKey(.interrupt)
-        let code: TerminalRuntimeGracefulShutdownRequestCode
-        switch delivery.code {
-        case .accepted, .queued:
-            code = .requested
-        case .missingTarget:
-            code = .missingRuntime
-        case .unavailableRuntime, .timeout:
-            code = .unavailable
-        case .rejected:
-            code = .rejected
+        guard let ptyHandle else {
+            return TerminalRuntimeGracefulShutdownRequestResult(
+                contentID: contentID,
+                reason: reason,
+                code: .missingRuntime,
+                delivery: nil,
+                message: "No Alan-owned PTY runtime is registered for this content."
+            )
         }
+
+        let signal = ptyHandle.sendSignal(.interrupt)
+        let delivery: TerminalRuntimeDeliveryResult = signal.accepted
+            ? .accepted(byteCount: 0, runtimePhase: ptyHandle.snapshot.phase.rawValue)
+            : .rejected(
+                errorCode: signal.code,
+                errorMessage: signal.message ?? "Alan-owned PTY signal delivery failed.",
+                runtimePhase: ptyHandle.snapshot.phase.rawValue
+            )
+        let code: TerminalRuntimeGracefulShutdownRequestCode = signal.accepted ? .requested : .rejected
+        _ = recordDelivery(delivery)
         return TerminalRuntimeGracefulShutdownRequestResult(
             contentID: contentID,
             reason: reason,
@@ -774,6 +2736,8 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #if canImport(GhosttyKit)
         liveHost.teardown()
 #endif
+        _ = ptyHandle?.terminateForCleanup()
+        ptyHandle = nil
         updateSnapshot(
             lifecyclePhase: .closed,
             metadata: .placeholder,
@@ -804,6 +2768,30 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     ) -> TerminalRuntimeDeliveryResult {
         updateSnapshot(lastDelivery: delivery)
         return delivery
+    }
+
+    private func resizePtyToRendererGridIfAvailable() {
+        guard let rendererGrid = rendererTerminalGridForPtyResize else { return }
+        guard rendererGrid.isUsable else { return }
+        let dimensions = AlanTerminalPtyDimensions(
+            columns: rendererGrid.columns,
+            rows: rendererGrid.rows
+        )
+        guard dimensions != lastAppliedPtyGrid else { return }
+        guard let ptyHandle else { return }
+        let result = ptyHandle.resize(columns: dimensions.columns, rows: dimensions.rows)
+        if result.accepted {
+            lastAppliedPtyGrid = dimensions
+        }
+    }
+
+    private var rendererTerminalGridForPtyResize: TerminalGridDimensions? {
+#if canImport(GhosttyKit)
+        if let rendererGrid = liveHost.terminalGridDimensions?.terminalGridDimensions {
+            return rendererGrid
+        }
+#endif
+        return nil
     }
 
     private func updateSnapshot(
@@ -1041,7 +3029,10 @@ private func buildTerminalTranscriptCapture(
     }
 
     let metadata = hostSnapshot?.paneMetadata ?? surfaceSnapshot.metadata
-    let dimensions = transcriptDimensions(from: hostSnapshot, metrics: metrics)
+    let dimensions = transcriptDimensions(
+        ptyDimensions: handle.terminalDimensions,
+        metrics: metrics
+    )
     let alternateScreen = hostSnapshot?.surfaceState.terminalMode == .alternateScreen
     let snapshot = TerminalTranscriptSnapshot(
         contentID: handle.contentID,
@@ -1086,11 +3077,11 @@ private func transcriptLines(from text: String) -> [String] {
 }
 
 private func transcriptDimensions(
-    from hostSnapshot: TerminalHostRuntimeSnapshot?,
+    ptyDimensions: AlanTerminalPtyDimensions?,
     metrics: AlanTerminalScrollbackMetrics?
 ) -> TerminalTranscriptDimensions? {
-    let columns = hostSnapshot.map { Int($0.logicalSize.width.rounded(.down)) } ?? 0
-    let rows = metrics?.visibleRows ?? hostSnapshot.map { Int($0.logicalSize.height.rounded(.down)) } ?? 0
+    let columns = ptyDimensions?.columns ?? 0
+    let rows = ptyDimensions?.rows ?? metrics?.visibleRows ?? 0
     guard columns > 0 || rows > 0 else { return nil }
     return TerminalTranscriptDimensions(columns: max(0, columns), rows: max(0, rows))
 }
@@ -1100,6 +3091,7 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     typealias SurfaceFactory = (String, String, AlanGhosttyProcessBootstrap) -> AlanTerminalSurfaceHandle
 
     private let bootstrap: AlanGhosttyProcessBootstrap
+    private let ptyRuntime: AlanTerminalPtyRuntime
     private let makeSurfaceHandle: SurfaceFactory
     private var handlesByContentID: [String: AlanTerminalSurfaceHandle] = [:]
     private var restoredTranscriptSnapshotsByContentID: [String: TerminalTranscriptSnapshot] = [:]
@@ -1107,16 +3099,20 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
 
     init(
         renderCoordinator: TerminalRenderCoordinator = TerminalRenderCoordinator(),
+        ptyRuntime: AlanTerminalPtyRuntime? = nil,
         surfaceFactory: SurfaceFactory? = nil
     ) {
         self.renderCoordinator = renderCoordinator
         self.bootstrap = AlanDefaultGhosttyProcessBootstrap.shared
+        let ptyRuntime = ptyRuntime ?? Self.makeDefaultPtyRuntime()
+        self.ptyRuntime = ptyRuntime
         let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
             AlanGhosttySurfaceHandle(
                 contentID: contentID,
                 paneID: paneID,
                 bootstrap: bootstrap,
+                ptyRuntime: ptyRuntime,
                 renderCoordinator: coordinator
             )
         }
@@ -1125,19 +3121,31 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
     init(
         bootstrap: AlanGhosttyProcessBootstrap,
         renderCoordinator: TerminalRenderCoordinator = TerminalRenderCoordinator(),
+        ptyRuntime: AlanTerminalPtyRuntime? = nil,
         surfaceFactory: SurfaceFactory? = nil
     ) {
         self.renderCoordinator = renderCoordinator
         self.bootstrap = bootstrap
+        let ptyRuntime = ptyRuntime ?? Self.makeDefaultPtyRuntime()
+        self.ptyRuntime = ptyRuntime
         let coordinator = renderCoordinator
         self.makeSurfaceHandle = surfaceFactory ?? { contentID, paneID, bootstrap in
             AlanGhosttySurfaceHandle(
                 contentID: contentID,
                 paneID: paneID,
                 bootstrap: bootstrap,
+                ptyRuntime: ptyRuntime,
                 renderCoordinator: coordinator
             )
         }
+    }
+
+    static func makeDefaultPtyRuntime(
+        helperClient: AlanPrivilegedHelperClienting = AlanPrivilegedHelperAppClient()
+    ) -> AlanTerminalPtyRuntime {
+        AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helperClient)
+        )
     }
 
     var diagnostics: AlanGhosttyBootstrapDiagnostics {
@@ -1261,7 +3269,9 @@ final class AlanWindowTerminalRuntimeService: AlanTerminalRuntimeService {
         guard let handle = handlesByContentID.removeValue(forKey: contentID) else {
             return .notStarted
         }
-        return handle.teardown()
+        let status = handle.teardown()
+        ptyRuntime.unregisterHandle(forTerminalContentID: contentID)
+        return status
     }
 
     func finalizeTerminalContents(excluding activeContentIDs: Set<String>) {
@@ -1306,6 +3316,172 @@ final class FakeAlanGhosttyProcessBootstrap: AlanGhosttyProcessBootstrap {
 }
 
 @MainActor
+final class FakeAlanTerminalPtyRuntime: AlanTerminalPtyRuntime {
+    private var handlesByContentID: [String: FakeAlanTerminalPtyHandle] = [:]
+
+    var registeredContentIDs: Set<String> {
+        Set(handlesByContentID.keys)
+    }
+
+    func handle(
+        forTerminalContentID contentID: String,
+        bootRequest: AlanTerminalBootRequest
+    ) -> AlanTerminalPtyHandle {
+        if let existing = handlesByContentID[contentID] {
+            return existing
+        }
+        let handle = FakeAlanTerminalPtyHandle(
+            contentID: contentID,
+            bootRequest: bootRequest
+        )
+        handlesByContentID[contentID] = handle
+        return handle
+    }
+
+    func existingHandle(forTerminalContentID contentID: String) -> AlanTerminalPtyHandle? {
+        handlesByContentID[contentID]
+    }
+
+    func snapshot(forTerminalContentID contentID: String) -> AlanTerminalPtyRuntimeSnapshot? {
+        handlesByContentID[contentID]?.snapshot
+    }
+
+    func unregisterHandle(forTerminalContentID contentID: String) {
+        handlesByContentID.removeValue(forKey: contentID)
+    }
+}
+
+@MainActor
+final class FakeAlanTerminalPtyHandle: AlanTerminalPtyHandle {
+    let contentID: String
+    let bootRequest: AlanTerminalBootRequest
+    private(set) var deliveredText: [String] = []
+    private(set) var resizeRequests: [AlanTerminalPtyDimensions] = []
+    private(set) var signalRequests: [AlanTerminalPtySignal] = []
+    private(set) var phase: AlanTerminalPtyRuntimePhase = .running
+    private(set) var inputClosed = false
+    private(set) var exitStatus: AlanTerminalProcessExitStatus?
+    private var transcriptRingBufferLines: [String] = []
+
+    init(contentID: String, bootRequest: AlanTerminalBootRequest) {
+        self.contentID = contentID
+        self.bootRequest = bootRequest
+    }
+
+    var snapshot: AlanTerminalPtyRuntimeSnapshot {
+        AlanTerminalPtyRuntimeSnapshot(
+            contentID: contentID,
+            bootRequest: bootRequest,
+            phase: phase,
+            dimensions: resizeRequests.last,
+            acceptedInputBytes: deliveredText.reduce(0) {
+                $0 + $1.lengthOfBytes(using: .utf8)
+            },
+            inputClosed: inputClosed,
+            lastSignal: signalRequests.last,
+            exitStatus: exitStatus,
+            transcriptLines: transcriptRingBufferLines
+        )
+    }
+
+    var isInputReady: Bool {
+        exitStatus == nil && !inputClosed
+    }
+
+    func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult {
+        guard exitStatus == nil else {
+            return .rejected(
+                errorCode: "terminal_child_exited",
+                errorMessage: "The terminal process has exited.",
+                runtimePhase: phase.rawValue
+            )
+        }
+        guard !inputClosed else {
+            return .rejected(
+                errorCode: "terminal_pty_input_closed",
+                errorMessage: "The terminal PTY input stream is closed.",
+                runtimePhase: phase.rawValue
+            )
+        }
+        deliveredText.append(text)
+        return .accepted(
+            byteCount: text.lengthOfBytes(using: .utf8),
+            runtimePhase: phase.rawValue
+        )
+    }
+
+    func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult {
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The terminal process has exited."
+            )
+        }
+        let dimensions = AlanTerminalPtyDimensions(
+            columns: max(0, columns),
+            rows: max(0, rows)
+        )
+        resizeRequests.append(dimensions)
+        return .accepted("resized")
+    }
+
+    func closeInput() -> AlanTerminalPtyOperationResult {
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The terminal process has exited."
+            )
+        }
+        inputClosed = true
+        phase = .inputClosed
+        return .accepted("input_closed")
+    }
+
+    func sendSignal(_ signal: AlanTerminalPtySignal) -> AlanTerminalPtyOperationResult {
+        guard exitStatus == nil else {
+            return .rejected(
+                "terminal_child_exited",
+                message: "The terminal process has exited."
+            )
+        }
+        signalRequests.append(signal)
+        return .accepted(signal.rawValue)
+    }
+
+    func makeRendererAttachment() -> AlanTerminalPtyRendererAttachmentResult {
+        .rejected(
+            .rejected(
+                "terminal_renderer_attachment_unsupported",
+                message: "The fake PTY runtime does not expose renderer file descriptors."
+            )
+        )
+    }
+
+    func terminateForCleanup() -> AlanTerminalPtyOperationResult {
+        guard exitStatus == nil else { return .accepted("already_exited") }
+        inputClosed = true
+        phase = .exited
+        exitStatus = .unknown
+        signalRequests.append(.terminate)
+        return .accepted("terminated")
+    }
+
+    func recordTranscriptOutput(_ text: String) {
+        transcriptRingBufferLines.append(contentsOf: transcriptLines(from: text))
+        if transcriptRingBufferLines.count > TerminalTranscriptSnapshot.defaultMaxRows {
+            transcriptRingBufferLines = Array(
+                transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
+            )
+        }
+    }
+
+    func markExited(_ status: AlanTerminalProcessExitStatus) {
+        exitStatus = status
+        phase = .exited
+    }
+}
+
+@MainActor
 final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     let contentID: String
     private(set) var paneID: String
@@ -1324,6 +3500,7 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
     var onGracefulShutdownRequest: ((TerminalRuntimeGracefulShutdownReason) -> Void)?
     var searchActionsShouldSucceed = true
     var scrollActionsShouldSucceed = true
+    var terminalDimensionsOverride: AlanTerminalPtyDimensions?
     var commandOutputTextByRange: [AlanTerminalBufferRange: String] = [:]
     private(set) var captureTranscriptTextRanges: [AlanTerminalBufferRange] = []
     var selectedText: String?
@@ -1361,6 +3538,10 @@ final class FakeAlanTerminalSurfaceHandle: AlanTerminalSurfaceHandle {
 
     var fallbackTranscriptLines: [String] {
         transcriptRingBufferLines
+    }
+
+    var terminalDimensions: AlanTerminalPtyDimensions? {
+        terminalDimensionsOverride
     }
 
     func configure(mountedAtPaneID paneID: String, bootProfile: AlanShellBootProfile?) {

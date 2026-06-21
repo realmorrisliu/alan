@@ -19,6 +19,7 @@ struct ShellSidebarView: View {
     @State private var renamingTabID: String?
     @State private var renameDraftTitle = ""
     @StateObject private var tabListWheelRouter = ShellSidebarTabListWheelRouter()
+    @StateObject private var spaceCreationProfileOptions = ShellSpaceCreationProfileOptionStore()
 
     init(
         host: ShellHostController,
@@ -46,6 +47,14 @@ struct ShellSidebarView: View {
         }
         .task(id: activityFreshnessRefreshID) {
             await scheduleActivityFreshnessRefresh()
+        }
+        .task {
+            spaceCreationProfileOptions.refresh()
+        }
+        .onChange(of: host.isPresentingSpaceCreation) { _, isPresenting in
+            if isPresenting {
+                spaceCreationProfileOptions.refresh()
+            }
         }
         .alert("Rename Tab", isPresented: renameAlertBinding) {
             TextField("Title", text: $renameDraftTitle)
@@ -75,7 +84,7 @@ struct ShellSidebarView: View {
                 .padding(.bottom, ShellSidebarTabListMetrics.itemSpacing)
             if host.isPresentingSpaceCreation {
                 ShellSpaceCreationForm(
-                    profiles: spaceCreationProfileOptions,
+                    profiles: spaceCreationProfileOptions.options,
                     draftName: $host.spaceDraftName,
                     draftIcon: $host.spaceDraftIcon,
                     draftProfileID: $host.spaceDraftProfileID,
@@ -97,15 +106,6 @@ struct ShellSidebarView: View {
             reduceMotion ? nil : .easeInOut(duration: 0.18),
             value: host.isPresentingSpaceCreation
         )
-    }
-
-    private var spaceCreationProfileOptions: [ShellSpaceCreationForm.ProfileOption] {
-        TerminalProfileStore.defaultStore().load().profiles.map { profile in
-            ShellSpaceCreationForm.ProfileOption(
-                id: profile.id,
-                name: "\(profile.title) · \(profile.launch.kind.rawValue)"
-            )
-        }
     }
 
     private var fixedSpaceSlider: some View {
@@ -1073,6 +1073,7 @@ private struct ShellSidebarSpaceSlider: View {
     @State private var wheelIntentState = ShellSidebarSpaceSliderWheelIntentState()
     @State private var wheelCommitToken = 0
     @State private var trackScrollOffsetX: CGFloat = 0
+    @StateObject private var spaceCreationProfileOptions = ShellSpaceCreationProfileOptionStore()
 
     var body: some View {
         GeometryReader { proxy in
@@ -1190,11 +1191,17 @@ private struct ShellSidebarSpaceSlider: View {
         .onChange(of: resolvedDisplaySpaceID) { _, _ in
             cancelScrubPreview()
         }
+        .task {
+            spaceCreationProfileOptions.refresh()
+        }
         .onChange(of: creationDraft != nil) { _, creating in
             // Entering the creation form must cancel any pending scrub and
             // invalidate the scheduled wheel-commit so it cannot fire and move
             // the underlying Space behind the draft.
-            if creating { cancelScrubPreview() }
+            if creating {
+                cancelScrubPreview()
+                spaceCreationProfileOptions.refresh()
+            }
         }
     }
 
@@ -1305,21 +1312,23 @@ private struct ShellSidebarSpaceSlider: View {
                 cancelScrubPreview()
                 _ = host.setTerminalProfile(nil, forSpaceID: space.spaceID)
             } label: {
-                Label("Default", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
+                Label("Login shell", systemImage: space.terminalProfileID == nil ? "checkmark" : "terminal")
             }
 
-            ForEach(TerminalProfileStore.defaultStore().load().profiles, id: \.id) { profile in
+            ForEach(spaceCreationProfileOptions.options) { option in
                 Button {
                     cancelScrubPreview()
-                    _ = host.setTerminalProfile(profile.id, forSpaceID: space.spaceID)
+                    _ = host.setTerminalProfile(option.id, forSpaceID: space.spaceID)
                 } label: {
                     Label(
-                        profileMenuTitle(profile),
-                        systemImage: profile.id == space.terminalProfileID
+                        option.name,
+                        systemImage: option.id == space.terminalProfileID
                             ? "checkmark"
-                            : profileSymbol(for: profile)
+                            : option.systemName
                     )
                 }
+                .disabled(!option.isEnabled)
+                .help(option.guidance ?? option.name)
             }
         }
 
@@ -1553,23 +1562,6 @@ private struct ShellSidebarSpaceSlider: View {
         else {
             cancelScrubPreview()
             return
-        }
-    }
-
-    private func profileMenuTitle(_ profile: TerminalProfileDefinition) -> String {
-        "\(profile.title) · \(profile.launch.kind.rawValue)"
-    }
-
-    private func profileSymbol(for profile: TerminalProfileDefinition) -> String {
-        switch profile.launch {
-        case .loginShell:
-            return "terminal"
-        case .sudoUser:
-            return "person.crop.circle"
-        case .sudoRoot:
-            return "exclamationmark.triangle"
-        case .customCommand:
-            return "chevron.left.forwardslash.chevron.right"
         }
     }
 

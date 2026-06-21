@@ -11,6 +11,7 @@ struct AlanApp: App {
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
 
     init() {
+        AlanMacAppStartup.handleDevPrivilegedHelperCommandIfRequested()
         singletonGuard = AlanMacAppStartup.acquireSingletonOrTerminate()
         _primaryShellOwner = StateObject(wrappedValue: AlanMacPrimaryShellOwner())
         _updateController = StateObject(wrappedValue: AlanMacUpdateController())

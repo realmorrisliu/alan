@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 enum TerminalRuntimeControlKey: String, Codable, Equatable {
     case interrupt
@@ -161,6 +162,7 @@ enum TerminalProfileLaunchKind: String, Codable, CaseIterable {
     case loginShell = "login_shell"
     case sudoUser = "sudo_user"
     case sudoRoot = "sudo_root"
+    case managedUser = "managed_user"
     case customCommand = "custom_command"
 }
 
@@ -168,6 +170,7 @@ enum TerminalProfileLaunch: Codable, Equatable {
     case loginShell
     case sudoUser(unixUser: String)
     case sudoRoot
+    case managedUser(unixUser: String)
     case customCommand(String)
 
     var kind: TerminalProfileLaunchKind {
@@ -178,14 +181,20 @@ enum TerminalProfileLaunch: Codable, Equatable {
             return .sudoUser
         case .sudoRoot:
             return .sudoRoot
+        case .managedUser:
+            return .managedUser
         case .customCommand:
             return .customCommand
         }
     }
 
     var unixUser: String? {
-        guard case .sudoUser(let unixUser) = self else { return nil }
-        return unixUser
+        switch self {
+        case .sudoUser(let unixUser), .managedUser(let unixUser):
+            return unixUser
+        case .loginShell, .sudoRoot, .customCommand:
+            return nil
+        }
     }
 
     var customCommand: String? {
@@ -210,6 +219,10 @@ enum TerminalProfileLaunch: Codable, Equatable {
             )
         case .sudoRoot:
             self = .sudoRoot
+        case .managedUser:
+            self = .managedUser(
+                unixUser: try container.decodeIfPresent(String.self, forKey: .unixUser) ?? ""
+            )
         case .customCommand:
             self = .customCommand(
                 try container.decodeIfPresent(String.self, forKey: .command) ?? ""
@@ -223,7 +236,7 @@ enum TerminalProfileLaunch: Codable, Equatable {
         switch self {
         case .loginShell, .sudoRoot:
             break
-        case .sudoUser(let unixUser):
+        case .sudoUser(let unixUser), .managedUser(let unixUser):
             try container.encode(unixUser, forKey: .unixUser)
         case .customCommand(let command):
             try container.encode(command, forKey: .command)
@@ -292,6 +305,10 @@ struct TerminalProfileDefinition: Codable, Equatable, Identifiable {
                 : "Sudo user \(unixUser)"
         case .sudoRoot:
             return "Root shell"
+        case .managedUser(let unixUser):
+            return unixUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Managed user"
+                : "Managed user \(unixUser)"
         case .customCommand:
             return "Custom command"
         }
@@ -328,7 +345,10 @@ enum TerminalProfileValidationError: Error, Equatable {
     case missingTitle(String)
     case missingUnixUser(String)
     case missingCustomCommand(String)
+    case missingManagedAccount(String)
+    case managedAccountMismatch(profileID: String, accountID: String, unixUser: String)
     case missingDefaultProfile(String)
+    case managedProfileReadOnly(String)
     case unavailableExecutable(profileID: String, path: String)
     case coreUnavailable(String)
 
@@ -344,8 +364,14 @@ enum TerminalProfileValidationError: Error, Equatable {
             return "Terminal Profile \(id) needs a Unix user."
         case .missingCustomCommand(let id):
             return "Terminal Profile \(id) needs a custom command."
+        case .missingManagedAccount(let id):
+            return "Terminal Profile \(id) needs a Managed User."
+        case .managedAccountMismatch(let id, let accountID, let unixUser):
+            return "Terminal Profile \(id) links Managed User \(accountID) but launches \(unixUser)."
         case .missingDefaultProfile(let id):
             return "Default Terminal Profile \(id) is missing."
+        case .managedProfileReadOnly(let id):
+            return "Managed Terminal Profile \(id) is read-only."
         case .unavailableExecutable(let id, let path):
             return "Terminal Profile \(id) cannot find executable \(path)."
         case .coreUnavailable:
@@ -468,7 +494,7 @@ enum TerminalProfileResolutionState: Equatable {
     }
 }
 
-struct ManagedTerminalAccountRequest: Equatable {
+struct ManagedTerminalAccountRequest: Codable, Equatable {
     let accountName: String
     let guiUserName: String
     let fullName: String?
@@ -522,6 +548,686 @@ enum ManagedTerminalAccountIdentifierValidator {
     }
 }
 
+enum AlanPrivilegedHelperRegistrationAPI: String, Codable, Equatable {
+    case smAppServiceDaemon = "SMAppService.daemon(plistName:)"
+}
+
+struct AlanPrivilegedHelperIdentity: Codable, Equatable {
+    let channelID: String
+    let registrationAPI: AlanPrivilegedHelperRegistrationAPI
+    let appBundleIdentifier: String
+    let helperBundleIdentifier: String
+    let launchdServiceLabel: String
+    let machServiceName: String
+    let plistName: String
+    let dataRootPath: String
+    let expectedClientRequirement: String
+}
+
+enum AlanCodeSigningRequirement {
+    private static let unsignedTeamIdentifier = "ALAN_UNSIGNED_HELPER_DENY"
+
+    static func clientRequirement(
+        bundleIdentifier: String,
+        signingTeamIdentifier: String?
+    ) -> String {
+        let teamIdentifier = normalized(signingTeamIdentifier) ?? unsignedTeamIdentifier
+        return "anchor apple generic and identifier \"\(requirementStringLiteral(bundleIdentifier))\" and certificate leaf[subject.OU] = \"\(requirementStringLiteral(teamIdentifier))\""
+    }
+
+    static func currentTeamIdentifier() -> String? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let code else {
+            return nil
+        }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode
+        else {
+            return nil
+        }
+
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
+              let dictionary = information as? [String: Any]
+        else {
+            return nil
+        }
+        return normalized(dictionary[kSecCodeInfoTeamIdentifier as String] as? String)
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func requirementStringLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
+
+extension AlanInstallChannel {
+    var privilegedHelperIdentity: AlanPrivilegedHelperIdentity {
+        privilegedHelperIdentity(signingTeamIdentifier: AlanCodeSigningRequirement.currentTeamIdentifier())
+    }
+
+    func privilegedHelperIdentity(signingTeamIdentifier: String?) -> AlanPrivilegedHelperIdentity {
+        let helperBundleID = "\(bundleIdentifier).privileged-helper"
+        return AlanPrivilegedHelperIdentity(
+            channelID: installChannelID,
+            registrationAPI: .smAppServiceDaemon,
+            appBundleIdentifier: bundleIdentifier,
+            helperBundleIdentifier: helperBundleID,
+            launchdServiceLabel: helperBundleID,
+            machServiceName: "\(helperBundleID).xpc",
+            plistName: "\(helperBundleID).plist",
+            dataRootPath: "/Library/Application Support/\(applicationSupportDirectoryName)/privileged-helper",
+            expectedClientRequirement: AlanCodeSigningRequirement.clientRequirement(
+                bundleIdentifier: bundleIdentifier,
+                signingTeamIdentifier: signingTeamIdentifier
+            )
+        )
+    }
+}
+
+enum AlanPrivilegedHelperOperation: String, Codable, Equatable, CaseIterable {
+    case helperStatus
+    case diagnoseManagedUser
+    case applyManagedUserPlan
+    case startManagedUserPTY
+    case readManagedUserPTY
+    case writeManagedUserPTY
+    case resizeManagedUserPTY
+    case closeManagedUserPTYInput
+    case signalManagedUserPTY
+    case observeManagedUserPTYExit
+    case terminatePTY
+    case removeManagedUserIntegration
+    case deleteManagedUser
+}
+
+enum AlanPrivilegedHelperStatusState: String, Codable, Equatable, CaseIterable {
+    case notInstalled = "not_installed"
+    case outdated
+    case invalidSignature = "invalid_signature"
+    case installing
+    case updating
+    case healthy
+    case unavailable
+    case uninstallable
+}
+
+struct AlanPrivilegedHelperStatus: Codable, Equatable {
+    let state: AlanPrivilegedHelperStatusState
+    let identity: AlanPrivilegedHelperIdentity
+    let installedVersion: String?
+    let expectedVersion: String?
+    let sanitizedMessage: String?
+
+    var isHealthy: Bool {
+        state == .healthy
+    }
+}
+
+enum AlanPrivilegedHelperErrorCode: String, Codable, Equatable {
+    case helperUnavailable = "helper_unavailable"
+    case helperOutdated = "helper_outdated"
+    case helperSignatureInvalid = "helper_signature_invalid"
+    case clientRequirementFailed = "client_requirement_failed"
+    case channelMismatch = "channel_mismatch"
+    case invalidAccountIdentifier = "invalid_account_identifier"
+    case invalidHomePath = "invalid_home_path"
+    case shellNotAllowed = "shell_not_allowed"
+    case unsupportedOperation = "unsupported_operation"
+    case accountNotAlanManaged = "account_not_alan_managed"
+    case rawCommandRejected = "raw_command_rejected"
+    case rawSudoersRejected = "raw_sudoers_rejected"
+    case ptySpawnFailed = "pty_spawn_failed"
+    case destructiveConfirmationRequired = "destructive_confirmation_required"
+}
+
+struct AlanPrivilegedHelperDiagnostic: Error, Codable, Equatable {
+    let operationID: String
+    let channelID: String
+    let accountName: String?
+    let operation: AlanPrivilegedHelperOperation
+    let code: AlanPrivilegedHelperErrorCode?
+    let sanitizedMessage: String
+}
+
+enum AlanManagedUserOwnershipState: String, Codable, Equatable {
+    case missing
+    case alanManaged = "alan_managed"
+    case notAlanManaged = "not_alan_managed"
+}
+
+enum AlanManagedUserReadinessState: String, Codable, Equatable {
+    case accountMissing = "account_missing"
+    case repairable
+    case ready
+    case accountNotAlanManaged = "account_not_alan_managed"
+    case helperUnavailable = "helper_unavailable"
+    case legacySudoersPresent = "legacy_sudoers_present"
+    case ptySpawnFailed = "pty_spawn_failed"
+    case destructiveConfirmationRequired = "destructive_confirmation_required"
+}
+
+struct AlanManagedUserDiagnosis: Codable, Equatable {
+    let request: ManagedTerminalAccountRequest
+    let ownershipState: AlanManagedUserOwnershipState
+    let readinessState: AlanManagedUserReadinessState
+    let accountExists: Bool
+    let isAdmin: Bool
+    let homeDirectoryExists: Bool
+    let shellMatches: Bool
+    let hiddenFromLoginWindow: Bool
+    let legacySudoersPath: String?
+    let terminalProfileID: String?
+    let ptySmokeVerified: Bool
+    let diagnostic: AlanPrivilegedHelperDiagnostic?
+}
+
+extension AlanManagedUserDiagnosis {
+    static func helperUnavailable(
+        request: ManagedTerminalAccountRequest,
+        status: AlanPrivilegedHelperStatus
+    ) -> AlanManagedUserDiagnosis {
+        AlanManagedUserDiagnosis(
+            request: request,
+            ownershipState: .missing,
+            readinessState: .helperUnavailable,
+            accountExists: false,
+            isAdmin: false,
+            homeDirectoryExists: false,
+            shellMatches: false,
+            hiddenFromLoginWindow: false,
+            legacySudoersPath: nil,
+            terminalProfileID: nil,
+            ptySmokeVerified: false,
+            diagnostic: AlanPrivilegedHelperDiagnostic(
+                operationID: UUID().uuidString,
+                channelID: status.identity.channelID,
+                accountName: request.accountName,
+                operation: .diagnoseManagedUser,
+                code: status.unavailableErrorCode,
+                sanitizedMessage: status.sanitizedMessage ?? "Privileged helper is unavailable."
+            )
+        )
+    }
+}
+
+private extension AlanPrivilegedHelperStatus {
+    var unavailableErrorCode: AlanPrivilegedHelperErrorCode {
+        switch state {
+        case .outdated:
+            return .helperOutdated
+        case .invalidSignature:
+            return .helperSignatureInvalid
+        case .notInstalled, .installing, .updating, .healthy, .unavailable, .uninstallable:
+            return .helperUnavailable
+        }
+    }
+}
+
+enum AlanManagedUserHelperPlanStepKind: String, Codable, Equatable, CaseIterable {
+    case createStandardAccount = "create_standard_account"
+    case repairAccountType = "repair_account_type"
+    case repairHomeDirectory = "repair_home_directory"
+    case repairShell = "repair_shell"
+    case hideAccount = "hide_account"
+    case writeOwnershipMarker = "write_ownership_marker"
+    case verifyAccount = "verify_account"
+    case cleanupLegacySudoers = "cleanup_legacy_sudoers"
+    case verifyManagedUserPTY = "verify_managed_user_pty"
+    case removeManagedUserIntegration = "remove_managed_user_integration"
+    case deleteAccount = "delete_account"
+    case deleteHomeDirectory = "delete_home_directory"
+}
+
+struct AlanManagedUserHelperPlanStep: Codable, Equatable {
+    let kind: AlanManagedUserHelperPlanStepKind
+    let summary: String
+    let requiresDestructiveConfirmation: Bool
+}
+
+struct AlanManagedUserHelperPlan: Codable, Equatable {
+    let operationID: String
+    let channelID: String
+    let request: ManagedTerminalAccountRequest
+    let steps: [AlanManagedUserHelperPlanStep]
+}
+
+struct AlanManagedUserPTYStartRequest: Codable, Equatable {
+    let operationID: String
+    let channelID: String
+    let accountName: String
+    let homeDirectory: String
+    let workingDirectory: String
+    let shell: String
+    let contentID: String
+    let columns: Int
+    let rows: Int
+}
+
+struct AlanManagedUserPTYSession: Codable, Equatable {
+    let sessionID: String
+    let accountName: String
+    let contentID: String
+    let helperOwnsChildProcess: Bool
+    let sanitizedMessage: String
+}
+
+struct AlanManagedUserPTYInputRequest: Codable, Equatable {
+    let sessionID: String
+    let data: Data
+
+    init(sessionID: String, data: Data) {
+        self.sessionID = sessionID
+        self.data = data
+    }
+
+    init(sessionID: String, text: String) {
+        self.init(sessionID: sessionID, data: Data(text.utf8))
+    }
+
+    var text: String {
+        String(decoding: data, as: UTF8.self)
+    }
+}
+
+struct AlanManagedUserPTYReadRequest: Codable, Equatable {
+    let sessionID: String
+    let maxBytes: Int
+}
+
+struct AlanManagedUserPTYOutputChunk: Codable, Equatable {
+    let sessionID: String
+    let data: Data
+    let final: Bool
+    let sanitizedMessage: String?
+}
+
+struct AlanManagedUserPTYResizeRequest: Codable, Equatable {
+    let sessionID: String
+    let columns: Int
+    let rows: Int
+}
+
+enum AlanManagedUserPTYSignal: String, Codable, Equatable {
+    case interrupt
+    case terminate
+    case kill
+}
+
+struct AlanManagedUserPTYSignalRequest: Codable, Equatable {
+    let sessionID: String
+    let signal: AlanManagedUserPTYSignal
+}
+
+struct AlanManagedUserPTYExitObservation: Codable, Equatable {
+    let sessionID: String
+    let final: Bool
+    let exitCode: Int32?
+    let terminatingSignal: Int32?
+    let sanitizedMessage: String?
+}
+
+struct AlanManagedUserPTYControlResult: Codable, Equatable {
+    let accepted: Bool
+    let diagnostic: AlanPrivilegedHelperDiagnostic
+
+    static func accepted(
+        operation: AlanPrivilegedHelperOperation,
+        channelID: String,
+        accountName: String?,
+        message: String
+    ) -> AlanManagedUserPTYControlResult {
+        AlanManagedUserPTYControlResult(
+            accepted: true,
+            diagnostic: AlanPrivilegedHelperDiagnostic(
+                operationID: UUID().uuidString,
+                channelID: channelID,
+                accountName: accountName,
+                operation: operation,
+                code: nil,
+                sanitizedMessage: message
+            )
+        )
+    }
+
+    static func rejected(
+        operation: AlanPrivilegedHelperOperation,
+        channelID: String,
+        accountName: String?,
+        code: AlanPrivilegedHelperErrorCode,
+        message: String
+    ) -> AlanManagedUserPTYControlResult {
+        AlanManagedUserPTYControlResult(
+            accepted: false,
+            diagnostic: AlanPrivilegedHelperDiagnostic(
+                operationID: UUID().uuidString,
+                channelID: channelID,
+                accountName: accountName,
+                operation: operation,
+                code: code,
+                sanitizedMessage: message
+            )
+        )
+    }
+}
+
+enum AlanPrivilegedHelperRequestValidator {
+    static let allowedShells: Set<String> = ["/bin/zsh"]
+
+    static func validate(
+        request: ManagedTerminalAccountRequest,
+        channel: AlanInstallChannel
+    ) -> [AlanPrivilegedHelperErrorCode] {
+        var errors: [AlanPrivilegedHelperErrorCode] = []
+        if !ManagedTerminalAccountIdentifierValidator.validate(request).isEmpty {
+            errors.append(.invalidAccountIdentifier)
+        }
+        if request.homeDirectory != ManagedTerminalAccountRequest.canonicalHomeDirectory(
+            for: request.accountName
+        ) {
+            errors.append(.invalidHomePath)
+        }
+        if !allowedShells.contains(request.shell) {
+            errors.append(.shellNotAllowed)
+        }
+        if channel.privilegedHelperIdentity.channelID != channel.installChannelID {
+            errors.append(.channelMismatch)
+        }
+        return errors
+    }
+
+    static func rejectsRawPrivilegedPayload(_ payload: String) -> AlanPrivilegedHelperErrorCode? {
+        let lowered = payload.lowercased()
+        if lowered.contains("do shell script") || lowered.contains("#!/bin/sh") || lowered.contains("sudo ") {
+            return .rawCommandRejected
+        }
+        if lowered.contains("/etc/sudoers") || lowered.contains("nopasswd") {
+            return .rawSudoersRejected
+        }
+        return nil
+    }
+}
+
+protocol AlanPrivilegedHelperClienting {
+    func status() -> AlanPrivilegedHelperStatus
+    func diagnoseManagedUser(_ request: ManagedTerminalAccountRequest) -> AlanManagedUserDiagnosis
+    func applyManagedUserPlan(_ plan: AlanManagedUserHelperPlan) -> ManagedTerminalAccountApplyResult
+    func startManagedUserPTY(_ request: AlanManagedUserPTYStartRequest) -> Result<AlanManagedUserPTYSession, AlanPrivilegedHelperDiagnostic>
+    func readManagedUserPTY(_ request: AlanManagedUserPTYReadRequest) -> Result<AlanManagedUserPTYOutputChunk, AlanPrivilegedHelperDiagnostic>
+    func writeManagedUserPTY(_ request: AlanManagedUserPTYInputRequest) -> AlanManagedUserPTYControlResult
+    func resizeManagedUserPTY(_ request: AlanManagedUserPTYResizeRequest) -> AlanManagedUserPTYControlResult
+    func closeManagedUserPTYInput(sessionID: String) -> AlanManagedUserPTYControlResult
+    func signalManagedUserPTY(_ request: AlanManagedUserPTYSignalRequest) -> AlanManagedUserPTYControlResult
+    func observeManagedUserPTYExit(sessionID: String) -> AlanManagedUserPTYExitObservation?
+    func terminatePTY(sessionID: String) -> AlanPrivilegedHelperDiagnostic
+    func removeManagedUserIntegration(_ request: ManagedTerminalAccountRequest) -> ManagedTerminalAccountApplyResult
+}
+
+final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
+    var helperStatus: AlanPrivilegedHelperStatus
+    var diagnosesByAccount: [String: AlanManagedUserDiagnosis]
+    var deniedOperation: AlanPrivilegedHelperOperation?
+    var appliedPlans: [AlanManagedUserHelperPlan] = []
+    var startedPTYRequests: [AlanManagedUserPTYStartRequest] = []
+    var readPTYRequests: [AlanManagedUserPTYReadRequest] = []
+    var writtenPTYInputRequests: [AlanManagedUserPTYInputRequest] = []
+    var resizedPTYRequests: [AlanManagedUserPTYResizeRequest] = []
+    var closedPTYInputSessionIDs: [String] = []
+    var signaledPTYRequests: [AlanManagedUserPTYSignalRequest] = []
+    var terminatedPTYSessionIDs: [String] = []
+    var exitObservationsBySessionID: [String: AlanManagedUserPTYExitObservation] = [:]
+    var outputChunksBySessionID: [String: [Data]] = [:]
+    private var startedPTYSessionAccounts: [String: String] = [:]
+
+    init(
+        channel: AlanInstallChannel = .current(),
+        statusState: AlanPrivilegedHelperStatusState = .healthy,
+        diagnosesByAccount: [String: AlanManagedUserDiagnosis] = [:]
+    ) {
+        helperStatus = AlanPrivilegedHelperStatus(
+            state: statusState,
+            identity: channel.privilegedHelperIdentity,
+            installedVersion: nil,
+            expectedVersion: nil,
+            sanitizedMessage: nil
+        )
+        self.diagnosesByAccount = diagnosesByAccount
+    }
+
+    func status() -> AlanPrivilegedHelperStatus {
+        helperStatus
+    }
+
+    func diagnoseManagedUser(_ request: ManagedTerminalAccountRequest) -> AlanManagedUserDiagnosis {
+        if let diagnosis = diagnosesByAccount[request.accountName] {
+            return diagnosis
+        }
+        return AlanManagedUserDiagnosis(
+            request: request,
+            ownershipState: .missing,
+            readinessState: helperStatus.isHealthy ? .accountMissing : .helperUnavailable,
+            accountExists: false,
+            isAdmin: false,
+            homeDirectoryExists: false,
+            shellMatches: false,
+            hiddenFromLoginWindow: false,
+            legacySudoersPath: nil,
+            terminalProfileID: nil,
+            ptySmokeVerified: false,
+            diagnostic: helperStatus.isHealthy ? nil : diagnostic(
+                operation: .diagnoseManagedUser,
+                accountName: request.accountName,
+                code: .helperUnavailable,
+                message: "Privileged helper is unavailable."
+            )
+        )
+    }
+
+    func applyManagedUserPlan(_ plan: AlanManagedUserHelperPlan) -> ManagedTerminalAccountApplyResult {
+        if deniedOperation == .applyManagedUserPlan || !helperStatus.isHealthy {
+            return ManagedTerminalAccountApplyResult(
+                completedSteps: [],
+                failedStep: plan.steps.first.map { .helperStep($0.kind) },
+                cancelled: false,
+                visibleDiagnostics: ["Privileged helper rejected the Managed User plan. Credentials redacted."]
+            )
+        }
+        appliedPlans.append(plan)
+        return ManagedTerminalAccountApplyResult(
+            completedSteps: plan.steps.map { ManagedTerminalAccountPlanStepKind.helperStep($0.kind) },
+            failedStep: nil,
+            cancelled: false,
+            visibleDiagnostics: ["Privileged helper applied the Managed User plan. Credentials redacted."]
+        )
+    }
+
+    func startManagedUserPTY(
+        _ request: AlanManagedUserPTYStartRequest
+    ) -> Result<AlanManagedUserPTYSession, AlanPrivilegedHelperDiagnostic> {
+        guard helperStatus.isHealthy, deniedOperation != .startManagedUserPTY else {
+            return .failure(
+                diagnostic(
+                    operation: .startManagedUserPTY,
+                    accountName: request.accountName,
+                    code: .ptySpawnFailed,
+                    message: "Privileged helper could not start the managed-user PTY."
+                )
+            )
+        }
+        startedPTYRequests.append(request)
+        let session = AlanManagedUserPTYSession(
+            sessionID: "fake-\(request.contentID)",
+            accountName: request.accountName,
+            contentID: request.contentID,
+            helperOwnsChildProcess: true,
+            sanitizedMessage: "Fake helper PTY session started."
+        )
+        startedPTYSessionAccounts[session.sessionID] = session.accountName
+        return .success(session)
+    }
+
+    func readManagedUserPTY(
+        _ request: AlanManagedUserPTYReadRequest
+    ) -> Result<AlanManagedUserPTYOutputChunk, AlanPrivilegedHelperDiagnostic> {
+        readPTYRequests.append(request)
+        guard helperStatus.isHealthy, deniedOperation != .readManagedUserPTY else {
+            return .failure(
+                diagnostic(
+                    operation: .readManagedUserPTY,
+                    accountName: startedPTYSessionAccounts[request.sessionID],
+                    code: helperStatus.isHealthy ? .unsupportedOperation : .helperUnavailable,
+                    message: "Privileged helper rejected the managed-user PTY read request."
+                )
+            )
+        }
+        var queued = outputChunksBySessionID[request.sessionID] ?? []
+        let data = queued.isEmpty ? Data() : queued.removeFirst()
+        outputChunksBySessionID[request.sessionID] = queued
+        let final = data.isEmpty && exitObservationsBySessionID[request.sessionID]?.final == true
+        return .success(
+            AlanManagedUserPTYOutputChunk(
+                sessionID: request.sessionID,
+                data: data,
+                final: final,
+                sanitizedMessage: data.isEmpty ? nil : "Privileged helper returned PTY output."
+            )
+        )
+    }
+
+    func writeManagedUserPTY(_ request: AlanManagedUserPTYInputRequest) -> AlanManagedUserPTYControlResult {
+        let result = controlResult(
+            operation: .writeManagedUserPTY,
+            sessionID: request.sessionID,
+            successMessage: "Privileged helper accepted PTY input."
+        )
+        if result.accepted {
+            writtenPTYInputRequests.append(request)
+        }
+        return result
+    }
+
+    func resizeManagedUserPTY(_ request: AlanManagedUserPTYResizeRequest) -> AlanManagedUserPTYControlResult {
+        let result = controlResult(
+            operation: .resizeManagedUserPTY,
+            sessionID: request.sessionID,
+            successMessage: "Privileged helper resized PTY session."
+        )
+        if result.accepted {
+            resizedPTYRequests.append(request)
+        }
+        return result
+    }
+
+    func closeManagedUserPTYInput(sessionID: String) -> AlanManagedUserPTYControlResult {
+        let result = controlResult(
+            operation: .closeManagedUserPTYInput,
+            sessionID: sessionID,
+            successMessage: "Privileged helper closed PTY input."
+        )
+        if result.accepted {
+            closedPTYInputSessionIDs.append(sessionID)
+        }
+        return result
+    }
+
+    func signalManagedUserPTY(
+        _ request: AlanManagedUserPTYSignalRequest
+    ) -> AlanManagedUserPTYControlResult {
+        let result = controlResult(
+            operation: .signalManagedUserPTY,
+            sessionID: request.sessionID,
+            successMessage: "Privileged helper signaled PTY session."
+        )
+        if result.accepted {
+            signaledPTYRequests.append(request)
+        }
+        return result
+    }
+
+    func observeManagedUserPTYExit(sessionID: String) -> AlanManagedUserPTYExitObservation? {
+        exitObservationsBySessionID[sessionID]
+    }
+
+    func terminatePTY(sessionID: String) -> AlanPrivilegedHelperDiagnostic {
+        terminatedPTYSessionIDs.append(sessionID)
+        exitObservationsBySessionID[sessionID] = AlanManagedUserPTYExitObservation(
+            sessionID: sessionID,
+            final: true,
+            exitCode: nil,
+            terminatingSignal: nil,
+            sanitizedMessage: "Privileged helper terminated PTY session."
+        )
+        return diagnostic(
+            operation: .terminatePTY,
+            accountName: startedPTYSessionAccounts[sessionID],
+            code: nil,
+            message: "Privileged helper terminated PTY session \(sessionID)."
+        )
+    }
+
+    func removeManagedUserIntegration(
+        _ request: ManagedTerminalAccountRequest
+    ) -> ManagedTerminalAccountApplyResult {
+        ManagedTerminalAccountApplyResult(
+            completedSteps: [.removeManagedTerminalProfile],
+            failedStep: nil,
+            cancelled: false,
+            visibleDiagnostics: ["Privileged helper removed Managed User integration. Credentials redacted."]
+        )
+    }
+
+    private func controlResult(
+        operation: AlanPrivilegedHelperOperation,
+        sessionID: String,
+        successMessage: String
+    ) -> AlanManagedUserPTYControlResult {
+        let accountName = startedPTYSessionAccounts[sessionID]
+        guard helperStatus.isHealthy, deniedOperation != operation else {
+            return .rejected(
+                operation: operation,
+                channelID: helperStatus.identity.channelID,
+                accountName: accountName,
+                code: helperStatus.isHealthy ? .unsupportedOperation : .helperUnavailable,
+                message: "Privileged helper rejected the managed-user PTY request."
+            )
+        }
+        return .accepted(
+            operation: operation,
+            channelID: helperStatus.identity.channelID,
+            accountName: accountName,
+            message: successMessage
+        )
+    }
+
+    private func diagnostic(
+        operation: AlanPrivilegedHelperOperation,
+        accountName: String?,
+        code: AlanPrivilegedHelperErrorCode?,
+        message: String
+    ) -> AlanPrivilegedHelperDiagnostic {
+        AlanPrivilegedHelperDiagnostic(
+            operationID: UUID().uuidString,
+            channelID: helperStatus.identity.channelID,
+            accountName: accountName,
+            operation: operation,
+            code: code,
+            sanitizedMessage: message
+        )
+    }
+}
+
 struct ManagedTerminalAccountCommandResult: Equatable {
     let exitCode: Int32
     let standardOutput: String
@@ -547,6 +1253,12 @@ protocol ManagedTerminalAccountCommandRunning {
 }
 
 struct ManagedTerminalAccountProcessRunner: ManagedTerminalAccountCommandRunning {
+    let timeoutSeconds: TimeInterval
+
+    init(timeoutSeconds: TimeInterval = 120) {
+        self.timeoutSeconds = timeoutSeconds
+    }
+
     func run(
         executablePath: String,
         arguments: [String]
@@ -562,7 +1274,18 @@ struct ManagedTerminalAccountProcessRunner: ManagedTerminalAccountCommandRunning
 
         do {
             try process.run()
-            process.waitUntilExit()
+            let deadline = Date().addingTimeInterval(timeoutSeconds)
+            while process.isRunning {
+                if Date() >= deadline {
+                    process.terminate()
+                    return ManagedTerminalAccountCommandResult(
+                        exitCode: 124,
+                        standardOutput: "",
+                        standardError: "Command timed out after \(timeoutSeconds) seconds."
+                    )
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
         } catch {
             return ManagedTerminalAccountCommandResult(
                 exitCode: 127,
@@ -602,6 +1325,24 @@ enum ManagedTerminalAccountSudoersState: Equatable {
     case existingUnreadable(path: String)
 }
 
+enum ManagedTerminalAccountOwnershipEvidence: Equatable {
+    case helperMarker(path: String)
+    case legacyAlanSudoers(path: String)
+}
+
+enum ManagedTerminalAccountOwnershipState: Equatable {
+    case missing
+    case alanManaged(ManagedTerminalAccountOwnershipEvidence)
+    case notAlanManaged(reason: String)
+
+    var isAlanManaged: Bool {
+        if case .alanManaged = self {
+            return true
+        }
+        return false
+    }
+}
+
 enum ManagedTerminalAccountProfileState: Equatable {
     case missing
     case existingManaged(profileID: String)
@@ -609,11 +1350,32 @@ enum ManagedTerminalAccountProfileState: Equatable {
     case existingUnmanaged(profileID: String)
 }
 
+private extension ManagedTerminalAccountProfileState {
+    var managedProfileID: String? {
+        switch self {
+        case .existingManaged(let profileID):
+            return profileID
+        case .missing, .existingManagedOutdated, .existingUnmanaged:
+            return nil
+        }
+    }
+
+    var unmanagedProfileID: String? {
+        switch self {
+        case .existingUnmanaged(let profileID):
+            return profileID
+        case .missing, .existingManaged, .existingManagedOutdated:
+            return nil
+        }
+    }
+}
+
 enum ManagedTerminalAccountVerificationStep: String, Equatable {
     case accountLookup = "account_lookup"
     case nonAdminAccount = "non_admin_account"
     case homeDirectory = "home_directory"
     case shell
+    case ownership
     case sudoersValidation = "sudoers_validation"
     case nonInteractiveSudo = "non_interactive_sudo"
 }
@@ -627,8 +1389,26 @@ enum ManagedTerminalAccountVerificationStatus: Equatable {
 struct ManagedTerminalAccountState: Equatable {
     let account: ManagedTerminalAccountRecord
     let sudoers: ManagedTerminalAccountSudoersState
+    let ownership: ManagedTerminalAccountOwnershipState
     let terminalProfile: ManagedTerminalAccountProfileState
     let verification: ManagedTerminalAccountVerificationStatus
+    let homeDirectoryExists: Bool
+
+    init(
+        account: ManagedTerminalAccountRecord,
+        sudoers: ManagedTerminalAccountSudoersState,
+        ownership: ManagedTerminalAccountOwnershipState = .missing,
+        terminalProfile: ManagedTerminalAccountProfileState,
+        verification: ManagedTerminalAccountVerificationStatus,
+        homeDirectoryExists: Bool = true
+    ) {
+        self.account = account
+        self.sudoers = sudoers
+        self.ownership = ownership
+        self.terminalProfile = terminalProfile
+        self.verification = verification
+        self.homeDirectoryExists = homeDirectoryExists
+    }
 }
 
 struct ManagedTerminalAccountSudoersValidationResult: Equatable {
@@ -719,15 +1499,18 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
     let fileManager: FileManager
     let commandRunner: ManagedTerminalAccountCommandRunning
     let sudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking
+    let helperIdentity: AlanPrivilegedHelperIdentity
 
     init(
         fileManager: FileManager = .default,
         commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner(),
-        sudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking = ManagedTerminalAccountVisudoSyntaxChecker()
+        sudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking = ManagedTerminalAccountVisudoSyntaxChecker(),
+        channel: AlanInstallChannel = .current()
     ) {
         self.fileManager = fileManager
         self.commandRunner = commandRunner
         self.sudoersSyntaxChecker = sudoersSyntaxChecker
+        self.helperIdentity = channel.privilegedHelperIdentity
     }
 
     func discover(
@@ -744,16 +1527,56 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
             )
         }
 
-        return ManagedTerminalAccountState(
-            account: accountRecord(for: request),
-            sudoers: ManagedTerminalAccountSudoersValidator.state(
-                request: request,
-                fileManager: fileManager,
-                syntaxChecker: sudoersSyntaxChecker
-            ),
-            terminalProfile: terminalProfileState(for: request, document: terminalProfiles),
-            verification: .notRun
+        let account = accountRecord(for: request)
+        let sudoers = ManagedTerminalAccountSudoersValidator.state(
+            request: request,
+            fileManager: fileManager,
+            syntaxChecker: sudoersSyntaxChecker
         )
+        return ManagedTerminalAccountState(
+            account: account,
+            sudoers: sudoers,
+            ownership: ownershipState(for: request, account: account, sudoers: sudoers),
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles),
+            verification: .notRun,
+            homeDirectoryExists: homeDirectoryExists(for: account)
+        )
+    }
+
+    private func homeDirectoryExists(for account: ManagedTerminalAccountRecord) -> Bool {
+        switch account {
+        case .standard(let homeDirectory, _, _), .admin(let homeDirectory, _, _):
+            return fileManager.fileExists(atPath: homeDirectory)
+        case .missing, .invalid:
+            return false
+        }
+    }
+
+    private func ownershipState(
+        for request: ManagedTerminalAccountRequest,
+        account: ManagedTerminalAccountRecord,
+        sudoers: ManagedTerminalAccountSudoersState
+    ) -> ManagedTerminalAccountOwnershipState {
+        guard account.requiresAlanManagedOwnership else {
+            return .missing
+        }
+
+        let markerPath = ownershipMarkerPath(for: request)
+        if fileManager.fileExists(atPath: markerPath) {
+            return .alanManaged(.helperMarker(path: markerPath))
+        }
+
+        if case .alanOwnedValid(let path) = sudoers {
+            return .alanManaged(.legacyAlanSudoers(path: path))
+        }
+
+        return .notAlanManaged(
+            reason: "\(request.accountName) is an existing local account without Alan-managed ownership evidence."
+        )
+    }
+
+    private func ownershipMarkerPath(for request: ManagedTerminalAccountRequest) -> String {
+        "\(helperIdentity.dataRootPath)/managed-users/\(request.accountName)/ownership.json"
     }
 
     private func accountRecord(for request: ManagedTerminalAccountRequest) -> ManagedTerminalAccountRecord {
@@ -763,9 +1586,12 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
                 ".",
                 "-read",
                 "/Users/\(request.accountName)",
+                "UniqueID",
+                "PrimaryGroupID",
                 "NFSHomeDirectory",
                 "UserShell",
                 "IsHidden",
+                "AuthenticationAuthority",
             ]
         )
         guard dscl.succeeded else {
@@ -773,6 +1599,11 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
         }
 
         let output = dscl.standardOutput
+        guard propertyValue("UniqueID", in: output) != nil,
+              propertyValue("PrimaryGroupID", in: output) != nil
+        else {
+            return .invalid(reason: "Local account record is incomplete.")
+        }
         let home = propertyValue("NFSHomeDirectory", in: output) ?? request.homeDirectory
         let shell = propertyValue("UserShell", in: output) ?? request.shell
         let hidden = propertyValue("IsHidden", in: output) == "1"
@@ -797,8 +1628,10 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
         output
             .split(separator: "\n", omittingEmptySubsequences: false)
             .compactMap { line -> String? in
-                let prefix = "\(key):"
-                guard line.hasPrefix(prefix) else { return nil }
+                let prefixes = ["\(key):", "dsAttrTypeNative:\(key):"]
+                guard let prefix = prefixes.first(where: { line.hasPrefix($0) }) else {
+                    return nil
+                }
                 let value = line.dropFirst(prefix.count)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 return value.isEmpty ? nil : value
@@ -813,15 +1646,30 @@ struct ManagedTerminalAccountLocalStateDiscoverer {
         guard let profile = document.profile(id: request.terminalProfileID) else {
             return .missing
         }
-        if profile.managedTerminalAccountID == request.accountName,
-           profile.launch == .sudoUser(unixUser: request.accountName)
-        {
+        if profile.managedTerminalAccountID == request.accountName {
+            if profile.launch == .sudoUser(unixUser: request.accountName) {
+                return .existingManagedOutdated(profileID: profile.id)
+            }
+            guard profile.launch == .managedUser(unixUser: request.accountName) else {
+                return .existingManagedOutdated(profileID: profile.id)
+            }
             if profile.defaultWorkingDirectory != request.homeDirectory {
                 return .existingManagedOutdated(profileID: profile.id)
             }
             return .existingManaged(profileID: profile.id)
         }
         return .existingUnmanaged(profileID: profile.id)
+    }
+}
+
+private extension ManagedTerminalAccountRecord {
+    var requiresAlanManagedOwnership: Bool {
+        switch self {
+        case .standard, .admin:
+            return true
+        case .missing, .invalid:
+            return false
+        }
     }
 }
 
@@ -872,9 +1720,19 @@ enum ManagedTerminalAccountReadinessVerifier {
             if homeDirectory != request.homeDirectory {
                 return .failed(step: .homeDirectory, message: "Home directory does not match the plan.")
             }
+            if !state.homeDirectoryExists {
+                return .failed(step: .homeDirectory, message: "Home directory is missing.")
+            }
             if shell != request.shell {
                 return .failed(step: .shell, message: "Login shell does not match the plan.")
             }
+        }
+
+        if state.account.requiresAlanManagedOwnership && !state.ownership.isAlanManaged {
+            return .failed(
+                step: .ownership,
+                message: "Local account is not Alan managed."
+            )
         }
 
         switch state.sudoers {
@@ -914,6 +1772,7 @@ enum ManagedTerminalAccountPlanStepKind: Equatable {
     case removeManagedTerminalProfile
     case deleteAccount
     case deleteHomeDirectory
+    case helperStep(AlanManagedUserHelperPlanStepKind)
 }
 
 struct ManagedTerminalAccountPlanStep: Equatable {
@@ -927,6 +1786,10 @@ enum ManagedTerminalAccountPlanStatus: Equatable {
     case alreadyReady
     case repair
     case invalid([ManagedTerminalAccountValidationError])
+    case helperUnavailable
+    case accountNotAlanManaged
+    case legacySudoersPresent(path: String?)
+    case ptySpawnFailed
     case requiresDestructiveConfirmation
     case sudoersConflict(path: String)
     case terminalProfileConflict(profileID: String)
@@ -946,6 +1809,110 @@ enum ManagedTerminalAccountRollbackScope: Equatable {
 enum ManagedTerminalAccountPlanner {
     static func plan(
         request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis
+    ) -> ManagedTerminalAccountPlan {
+        plan(request: request, diagnosis: diagnosis, terminalProfile: nil)
+    }
+
+    static func plan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfiles: TerminalProfileDocument
+    ) -> ManagedTerminalAccountPlan {
+        plan(
+            request: request,
+            diagnosis: diagnosis,
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles)
+        )
+    }
+
+    private static func plan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> ManagedTerminalAccountPlan {
+        let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
+        guard validationErrors.isEmpty else {
+            return ManagedTerminalAccountPlan(request: request, status: .invalid(validationErrors), steps: [])
+        }
+
+        switch diagnosis.readinessState {
+        case .helperUnavailable:
+            return ManagedTerminalAccountPlan(request: request, status: .helperUnavailable, steps: [])
+        case .accountNotAlanManaged:
+            return ManagedTerminalAccountPlan(request: request, status: .accountNotAlanManaged, steps: [])
+        case _ where terminalProfile?.unmanagedProfileID != nil:
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .terminalProfileConflict(
+                    profileID: terminalProfile?.unmanagedProfileID ?? request.terminalProfileID
+                ),
+                steps: []
+            )
+        case .destructiveConfirmationRequired:
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .requiresDestructiveConfirmation,
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
+            )
+        case .ready:
+            let steps = terminalProfileHandoffSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: steps.isEmpty ? .alreadyReady : .readyToApply,
+                steps: steps
+            )
+        case .legacySudoersPresent:
+            if let conflictPath = unexpectedLegacySudoersPath(request: request, diagnosis: diagnosis) {
+                return ManagedTerminalAccountPlan(
+                    request: request,
+                    status: .sudoersConflict(path: conflictPath),
+                    steps: []
+                )
+            }
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .legacySudoersPresent(path: diagnosis.legacySudoersPath),
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
+            )
+        case .ptySpawnFailed:
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .ptySpawnFailed,
+                steps: helperBackedSteps(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfile: terminalProfile
+                )
+            )
+        case .accountMissing, .repairable:
+            let steps = helperBackedSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: diagnosis.accountExists ? .repair : .readyToApply,
+                steps: steps
+            )
+        }
+    }
+
+    static func plan(
+        request: ManagedTerminalAccountRequest,
         state: ManagedTerminalAccountState
     ) -> ManagedTerminalAccountPlan {
         do {
@@ -958,6 +1925,98 @@ enum ManagedTerminalAccountPlanner {
                 request: request,
                 status: .invalid([.coreUnavailable(String(describing: error))]),
                 steps: []
+            )
+        }
+    }
+
+    static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope
+    ) -> ManagedTerminalAccountPlan {
+        rollbackPlan(request: request, diagnosis: diagnosis, scope: scope, terminalProfile: nil)
+    }
+
+    static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope,
+        terminalProfiles: TerminalProfileDocument
+    ) -> ManagedTerminalAccountPlan {
+        rollbackPlan(
+            request: request,
+            diagnosis: diagnosis,
+            scope: scope,
+            terminalProfile: terminalProfileState(for: request, document: terminalProfiles)
+        )
+    }
+
+    private static func rollbackPlan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> ManagedTerminalAccountPlan {
+        if diagnosis.readinessState == .helperUnavailable {
+            return ManagedTerminalAccountPlan(request: request, status: .helperUnavailable, steps: [])
+        }
+        if diagnosis.readinessState == .accountNotAlanManaged
+            || diagnosis.ownershipState == .notAlanManaged
+        {
+            return ManagedTerminalAccountPlan(request: request, status: .accountNotAlanManaged, steps: [])
+        }
+
+        var steps: [ManagedTerminalAccountPlanStep] = []
+        if shouldCleanupLegacySudoers(request: request, diagnosis: diagnosis) {
+            steps.append(helperStep(.cleanupLegacySudoers, "Clean up verified legacy Alan sudoers"))
+        }
+        if terminalProfile?.managedProfileID == request.terminalProfileID
+            || diagnosis.terminalProfileID == request.terminalProfileID
+        {
+            steps.append(step(.removeManagedTerminalProfile, "Remove managed Terminal Profile", false))
+        }
+
+        switch scope {
+        case .alanIntegrationOnly:
+            steps.append(
+                helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration")
+            )
+            return ManagedTerminalAccountPlan(request: request, status: .readyToApply, steps: steps)
+        case .deleteAccountAndHome(let confirmation):
+            guard diagnosis.ownershipState == .alanManaged else {
+                return ManagedTerminalAccountPlan(
+                    request: request,
+                    status: .accountNotAlanManaged,
+                    steps: steps
+                )
+            }
+            guard confirmation == request.accountName else {
+                return ManagedTerminalAccountPlan(
+                    request: request,
+                    status: .requiresDestructiveConfirmation,
+                    steps: steps
+                )
+            }
+            var destructiveSteps: [ManagedTerminalAccountPlanStep] = []
+            if diagnosis.accountExists {
+                destructiveSteps.append(helperStep(.deleteAccount, "Delete terminal account"))
+            }
+            if diagnosis.homeDirectoryExists
+                && request.homeDirectory == ManagedTerminalAccountRequest.canonicalHomeDirectory(
+                    for: request.accountName
+                )
+            {
+                destructiveSteps.append(
+                    helperStep(.deleteHomeDirectory, "Delete terminal account home directory")
+                )
+            }
+            destructiveSteps.append(
+                helperStep(.removeManagedUserIntegration, "Remove helper-managed account integration")
+            )
+            return ManagedTerminalAccountPlan(
+                request: request,
+                status: .readyToApply,
+                steps: steps + destructiveSteps
             )
         }
     }
@@ -981,6 +2040,13 @@ enum ManagedTerminalAccountPlanner {
         case .alanIntegrationOnly:
             return ManagedTerminalAccountPlan(request: request, status: .readyToApply, steps: steps)
         case .deleteAccountAndHome(let confirmation):
+            if state.account.requiresAlanManagedOwnership && !state.ownership.isAlanManaged {
+                return ManagedTerminalAccountPlan(
+                    request: request,
+                    status: .accountNotAlanManaged,
+                    steps: steps
+                )
+            }
             guard confirmation == request.accountName else {
                 return ManagedTerminalAccountPlan(
                     request: request,
@@ -988,9 +2054,10 @@ enum ManagedTerminalAccountPlanner {
                     steps: steps
                 )
             }
-            var destructiveSteps = [
-                step(.deleteAccount, "Delete terminal account", true),
-            ]
+            var destructiveSteps: [ManagedTerminalAccountPlanStep] = []
+            if canDeleteAccount(state: state) {
+                destructiveSteps.append(step(.deleteAccount, "Delete terminal account", true))
+            }
             if canDeleteHomeDirectory(request: request, state: state) {
                 destructiveSteps.append(
                     step(.deleteHomeDirectory, "Delete terminal account home directory", true)
@@ -1001,6 +2068,15 @@ enum ManagedTerminalAccountPlanner {
                 status: .readyToApply,
                 steps: steps + destructiveSteps
             )
+        }
+    }
+
+    private static func canDeleteAccount(state: ManagedTerminalAccountState) -> Bool {
+        switch state.account {
+        case .standard, .admin:
+            return true
+        case .missing, .invalid:
+            return false
         }
     }
 
@@ -1031,6 +2107,111 @@ enum ManagedTerminalAccountPlanner {
             summary: summary,
             requiresPrivilege: requiresPrivilege
         )
+    }
+
+    private static func helperStep(
+        _ kind: AlanManagedUserHelperPlanStepKind,
+        _ summary: String
+    ) -> ManagedTerminalAccountPlanStep {
+        step(.helperStep(kind), summary, true)
+    }
+
+    private static func helperBackedSteps(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> [ManagedTerminalAccountPlanStep] {
+        var steps: [ManagedTerminalAccountPlanStep] = []
+
+        if !diagnosis.accountExists {
+            steps.append(helperStep(.createStandardAccount, "Create standard local terminal account"))
+        } else {
+            if diagnosis.isAdmin {
+                steps.append(helperStep(.repairAccountType, "Repair terminal account type"))
+            }
+            if !diagnosis.homeDirectoryExists {
+                steps.append(helperStep(.repairHomeDirectory, "Repair terminal account home directory"))
+            }
+            if !diagnosis.shellMatches {
+                steps.append(helperStep(.repairShell, "Repair terminal account shell"))
+            }
+        }
+
+        if request.hideFromLoginWindow && !diagnosis.hiddenFromLoginWindow {
+            steps.append(helperStep(.hideAccount, "Hide terminal account from login window lists"))
+        }
+        let shouldCleanupLegacySudoers = shouldCleanupLegacySudoers(
+            request: request,
+            diagnosis: diagnosis
+        )
+        if diagnosis.ownershipState != .alanManaged || shouldCleanupLegacySudoers {
+            steps.append(helperStep(.writeOwnershipMarker, "Write Alan-managed ownership marker"))
+        }
+        if shouldCleanupLegacySudoers {
+            steps.append(helperStep(.cleanupLegacySudoers, "Clean up verified legacy Alan sudoers"))
+        }
+        steps.append(helperStep(.verifyAccount, "Verify helper-managed account state"))
+        if !diagnosis.ptySmokeVerified {
+            steps.append(helperStep(.verifyManagedUserPTY, "Verify helper-managed PTY startup"))
+        }
+        steps.append(
+            contentsOf: terminalProfileHandoffSteps(
+                request: request,
+                diagnosis: diagnosis,
+                terminalProfile: terminalProfile
+            )
+        )
+        return steps
+    }
+
+    private static func terminalProfileHandoffSteps(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis,
+        terminalProfile: ManagedTerminalAccountProfileState?
+    ) -> [ManagedTerminalAccountPlanStep] {
+        if terminalProfile?.managedProfileID == request.terminalProfileID {
+            return []
+        }
+        guard diagnosis.terminalProfileID == request.terminalProfileID else {
+            return [
+                step(.createOrUpdateTerminalProfile, "Create matching Terminal Profile", false),
+            ]
+        }
+        return []
+    }
+
+    private static func terminalProfileState(
+        for request: ManagedTerminalAccountRequest,
+        document: TerminalProfileDocument
+    ) -> ManagedTerminalAccountProfileState {
+        guard let profile = document.profile(id: request.terminalProfileID) else {
+            return .missing
+        }
+        guard profile.managedTerminalAccountID == request.accountName else {
+            return .existingUnmanaged(profileID: profile.id)
+        }
+        guard profile.launch == .managedUser(unixUser: request.accountName),
+            profile.defaultWorkingDirectory == request.homeDirectory
+        else {
+            return .existingManagedOutdated(profileID: profile.id)
+        }
+        return .existingManaged(profileID: profile.id)
+    }
+
+    private static func shouldCleanupLegacySudoers(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis
+    ) -> Bool {
+        guard let path = diagnosis.legacySudoersPath else { return false }
+        return path == ManagedTerminalAccountSudoersRule(request: request).filePath
+    }
+
+    private static func unexpectedLegacySudoersPath(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: AlanManagedUserDiagnosis
+    ) -> String? {
+        guard let path = diagnosis.legacySudoersPath else { return nil }
+        return path == ManagedTerminalAccountSudoersRule(request: request).filePath ? nil : path
     }
 
     private static func shouldRemoveSudoersDropIn(
@@ -1088,11 +2269,6 @@ protocol ManagedTerminalAccountPrivilegedExecuting {
     func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult
 }
 
-struct ManagedTerminalAccountPrivilegedCommandResult: Equatable {
-    let succeeded: Bool
-    let redactedMessage: String
-}
-
 struct ManagedTerminalAccountLocalEffectResult: Equatable {
     let succeeded: Bool
     let redactedMessage: String
@@ -1138,7 +2314,7 @@ struct ManagedTerminalAccountTerminalProfileEffectExecutor: ManagedTerminalAccou
             return removeManagedTerminalProfile(for: request)
         case .createStandardAccount, .repairAccountType, .repairHomeDirectory, .repairShell,
                 .hideAccount, .writeSudoersDropIn, .validateSudoers, .verifyTerminalEntry,
-                .removeSudoersDropIn, .deleteAccount, .deleteHomeDirectory:
+                .removeSudoersDropIn, .deleteAccount, .deleteHomeDirectory, .helperStep:
             return nil
         }
     }
@@ -1147,21 +2323,20 @@ struct ManagedTerminalAccountTerminalProfileEffectExecutor: ManagedTerminalAccou
         for request: ManagedTerminalAccountRequest
     ) -> ManagedTerminalAccountLocalEffectResult {
         let document = store.load().document
-        let editorResult = TerminalProfileEditor.upserting(
-            draft: TerminalProfileEditorDraft(
-                id: request.terminalProfileID,
-                title: request.fullName ?? request.accountName,
-                launchKind: .sudoUser,
-                unixUser: request.accountName,
-                defaultWorkingDirectory: request.homeDirectory,
-                presentation: TerminalProfilePresentation(
-                    symbolName: "person.crop.circle",
-                    colorName: nil
-                ),
-                managedTerminalAccountID: request.accountName
+        let draft = TerminalProfileEditorDraft(
+            id: request.terminalProfileID,
+            title: request.fullName ?? request.accountName,
+            launchKind: .managedUser,
+            unixUser: request.accountName,
+            customCommand: "",
+            defaultWorkingDirectory: request.homeDirectory,
+            presentation: TerminalProfilePresentation(
+                symbolName: "person.crop.circle",
+                colorName: nil
             ),
-            into: document
+            managedTerminalAccountID: request.accountName
         )
+        let editorResult = TerminalProfileEditor.upserting(draft: draft, into: document)
         guard let nextDocument = editorResult.document else {
             return .failed("Terminal Profile handoff failed. Credentials redacted.")
         }
@@ -1228,122 +2403,60 @@ struct ManagedTerminalAccountTerminalProfileEffectExecutor: ManagedTerminalAccou
     }
 }
 
-protocol ManagedTerminalAccountPrivilegedCommandRunning {
-    func runPrivilegedShellScript(
-        _ script: String,
-        redactedDescription: String
-    ) -> ManagedTerminalAccountPrivilegedCommandResult
-}
-
-struct ManagedTerminalAccountAppleScriptPrivilegeRunner: ManagedTerminalAccountPrivilegedCommandRunning {
-    let commandRunner: ManagedTerminalAccountCommandRunning
-
-    init(commandRunner: ManagedTerminalAccountCommandRunning = ManagedTerminalAccountProcessRunner()) {
-        self.commandRunner = commandRunner
-    }
-
-    func runPrivilegedShellScript(
-        _ script: String,
-        redactedDescription: String
-    ) -> ManagedTerminalAccountPrivilegedCommandResult {
-        let result = commandRunner.run(
-            executablePath: "/usr/bin/osascript",
-            arguments: [
-                "-e",
-                "do shell script \(appleScriptStringLiteral(script)) with administrator privileges",
-            ]
-        )
-        return ManagedTerminalAccountPrivilegedCommandResult(
-            succeeded: result.succeeded,
-            redactedMessage: result.succeeded
-                ? "\(redactedDescription) completed."
-                : "\(redactedDescription) failed. Credentials redacted."
-        )
-    }
-
-    private func appleScriptStringLiteral(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-        return "\"\(escaped)\""
-    }
-}
-
-struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPrivilegedExecuting {
-    let request: ManagedTerminalAccountRequest
-    let commandRunner: ManagedTerminalAccountPrivilegedCommandRunning
+struct ManagedTerminalAccountHelperExecutor: ManagedTerminalAccountPrivilegedExecuting {
+    let channel: AlanInstallChannel
+    let helperClient: AlanPrivilegedHelperClienting
     let localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting
-    let entryVerifier: ManagedTerminalAccountEntryVerifying
 
     init(
-        request: ManagedTerminalAccountRequest,
-        commandRunner: ManagedTerminalAccountPrivilegedCommandRunning =
-            ManagedTerminalAccountAppleScriptPrivilegeRunner(),
+        channel: AlanInstallChannel = .current(),
+        helperClient: AlanPrivilegedHelperClienting,
         localEffectExecutor: ManagedTerminalAccountLocalEffectExecuting =
-            ManagedTerminalAccountTerminalProfileEffectExecutor(),
-        entryVerifier: ManagedTerminalAccountEntryVerifying =
-            ManagedTerminalAccountSudoEntryVerifier()
+            ManagedTerminalAccountTerminalProfileEffectExecutor()
     ) {
-        self.request = request
-        self.commandRunner = commandRunner
+        self.channel = channel
+        self.helperClient = helperClient
         self.localEffectExecutor = localEffectExecutor
-        self.entryVerifier = entryVerifier
     }
 
     func apply(_ plan: ManagedTerminalAccountPlan) -> ManagedTerminalAccountApplyResult {
-        var completed: [ManagedTerminalAccountPlanStepKind] = []
-        var diagnostics: [String] = []
-
-        for step in plan.steps {
-            if step.kind == .verifyTerminalEntry {
-                let verification = entryVerifier.verifyTerminalEntry(request: request)
-                guard verification.isValid else {
-                    diagnostics.append("\(step.summary) failed. Credentials redacted.")
-                    return ManagedTerminalAccountApplyResult(
-                        completedSteps: completed,
-                        failedStep: step.kind,
-                        cancelled: false,
-                        visibleDiagnostics: diagnostics
-                    )
-                }
-                diagnostics.append("\(step.summary) completed.")
-                completed.append(step.kind)
-                continue
-            }
-            guard let script = script(for: step.kind) else {
-                guard let result = localEffectExecutor.apply(step.kind, request: request) else {
-                    diagnostics.append("Step has no executor: \(step.summary).")
-                    return ManagedTerminalAccountApplyResult(
-                        completedSteps: completed,
-                        failedStep: step.kind,
-                        cancelled: false,
-                        visibleDiagnostics: diagnostics
-                    )
-                }
-                diagnostics.append(result.redactedMessage)
-                guard result.succeeded else {
-                    return ManagedTerminalAccountApplyResult(
-                        completedSteps: completed,
-                        failedStep: step.kind,
-                        cancelled: false,
-                        visibleDiagnostics: diagnostics
-                    )
-                }
-                completed.append(step.kind)
-                continue
-            }
-            let result = commandRunner.runPrivilegedShellScript(
-                script,
-                redactedDescription: step.summary
+        if let rejectedStep = plan.steps.first(where: rejectsLegacyPrivilegedStep) {
+            return ManagedTerminalAccountApplyResult(
+                completedSteps: [],
+                failedStep: rejectedStep.kind,
+                cancelled: false,
+                visibleDiagnostics: [
+                    "Helper-backed Managed User plan rejected a legacy privileged step. Credentials redacted.",
+                ]
             )
-            diagnostics.append(result.redactedMessage)
+        }
+
+        let helperPlan = AlanManagedUserHelperPlan(
+            operationID: UUID().uuidString,
+            channelID: channel.installChannelID,
+            request: plan.request,
+            steps: plan.steps.compactMap(helperPlanStep)
+        )
+
+        var completed: [ManagedTerminalAccountPlanStepKind] = []
+        if !helperPlan.steps.isEmpty {
+            let helperResult = helperClient.applyManagedUserPlan(helperPlan)
+            completed.append(contentsOf: helperResult.completedSteps)
+            if helperResult.failedStep != nil || helperResult.cancelled {
+                return helperResult
+            }
+        }
+
+        for step in plan.steps where !step.requiresPrivilege {
+            guard let result = localEffectExecutor.apply(step.kind, request: plan.request) else {
+                continue
+            }
             guard result.succeeded else {
                 return ManagedTerminalAccountApplyResult(
                     completedSteps: completed,
                     failedStep: step.kind,
                     cancelled: false,
-                    visibleDiagnostics: diagnostics
+                    visibleDiagnostics: [result.redactedMessage]
                 )
             }
             completed.append(step.kind)
@@ -1353,116 +2466,27 @@ struct ManagedTerminalAccountAuthorizedScriptExecutor: ManagedTerminalAccountPri
             completedSteps: completed,
             failedStep: nil,
             cancelled: false,
-            visibleDiagnostics: diagnostics.isEmpty
-                ? ["Provisioning plan completed. Credentials redacted."]
-                : diagnostics
+            visibleDiagnostics: ["Helper-backed Managed User plan applied. Credentials redacted."]
         )
     }
 
-    private func script(for step: ManagedTerminalAccountPlanStepKind) -> String? {
-        let account = shellQuote(request.accountName)
-        let accountRecord = shellQuote("/Users/\(request.accountName)")
-        let home = shellQuote(request.homeDirectory)
-        let shell = shellQuote(request.shell)
-        switch step {
-        case .createStandardAccount:
-            let fullName = shellQuote(request.fullName ?? request.accountName)
-            let disabledAuthentication = shellQuote(";DisabledUser;")
-            return """
-            set -eu
-            account_name=\(account)
-            account_record=\(accountRecord)
-            account_home=\(home)
-            account_shell=\(shell)
-            account_full_name=\(fullName)
-            disabled_auth=\(disabledAuthentication)
-            next_uid="$(
-              /usr/bin/dscl . -list /Users UniqueID |
-                /usr/bin/awk '$2 ~ /^[0-9]+$/ && $2 >= 501 { if ($2 >= max) max=$2 } END { print (max ? max + 1 : 501) }'
-            )"
-            while /usr/bin/dscl . -search /Users UniqueID "$next_uid" >/dev/null 2>&1; do
-              next_uid=$((next_uid + 1))
-            done
-            /usr/bin/dscl . -create "$account_record"
-            /usr/bin/dscl . -create "$account_record" UserShell "$account_shell"
-            /usr/bin/dscl . -create "$account_record" RealName "$account_full_name"
-            /usr/bin/dscl . -create "$account_record" NFSHomeDirectory "$account_home"
-            /usr/bin/dscl . -create "$account_record" PrimaryGroupID 20
-            /usr/bin/dscl . -create "$account_record" UniqueID "$next_uid"
-            /usr/bin/dscl . -create "$account_record" GeneratedUID "$(/usr/bin/uuidgen)"
-            /usr/bin/dscl . -create "$account_record" AuthenticationAuthority "$disabled_auth"
-            /usr/sbin/createhomedir -c -u "$account_name" >/dev/null 2>&1 || true
-            /usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true
-            """
-        case .repairAccountType:
-            return "/usr/sbin/dseditgroup -o edit -d \(account) -t user admin >/dev/null 2>&1 || true"
-        case .repairHomeDirectory:
-            return """
-            /usr/bin/dscl . -create \(accountRecord) NFSHomeDirectory \(home)
-            /usr/sbin/createhomedir -c -u \(account) >/dev/null 2>&1 || true
-            """
-        case .repairShell:
-            return "/usr/bin/dscl . -create \(accountRecord) UserShell \(shell)"
-        case .hideAccount:
-            return "/usr/bin/dscl . -create \(accountRecord) IsHidden 1"
-        case .writeSudoersDropIn:
-            return sudoersWriteScript()
-        case .validateSudoers:
-            return "/usr/sbin/visudo -cf \(shellQuote(ManagedTerminalAccountSudoersRule(request: request).filePath))"
-        case .verifyTerminalEntry:
-            return nil
-        case .removeSudoersDropIn:
-            return sudoersRemoveScript()
-        case .deleteAccount:
-            return "/usr/sbin/sysadminctl -deleteUser \(account)"
-        case .deleteHomeDirectory:
-            return "/bin/rm -rf \(home)"
-        case .createOrUpdateTerminalProfile, .bindCurrentSpace, .removeManagedTerminalProfile:
-            return nil
+    private func rejectsLegacyPrivilegedStep(_ step: ManagedTerminalAccountPlanStep) -> Bool {
+        guard step.requiresPrivilege else { return false }
+        if case .helperStep = step.kind {
+            return false
         }
+        return true
     }
 
-    private func sudoersWriteScript() -> String {
-        let rule = ManagedTerminalAccountSudoersRule(request: request)
-        return """
-        set -eu
-        temp_dir="$(/usr/bin/mktemp -d /tmp/alan-terminal-sudoers.XXXXXXXXXX)"
-        trap '/bin/rm -rf "$temp_dir"' 0 1 2 15
-        temp_path="$temp_dir/sudoers"
-        umask 077
-        /bin/cat > "$temp_path" <<'ALAN_SUDOERS'
-        \(rule.contents)
-        ALAN_SUDOERS
-        /usr/sbin/visudo -cf "$temp_path"
-        /usr/bin/install -o root -g wheel -m 0440 "$temp_path" \(shellQuote(rule.filePath))
-        """
-    }
-
-    private func sudoersRemoveScript() -> String {
-        let rule = ManagedTerminalAccountSudoersRule(request: request)
-        return """
-        set -eu
-        sudoers_path=\(shellQuote(rule.filePath))
-        if [ ! -e "$sudoers_path" ] && [ ! -L "$sudoers_path" ]; then
-          exit 0
-        fi
-        temp_dir="$(/usr/bin/mktemp -d /tmp/alan-terminal-sudoers-remove.XXXXXXXXXX)"
-        trap '/bin/rm -rf "$temp_dir"' 0 1 2 15
-        expected_path="$temp_dir/expected"
-        umask 077
-        /bin/cat > "$expected_path" <<'ALAN_SUDOERS'
-        \(rule.contents)
-        ALAN_SUDOERS
-        if ! /usr/bin/cmp -s "$expected_path" "$sudoers_path"; then
-          /bin/echo "Refusing to remove sudoers drop-in with unexpected contents." >&2
-          exit 1
-        fi
-        /bin/rm -f "$sudoers_path"
-        """
-    }
-
-    private func shellQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    private func helperPlanStep(
+        _ step: ManagedTerminalAccountPlanStep
+    ) -> AlanManagedUserHelperPlanStep? {
+        guard case .helperStep(let kind) = step.kind else { return nil }
+        return AlanManagedUserHelperPlanStep(
+            kind: kind,
+            summary: step.summary,
+            requiresDestructiveConfirmation: kind == .deleteAccount || kind == .deleteHomeDirectory
+        )
     }
 }
 

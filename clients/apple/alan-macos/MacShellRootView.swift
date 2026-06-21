@@ -17,7 +17,7 @@ struct MacShellRootView: View {
     @State private var windowChromeMetrics = ShellWindowChromeMetrics()
     @State private var systemColorScheme = ShellAppearanceMode.currentSystemColorScheme
     @State private var isCollapsedSidebarPointerRetained = false
-    private let sidebarWidth: CGFloat = 264
+    private let sidebarWidth: CGFloat = 240
     private let floatingSidebarInset: CGFloat = 6
     private let floatingSidebarTrafficLightRevealDelay: TimeInterval = 0.08
     private let sidebarPinMorphDuration: TimeInterval = 0.18

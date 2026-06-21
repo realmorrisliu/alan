@@ -930,6 +930,10 @@ impl WorkspaceReducer {
         let pane_slot_ids = self.pane_slot_id_sources(reserved_pane_slot_ids);
         let pane_slot_id = next_id("pane", pane_slot_ids.iter());
         let content_id = terminal_content_id(&pane_slot_id);
+        let locks_tab_title = tab_title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|title| !title.is_empty());
         let resolved_tab_title = tab_title.unwrap_or_else(|| "Shell".to_string());
         let resolved_space_title = title.unwrap_or_else(|| {
             default_space_title_from_working_directory(
@@ -945,7 +949,7 @@ impl WorkspaceReducer {
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
             zoomed_pane_id: None,
             is_pinned: false,
-            is_title_user_locked: false,
+            is_title_user_locked: locks_tab_title,
         };
         self.state.spaces.push(Space {
             space_id: space_id.clone(),
@@ -1022,6 +1026,10 @@ impl WorkspaceReducer {
         let pane_slot_ids = self.pane_slot_id_sources(reserved_pane_slot_ids);
         let pane_slot_id = next_id("pane", pane_slot_ids.iter());
         let content_id = terminal_content_id(&pane_slot_id);
+        let locks_tab_title = title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|title| !title.is_empty());
         let resolved_title = title.unwrap_or_else(|| {
             let next_tab_count = self.state.spaces[space_index].tabs.len() + 1;
             format!("Shell {next_tab_count}")
@@ -1040,7 +1048,7 @@ impl WorkspaceReducer {
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
             zoomed_pane_id: None,
             is_pinned: false,
-            is_title_user_locked: false,
+            is_title_user_locked: locks_tab_title,
         });
         self.state.spaces[space_index].selected_tab_id = Some(tab_id.clone());
         self.state.pane_slots.push(PaneSlot {
@@ -2513,6 +2521,7 @@ fn content_instance(
         payload,
         terminal_metadata: None,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     }
 }
 
@@ -2561,6 +2570,7 @@ fn terminal_content(
         payload,
         terminal_metadata: None,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     }
 }
 

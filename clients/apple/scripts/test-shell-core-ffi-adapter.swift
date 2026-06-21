@@ -316,21 +316,6 @@ private func testManifestReducerAndActionCalls() throws {
     try expect(reducerResponse.error == nil, "reducer apply must succeed through FFI")
     try expect(reducerResponse.payload?["status"] as? String == "ok", "reducer response must be ok")
 
-    let shortcutResponse = try adapter.send(
-        operation: "actions.default_shortcut",
-        payload: [
-            "id": "shell.tab.new_terminal",
-            "target": [
-                "type": "current_selection",
-            ],
-        ]
-    )
-    try expect(shortcutResponse.error == nil, "action shortcut must succeed through FFI")
-    guard let shortcut = shortcutResponse.payload?["shortcut"] as? [String: Any] else {
-        throw TestFailure.message("action shortcut response must contain shortcut")
-    }
-    try expect(shortcut["key"] as? String == "t", "new terminal tab shortcut key must match")
-    try expect(shortcut["context"] as? String == "shell", "new terminal tab shortcut context must match")
 }
 
 private func testProductionAdapterReducerFocus() throws {
@@ -823,33 +808,54 @@ private func testProductionAdapterActions() throws {
         workingDirectory: "/repo/app"
     )
 
-    let actionTitle = try adapter.actionTitle(for: .newTerminalTab)
-    try expect(actionTitle == "New Terminal Tab", "production adapter must read action titles from Rust")
-    let shortcut = try adapter.defaultActionShortcut(for: .newTerminalTab)
-    try expect(shortcut?.key == "t", "production adapter must decode default shortcut key")
-    try expect(shortcut?.modifiers == [.command], "production adapter must decode shortcut modifiers")
+    try expect(
+        ShellActionID.newTerminalTab.title == "New Terminal Tab",
+        "action titles must resolve locally without shell-core FFI"
+    )
+    let shortcut = ShellActionMetadataCatalog.shortcut(.newTerminalTab)
+    try expect(shortcut?.key == "t", "local action metadata must provide default shortcut key")
+    try expect(shortcut?.modifiers == [.command], "local action metadata must provide shortcut modifiers")
 
-    let spaceShortcut = try adapter.defaultActionShortcut(
-        for: .spaceSelectByIndex,
+    let spaceShortcut = ShellActionMetadataCatalog.shortcut(
+        .spaceSelectByIndex,
         target: .spaceIndex(2)
     )
-    try expect(spaceShortcut?.key == "3", "production adapter must decode dynamic Space shortcut")
+    try expect(spaceShortcut?.key == "3", "local action metadata must provide dynamic Space shortcut")
 
     guard let shortcut else {
         throw TestFailure.message("new terminal shortcut must be present")
     }
-    let keyboardAction = try adapter.keyboardAction(for: shortcut)
+    let keyboardAction = ShellActionMetadataCatalog.keyboardAction(for: shortcut)
     try expect(
         keyboardAction == ShellKeyboardAction(id: .newTerminalTab, target: .currentSelection),
-        "production adapter must decode keyboard action target"
+        "local action metadata must decode keyboard action target"
     )
 
-    let availability = try adapter.actionAvailability(
+    let availability = ShellActionAvailabilityResolver.availability(
         .newTerminalTab,
         target: .currentSelection,
         state: state
     )
-    try expect(availability == .available, "production adapter must decode available actions")
+    try expect(availability == .available, "action availability must resolve locally")
+
+    let createdSpace = state.creatingSpace(title: "Other", workingDirectory: "/repo/other")
+    guard let createdSpaceID = createdSpace.spaceID else {
+        throw TestFailure.message("space fixture must create a context Space for action execution")
+    }
+    var handledNewTabEffect: ShellActionEffect?
+    let newTabResult = try adapter.executeAction(
+        .newTerminalTab,
+        target: .contextSpace(createdSpaceID),
+        state: createdSpace.state
+    ) { effect in
+        handledNewTabEffect = effect
+        return true
+    }
+    try expect(newTabResult == .executed, "new-terminal action must execute for context Space")
+    try expect(
+        handledNewTabEffect == .openTab(.shell, spaceID: createdSpaceID),
+        "new-terminal action must preserve the context Space target"
+    )
 
     let splitResult = try state.splittingPane("pane_1", placement: .right)
     guard let focusedPaneID = splitResult.paneID else {
@@ -1265,6 +1271,32 @@ private func testProductionAdapterTerminalProfiles() throws {
     try expect(
         upsertResult.document?.profiles.first?.defaultWorkingDirectory == "/repo/custom",
         "profile upsert adapter must decode Rust-normalized working directories"
+    )
+    let managedUpsert = try adapter.upsertTerminalProfileDraft(
+        TerminalProfileEditorDraft(
+            id: "managed",
+            title: "Managed Root",
+            launchKind: .sudoRoot,
+            defaultWorkingDirectory: "/var/root",
+            managedTerminalAccountID: "managed"
+        ),
+        into: TerminalProfileDocument(
+            defaultProfileID: "managed",
+            profiles: [
+                TerminalProfileDefinition(
+                    id: "managed",
+                    title: "Managed",
+                    launch: .managedUser(unixUser: "managed"),
+                    defaultWorkingDirectory: "/Users/managed",
+                    presentation: nil,
+                    managedTerminalAccountID: "managed"
+                )
+            ]
+        )
+    )
+    try expect(
+        managedUpsert.errors.contains(.managedProfileReadOnly("managed")),
+        "profile upsert adapter must decode managed read-only errors"
     )
 
     let launchIntent = try adapter.resolveTerminalLaunchIntent(

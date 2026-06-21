@@ -769,6 +769,7 @@ fn restored_content_instance(
         payload,
         terminal_metadata,
         lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
     }
 }
 

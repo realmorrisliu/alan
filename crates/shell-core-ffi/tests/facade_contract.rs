@@ -207,7 +207,7 @@ fn facade_dispatches_terminal_profile_launch_intent() {
         }),
     );
     assert!(capture.error.is_none());
-    assert_eq!(capture.payload.unwrap()["capture"], json!(true));
+    assert_eq!(capture.payload.unwrap()["capture"], json!(false));
 
     let upsert = request(
         "terminal_profile.upsert",
@@ -354,6 +354,52 @@ fn facade_dispatches_managed_terminal_account_planning() {
             "create_or_update_terminal_profile",
             "bind_current_space",
         ]
+    );
+
+    let ordinary_account = request(
+        "managed_terminal_account.plan",
+        json!({
+            "request": {
+                "account_name": "univer",
+                "gui_user_name": "morris",
+                "full_name": "Univer",
+                "shell": "/bin/zsh",
+                "home_directory": "/Users/univer",
+                "hide_from_login_window": true,
+                "bind_current_space_after_success": false
+            },
+            "state": {
+                "account": {
+                    "state": "standard",
+                    "home_directory": "/Users/univer",
+                    "shell": "/bin/zsh",
+                    "hidden": false
+                },
+                "sudoers": {
+                    "state": "missing"
+                },
+                "ownership": {
+                    "state": "not_alan_managed",
+                    "reason": "univer is an existing local account without Alan-managed ownership evidence."
+                },
+                "terminal_profile": {
+                    "state": "missing"
+                },
+                "verification": {
+                    "status": "failed",
+                    "step": "ownership",
+                    "message": "Local account is not Alan managed."
+                },
+                "home_directory_exists": true
+            }
+        }),
+    );
+    assert!(ordinary_account.error.is_none());
+    assert_eq!(
+        ordinary_account
+            .payload
+            .expect("ordinary account plan payload")["plan"]["status"]["type"],
+        json!("account_not_alan_managed")
     );
 }
 

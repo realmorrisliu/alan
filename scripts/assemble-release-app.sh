@@ -17,6 +17,8 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
 CARGO_BUILD_TARGET="aarch64-apple-darwin"
 CARGO_RELEASE_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/alan"
+SHELL_CORE_FFI_TARGET_DIR="${ALAN_SHELL_CORE_FFI_TARGET_DIR:-$REPO_ROOT/target/shell-core-ffi-release-unoptimized}"
+SHELL_CORE_FFI_BUILD_DYLIB="$SHELL_CORE_FFI_TARGET_DIR/release/libalan_shell_core_ffi.dylib"
 RELEASE_ARCH="arm64"
 ARTIFACT_DIR="${ALAN_RELEASE_ARTIFACT_DIR:-$REPO_ROOT/target/release-artifacts}"
 STAGING_DIR="$ARTIFACT_DIR/staging"
@@ -24,6 +26,7 @@ APP_BUNDLE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 EMBEDDED_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 SHELL_CORE_FFI_DYLIB_NAME="libalan_shell_core_ffi.dylib"
 SHELL_CORE_FFI_DYLIB="$APP_BUNDLE/Contents/Frameworks/$SHELL_CORE_FFI_DYLIB_NAME"
+PRIVILEGED_HELPER_EXECUTABLE="$APP_BUNDLE/Contents/Library/LaunchServices/$ALAN_PRIVILEGED_HELPER_LABEL"
 MANIFEST_PATH="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 SIGNING_IDENTITY="${ALAN_DEVELOPER_ID_APPLICATION:-${ALAN_SIGNING_IDENTITY:-}}"
 NOTARIZE="${ALAN_NOTARIZE:-0}"
@@ -31,6 +34,7 @@ CREATE_ARCHIVE="${ALAN_CREATE_RELEASE_ARCHIVE:-$NOTARIZE}"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
 REVISION="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 DIRTY="false"
+XCODE_VERSION_SETTINGS=()
 
 if ! git -C "$REPO_ROOT" diff --quiet --ignore-submodules -- 2>/dev/null ||
     ! git -C "$REPO_ROOT" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
@@ -39,6 +43,10 @@ fi
 
 if alan_install_channel_is_dev && [[ -z "$SIGNING_IDENTITY" ]]; then
     SIGNING_IDENTITY="-"
+fi
+
+if [[ -n "${ALAN_BUNDLE_VERSION:-}" ]]; then
+    XCODE_VERSION_SETTINGS=(CURRENT_PROJECT_VERSION="$ALAN_BUNDLE_VERSION")
 fi
 
 fail() {
@@ -93,6 +101,13 @@ sign_path() {
         args+=(--options runtime --timestamp)
     fi
     codesign "${args[@]}" "$path"
+}
+
+verify_dylib_loadable() {
+    local dylib="$1"
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$dylib" ||
+        fail "shell-core FFI dylib is not loadable: $dylib"
 }
 
 thin_macho_to_arm64() {
@@ -178,6 +193,8 @@ require_command xcodebuild
 require_command codesign
 require_command ditto
 require_command lipo
+require_command plutil
+require_command python3
 require_command shasum
 if [[ "$SIGNING_IDENTITY" != "-" ]]; then
     require_command security
@@ -190,13 +207,20 @@ printf 'Building release alan binary for %s channel (%s)...\n' \
     "$ALAN_CHANNEL_ID" "$CARGO_BUILD_TARGET"
 cargo build --release -p alan --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
 
+printf 'Building release shell core FFI for %s channel...\n' "$ALAN_CHANNEL_ID"
+CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_TARGET_DIR="$SHELL_CORE_FFI_TARGET_DIR" \
+    cargo build --release -p alan-shell-core-ffi
+python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$SHELL_CORE_FFI_BUILD_DYLIB" ||
+    fail "release shell core FFI dylib is not loadable: $SHELL_CORE_FFI_BUILD_DYLIB"
+
 if [[ -e "$APP_BUNDLE" ]]; then
     printf 'Removing stale Release %s build product...\n' "$ALAN_APP_BUNDLE_NAME"
     rm -rf "$APP_BUNDLE"
 fi
 
 printf 'Building Release %s...\n' "$ALAN_APP_BUNDLE_NAME"
-xcodebuild \
+ALAN_SHELL_CORE_FFI_LIBRARY="$SHELL_CORE_FFI_BUILD_DYLIB" xcodebuild \
     -project "$REPO_ROOT/clients/apple/alan-macos.xcodeproj" \
     -scheme alan-macos \
     -configuration Release \
@@ -206,8 +230,10 @@ xcodebuild \
     ALAN_SHELL_CORE_FFI_CARGO_TARGET="$CARGO_BUILD_TARGET" \
     CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
     PRODUCT_BUNDLE_IDENTIFIER="$ALAN_BUNDLE_ID" \
-    PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
+    ALAN_PRIVILEGED_HELPER_LABEL="$ALAN_PRIVILEGED_HELPER_LABEL" \
+    ALAN_APP_PRODUCT_NAME="$ALAN_DISPLAY_NAME" \
     INFOPLIST_KEY_CFBundleDisplayName="$ALAN_DISPLAY_NAME" \
+    "${XCODE_VERSION_SETTINGS[@]}" \
     CODE_SIGNING_ALLOWED=NO \
     build
 
@@ -217,6 +243,11 @@ fi
 if [[ ! -f "$SHELL_CORE_FFI_DYLIB" ]]; then
     fail "Release build did not produce $SHELL_CORE_FFI_DYLIB"
 fi
+if [[ ! -f "$PRIVILEGED_HELPER_EXECUTABLE" ]]; then
+    fail "Release build did not produce $PRIVILEGED_HELPER_EXECUTABLE"
+fi
+BUNDLE_VERSION="$(plutil -extract CFBundleVersion raw -o - "$APP_BUNDLE/Contents/Info.plist")" ||
+    fail "could not read CFBundleVersion from $APP_BUNDLE"
 
 printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
@@ -229,10 +260,13 @@ thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 printf 'Verifying shell-core FFI dylib architecture...\n'
 thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
 
+printf 'Verifying privileged helper architecture...\n'
+chmod +x "$PRIVILEGED_HELPER_EXECUTABLE"
+thin_macho_to_arm64 "$PRIVILEGED_HELPER_EXECUTABLE"
+
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-printf 'Signing embedded binaries...\n'
+printf 'Signing embedded alan binary...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
-sign_path "$SHELL_CORE_FFI_DYLIB"
 
 printf 'Thinning Sparkle framework to arm64...\n'
 thin_sparkle_to_arm64
@@ -240,9 +274,22 @@ thin_sparkle_to_arm64
 printf 'Signing Sparkle framework and helper...\n'
 sign_sparkle_code
 
+printf 'Signing shell core FFI library...\n'
+[[ -f "$SHELL_CORE_FFI_DYLIB" ]] ||
+    fail "shell core FFI library was not embedded: $SHELL_CORE_FFI_DYLIB"
+thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
+sign_path "$SHELL_CORE_FFI_DYLIB"
+codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
+verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
+
+printf 'Signing privileged helper...\n'
+sign_path "$PRIVILEGED_HELPER_EXECUTABLE"
+codesign --verify --strict --verbose=2 "$PRIVILEGED_HELPER_EXECUTABLE"
+
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
 SHELL_CORE_FFI_SHA="$(sha256 "$SHELL_CORE_FFI_DYLIB")"
+PRIVILEGED_HELPER_SHA="$(sha256 "$PRIVILEGED_HELPER_EXECUTABLE")"
 
 cat >"$MANIFEST_PATH" <<EOF
 {
@@ -251,6 +298,7 @@ cat >"$MANIFEST_PATH" <<EOF
   "package": "$(json_escape "$ALAN_APP_BUNDLE_NAME")",
   "bundle_identifier": "$(json_escape "$ALAN_BUNDLE_ID")",
   "version": "$(json_escape "$VERSION")",
+  "bundle_version": "$(json_escape "$BUNDLE_VERSION")",
   "git_revision": "$(json_escape "$REVISION")",
   "git_dirty": $DIRTY,
   "assembled_at_utc": "$(json_escape "$ASSEMBLED_AT")",
@@ -262,6 +310,10 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")": {
       "path": "Contents/Frameworks/$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")",
       "sha256": "$(json_escape "$SHELL_CORE_FFI_SHA")"
+    },
+    "$(json_escape "$ALAN_PRIVILEGED_HELPER_LABEL")": {
+      "path": "Contents/Library/LaunchServices/$(json_escape "$ALAN_PRIVILEGED_HELPER_LABEL")",
+      "sha256": "$(json_escape "$PRIVILEGED_HELPER_SHA")"
     }
   }
 }
@@ -269,6 +321,9 @@ EOF
 
 printf 'Signing app bundle...\n'
 sign_path "$APP_BUNDLE"
+codesign --verify --strict --verbose=2 "$SHELL_CORE_FFI_DYLIB"
+verify_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
+codesign --verify --strict --verbose=2 "$PRIVILEGED_HELPER_EXECUTABLE"
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 
 ZIP_PATH=""

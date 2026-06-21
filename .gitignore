@@ -26,6 +26,7 @@ target
 # Xcode user-specific files
 **/xcuserdata/
 *.xcuserstate
+clients/apple/build/
 
 # Coverage artifacts
 lcov.info

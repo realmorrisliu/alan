@@ -297,6 +297,7 @@ fn workspace(tabs: Vec<Tab>, pane_ids: Vec<&str>, focused_pane_id: Option<&str>)
                 ),
                 terminal_metadata: None,
                 lifecycle: ContentLifecycleState::Active,
+                renderer_state: Default::default(),
             })
             .collect(),
     }

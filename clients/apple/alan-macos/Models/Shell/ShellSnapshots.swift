@@ -171,6 +171,24 @@ struct TerminalTranscriptDimensions: Codable, Equatable {
     }
 }
 
+struct TerminalGridDimensions: Codable, Equatable {
+    let columns: Int
+    let rows: Int
+
+    var isUsable: Bool {
+        columns > 0 && rows > 0
+    }
+
+    var transcriptDimensions: TerminalTranscriptDimensions {
+        TerminalTranscriptDimensions(columns: columns, rows: rows)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case columns
+        case rows
+    }
+}
+
 struct TerminalTranscriptViewport: Codable, Equatable {
     let firstVisibleRow: Int?
     let cursorRow: Int?
@@ -363,6 +381,21 @@ struct TerminalTranscriptSnapshot: Codable, Equatable {
         )
     }
 
+    func replacingDimensions(_ dimensions: TerminalTranscriptDimensions?) -> TerminalTranscriptSnapshot {
+        TerminalTranscriptSnapshot(
+            contentID: contentID,
+            cwd: cwd,
+            title: title,
+            dimensions: dimensions,
+            viewport: viewport,
+            transcriptLines: transcriptLines,
+            processSummary: processSummary,
+            capturedAt: capturedAt,
+            truncation: truncation,
+            alternateScreen: alternateScreen
+        )
+    }
+
     private static func encodedByteCount(for lines: [String]) -> Int {
         lines.joined(separator: "\n").utf8.count
     }
@@ -443,7 +476,10 @@ struct ShellTerminalContentPayload: Codable, Equatable {
                 TerminalTranscriptSnapshot.self,
                 forKey: .transcriptSnapshot
             ),
-            terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
+            terminalProfileID: try container.decodeIfPresent(
+                String.self,
+                forKey: .terminalProfileID
+            )
         )
     }
 }

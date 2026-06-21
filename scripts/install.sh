@@ -24,6 +24,22 @@ fi
 CLI_INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-/usr/local/bin}"
 APP_WAS_RUNNING=0
 
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+verify_shell_core_ffi_loadable() {
+    local dylib="$1"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        fail "python3 is required to verify shell-core FFI dylib loading"
+    fi
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$dylib" ||
+        fail "installed shell-core FFI dylib is not loadable: $dylib"
+}
+
 is_app_running() {
     local app_pattern="${ALAN_APP_BUNDLE_NAME//./\\.}"
 
@@ -173,7 +189,13 @@ fi
 printf 'Installing %s to %s...\n' "$ALAN_APP_BUNDLE_NAME" "$APP_TARGET"
 mkdir -p "$APP_INSTALL_DIR"
 rm -rf "$APP_TARGET"
-ditto "$APP_SOURCE" "$APP_TARGET"
+cp -R "$APP_SOURCE" "$APP_TARGET"
+if [[ -f "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib" ]]; then
+    codesign --verify --strict --verbose=2 \
+        "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib" >/dev/null
+    verify_shell_core_ffi_loadable "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib"
+fi
+codesign --verify --strict --verbose=2 "$APP_TARGET" >/dev/null
 if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
     printf 'Removing legacy lowercase app bundle at %s...\n' "$LEGACY_APP_TARGET"
     rm -rf "$LEGACY_APP_TARGET"

@@ -94,6 +94,17 @@ codesign_dylib_if_needed() {
     fi
 }
 
+verify_dylib_loadable() {
+    local dylib="$1"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        fail "python3 is required to verify shell-core FFI dylib loading"
+    fi
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$dylib" ||
+        fail "shell-core FFI dylib is not loadable: $dylib"
+}
+
 rewrite_dylib_install_name_if_supported() {
     local dylib="$1"
 
@@ -116,14 +127,19 @@ if [[ "$PROFILE_DIR" == "release" ]]; then
     CARGO_BUILD_ARGS+=(--release)
 fi
 
-cd "$REPO_ROOT"
-cargo build "${CARGO_BUILD_ARGS[@]}"
-
-DYLIB="$CARGO_TARGET_ROOT/$CARGO_BUILD_TARGET/$PROFILE_DIR/$DYLIB_NAME"
-[[ -f "$DYLIB" ]] || fail "shell-core FFI dylib was not produced at $DYLIB"
+if [[ -n "${ALAN_SHELL_CORE_FFI_LIBRARY:-}" ]]; then
+    DYLIB="$ALAN_SHELL_CORE_FFI_LIBRARY"
+else
+    cd "$REPO_ROOT"
+    cargo build "${CARGO_BUILD_ARGS[@]}"
+    DYLIB="$CARGO_TARGET_ROOT/$CARGO_BUILD_TARGET/$PROFILE_DIR/$DYLIB_NAME"
+fi
+[[ -f "$DYLIB" ]] || fail "shell-core FFI dylib was not found at $DYLIB"
+verify_dylib_loadable "$DYLIB"
 
 BUNDLED_DYLIB="$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$DYLIB_NAME"
 mkdir -p "$(dirname "$BUNDLED_DYLIB")"
 install -m 755 "$DYLIB" "$BUNDLED_DYLIB"
 rewrite_dylib_install_name_if_supported "$BUNDLED_DYLIB"
 codesign_dylib_if_needed "$BUNDLED_DYLIB"
+verify_dylib_loadable "$BUNDLED_DYLIB"

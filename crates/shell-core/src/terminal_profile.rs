@@ -14,6 +14,8 @@ pub enum TerminalProfileLaunchKind {
     SudoUser,
     /// Launch an interactive root shell.
     SudoRoot,
+    /// Launch a helper-managed local user shell.
+    ManagedUser,
     /// Run a custom command through zsh.
     CustomCommand,
 }
@@ -30,6 +32,11 @@ pub enum TerminalProfileLaunch {
     },
     /// Launch an interactive root shell.
     SudoRoot,
+    /// Launch a helper-managed local user shell.
+    ManagedUser {
+        /// Target Unix user.
+        unix_user: String,
+    },
     /// Run a custom command through zsh.
     CustomCommand {
         /// Command payload.
@@ -44,6 +51,7 @@ impl TerminalProfileLaunch {
             Self::LoginShell => TerminalProfileLaunchKind::LoginShell,
             Self::SudoUser { .. } => TerminalProfileLaunchKind::SudoUser,
             Self::SudoRoot => TerminalProfileLaunchKind::SudoRoot,
+            Self::ManagedUser { .. } => TerminalProfileLaunchKind::ManagedUser,
             Self::CustomCommand { .. } => TerminalProfileLaunchKind::CustomCommand,
         }
     }
@@ -51,7 +59,7 @@ impl TerminalProfileLaunch {
     /// Returns the Unix user for sudo-user launches.
     pub fn unix_user(&self) -> Option<&str> {
         match self {
-            Self::SudoUser { unix_user } => Some(unix_user),
+            Self::SudoUser { unix_user } | Self::ManagedUser { unix_user } => Some(unix_user),
             _ => None,
         }
     }
@@ -74,7 +82,9 @@ impl Serialize for TerminalProfileLaunch {
         state.serialize_field("kind", &self.kind())?;
         match self {
             Self::LoginShell | Self::SudoRoot => {}
-            Self::SudoUser { unix_user } => state.serialize_field("unix_user", unix_user)?,
+            Self::SudoUser { unix_user } | Self::ManagedUser { unix_user } => {
+                state.serialize_field("unix_user", unix_user)?
+            }
             Self::CustomCommand { command } => state.serialize_field("command", command)?,
         }
         state.end()
@@ -156,6 +166,11 @@ impl<'de> Deserialize<'de> for TerminalProfileLaunch {
                         unix_user: unix_user.unwrap_or_default(),
                     }),
                     TerminalProfileLaunchKind::SudoRoot => Ok(TerminalProfileLaunch::SudoRoot),
+                    TerminalProfileLaunchKind::ManagedUser => {
+                        Ok(TerminalProfileLaunch::ManagedUser {
+                            unix_user: unix_user.unwrap_or_default(),
+                        })
+                    }
                     TerminalProfileLaunchKind::CustomCommand => {
                         Ok(TerminalProfileLaunch::CustomCommand {
                             command: command.unwrap_or_default(),
@@ -233,6 +248,14 @@ impl TerminalProfileDefinition {
                 }
             }
             TerminalProfileLaunch::SudoRoot => "Root shell".to_string(),
+            TerminalProfileLaunch::ManagedUser { unix_user } => {
+                let trimmed = unix_user.trim();
+                if trimmed.is_empty() {
+                    "Managed user".to_string()
+                } else {
+                    format!("Managed user {unix_user}")
+                }
+            }
             TerminalProfileLaunch::CustomCommand { .. } => "Custom command".to_string(),
         }
     }
@@ -296,6 +319,25 @@ pub enum TerminalProfileValidationError {
         /// Profile id.
         id: String,
     },
+    /// managed-user launch is missing a Managed User account id.
+    MissingManagedAccount {
+        /// Profile id.
+        id: String,
+    },
+    /// managed-user launch target and Managed User account id disagree.
+    ManagedAccountMismatch {
+        /// Profile id.
+        profile_id: String,
+        /// Managed account id.
+        account_id: String,
+        /// Launch Unix user.
+        unix_user: String,
+    },
+    /// Existing managed Terminal Profile is read-only.
+    ManagedProfileReadOnly {
+        /// Profile id.
+        id: String,
+    },
     /// Document default profile is missing.
     MissingDefaultProfile {
         /// Missing default profile id.
@@ -320,6 +362,21 @@ impl TerminalProfileValidationError {
             Self::MissingUnixUser { id } => format!("Terminal Profile {id} needs a Unix user."),
             Self::MissingCustomCommand { id } => {
                 format!("Terminal Profile {id} needs a custom command.")
+            }
+            Self::MissingManagedAccount { id } => {
+                format!("Terminal Profile {id} needs a Managed User.")
+            }
+            Self::ManagedAccountMismatch {
+                profile_id,
+                account_id,
+                unix_user,
+            } => {
+                format!(
+                    "Terminal Profile {profile_id} links Managed User {account_id} but launches {unix_user}."
+                )
+            }
+            Self::ManagedProfileReadOnly { id } => {
+                format!("Managed Terminal Profile {id} is read-only.")
             }
             Self::MissingDefaultProfile { id } => {
                 format!("Default Terminal Profile {id} is missing.")
@@ -412,6 +469,36 @@ impl TerminalProfileValidator {
                         });
                     }
                 }
+                TerminalProfileLaunch::ManagedUser { unix_user } => {
+                    let trimmed_unix_user = unix_user.trim();
+                    if trimmed_unix_user.is_empty() {
+                        errors.push(TerminalProfileValidationError::MissingUnixUser {
+                            id: profile.id.clone(),
+                        });
+                    }
+                    match profile
+                        .managed_terminal_account_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|account_id| !account_id.is_empty())
+                    {
+                        Some(account_id)
+                            if !trimmed_unix_user.is_empty() && account_id != trimmed_unix_user =>
+                        {
+                            errors.push(TerminalProfileValidationError::ManagedAccountMismatch {
+                                profile_id: profile.id.clone(),
+                                account_id: account_id.to_string(),
+                                unix_user: trimmed_unix_user.to_string(),
+                            });
+                        }
+                        Some(_) => {}
+                        None => {
+                            errors.push(TerminalProfileValidationError::MissingManagedAccount {
+                                id: profile.id.clone(),
+                            });
+                        }
+                    }
+                }
                 TerminalProfileLaunch::CustomCommand { command } => {
                     if command.trim().is_empty() {
                         errors.push(TerminalProfileValidationError::MissingCustomCommand {
@@ -447,6 +534,7 @@ impl TerminalProfileValidator {
             TerminalProfileLaunch::SudoUser { .. } | TerminalProfileLaunch::SudoRoot => {
                 Some("/usr/bin/sudo")
             }
+            TerminalProfileLaunch::ManagedUser { .. } => None,
             TerminalProfileLaunch::CustomCommand { .. } => Some("/bin/zsh"),
         }
     }
@@ -542,6 +630,9 @@ impl TerminalProfileEditor {
                 unix_user: draft.unix_user,
             },
             TerminalProfileLaunchKind::SudoRoot => TerminalProfileLaunch::SudoRoot,
+            TerminalProfileLaunchKind::ManagedUser => TerminalProfileLaunch::ManagedUser {
+                unix_user: draft.unix_user,
+            },
             TerminalProfileLaunchKind::CustomCommand => TerminalProfileLaunch::CustomCommand {
                 command: draft.custom_command,
             },
@@ -570,6 +661,22 @@ impl TerminalProfileEditor {
         draft: TerminalProfileEditorDraft,
         document: &TerminalProfileDocument,
     ) -> TerminalProfileDocumentEditorResult {
+        let draft_id = draft.id.trim();
+        let existing_managed_profile = document.profiles.iter().find(|profile| {
+            profile.id == draft_id
+                && normalized_non_empty(profile.managed_terminal_account_id.as_deref()).is_some()
+        });
+        if let Some(existing_profile) = existing_managed_profile
+            && !allows_managed_profile_repair_upsert(existing_profile, &draft)
+        {
+            return TerminalProfileDocumentEditorResult {
+                document: None,
+                errors: vec![TerminalProfileValidationError::ManagedProfileReadOnly {
+                    id: draft_id.to_string(),
+                }],
+            };
+        }
+
         let editor_result = Self::make_definition(draft);
         let Some(definition) = editor_result.definition else {
             return TerminalProfileDocumentEditorResult {
@@ -656,6 +763,8 @@ pub enum TerminalLaunchStrategy {
     TerminalProfileSudoUser,
     /// Terminal Profile sudo root launch.
     TerminalProfileSudoRoot,
+    /// Terminal Profile helper-managed user launch.
+    TerminalProfileManagedUser,
     /// Terminal Profile custom command launch.
     TerminalProfileCustomCommand,
 }
@@ -788,6 +897,24 @@ impl TerminalLaunchIntent {
                 availability,
                 environment,
             ),
+            TerminalProfileLaunch::ManagedUser { unix_user } => {
+                let boot_command = shell_join(&["managed_user".to_string(), unix_user.clone()]);
+                Self::from_seed(TerminalLaunchIntentSeed {
+                    strategy: TerminalLaunchStrategy::TerminalProfileManagedUser,
+                    executable_path: None,
+                    launch_path: String::new(),
+                    arguments: Vec::new(),
+                    boot_command: boot_command.clone(),
+                    surface_command: None,
+                    summary: format!("Launching pane with Managed User {}", profile.title),
+                    detail: Some(profile.redacted_display_detail()),
+                    terminal_profile: Some(profile.clone()),
+                    terminal_profile_state: TerminalProfileResolutionState::Resolved,
+                    working_directory: normalized_non_empty(
+                        profile.default_working_directory.as_deref(),
+                    ),
+                })
+            }
             TerminalProfileLaunch::CustomCommand { command } => {
                 let executable_path = "/bin/zsh";
                 if !availability.is_executable(executable_path) {
@@ -953,6 +1080,10 @@ impl TerminalLaunchIntent {
                 "ALAN_TERMINAL_PROFILE_KIND".to_string(),
                 profile.launch.kind().environment_value().to_string(),
             );
+            if let TerminalProfileLaunch::ManagedUser { unix_user } = &profile.launch {
+                profile_environment
+                    .insert("ALAN_MANAGED_USER_ACCOUNT".to_string(), unix_user.clone());
+            }
         }
 
         Self {
@@ -1006,6 +1137,7 @@ impl TerminalProfileLaunchKind {
             TerminalProfileLaunchKind::LoginShell => "login_shell",
             TerminalProfileLaunchKind::SudoUser => "sudo_user",
             TerminalProfileLaunchKind::SudoRoot => "sudo_root",
+            TerminalProfileLaunchKind::ManagedUser => "managed_user",
             TerminalProfileLaunchKind::CustomCommand => "custom_command",
         }
     }
@@ -1013,10 +1145,8 @@ impl TerminalProfileLaunchKind {
 
 /// Returns whether a global default profile should be captured on new panes.
 pub fn should_capture_global_default_terminal_profile(profile: &TerminalProfileDefinition) -> bool {
-    if normalized_non_empty(profile.default_working_directory.as_deref()).is_some() {
-        return true;
-    }
-    !matches!(profile.launch, TerminalProfileLaunch::LoginShell)
+    let _ = profile;
+    false
 }
 
 /// Portable request to prepare a managed local terminal account.
@@ -1144,6 +1274,12 @@ pub enum ManagedTerminalAccountRecord {
     },
 }
 
+impl ManagedTerminalAccountRecord {
+    fn requires_alan_managed_ownership(&self) -> bool {
+        matches!(self, Self::Standard { .. } | Self::Admin { .. })
+    }
+}
+
 /// Discovered sudoers drop-in state supplied by a platform adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1172,6 +1308,47 @@ pub enum ManagedTerminalAccountSudoersState {
         /// Drop-in path.
         path: String,
     },
+}
+
+/// Evidence that an existing account is owned by Alan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ManagedTerminalAccountOwnershipEvidence {
+    /// Helper-owned marker file.
+    HelperMarker {
+        /// Marker path.
+        path: String,
+    },
+    /// Legacy Alan sudoers state.
+    LegacyAlanSudoers {
+        /// Sudoers path.
+        path: String,
+    },
+}
+
+/// Ownership state for an existing managed terminal account.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ManagedTerminalAccountOwnershipState {
+    /// No ownership evidence is present.
+    #[default]
+    Missing,
+    /// Alan owns this account.
+    AlanManaged {
+        /// Ownership evidence.
+        evidence: ManagedTerminalAccountOwnershipEvidence,
+    },
+    /// The account exists but is outside Alan management.
+    NotAlanManaged {
+        /// Redacted reason.
+        reason: String,
+    },
+}
+
+impl ManagedTerminalAccountOwnershipState {
+    fn is_alan_managed(&self) -> bool {
+        matches!(self, Self::AlanManaged { .. })
+    }
 }
 
 /// Discovered managed Terminal Profile state.
@@ -1209,6 +1386,8 @@ pub enum ManagedTerminalAccountVerificationStep {
     HomeDirectory,
     /// Shell check.
     Shell,
+    /// Alan ownership check.
+    Ownership,
     /// Sudoers syntax check.
     SudoersValidation,
     /// Non-interactive sudo check.
@@ -1239,10 +1418,16 @@ pub struct ManagedTerminalAccountState {
     pub account: ManagedTerminalAccountRecord,
     /// Sudoers record.
     pub sudoers: ManagedTerminalAccountSudoersState,
+    /// Alan ownership evidence for existing accounts.
+    #[serde(default)]
+    pub ownership: ManagedTerminalAccountOwnershipState,
     /// Terminal Profile record.
     pub terminal_profile: ManagedTerminalAccountProfileState,
     /// Verification status.
     pub verification: ManagedTerminalAccountVerificationStatus,
+    /// Whether the account home directory exists on disk.
+    #[serde(default = "default_true")]
+    pub home_directory_exists: bool,
 }
 
 /// Managed terminal account plan step kind.
@@ -1277,6 +1462,16 @@ pub enum ManagedTerminalAccountPlanStepKind {
     DeleteAccount,
     /// Delete the account home directory.
     DeleteHomeDirectory,
+    /// Write the helper ownership marker.
+    WriteOwnershipMarker,
+    /// Verify the helper-managed account state.
+    VerifyAccount,
+    /// Clean up a verified legacy Alan sudoers file.
+    CleanupLegacySudoers,
+    /// Verify helper-managed PTY startup.
+    VerifyManagedUserPty,
+    /// Remove helper-managed account integration.
+    RemoveManagedUserIntegration,
 }
 
 /// Managed terminal account plan step.
@@ -1317,6 +1512,17 @@ pub enum ManagedTerminalAccountPlanStatus {
         /// Conflicting profile id.
         profile_id: String,
     },
+    /// Privileged helper is unavailable.
+    HelperUnavailable,
+    /// Account exists but is not Alan-managed.
+    AccountNotAlanManaged,
+    /// A legacy Alan sudoers file needs cleanup.
+    LegacySudoersPresent {
+        /// Optional legacy sudoers path.
+        path: Option<String>,
+    },
+    /// Helper-managed PTY smoke failed.
+    PtySpawnFailed,
 }
 
 impl ManagedTerminalAccountPlanStatus {
@@ -1330,6 +1536,10 @@ impl ManagedTerminalAccountPlanStatus {
             Self::RequiresDestructiveConfirmation => "requires_destructive_confirmation",
             Self::SudoersConflict { .. } => "sudoers_conflict",
             Self::TerminalProfileConflict { .. } => "terminal_profile_conflict",
+            Self::HelperUnavailable => "helper_unavailable",
+            Self::AccountNotAlanManaged => "account_not_alan_managed",
+            Self::LegacySudoersPresent { .. } => "legacy_sudoers_present",
+            Self::PtySpawnFailed => "pty_spawn_failed",
         }
     }
 }
@@ -1361,6 +1571,13 @@ impl ManagedTerminalAccountPlanner {
                 status: ManagedTerminalAccountPlanStatus::Invalid {
                     errors: validation_errors,
                 },
+                steps: Vec::new(),
+            };
+        }
+        if state.account.requires_alan_managed_ownership() && !state.ownership.is_alan_managed() {
+            return ManagedTerminalAccountPlan {
+                request,
+                status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
                 steps: Vec::new(),
             };
         }
@@ -1412,19 +1629,35 @@ impl ManagedTerminalAccountPlanner {
                 ));
             }
             ManagedTerminalAccountRecord::Invalid { reason } => {
-                repair_needed = true;
-                steps.push(managed_account_step(
-                    ManagedTerminalAccountPlanStepKind::RepairAccountType,
-                    format!("Repair account state: {reason}"),
-                    true,
-                ));
+                if reason.to_ascii_lowercase().contains("incomplete") {
+                    needs_create = true;
+                    steps.push(managed_account_step(
+                        ManagedTerminalAccountPlanStepKind::CreateStandardAccount,
+                        format!("Complete local terminal account record: {reason}"),
+                        true,
+                    ));
+                    if request.hide_from_login_window {
+                        steps.push(managed_account_step(
+                            ManagedTerminalAccountPlanStepKind::HideAccount,
+                            "Hide terminal account from login window lists",
+                            true,
+                        ));
+                    }
+                } else {
+                    repair_needed = true;
+                    steps.push(managed_account_step(
+                        ManagedTerminalAccountPlanStepKind::RepairAccountType,
+                        format!("Repair account state: {reason}"),
+                        true,
+                    ));
+                }
             }
             ManagedTerminalAccountRecord::Standard {
                 home_directory,
                 shell,
                 hidden,
             } => {
-                if home_directory != &request.home_directory {
+                if home_directory != &request.home_directory || !state.home_directory_exists {
                     repair_needed = true;
                     steps.push(managed_account_step(
                         ManagedTerminalAccountPlanStepKind::RepairHomeDirectory,
@@ -1651,7 +1884,7 @@ impl ManagedTerminalAccountProfileHandoff {
                     .full_name
                     .clone()
                     .unwrap_or_else(|| request.account_name.clone()),
-                launch: TerminalProfileLaunch::SudoUser {
+                launch: TerminalProfileLaunch::ManagedUser {
                     unix_user: request.account_name.clone(),
                 },
                 default_working_directory: Some(request.home_directory.clone()),
@@ -1667,6 +1900,24 @@ impl ManagedTerminalAccountProfileHandoff {
 
 fn normalized_optional(value: Option<String>) -> Option<String> {
     normalized_non_empty(value.as_deref())
+}
+
+fn allows_managed_profile_repair_upsert(
+    existing: &TerminalProfileDefinition,
+    draft: &TerminalProfileEditorDraft,
+) -> bool {
+    let Some(existing_account_id) =
+        normalized_non_empty(existing.managed_terminal_account_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(draft_account_id) = normalized_non_empty(draft.managed_terminal_account_id.as_deref())
+    else {
+        return false;
+    };
+    draft.launch_kind == TerminalProfileLaunchKind::ManagedUser
+        && draft_account_id == existing_account_id
+        && draft.unix_user.trim() == existing_account_id
 }
 
 fn matches_managed_account_identifier(value: &str) -> bool {
@@ -1697,6 +1948,10 @@ fn managed_account_step(
         summary: summary.into(),
         requires_privilege,
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn append_sudoers_write_steps(steps: &mut Vec<ManagedTerminalAccountPlanStep>) {

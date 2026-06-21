@@ -86,21 +86,27 @@ private struct ShellCoreManagedAccountRequestPayload: Codable {
 private struct ShellCoreManagedAccountStatePayload: Encodable {
     let account: ShellCoreManagedAccountRecordPayload
     let sudoers: ShellCoreManagedAccountSudoersStatePayload
+    let ownership: ShellCoreManagedAccountOwnershipStatePayload
     let terminalProfile: ShellCoreManagedAccountProfileStatePayload
     let verification: ShellCoreManagedAccountVerificationStatusPayload
+    let homeDirectoryExists: Bool
 
     private enum CodingKeys: String, CodingKey {
         case account
         case sudoers
+        case ownership
         case terminalProfile = "terminal_profile"
         case verification
+        case homeDirectoryExists = "home_directory_exists"
     }
 
     init(_ state: ManagedTerminalAccountState) {
         account = ShellCoreManagedAccountRecordPayload(state.account)
         sudoers = ShellCoreManagedAccountSudoersStatePayload(state.sudoers)
+        ownership = ShellCoreManagedAccountOwnershipStatePayload(state.ownership)
         terminalProfile = ShellCoreManagedAccountProfileStatePayload(state.terminalProfile)
         verification = ShellCoreManagedAccountVerificationStatusPayload(state.verification)
+        homeDirectoryExists = state.homeDirectoryExists
     }
 }
 
@@ -202,6 +208,58 @@ private struct ShellCoreManagedAccountSudoersStatePayload: Encodable {
     }
 }
 
+private struct ShellCoreManagedAccountOwnershipStatePayload: Encodable {
+    let state: String
+    let evidence: ShellCoreManagedAccountOwnershipEvidencePayload?
+    let reason: String?
+
+    init(_ ownership: ManagedTerminalAccountOwnershipState) {
+        switch ownership {
+        case .missing:
+            state = "missing"
+            evidence = nil
+            reason = nil
+        case .alanManaged(let evidence):
+            state = "alan_managed"
+            self.evidence = ShellCoreManagedAccountOwnershipEvidencePayload(evidence)
+            reason = nil
+        case .notAlanManaged(let reason):
+            state = "not_alan_managed"
+            evidence = nil
+            self.reason = reason
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        enum CodingKeys: String, CodingKey {
+            case state
+            case evidence
+            case reason
+        }
+
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(evidence, forKey: .evidence)
+        try container.encodeIfPresent(reason, forKey: .reason)
+    }
+}
+
+private struct ShellCoreManagedAccountOwnershipEvidencePayload: Encodable {
+    let state: String
+    let path: String
+
+    init(_ evidence: ManagedTerminalAccountOwnershipEvidence) {
+        switch evidence {
+        case .helperMarker(let path):
+            state = "helper_marker"
+            self.path = path
+        case .legacyAlanSudoers(let path):
+            state = "legacy_alan_sudoers"
+            self.path = path
+        }
+    }
+}
+
 private struct ShellCoreManagedAccountProfileStatePayload: Encodable {
     let state: String
     let profileID: String?
@@ -290,6 +348,10 @@ private enum ShellCoreManagedAccountPlanStatus: Decodable {
     case alreadyReady
     case repair
     case invalid([ShellCoreManagedAccountValidationError])
+    case helperUnavailable
+    case accountNotAlanManaged
+    case legacySudoersPresent(path: String?)
+    case ptySpawnFailed
     case requiresDestructiveConfirmation
     case sudoersConflict(path: String)
     case terminalProfileConflict(profileID: String)
@@ -314,6 +376,14 @@ private enum ShellCoreManagedAccountPlanStatus: Decodable {
             self = .invalid(
                 try container.decode([ShellCoreManagedAccountValidationError].self, forKey: .errors)
             )
+        case "helper_unavailable":
+            self = .helperUnavailable
+        case "account_not_alan_managed":
+            self = .accountNotAlanManaged
+        case "legacy_sudoers_present":
+            self = .legacySudoersPresent(path: try container.decodeIfPresent(String.self, forKey: .path))
+        case "pty_spawn_failed":
+            self = .ptySpawnFailed
         case "requires_destructive_confirmation":
             self = .requiresDestructiveConfirmation
         case "sudoers_conflict":
@@ -342,6 +412,14 @@ private enum ShellCoreManagedAccountPlanStatus: Decodable {
             return .repair
         case let .invalid(errors):
             return .invalid(errors.map(\.swiftError))
+        case .helperUnavailable:
+            return .helperUnavailable
+        case .accountNotAlanManaged:
+            return .accountNotAlanManaged
+        case let .legacySudoersPresent(path):
+            return .legacySudoersPresent(path: path)
+        case .ptySpawnFailed:
+            return .ptySpawnFailed
         case .requiresDestructiveConfirmation:
             return .requiresDestructiveConfirmation
         case let .sudoersConflict(path):

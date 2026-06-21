@@ -1,7 +1,7 @@
 import Foundation
+import OSLog
 import SwiftUI
 
-#if os(macOS)
 struct TerminalPaneView: View {
     @ObservedObject var host: ShellHostController
     let tab: ShellTab?
@@ -1208,7 +1208,10 @@ private struct ShellMarkdownContentView: View {
         let result = await Task.detached(priority: .userInitiated) {
             ShellMarkdownContentLoader.load(fileURL: fileURL)
         }.value
-        guard !Task.isCancelled else { return }
+        if Task.isCancelled {
+            isLoading = false
+            return
+        }
 
         isLoading = false
         switch result {
@@ -1275,13 +1278,36 @@ private struct ShellSettingsContentView: View {
     @State private var remoteSnapshot = ShellSettingsRemoteSnapshot.unavailable(
         reason: "Daemon unavailable"
     )
+    @State private var terminalProfilesSummary = TerminalProfileSettingsSummary.current()
+    @State private var privilegedHelperSummary = PrivilegedHelperSettingsSummary.current()
+    @State private var managedTerminalAccountsSummary = ManagedTerminalAccountSettingsSummary.empty
     @State private var lastDiagnosticsExportURL: URL?
     @State private var selectedGroup = ShellSettingsNavigationGroup.general
+    @State private var isManagedUserCreationPresented = false
+    @State private var managedUserCreationDraft = ManagedTerminalUserCreationDraft(
+        unixUserName: "",
+        displayLabel: "",
+        guiUserName: NSUserName()
+    )
+    @State private var managedUserCreationPreviewResult: ManagedTerminalUserCreationPreviewResult?
+    @State private var managedUserActionSheet: ShellManagedUserActionSheetState?
+    @State private var managedUserApplyDiagnostics: [String] = []
+    @State private var managedUserApplyInFlight = false
+
+    nonisolated private static let managedUserApplyLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "app.alanworks.macos",
+        category: "ManagedUsers"
+    )
+    nonisolated private static let managedUserApplyTimeoutNanoseconds: UInt64 =
+        10 * 60 * 1_000_000_000
 
     private var snapshot: ShellSettingsSurfaceSnapshot {
         ShellSettingsSurfaceSnapshot.make(
             remote: remoteSnapshot,
             local: localSummary,
+            terminalProfiles: terminalProfilesSummary,
+            privilegedHelper: privilegedHelperSummary,
+            managedTerminalAccounts: managedTerminalAccountsSummary,
             diagnostics: diagnosticsSummary
         )
     }
@@ -1324,7 +1350,8 @@ private struct ShellSettingsContentView: View {
                             sidebarVisible: sidebarVisible,
                             dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
                             performanceDiagnosticsEnabled: performanceDiagnosticsBinding,
-                            onExportPerformanceDiagnostics: exportPerformanceDiagnostics
+                            onExportPerformanceDiagnostics: exportPerformanceDiagnostics,
+                            onRowAction: handleSettingsRowAction
                         )
                         .frame(maxWidth: ShellSettingsMetrics.contentWidth, alignment: .leading)
                         .padding(.leading, ShellSettingsMetrics.detailContentLeadingPadding)
@@ -1341,6 +1368,33 @@ private struct ShellSettingsContentView: View {
         }
         .task(id: refreshTaskID) {
             await refreshSettingsSummaries()
+        }
+        .sheet(isPresented: $isManagedUserCreationPresented) {
+            ShellManagedUserCreationSheet(
+                draft: $managedUserCreationDraft,
+                previewResult: managedUserCreationPreviewResult,
+                diagnostics: managedUserApplyDiagnostics,
+                isApplying: managedUserApplyInFlight,
+                onDraftChanged: resetManagedUserCreationPreview,
+                onPreview: reviewManagedUserCreationDraft,
+                onApply: applyManagedUserCreationPreview,
+                onCancel: {
+                    isManagedUserCreationPresented = false
+                }
+            )
+        }
+        .sheet(item: $managedUserActionSheet) { sheet in
+            ShellManagedUserPlanSheet(
+                sheet: sheet,
+                diagnostics: managedUserApplyDiagnostics,
+                isApplying: managedUserApplyInFlight,
+                onApply: {
+                    applyManagedUserActionSheet(sheet)
+                },
+                onCancel: {
+                    managedUserActionSheet = nil
+                }
+            )
         }
     }
 
@@ -1389,10 +1443,338 @@ private struct ShellSettingsContentView: View {
         )
     }
 
+    @discardableResult
+    @MainActor
+    private func refreshLocalTerminalIdentitySummaries() -> ManagedTerminalAccountSettingsSummary {
+        let profiles = TerminalProfileSettingsSummary.current()
+        let accounts = ManagedTerminalAccountSettingsSummary.current(
+            terminalProfiles: profiles,
+            helperClient: AlanPrivilegedHelperAppClient(channel: .current())
+        )
+        terminalProfilesSummary = profiles
+        managedTerminalAccountsSummary = accounts
+        return accounts
+    }
+
+    @MainActor
+    private func handleSettingsRowAction(
+        row: ShellSettingsRowModel,
+        action: ShellSettingsRowActionKind
+    ) {
+        managedUserApplyDiagnostics = []
+        switch action {
+        case .create:
+            managedUserCreationDraft = ManagedTerminalUserCreationDraft(
+                unixUserName: "",
+                displayLabel: "",
+                guiUserName: NSUserName()
+            )
+            managedUserCreationPreviewResult = nil
+            isManagedUserCreationPresented = true
+        case .review, .repair, .verify, .remove:
+            handleExistingManagedUserAction(row: row, action: action)
+        case .installHelper, .updateHelper, .uninstallHelper:
+            applyPrivilegedHelperLifecycleAction(action)
+        }
+    }
+
+    @MainActor
+    private func applyPrivilegedHelperLifecycleAction(_ action: ShellSettingsRowActionKind) {
+        let manager = AlanPrivilegedHelperAppServiceManager()
+        let result: AlanPrivilegedHelperLifecycleResult
+        switch action {
+        case .installHelper, .updateHelper:
+            result = manager.installOrUpdate()
+        case .uninstallHelper:
+            result = manager.uninstall()
+        case .create, .review, .repair, .verify, .remove:
+            return
+        }
+        privilegedHelperSummary = PrivilegedHelperSettingsSummary(status: result.status)
+        managedUserApplyDiagnostics = result.diagnostic.map {
+            [$0.sanitizedMessage, "Credentials redacted."]
+        } ?? ["Privileged helper \(result.action.rawValue) completed. Credentials redacted."]
+    }
+
+    @MainActor
+    private func handleExistingManagedUserAction(
+        row: ShellSettingsRowModel,
+        action: ShellSettingsRowActionKind
+    ) {
+        guard let plan = managedUserPlan(forRowID: row.id) else { return }
+        switch action {
+        case .create, .installHelper, .updateHelper, .uninstallHelper:
+            return
+        case .review:
+            managedUserActionSheet = ShellManagedUserActionSheetState(
+                action: action,
+                plan: plan,
+                allowsApply: false
+            )
+        case .repair:
+            managedUserActionSheet = ShellManagedUserActionSheetState(
+                action: action,
+                plan: plan,
+                allowsApply: true
+            )
+        case .verify:
+            let refreshedSummary = refreshLocalTerminalIdentitySummaries()
+            let refreshedPlan = refreshedSummary.plans.first {
+                $0.request.accountName == plan.request.accountName
+            } ?? plan
+            managedUserActionSheet = ShellManagedUserActionSheetState(
+                action: .review,
+                plan: refreshedPlan,
+                allowsApply: false
+            )
+        case .remove:
+            let helperClient = AlanPrivilegedHelperAppClient(channel: .current())
+            let status = helperClient.status()
+            let diagnosis = status.isHealthy
+                ? helperClient.diagnoseManagedUser(plan.request)
+                : AlanManagedUserDiagnosis.helperUnavailable(request: plan.request, status: status)
+            let rollbackPlan = ManagedTerminalAccountPlanner.rollbackPlan(
+                request: plan.request,
+                diagnosis: diagnosis,
+                scope: .alanIntegrationOnly,
+                terminalProfiles: terminalProfilesSummary.document
+            )
+            managedUserActionSheet = ShellManagedUserActionSheetState(
+                action: action,
+                plan: rollbackPlan,
+                allowsApply: true
+            )
+        }
+    }
+
+    private func managedUserPlan(forRowID rowID: String) -> ManagedTerminalAccountPlan? {
+        let prefix = "terminalAccount."
+        guard rowID.hasPrefix(prefix) else { return nil }
+        let accountName = String(rowID.dropFirst(prefix.count))
+        return managedTerminalAccountsSummary.plans.first {
+            $0.request.accountName == accountName
+        }
+    }
+
+    @MainActor
+    private func resetManagedUserCreationPreview() {
+        managedUserCreationPreviewResult = nil
+        managedUserApplyDiagnostics = []
+    }
+
+    @MainActor
+    private func reviewManagedUserCreationDraft() {
+        let request = managedUserCreationDraft.request
+        let helperClient = AlanPrivilegedHelperAppClient(channel: .current())
+        let status = helperClient.status()
+        let diagnosis = status.isHealthy
+            ? helperClient.diagnoseManagedUser(request)
+            : AlanManagedUserDiagnosis.helperUnavailable(request: request, status: status)
+        managedUserCreationPreviewResult = ManagedTerminalUserCreationPreviewBuilder.make(
+            draft: managedUserCreationDraft,
+            existingUsers: managedTerminalAccountsSummary.users,
+            terminalProfiles: terminalProfilesSummary,
+            diagnosis: diagnosis
+        )
+    }
+
+    @MainActor
+    private func applyManagedUserCreationPreview(_ preview: ManagedTerminalUserCreationPreview) {
+        guard !managedUserApplyInFlight else { return }
+        managedUserApplyInFlight = true
+        managedUserApplyDiagnostics = ["Applying managed user changes. Credentials redacted."]
+
+        Task {
+            defer { managedUserApplyInFlight = false }
+            let result = await Self.applyManagedUserPlanInBackground(
+                plan: preview.plan,
+                request: preview.request
+            )
+            if Task.isCancelled { return }
+
+            terminalProfilesSummary = result.terminalProfiles
+            managedTerminalAccountsSummary = result.managedTerminalAccounts
+            managedUserApplyDiagnostics = result.applyResult.visibleDiagnostics
+            if !result.applyResult.cancelled && result.applyResult.failedStep == nil {
+                isManagedUserCreationPresented = false
+                managedUserCreationPreviewResult = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func applyManagedUserActionSheet(_ sheet: ShellManagedUserActionSheetState) {
+        guard !managedUserApplyInFlight else { return }
+        managedUserApplyInFlight = true
+        managedUserApplyDiagnostics = ["Applying managed user changes. Credentials redacted."]
+
+        Task {
+            defer { managedUserApplyInFlight = false }
+            let result = await Self.applyManagedUserPlanInBackground(
+                plan: sheet.plan,
+                request: sheet.plan.request
+            )
+            if Task.isCancelled { return }
+
+            terminalProfilesSummary = result.terminalProfiles
+            managedTerminalAccountsSummary = result.managedTerminalAccounts
+            managedUserApplyDiagnostics = result.applyResult.visibleDiagnostics
+            if !result.applyResult.cancelled && result.applyResult.failedStep == nil {
+                managedUserActionSheet = nil
+            }
+        }
+    }
+
+    nonisolated private static func applyManagedUserPlanInBackground(
+        plan: ManagedTerminalAccountPlan,
+        request: ManagedTerminalAccountRequest
+    ) async -> ShellManagedUserApplyBackgroundResult {
+        await withCheckedContinuation { continuation in
+            let continuationBox = ShellManagedUserApplyContinuationBox(continuation: continuation)
+            let work = Task.detached(priority: .userInitiated) {
+                let result = runManagedUserPlanInBackground(plan: plan, request: request)
+                continuationBox.resume(returning: result)
+            }
+            Task.detached(priority: .userInitiated) {
+                try? await Task.sleep(nanoseconds: managedUserApplyTimeoutNanoseconds)
+                guard !work.isCancelled else { return }
+                work.cancel()
+                managedUserApplyLogger.error("Managed User apply timed out.")
+                continuationBox.resume(returning: timeoutManagedUserApplyResult(plan: plan))
+            }
+        }
+    }
+
+    nonisolated private static func runManagedUserPlanInBackground(
+        plan: ManagedTerminalAccountPlan,
+        request: ManagedTerminalAccountRequest
+    ) -> ShellManagedUserApplyBackgroundResult {
+        managedUserApplyLogger.info("Managed User apply started.")
+        let catalogStore = ManagedTerminalAccountCatalogStore.defaultStore()
+        let isRemovalPlan = plan.steps.contains {
+            switch $0.kind {
+            case .removeSudoersDropIn, .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
+                return true
+            case .helperStep(let helperKind):
+                return helperKind == .removeManagedUserIntegration
+                    || helperKind == .deleteAccount
+                    || helperKind == .deleteHomeDirectory
+            default:
+                return false
+            }
+        } && !plan.steps.contains {
+            switch $0.kind {
+            case .createStandardAccount,
+                 .repairAccountType,
+                 .repairHomeDirectory,
+                 .repairShell,
+                 .hideAccount,
+                 .createOrUpdateTerminalProfile,
+                 .bindCurrentSpace:
+                return true
+            case .helperStep(let helperKind):
+                switch helperKind {
+                case .removeManagedUserIntegration, .deleteAccount, .deleteHomeDirectory:
+                    return false
+                case .createStandardAccount,
+                     .repairAccountType,
+                     .repairHomeDirectory,
+                     .repairShell,
+                     .hideAccount,
+                     .writeOwnershipMarker,
+                     .verifyAccount,
+                     .cleanupLegacySudoers,
+                     .verifyManagedUserPTY:
+                    return true
+                }
+            case .removeSudoersDropIn, .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
+                return false
+            default:
+                return false
+            }
+        }
+        if !isRemovalPlan {
+            try? catalogStore.upsert(
+                ManagedTerminalAccountCatalogEntry(
+                    accountName: request.accountName,
+                    displayLabel: request.fullName ?? request.accountName
+                )
+            )
+        }
+        let channel = AlanInstallChannel.current()
+        let helperClient = AlanPrivilegedHelperAppClient(channel: channel)
+        let executor = ManagedTerminalAccountHelperExecutor(
+            channel: channel,
+            helperClient: helperClient
+        )
+        let applyResult = executor.apply(plan)
+        if isRemovalPlan && !applyResult.cancelled && applyResult.failedStep == nil {
+            try? catalogStore.remove(accountName: request.accountName)
+        }
+        let terminalProfiles = TerminalProfileSettingsSummary.current()
+        let managedTerminalAccounts = ManagedTerminalAccountSettingsSummary.current(
+            terminalProfiles: terminalProfiles,
+            helperClient: helperClient
+        )
+        managedUserApplyLogger.info("Managed User apply finished.")
+        return ShellManagedUserApplyBackgroundResult(
+            applyResult: applyResult,
+            terminalProfiles: terminalProfiles,
+            managedTerminalAccounts: managedTerminalAccounts
+        )
+    }
+
+    nonisolated private static func timeoutManagedUserApplyResult(
+        plan: ManagedTerminalAccountPlan
+    ) -> ShellManagedUserApplyBackgroundResult {
+        let terminalProfiles = TerminalProfileSettingsSummary.current()
+        return ShellManagedUserApplyBackgroundResult(
+            applyResult: ManagedTerminalAccountApplyResult(
+                completedSteps: [],
+                failedStep: plan.steps.first?.kind,
+                cancelled: false,
+                visibleDiagnostics: [
+                    "Managed User apply timed out. Credentials redacted.",
+                ]
+            ),
+            terminalProfiles: terminalProfiles,
+            managedTerminalAccounts: ManagedTerminalAccountSettingsSummary.current(
+                terminalProfiles: terminalProfiles,
+                helperClient: AlanPrivilegedHelperAppClient(channel: .current())
+            )
+        )
+    }
+
+    private struct ShellManagedUserApplyBackgroundResult {
+        let applyResult: ManagedTerminalAccountApplyResult
+        let terminalProfiles: TerminalProfileSettingsSummary
+        let managedTerminalAccounts: ManagedTerminalAccountSettingsSummary
+    }
+
+    private final class ShellManagedUserApplyContinuationBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var hasResumed = false
+        private let continuation: CheckedContinuation<ShellManagedUserApplyBackgroundResult, Never>
+
+        init(continuation: CheckedContinuation<ShellManagedUserApplyBackgroundResult, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning result: ShellManagedUserApplyBackgroundResult) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !hasResumed else { return }
+            hasResumed = true
+            continuation.resume(returning: result)
+        }
+    }
+
     @MainActor
     private func refreshSettingsSummaries() async {
         let local = ShellSettingsLocalSummary.current()
         localSummary = local
+        privilegedHelperSummary = PrivilegedHelperSettingsSummary.current()
+        refreshLocalTerminalIdentitySummaries()
 
         do {
             let client = try AlanAPIClient(baseURLString: local.daemonURL)
@@ -1622,6 +2004,7 @@ private struct ShellSettingsGroupView: View {
     @Binding var dimsInactiveSplitPanes: Bool
     let performanceDiagnosticsEnabled: Binding<Bool>
     let onExportPerformanceDiagnostics: () -> Void
+    let onRowAction: (ShellSettingsRowModel, ShellSettingsRowActionKind) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: ShellSettingsMetrics.pageTitleToSectionsSpacing) {
@@ -1637,7 +2020,8 @@ private struct ShellSettingsGroupView: View {
                         sidebarVisible: sidebarVisible,
                         dimsInactiveSplitPanes: $dimsInactiveSplitPanes,
                         performanceDiagnosticsEnabled: performanceDiagnosticsEnabled,
-                        onExportPerformanceDiagnostics: onExportPerformanceDiagnostics
+                        onExportPerformanceDiagnostics: onExportPerformanceDiagnostics,
+                        onRowAction: onRowAction
                     )
                 }
             }
@@ -1660,6 +2044,7 @@ private struct ShellSettingsSectionView: View {
     @Binding var dimsInactiveSplitPanes: Bool
     let performanceDiagnosticsEnabled: Binding<Bool>
     let onExportPerformanceDiagnostics: () -> Void
+    let onRowAction: (ShellSettingsRowModel, ShellSettingsRowActionKind) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1781,7 +2166,15 @@ private struct ShellSettingsSectionView: View {
                 ShellSettingsPathAction(value: row.value)
             }
         default:
-            if let detail = row.detail, row.value != nil {
+            if !row.actions.isEmpty {
+                ShellSettingsRow(
+                    systemName: row.systemName,
+                    title: row.title,
+                    detail: row.detail
+                ) {
+                    ShellSettingsRowActionAccessory(row: row, onAction: onRowAction)
+                }
+            } else if let detail = row.detail, row.value != nil {
                 ShellSettingsRow(
                     systemName: row.systemName,
                     title: row.title,
@@ -1987,6 +2380,281 @@ private struct ShellSettingsPathAction: View {
         .controlSize(.small)
         .disabled(!ShellLocalFolderOpener.canOpenFolder(displayPath: value))
         .help(value ?? "Folder unavailable")
+    }
+}
+
+private struct ShellSettingsRowActionAccessory: View {
+    let row: ShellSettingsRowModel
+    let onAction: (ShellSettingsRowModel, ShellSettingsRowActionKind) -> Void
+
+    var body: some View {
+        HStack(spacing: ShellSettingsMetrics.inlineActionSpacing) {
+            if let value = row.value,
+               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(value)
+                    .font(ShellSettingsTypography.value)
+                    .foregroundStyle(ShellPalette.settingsValueInk)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 96, alignment: .trailing)
+            }
+
+            if row.actions.count == 1,
+               let action = row.actions.first {
+                Button {
+                    onAction(row, action.id)
+                } label: {
+                    Label(action.title, systemImage: action.systemName)
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help(action.title)
+            } else {
+                Menu {
+                    ForEach(row.actions) { action in
+                        Button {
+                            onAction(row, action.id)
+                        } label: {
+                            Label(action.title, systemImage: action.systemName)
+                        }
+                    }
+                } label: {
+                    Label("Actions", systemImage: "ellipsis.circle")
+                        .labelStyle(.iconOnly)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Actions")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+private struct ShellManagedUserActionSheetState: Identifiable, Equatable {
+    let action: ShellSettingsRowActionKind
+    let plan: ManagedTerminalAccountPlan
+    let allowsApply: Bool
+
+    var id: String {
+        "\(action.rawValue)-\(plan.request.accountName)-\(plan.steps.map(\.kind).count)"
+    }
+
+    var title: String {
+        switch action {
+        case .create:
+            return "Create Managed User"
+        case .review:
+            return "Review Managed User"
+        case .repair:
+            return "Repair Managed User"
+        case .verify:
+            return "Verify Managed User"
+        case .remove:
+            return "Remove Managed User"
+        case .installHelper, .updateHelper, .uninstallHelper:
+            return "Managed User Helper"
+        }
+    }
+
+    var applyTitle: String {
+        switch action {
+        case .remove:
+            return "Remove"
+        case .repair:
+            return "Apply Repair"
+        case .create:
+            return "Create"
+        case .review, .verify:
+            return "Apply"
+        case .installHelper, .updateHelper, .uninstallHelper:
+            return "Apply"
+        }
+    }
+}
+
+private struct ShellManagedUserCreationSheet: View {
+    @Binding var draft: ManagedTerminalUserCreationDraft
+    let previewResult: ManagedTerminalUserCreationPreviewResult?
+    let diagnostics: [String]
+    let isApplying: Bool
+    let onDraftChanged: () -> Void
+    let onPreview: () -> Void
+    let onApply: (ManagedTerminalUserCreationPreview) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Create Managed User")
+                .font(ShellSettingsTypography.pageTitle)
+                .foregroundStyle(ShellPalette.settingsPrimaryInk)
+
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Unix user", text: $draft.unixUserName)
+                TextField("Display label", text: $draft.displayLabel)
+            }
+            .textFieldStyle(.roundedBorder)
+            .disabled(isApplying)
+
+            previewContent
+
+            HStack {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .disabled(isApplying)
+                Spacer()
+                if isApplying {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Button("Review Plan", action: onPreview)
+                    .disabled(isApplying)
+                Button("Apply") {
+                    if let preview = previewResult?.preview {
+                        onApply(preview)
+                    }
+                }
+                .disabled(isApplying || (previewResult?.preview?.plan.steps.isEmpty ?? true))
+            }
+        }
+        .padding(24)
+        .frame(width: 460, alignment: .leading)
+        .onChange(of: draft) { _, _ in
+            onDraftChanged()
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let result = previewResult,
+           !result.errors.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(result.errors.map(errorMessage), id: \.self) { message in
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(ShellSettingsTypography.rowDetail)
+                        .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                }
+            }
+        } else if let preview = previewResult?.preview {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(preview.visiblePlanRows, id: \.self) { row in
+                    Label(row, systemImage: "checkmark")
+                        .font(ShellSettingsTypography.rowDetail)
+                        .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                }
+            }
+        }
+
+        if !diagnostics.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(diagnostics, id: \.self) { diagnostic in
+                    Text(diagnostic)
+                        .font(ShellSettingsTypography.rowDetail)
+                        .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                }
+            }
+        }
+    }
+
+    private func errorMessage(_ error: ManagedTerminalUserCreationPreviewError) -> String {
+        switch error {
+        case .missingUnixUserName:
+            return "Unix user is required."
+        case .missingDisplayLabel:
+            return "Display label is required."
+        case .duplicateUnixUser(let user):
+            return "\(user) already exists."
+        case .terminalProfileConflict(let profileID):
+            return "Terminal Profile \(profileID) already exists."
+        case .validation:
+            return "Use a valid local Unix user name."
+        }
+    }
+}
+
+private struct ShellManagedUserPlanSheet: View {
+    let sheet: ShellManagedUserActionSheetState
+    let diagnostics: [String]
+    let isApplying: Bool
+    let onApply: () -> Void
+    let onCancel: () -> Void
+
+    private var preview: ManagedTerminalUserCreationPreview {
+        ManagedTerminalUserCreationPreview(request: sheet.plan.request, plan: sheet.plan)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(sheet.title)
+                .font(ShellSettingsTypography.pageTitle)
+                .foregroundStyle(ShellPalette.settingsPrimaryInk)
+
+            Text("\(sheet.plan.request.fullName ?? sheet.plan.request.accountName) · \(planStatusText)")
+                .font(ShellSettingsTypography.rowDetail)
+                .foregroundStyle(ShellPalette.settingsSecondaryInk)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(preview.visiblePlanRows, id: \.self) { row in
+                    Label(row, systemImage: "checkmark")
+                        .font(ShellSettingsTypography.rowDetail)
+                        .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                }
+            }
+
+            if !diagnostics.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(diagnostics, id: \.self) { diagnostic in
+                        Text(diagnostic)
+                            .font(ShellSettingsTypography.rowDetail)
+                            .foregroundStyle(ShellPalette.settingsSecondaryInk)
+                    }
+                }
+            }
+
+            HStack {
+                Button("Close", role: .cancel, action: onCancel)
+                    .disabled(isApplying)
+                Spacer()
+                if isApplying {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                if sheet.allowsApply {
+                    Button(sheet.applyTitle, action: onApply)
+                        .disabled(isApplying || sheet.plan.steps.isEmpty)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 460, alignment: .leading)
+    }
+
+    private var planStatusText: String {
+        switch sheet.plan.status {
+        case .alreadyReady:
+            return "Ready"
+        case .readyToApply:
+            return "Ready to apply"
+        case .repair:
+            return "Repairable"
+        case .helperUnavailable:
+            return "Helper unavailable"
+        case .accountNotAlanManaged:
+            return "Not managed"
+        case .legacySudoersPresent:
+            return "Legacy sudoers"
+        case .ptySpawnFailed:
+            return "PTY failed"
+        case .invalid:
+            return "Invalid"
+        case .requiresDestructiveConfirmation:
+            return "Needs confirmation"
+        case .sudoersConflict:
+            return "Sudoers conflict"
+        case .terminalProfileConflict:
+            return "Terminal Profile conflict"
+        }
     }
 }
 
@@ -2365,7 +3033,7 @@ private struct ShellPaneTitleBarView: View {
             try? await Task.sleep(nanoseconds: nanoseconds)
         }
 
-        guard !Task.isCancelled else { return }
+        if Task.isCancelled { return }
         await MainActor.run {
             activityFreshnessNow = Date()
         }
@@ -2868,5 +3536,3 @@ private struct TerminalMonoLine: View {
             )
     }
 }
-
-#endif

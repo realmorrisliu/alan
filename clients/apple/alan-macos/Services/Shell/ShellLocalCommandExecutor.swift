@@ -508,7 +508,6 @@ private extension AlanShellControlCommand {
         switch command {
         case .spaceCreate:
             let resolvedTerminalProfileID = terminalProfileID
-                ?? terminalProfileIDForGlobalDefaultPaneCapture()
             return withTerminalProfileID(resolvedTerminalProfileID)
 
         case .tabOpen:
@@ -516,7 +515,6 @@ private extension AlanShellControlCommand {
                 in: spaceID,
                 explicit: terminalProfileID
             )
-                ?? terminalProfileIDForGlobalDefaultPaneCapture()
             return withTerminalProfileID(resolvedTerminalProfileID)
 
         case .paneSplit:
@@ -524,12 +522,11 @@ private extension AlanShellControlCommand {
                 state.terminalProfileIDForNewSplit(from: $0, explicit: terminalProfileID)
             }
                 ?? terminalProfileID
-                ?? terminalProfileIDForGlobalDefaultPaneCapture()
-            let resolvedCwd = cwd
+            let resolvedCWD = cwd
                 ?? (resolvedTerminalProfileID == nil
                     ? paneID.flatMap { state.pane(paneID: $0)?.cwd }
                     : nil)
-            return withTerminalProfileID(resolvedTerminalProfileID, cwd: resolvedCwd)
+            return withTerminalProfileID(resolvedTerminalProfileID, cwd: resolvedCWD)
 
         default:
             return self
@@ -538,7 +535,7 @@ private extension AlanShellControlCommand {
 
     func withTerminalProfileID(
         _ terminalProfileID: String?,
-        cwd resolvedCwd: String? = nil
+        cwd resolvedCWD: String? = nil
     ) -> AlanShellControlCommand {
         AlanShellControlCommand(
             requestID: requestID,
@@ -557,7 +554,7 @@ private extension AlanShellControlCommand {
             spatialDirection: spatialDirection,
             placement: placement,
             title: title,
-            cwd: resolvedCwd ?? cwd,
+            cwd: resolvedCWD ?? cwd,
             text: text,
             key: key,
             attention: attention,

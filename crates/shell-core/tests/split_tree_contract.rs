@@ -245,6 +245,7 @@ fn workspace_model_serializes_platform_neutral_identity_fields() {
             ),
             terminal_metadata: None,
             lifecycle: ContentLifecycleState::Active,
+            renderer_state: Default::default(),
         }],
     };
 

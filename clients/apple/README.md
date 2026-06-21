@@ -78,8 +78,23 @@ This follows the same boundary as `cmux`: Ghostty stays external, the script
 syncs artifacts into a cache outside the repo, and then creates ignored local
 links at `clients/apple/GhosttyKit.xcframework`,
 `clients/apple/ghostty-resources`, and `clients/apple/ghostty-terminfo`.
-It prefers explicit overrides first, then a local `~/Developer/ghostty`
-checkout.
+By default, artifacts are built from the pinned Alan-maintained Ghostty fork
+submodule at `third_party/ghostty`. The setup script initializes or verifies
+that submodule, records source revision metadata in the artifact cache, and
+reports stale local links during `--check`. Explicit developer overrides such
+as `ALAN_GHOSTTY_REPO`, `ALAN_GHOSTTYKIT_PATH`,
+`ALAN_GHOSTTY_RESOURCES_DIR`, and `ALAN_GHOSTTY_TERMINFO_DIR` remain supported
+for fork development.
+
+Alan's local Ghostty build is macOS-only by default. The script builds
+`-Dxcframework-target=native` and `-Dsimd=false` because Alan does not need iOS
+slices for the macOS terminal host, and Zig 0.15.2's bundled libc++ does not
+currently compile Ghostty's SIMD C++ path against the macOS 27 SDK. Set
+`ALAN_GHOSTTY_XCFRAMEWORK_TARGET=universal` or `ALAN_GHOSTTY_SIMD=true` only
+when intentionally testing those upstream paths. The script also clears proxy
+environment variables for Zig dependency downloads by default; set
+`ALAN_GHOSTTY_ZIG_KEEP_PROXY=1` if your network requires Zig to use the process
+proxy environment.
 
 By default, the macOS app boots each new pane into your login shell. You can
 override that boot contract with:

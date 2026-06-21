@@ -24,6 +24,7 @@ MANIFEST="$APP_BUNDLE/Contents/Resources/alan-package-manifest.json"
 ALAN_BIN="$APP_BUNDLE/Contents/Resources/bin/$ALAN_CLI_NAME"
 SHELL_CORE_FFI_DYLIB_NAME="libalan_shell_core_ffi.dylib"
 SHELL_CORE_FFI_DYLIB="$APP_BUNDLE/Contents/Frameworks/$SHELL_CORE_FFI_DYLIB_NAME"
+PRIVILEGED_HELPER_EXECUTABLE="$APP_BUNDLE/Contents/Library/LaunchServices/$ALAN_PRIVILEGED_HELPER_LABEL"
 SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
 fail() {
@@ -62,6 +63,13 @@ require_developer_id_signature() {
     if ! printf '%s\n' "$details" | grep -q 'Authority=Developer ID Application'; then
         fail "Developer ID Application signature is required for $path"
     fi
+}
+
+require_dylib_loadable() {
+    local path="$1"
+
+    python3 -c 'import ctypes, sys; ctypes.CDLL(sys.argv[1])' "$path" ||
+        fail "dylib is not loadable: $path"
 }
 
 manifest_value() {
@@ -107,6 +115,7 @@ require_manifest_checksum() {
 
 require_command codesign
 require_command lipo
+require_command python3
 require_command shasum
 if [[ "${ALAN_VALIDATE_NOTARIZATION:-0}" == "1" ]]; then
     require_command xcrun
@@ -116,6 +125,7 @@ fi
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$ALAN_DISPLAY_NAME"
 require_executable "$APP_EXECUTABLE"
 require_executable "$ALAN_BIN"
+require_executable "$PRIVILEGED_HELPER_EXECUTABLE"
 [[ -f "$SHELL_CORE_FFI_DYLIB" ]] || fail "shell-core FFI dylib not found in release app"
 [[ -d "$SPARKLE_FRAMEWORK" ]] || fail "Sparkle.framework not found in release app"
 
@@ -157,6 +167,8 @@ grep -q "\"path\": \"Contents/Resources/bin/$ALAN_CLI_NAME\"" "$MANIFEST" ||
     fail "manifest does not record embedded $ALAN_CLI_NAME path"
 grep -q "\"path\": \"Contents/Frameworks/$SHELL_CORE_FFI_DYLIB_NAME\"" "$MANIFEST" ||
     fail "manifest does not record embedded $SHELL_CORE_FFI_DYLIB_NAME path"
+grep -q "\"path\": \"Contents/Library/LaunchServices/$ALAN_PRIVILEGED_HELPER_LABEL\"" "$MANIFEST" ||
+    fail "manifest does not record embedded $ALAN_PRIVILEGED_HELPER_LABEL path"
 
 manifest_version="$(manifest_value "version")"
 repo_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
@@ -166,10 +178,13 @@ if [[ "$manifest_version" != "$repo_version" ]]; then
 fi
 require_manifest_checksum "$ALAN_CLI_NAME" "$ALAN_BIN"
 require_manifest_checksum "$SHELL_CORE_FFI_DYLIB_NAME" "$SHELL_CORE_FFI_DYLIB"
+require_manifest_checksum "$ALAN_PRIVILEGED_HELPER_LABEL" "$PRIVILEGED_HELPER_EXECUTABLE"
 
 require_arm64_macho "$APP_EXECUTABLE"
 require_arm64_macho "$ALAN_BIN"
 require_arm64_macho "$SHELL_CORE_FFI_DYLIB"
+require_arm64_macho "$PRIVILEGED_HELPER_EXECUTABLE"
+require_dylib_loadable "$SHELL_CORE_FFI_DYLIB"
 require_arm64_macho "$SPARKLE_AUTOUPDATE"
 require_arm64_macho "$SPARKLE_FRAMEWORK_BIN"
 require_arm64_macho "$SPARKLE_UPDATER_BIN"
@@ -178,6 +193,7 @@ require_arm64_macho "$SPARKLE_INSTALLER_BIN"
 
 require_developer_id_signature "$ALAN_BIN"
 require_developer_id_signature "$SHELL_CORE_FFI_DYLIB"
+require_developer_id_signature "$PRIVILEGED_HELPER_EXECUTABLE"
 require_developer_id_signature "$SPARKLE_AUTOUPDATE"
 require_developer_id_signature "$SPARKLE_UPDATER_APP"
 require_developer_id_signature "$SPARKLE_DOWNLOADER_XPC"

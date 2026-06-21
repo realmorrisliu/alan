@@ -1,13 +1,14 @@
 use alan_shell_core::{
-    ManagedTerminalAccountPlanner, ManagedTerminalAccountProfileState,
-    ManagedTerminalAccountRecord, ManagedTerminalAccountRequest,
-    ManagedTerminalAccountSettingsSummary, ManagedTerminalAccountState,
-    ManagedTerminalAccountSudoersState, ManagedTerminalAccountVerificationStatus,
-    ShellSettingsCapabilitiesSummary, ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary,
-    ShellSettingsRowMutability, ShellSettingsSkillSummary, ShellSettingsSummaryRows,
-    ShellSettingsWorkspaceContext, ShellSettingsWorkspaceContextInput,
-    ShellSettingsWorkspaceRegistryEntry, TerminalProfileDefinition, TerminalProfileLaunch,
-    TerminalProfilePresentation, TerminalProfileSettingsSummary,
+    ManagedTerminalAccountPlan, ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanner,
+    ManagedTerminalAccountProfileState, ManagedTerminalAccountRecord,
+    ManagedTerminalAccountRequest, ManagedTerminalAccountSettingsSummary,
+    ManagedTerminalAccountState, ManagedTerminalAccountSudoersState,
+    ManagedTerminalAccountVerificationStatus, ShellSettingsCapabilitiesSummary,
+    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsRowMutability,
+    ShellSettingsSkillSummary, ShellSettingsSummaryRows, ShellSettingsWorkspaceContext,
+    ShellSettingsWorkspaceContextInput, ShellSettingsWorkspaceRegistryEntry,
+    TerminalProfileDefinition, TerminalProfileLaunch, TerminalProfilePresentation,
+    TerminalProfileSettingsSummary,
 };
 
 #[test]
@@ -45,8 +46,8 @@ fn terminal_profile_rows_match_swift_summary_semantics() {
         .expect("managed profile row");
     assert_eq!(alan.system_name, "person.crop.circle");
     assert_eq!(alan.detail.as_deref(), Some("Sudo user alan"));
-    assert_eq!(alan.value.as_deref(), Some("sudo_user"));
-    assert_eq!(alan.mutability, ShellSettingsRowMutability::Editable);
+    assert_eq!(alan.value.as_deref(), Some("Managed"));
+    assert_eq!(alan.mutability, ShellSettingsRowMutability::ReadOnly);
 }
 
 #[test]
@@ -55,8 +56,10 @@ fn managed_account_rows_project_plan_status_and_detail() {
     let state = ManagedTerminalAccountState {
         account: ManagedTerminalAccountRecord::Missing,
         sudoers: ManagedTerminalAccountSudoersState::Missing,
+        ownership: Default::default(),
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: false,
     };
     let plan = ManagedTerminalAccountPlanner::plan(request, &state);
     let summary = ManagedTerminalAccountSettingsSummary { plans: vec![plan] };
@@ -84,6 +87,40 @@ fn managed_account_rows_project_plan_status_and_detail() {
         vec!["terminalAccountProvision", "terminalAccountLoginBoundary"]
     );
     assert_eq!(empty_rows[0].value.as_deref(), Some("Preview…"));
+
+    let unmanaged_rows = ShellSettingsSummaryRows::managed_terminal_account_rows(
+        &ManagedTerminalAccountSettingsSummary {
+            plans: vec![ManagedTerminalAccountPlan {
+                request: managed_account_request(),
+                status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
+                steps: vec![],
+            }],
+        },
+    );
+    assert_eq!(unmanaged_rows[0].value.as_deref(), Some("Not managed"));
+    assert_eq!(
+        unmanaged_rows[0].detail.as_deref(),
+        Some("alan_smoke is an existing local account outside Alan management.")
+    );
+
+    let legacy_rows = ShellSettingsSummaryRows::managed_terminal_account_rows(
+        &ManagedTerminalAccountSettingsSummary {
+            plans: vec![ManagedTerminalAccountPlan {
+                request: managed_account_request(),
+                status: ManagedTerminalAccountPlanStatus::LegacySudoersPresent {
+                    path: Some("/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string()),
+                },
+                steps: vec![],
+            }],
+        },
+    );
+    assert_eq!(legacy_rows[0].value.as_deref(), Some("Legacy"));
+    assert_eq!(
+        legacy_rows[0].detail.as_deref(),
+        Some(
+            "alan_smoke has legacy Alan sudoers state at /etc/sudoers.d/alan-terminal-morris-to-alan_smoke."
+        )
+    );
 }
 
 #[test]

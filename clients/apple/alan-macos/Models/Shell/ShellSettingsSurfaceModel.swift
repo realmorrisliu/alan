@@ -27,7 +27,7 @@ enum ShellSettingsSectionID: String, CaseIterable, Equatable {
         case .terminalProfiles:
             return "Terminal Profiles"
         case .terminalAccounts:
-            return "Terminal Accounts"
+            return "Managed Users"
         case .accounts:
             return "Accounts"
         case .sessions:
@@ -106,7 +106,7 @@ enum ShellSettingsGroupSectionID: String, Equatable, Identifiable {
         case .profiles:
             return "Profiles"
         case .localIdentity:
-            return "Identity"
+            return "Managed Users"
         case .agent:
             return "Agent"
         case .connection:
@@ -138,6 +138,52 @@ enum ShellSettingsRowMutability: Equatable {
     case deferred
 }
 
+enum ShellSettingsRowActionKind: String, Equatable {
+    case create
+    case review
+    case repair
+    case verify
+    case remove
+    case installHelper = "install_helper"
+    case updateHelper = "update_helper"
+    case uninstallHelper = "uninstall_helper"
+}
+
+struct ShellSettingsRowActionModel: Identifiable, Equatable {
+    let id: ShellSettingsRowActionKind
+    let title: String
+    let systemName: String
+
+    static func make(_ kind: ShellSettingsRowActionKind) -> ShellSettingsRowActionModel {
+        switch kind {
+        case .create:
+            return ShellSettingsRowActionModel(id: kind, title: "Create", systemName: "plus")
+        case .review:
+            return ShellSettingsRowActionModel(id: kind, title: "Review", systemName: "doc.text")
+        case .repair:
+            return ShellSettingsRowActionModel(
+                id: kind,
+                title: "Repair",
+                systemName: "wrench.and.screwdriver"
+            )
+        case .verify:
+            return ShellSettingsRowActionModel(
+                id: kind,
+                title: "Verify",
+                systemName: "checkmark.seal"
+            )
+        case .remove:
+            return ShellSettingsRowActionModel(id: kind, title: "Remove", systemName: "trash")
+        case .installHelper:
+            return ShellSettingsRowActionModel(id: kind, title: "Install", systemName: "arrow.down.circle")
+        case .updateHelper:
+            return ShellSettingsRowActionModel(id: kind, title: "Update", systemName: "arrow.triangle.2.circlepath")
+        case .uninstallHelper:
+            return ShellSettingsRowActionModel(id: kind, title: "Uninstall", systemName: "trash")
+        }
+    }
+}
+
 struct ShellSettingsRowModel: Identifiable, Equatable {
     let id: String
     let systemName: String
@@ -146,6 +192,7 @@ struct ShellSettingsRowModel: Identifiable, Equatable {
     let value: String?
     let mutability: ShellSettingsRowMutability
     let offersFreeformEditing: Bool
+    let actions: [ShellSettingsRowActionModel]
 
     init(
         id: String,
@@ -154,7 +201,8 @@ struct ShellSettingsRowModel: Identifiable, Equatable {
         detail: String? = nil,
         value: String? = nil,
         mutability: ShellSettingsRowMutability = .readOnly,
-        offersFreeformEditing: Bool = false
+        offersFreeformEditing: Bool = false,
+        actions: [ShellSettingsRowActionModel] = []
     ) {
         self.id = id
         self.systemName = systemName
@@ -163,6 +211,7 @@ struct ShellSettingsRowModel: Identifiable, Equatable {
         self.value = value
         self.mutability = mutability
         self.offersFreeformEditing = offersFreeformEditing
+        self.actions = actions
     }
 
     var visibleText: [String] {
@@ -218,6 +267,7 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         remote: ShellSettingsRemoteSnapshot,
         local: ShellSettingsLocalSummary,
         terminalProfiles: TerminalProfileSettingsSummary = .current(),
+        privilegedHelper: PrivilegedHelperSettingsSummary = .current(),
         managedTerminalAccounts: ManagedTerminalAccountSettingsSummary = .empty,
         diagnostics: ShellSettingsDiagnosticsSummary = .disabled
     ) -> ShellSettingsSurfaceSnapshot {
@@ -230,7 +280,10 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
                 ),
                 ShellSettingsSectionModel(
                     id: .terminalAccounts,
-                    rows: managedTerminalAccountRows(managedTerminalAccounts)
+                    rows: managedTerminalAccountRows(
+                        managedTerminalAccounts,
+                        privilegedHelper: privilegedHelper
+                    )
                 ),
                 ShellSettingsSectionModel(id: .accounts, rows: accountRows(remote.accounts)),
                 ShellSettingsSectionModel(id: .sessions, rows: sessionRows()),
@@ -429,20 +482,88 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
     }
 
     private static func managedTerminalAccountRows(
-        _ summary: ManagedTerminalAccountSettingsSummary
+        _ summary: ManagedTerminalAccountSettingsSummary,
+        privilegedHelper: PrivilegedHelperSettingsSummary
     ) -> [ShellSettingsRowModel] {
+        let users = summary.users
+        let helperRow = privilegedHelper.row
+        let createRows = [
+            ShellSettingsRowModel(
+                id: "terminalAccountProvision",
+                systemName: "person.crop.circle.badge.plus",
+                title: "Create Managed User",
+                detail: "Create a terminal-only local user for passwordless terminal entry.",
+                value: "Preview…",
+                mutability: .actionOnly,
+                actions: [.make(.create)]
+            )
+        ]
+        let userRows = managedTerminalAccountUserRows(summary: summary, users: users)
+        let boundaryRows = [
+            ShellSettingsRowModel(
+                id: "terminalAccountLoginBoundary",
+                systemName: "macwindow.badge.plus",
+                title: "Mac login session",
+                detail: "This flow leaves the Mac login session setting unchanged.",
+                value: "Not changed"
+            )
+        ]
+        return [helperRow] + createRows + userRows + boundaryRows
+    }
+
+    private static func managedTerminalAccountUserRows(
+        summary: ManagedTerminalAccountSettingsSummary,
+        users: [ManagedTerminalUserSummary]
+    ) -> [ShellSettingsRowModel] {
+        guard !users.isEmpty else { return [] }
         do {
-            let rows = try ShellCoreFFIAdapter.shared.managedTerminalAccountRows(summary)
-            return rows
+            let coreRows = try ShellCoreFFIAdapter.shared.managedTerminalAccountRows(summary)
+            let rowsByID = Dictionary(uniqueKeysWithValues: coreRows.map { ($0.id, $0) })
+            return users.map { user in
+                let id = "terminalAccount.\(user.unixUserName)"
+                let coreRow = rowsByID[id]
+                return ShellSettingsRowModel(
+                    id: id,
+                    systemName: coreRow?.systemName ?? "exclamationmark.triangle",
+                    title: user.displayLabel,
+                    detail: coreRow?.detail,
+                    value: coreRow?.value ?? "Unavailable",
+                    mutability: .actionOnly,
+                    actions: terminalAccountActions(user)
+                )
+            }
         } catch {
-            return [
-                unavailableRow(
-                    id: "terminalAccountsUnavailable",
-                    systemName: "person.crop.circle.badge.exclamationmark",
-                    title: "Managed terminal account"
-                ),
-            ]
+            return users.map { user in
+                ShellSettingsRowModel(
+                    id: "terminalAccount.\(user.unixUserName)",
+                    systemName: "exclamationmark.triangle",
+                    title: user.displayLabel,
+                    value: "Unavailable",
+                    mutability: .actionOnly,
+                    actions: [.make(.review)]
+                )
+            }
         }
+    }
+
+    private static func terminalAccountActions(
+        _ user: ManagedTerminalUserSummary
+    ) -> [ShellSettingsRowActionModel] {
+        let kinds: [ShellSettingsRowActionKind]
+        switch user.readinessState {
+        case .ready:
+            kinds = [.review, .verify, .remove]
+        case .repairable, .readyToApply, .legacySudoersPresent, .ptySpawnFailed:
+            kinds = [.review, .repair]
+        case .invalid,
+             .helperUnavailable,
+             .accountNotAlanManaged,
+             .destructiveConfirmation,
+             .sudoersConflict,
+             .terminalProfileConflict:
+            kinds = [.review]
+        }
+        return kinds.map(ShellSettingsRowActionModel.make)
     }
 
     private static func accountRows(
@@ -595,12 +716,609 @@ struct TerminalProfileSettingsSummary: Equatable {
     var defaultProfileTitle: String? {
         profiles.first { $0.id == defaultProfileID }?.title
     }
+
+    var containsManagedUserProfile: Bool {
+        profiles.contains { profile in
+            if case .managedUser = profile.launch {
+                return true
+            }
+            return false
+        }
+    }
+
+    var document: TerminalProfileDocument {
+        TerminalProfileDocument(defaultProfileID: defaultProfileID, profiles: profiles)
+    }
+}
+
+struct PrivilegedHelperSettingsSummary: Equatable {
+    let status: AlanPrivilegedHelperStatus
+
+    static func current(
+        manager: AlanPrivilegedHelperLifecycleManaging = AlanPrivilegedHelperAppServiceManager()
+    ) -> PrivilegedHelperSettingsSummary {
+        PrivilegedHelperSettingsSummary(status: manager.status())
+    }
+
+    var row: ShellSettingsRowModel {
+        ShellSettingsRowModel(
+            id: "terminalPrivilegedHelper",
+            systemName: systemName,
+            title: "Privileged helper",
+            detail: detail,
+            value: value,
+            mutability: actions.isEmpty ? .readOnly : .actionOnly,
+            actions: actions.map(ShellSettingsRowActionModel.make)
+        )
+    }
+
+    private var systemName: String {
+        switch status.state {
+        case .healthy:
+            return "checkmark.shield"
+        case .installing, .updating:
+            return "hourglass"
+        case .notInstalled, .outdated, .invalidSignature, .unavailable, .uninstallable:
+            return "exclamationmark.shield"
+        }
+    }
+
+    private var value: String {
+        switch status.state {
+        case .notInstalled:
+            return "Not installed"
+        case .outdated:
+            return "Outdated"
+        case .invalidSignature:
+            return "Invalid signature"
+        case .installing:
+            return "Installing"
+        case .updating:
+            return "Updating"
+        case .healthy:
+            return "Healthy"
+        case .unavailable:
+            return "Unavailable"
+        case .uninstallable:
+            return "Uninstallable"
+        }
+    }
+
+    private var detail: String {
+        if let message = status.sanitizedMessage,
+           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return message
+        }
+        switch status.state {
+        case .notInstalled:
+            return "Install the helper before Managed Users can be created or repaired."
+        case .outdated:
+            return "Update the helper before using helper-backed Managed Users."
+        case .invalidSignature:
+            return "Reinstall the helper because its signature does not match this Alan build."
+        case .installing:
+            return "Helper installation is in progress."
+        case .updating:
+            return "Helper update is in progress."
+        case .healthy:
+            return "Managed User create, repair, and terminal launch can use the helper."
+        case .unavailable:
+            return "Helper status is unavailable; Managed User privileged operations are disabled."
+        case .uninstallable:
+            return "The helper can be removed from this Mac."
+        }
+    }
+
+    private var actions: [ShellSettingsRowActionKind] {
+        switch status.state {
+        case .notInstalled, .unavailable:
+            return [.installHelper]
+        case .outdated, .invalidSignature:
+            return [.updateHelper]
+        case .uninstallable:
+            return [.uninstallHelper]
+        case .installing, .updating, .healthy:
+            return []
+        }
+    }
 }
 
 struct ManagedTerminalAccountSettingsSummary: Equatable {
     let plans: [ManagedTerminalAccountPlan]
 
     static let empty = ManagedTerminalAccountSettingsSummary(plans: [])
+
+    static func current(
+        terminalProfiles: TerminalProfileSettingsSummary,
+        guiUserName: String = NSUserName(),
+        discoverer: ManagedTerminalAccountLocalStateDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(),
+        entryVerifier: ManagedTerminalAccountEntryVerifying = ManagedTerminalAccountSudoEntryVerifier(),
+        helperClient: AlanPrivilegedHelperClienting? = nil,
+        catalog: ManagedTerminalAccountCatalog? = nil
+    ) -> ManagedTerminalAccountSettingsSummary {
+        let storedCatalog = catalog ?? ManagedTerminalAccountCatalogStore.defaultStore().load()
+        var requestsByAccount: [String: ManagedTerminalAccountRequest] = [:]
+        var orderedAccountNames: [String] = []
+
+        func upsertRequest(_ request: ManagedTerminalAccountRequest) {
+            if requestsByAccount[request.accountName] == nil {
+                orderedAccountNames.append(request.accountName)
+            }
+            requestsByAccount[request.accountName] = request
+        }
+
+        for entry in storedCatalog.entries {
+            upsertRequest(
+                ManagedTerminalAccountRequest(
+                    accountName: entry.accountName,
+                    guiUserName: guiUserName,
+                    fullName: entry.displayLabel
+                )
+            )
+        }
+
+        for profile in terminalProfiles.profiles {
+            guard let accountID = profile.managedTerminalAccountID else { continue }
+            upsertRequest(
+                ManagedTerminalAccountRequest(
+                    accountName: accountID,
+                    guiUserName: guiUserName,
+                    fullName: profile.title
+                )
+            )
+        }
+
+        let plans = orderedAccountNames.compactMap { accountName -> ManagedTerminalAccountPlan? in
+            guard let request = requestsByAccount[accountName] else { return nil }
+            if let helperClient {
+                let status = helperClient.status()
+                let diagnosis = status.isHealthy
+                    ? helperClient.diagnoseManagedUser(request)
+                    : AlanManagedUserDiagnosis.helperUnavailable(request: request, status: status)
+                return ManagedTerminalAccountPlanner.plan(
+                    request: request,
+                    diagnosis: diagnosis,
+                    terminalProfiles: terminalProfiles.document
+                )
+            }
+            let discoveredState = discoverer.discover(
+                request: request,
+                terminalProfiles: terminalProfiles.document
+            )
+            let verification = ManagedTerminalAccountReadinessVerifier.verify(
+                request: request,
+                state: discoveredState,
+                entryVerifier: entryVerifier
+            )
+            let verifiedState = ManagedTerminalAccountState(
+                account: discoveredState.account,
+                sudoers: discoveredState.sudoers,
+                ownership: discoveredState.ownership,
+                terminalProfile: discoveredState.terminalProfile,
+                verification: verification,
+                homeDirectoryExists: discoveredState.homeDirectoryExists
+            )
+            return ManagedTerminalAccountPlanner.plan(request: request, state: verifiedState)
+        }
+        return ManagedTerminalAccountSettingsSummary(plans: plans)
+    }
+
+    var users: [ManagedTerminalUserSummary] {
+        plans.map(ManagedTerminalUserSummary.init(plan:))
+    }
+}
+
+struct ManagedTerminalAccountCatalogEntry: Codable, Equatable {
+    let accountName: String
+    let displayLabel: String
+}
+
+struct ManagedTerminalAccountCatalog: Codable, Equatable {
+    let entries: [ManagedTerminalAccountCatalogEntry]
+
+    static let empty = ManagedTerminalAccountCatalog(entries: [])
+
+    var normalized: ManagedTerminalAccountCatalog {
+        var entriesByAccount: [String: ManagedTerminalAccountCatalogEntry] = [:]
+        for entry in entries {
+            let accountName = entry.accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !accountName.isEmpty else { continue }
+            let label = entry.displayLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            entriesByAccount[accountName] = ManagedTerminalAccountCatalogEntry(
+                accountName: accountName,
+                displayLabel: label.isEmpty ? accountName : label
+            )
+        }
+        return ManagedTerminalAccountCatalog(
+            entries: entriesByAccount.values.sorted { $0.accountName < $1.accountName }
+        )
+    }
+}
+
+struct ManagedTerminalAccountCatalogStore {
+    let fileManager: FileManager
+    let storeURL: URL
+
+    init(fileManager: FileManager = .default, storeURL: URL) {
+        self.fileManager = fileManager
+        self.storeURL = storeURL
+    }
+
+    static func defaultStore(
+        channelApplicationSupportDirectoryName: String =
+            TerminalProfileStore.currentChannelApplicationSupportDirectoryName(),
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ManagedTerminalAccountCatalogStore {
+        let profileStore = TerminalProfileStore.defaultStore(
+            channelApplicationSupportDirectoryName: channelApplicationSupportDirectoryName,
+            fileManager: fileManager,
+            environment: environment
+        )
+        return ManagedTerminalAccountCatalogStore(
+            fileManager: fileManager,
+            storeURL: profileStore.storeURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("managed-terminal-users.json", isDirectory: false)
+        )
+    }
+
+    func load() -> ManagedTerminalAccountCatalog {
+        guard fileManager.fileExists(atPath: storeURL.path),
+              let data = try? Data(contentsOf: storeURL),
+              let catalog = try? JSONDecoder().decode(ManagedTerminalAccountCatalog.self, from: data)
+        else {
+            return .empty
+        }
+        return catalog.normalized
+    }
+
+    func upsert(_ entry: ManagedTerminalAccountCatalogEntry) throws {
+        var entries = load().entries.filter { $0.accountName != entry.accountName }
+        entries.append(entry)
+        try save(ManagedTerminalAccountCatalog(entries: entries).normalized)
+    }
+
+    func remove(accountName: String) throws {
+        let entries = load().entries.filter { $0.accountName != accountName }
+        try save(ManagedTerminalAccountCatalog(entries: entries))
+    }
+
+    private func save(_ catalog: ManagedTerminalAccountCatalog) throws {
+        try fileManager.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(catalog.normalized)
+        try data.write(to: storeURL, options: .atomic)
+    }
+}
+
+enum TerminalProfileSpaceIdentityFilter {
+    static func selectableProfiles(
+        terminalProfiles: TerminalProfileSettingsSummary,
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary
+    ) -> [TerminalProfileDefinition] {
+        terminalProfiles.profiles.filter { profile in
+            guard profile.id != TerminalProfileDefinition.loginShellFallback.id else { return false }
+            guard let managedAccountID = profile.managedTerminalAccountID else { return true }
+            return managedTerminalAccounts.users.first {
+                $0.unixUserName == managedAccountID && $0.readinessState == .ready
+            } != nil
+        }
+    }
+
+    static func repairGuidance(
+        profileID: String,
+        terminalProfiles: TerminalProfileSettingsSummary,
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary
+    ) -> String? {
+        guard let profile = terminalProfiles.profiles.first(where: { $0.id == profileID }),
+              let managedAccountID = profile.managedTerminalAccountID
+        else {
+            return nil
+        }
+        guard let user = managedTerminalAccounts.users.first(where: { $0.unixUserName == managedAccountID })
+        else {
+            return "Repair this Managed User in Settings before using it for a Space."
+        }
+        guard user.readinessState != .ready else { return nil }
+        if let repairState = user.repairState {
+            return "Repair required: \(repairState)"
+        }
+        return user.conflictState ?? "Repair this Managed User in Settings before using it for a Space."
+    }
+}
+
+enum ManagedTerminalUserReadinessState: String, Equatable {
+    case ready
+    case repairable
+    case readyToApply
+    case invalid
+    case helperUnavailable
+    case accountNotAlanManaged
+    case legacySudoersPresent
+    case ptySpawnFailed
+    case destructiveConfirmation
+    case sudoersConflict
+    case terminalProfileConflict
+}
+
+struct ManagedTerminalUserSummary: Equatable, Identifiable {
+    let unixUserName: String
+    let displayLabel: String
+    let readinessState: ManagedTerminalUserReadinessState
+    let repairState: String?
+    let conflictState: String?
+    let managedTerminalProfileID: String
+
+    var id: String { unixUserName }
+
+    init(plan: ManagedTerminalAccountPlan) {
+        unixUserName = plan.request.accountName
+        let trimmedLabel = plan.request.fullName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedLabel, !trimmedLabel.isEmpty {
+            displayLabel = trimmedLabel
+        } else {
+            displayLabel = plan.request.accountName
+        }
+        managedTerminalProfileID = plan.request.terminalProfileID
+
+        switch plan.status {
+        case .alreadyReady:
+            readinessState = .ready
+            repairState = nil
+            conflictState = nil
+        case .repair:
+            readinessState = .repairable
+            repairState = "\(plan.request.accountName) needs repair before terminal entry is ready."
+            conflictState = nil
+        case .readyToApply:
+            readinessState = .readyToApply
+            repairState = nil
+            conflictState = nil
+        case .invalid:
+            readinessState = .invalid
+            repairState = nil
+            conflictState = nil
+        case .helperUnavailable:
+            readinessState = .helperUnavailable
+            repairState = nil
+            conflictState = "Privileged helper is unavailable for \(plan.request.accountName)."
+        case .accountNotAlanManaged:
+            readinessState = .accountNotAlanManaged
+            repairState = nil
+            conflictState = "\(plan.request.accountName) is an existing local account outside Alan management."
+        case .legacySudoersPresent(let path):
+            readinessState = .legacySudoersPresent
+            repairState = path.map {
+                "\(plan.request.accountName) has legacy Alan sudoers state at \($0)."
+            } ?? "\(plan.request.accountName) has legacy Alan sudoers state."
+            conflictState = nil
+        case .ptySpawnFailed:
+            readinessState = .ptySpawnFailed
+            repairState = "\(plan.request.accountName) failed helper-managed PTY verification."
+            conflictState = nil
+        case .requiresDestructiveConfirmation:
+            readinessState = .destructiveConfirmation
+            repairState = nil
+            conflictState = nil
+        case .sudoersConflict(let path):
+            readinessState = .sudoersConflict
+            repairState = nil
+            conflictState = "\(plan.request.accountName) has an existing non-Alan sudoers file at \(path)."
+        case .terminalProfileConflict(let profileID):
+            readinessState = .terminalProfileConflict
+            repairState = nil
+            conflictState =
+                "\(plan.request.accountName) has an existing non-Alan Terminal Profile named \(profileID)."
+        }
+    }
+}
+
+struct ManagedTerminalUserCreationDraft: Equatable {
+    var unixUserName: String
+    var displayLabel: String
+    var guiUserName: String
+
+    var request: ManagedTerminalAccountRequest {
+        ManagedTerminalAccountRequest(
+            accountName: unixUserName.trimmingCharacters(in: .whitespacesAndNewlines),
+            guiUserName: guiUserName.trimmingCharacters(in: .whitespacesAndNewlines),
+            fullName: normalizedDisplayLabel
+        )
+    }
+
+    private var normalizedDisplayLabel: String? {
+        let trimmed = displayLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+enum ManagedTerminalUserCreationPreviewError: Equatable {
+    case missingUnixUserName
+    case missingDisplayLabel
+    case duplicateUnixUser(String)
+    case terminalProfileConflict(String)
+    case validation([ManagedTerminalAccountValidationError])
+}
+
+struct ManagedTerminalUserCreationPreview: Equatable {
+    let request: ManagedTerminalAccountRequest
+    let plan: ManagedTerminalAccountPlan
+
+    var visiblePlanRows: [String] {
+        var rows = [
+            "Account \(request.accountName)",
+            "Home \(request.homeDirectory)",
+            "Shell \(request.shell)",
+        ]
+        if request.hideFromLoginWindow {
+            rows.append("Hidden from login window")
+        }
+        rows.append("Privileged helper managed")
+        rows.append(contentsOf: plan.steps.map(visiblePlanRow(for:)))
+        return rows
+    }
+
+    private func visiblePlanRow(for step: ManagedTerminalAccountPlanStep) -> String {
+        switch step.kind {
+        case .createStandardAccount:
+            return "Create standard account"
+        case .repairAccountType:
+            return "Repair account type"
+        case .repairHomeDirectory:
+            return "Repair home directory"
+        case .repairShell:
+            return "Repair shell"
+        case .hideAccount:
+            return "Hide from login window"
+        case .writeSudoersDropIn:
+            return "Prepare helper-managed account entry"
+        case .validateSudoers:
+            return "Validate helper plan"
+        case .verifyTerminalEntry:
+            return "Verify terminal entry"
+        case .createOrUpdateTerminalProfile:
+            return "Terminal Profile \(request.terminalProfileID)"
+        case .bindCurrentSpace:
+            return "Bind current Space"
+        case .removeSudoersDropIn:
+            return "Remove Alan-owned sudoers drop-in"
+        case .removeManagedTerminalProfile:
+            return "Remove managed Terminal Profile"
+        case .deleteAccount:
+            return "Delete terminal account"
+        case .deleteHomeDirectory:
+            return "Delete terminal account home directory"
+        case .helperStep:
+            return step.summary
+        }
+    }
+}
+
+struct ManagedTerminalUserCreationPreviewResult: Equatable {
+    let preview: ManagedTerminalUserCreationPreview?
+    let errors: [ManagedTerminalUserCreationPreviewError]
+
+    var isValid: Bool {
+        preview != nil && errors.isEmpty
+    }
+}
+
+enum ManagedTerminalUserCreationPreviewBuilder {
+    static func make(
+        draft: ManagedTerminalUserCreationDraft,
+        existingUsers: [ManagedTerminalUserSummary],
+        terminalProfiles: TerminalProfileSettingsSummary,
+        diagnosis: AlanManagedUserDiagnosis
+    ) -> ManagedTerminalUserCreationPreviewResult {
+        make(
+            draft: draft,
+            existingUsers: existingUsers,
+            terminalProfiles: terminalProfiles,
+            accountIsUnavailable: diagnosis.accountExists
+                && diagnosis.ownershipState != .alanManaged,
+            plan: ManagedTerminalAccountPlanner.plan(
+                request: draft.request,
+                diagnosis: diagnosis,
+                terminalProfiles: terminalProfiles.document
+            )
+        )
+    }
+
+    static func make(
+        draft: ManagedTerminalUserCreationDraft,
+        existingUsers: [ManagedTerminalUserSummary],
+        terminalProfiles: TerminalProfileSettingsSummary,
+        state: ManagedTerminalAccountState
+    ) -> ManagedTerminalUserCreationPreviewResult {
+        make(
+            draft: draft,
+            existingUsers: existingUsers,
+            terminalProfiles: terminalProfiles,
+            accountIsUnavailable: accountIsUnavailableForCreation(state.account),
+            plan: ManagedTerminalAccountPlanner.plan(request: draft.request, state: state)
+        )
+    }
+
+    private static func make(
+        draft: ManagedTerminalUserCreationDraft,
+        existingUsers: [ManagedTerminalUserSummary],
+        terminalProfiles: TerminalProfileSettingsSummary,
+        accountIsUnavailable: Bool,
+        plan: ManagedTerminalAccountPlan
+    ) -> ManagedTerminalUserCreationPreviewResult {
+        let request = draft.request
+        var errors: [ManagedTerminalUserCreationPreviewError] = []
+        if request.accountName.isEmpty {
+            errors.append(.missingUnixUserName)
+        }
+        if request.fullName == nil {
+            errors.append(.missingDisplayLabel)
+        }
+        let duplicatesManagedUser = existingUsers.contains { $0.unixUserName == request.accountName }
+        if duplicatesManagedUser {
+            errors.append(.duplicateUnixUser(request.accountName))
+        }
+        if !duplicatesManagedUser && accountIsUnavailable {
+            errors.append(.duplicateUnixUser(request.accountName))
+        }
+        if let conflictingProfile = terminalProfiles.profiles.first(where: {
+            $0.id == request.terminalProfileID
+                && $0.managedTerminalAccountID != request.accountName
+        }) {
+            errors.append(.terminalProfileConflict(conflictingProfile.id))
+        }
+
+        let validationErrors = ManagedTerminalAccountIdentifierValidator.validate(request)
+        if !validationErrors.isEmpty {
+            errors.append(.validation(validationErrors))
+        }
+        guard errors.isEmpty else {
+            return ManagedTerminalUserCreationPreviewResult(preview: nil, errors: errors)
+        }
+
+        return ManagedTerminalUserCreationPreviewResult(
+            preview: ManagedTerminalUserCreationPreview(request: request, plan: plan),
+            errors: []
+        )
+    }
+
+    private static func accountIsUnavailableForCreation(
+        _ account: ManagedTerminalAccountRecord
+    ) -> Bool {
+        switch account {
+        case .missing:
+            return false
+        case .invalid(let reason) where reason.localizedCaseInsensitiveContains("incomplete"):
+            return false
+        case .invalid, .standard, .admin:
+            return true
+        }
+    }
+}
+
+struct ManagedTerminalUserProvisioningApplyResult: Equatable {
+    let applyResult: ManagedTerminalAccountApplyResult
+    let refreshedSummary: ManagedTerminalAccountSettingsSummary
+}
+
+enum ManagedTerminalUserProvisioningFlow {
+    static func applyApproved<Executor: ManagedTerminalAccountPrivilegedExecuting>(
+        plan: ManagedTerminalAccountPlan,
+        executor: Executor,
+        refresh: () -> ManagedTerminalAccountSettingsSummary
+    ) -> ManagedTerminalUserProvisioningApplyResult {
+        let applyResult = executor.apply(plan)
+        return ManagedTerminalUserProvisioningApplyResult(
+            applyResult: applyResult,
+            refreshedSummary: refresh()
+        )
+    }
 }
 
 struct ShellSettingsAccountsSummary: Equatable {
