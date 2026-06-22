@@ -20,6 +20,15 @@ use std::time::Duration;
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
 const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
+/// How thoroughly to validate command paths. Under an OS sandbox the kernel
+/// enforces workspace containment, so only protected-subpath writes need the
+/// parser; on the path-guard fallback the full syntactic checks apply.
+#[derive(Debug, Clone, Copy)]
+enum PathCheckMode {
+    Full,
+    ProtectedOnly,
+}
+
 /// Execution result from sandbox
 #[derive(Debug, Clone)]
 pub struct ExecResult {
@@ -93,7 +102,7 @@ impl Sandbox {
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd) {
+        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -225,9 +234,17 @@ impl Sandbox {
         // syntactic checks and let Seatbelt/Landlock confine the command (e.g.
         // `bash -lc ...`, `python -c ...`). They still apply on the path-guard
         // fallback.
-        if !self.active_backend().is_os_enforced() {
+        if self.active_backend().is_os_enforced() {
+            // The kernel sandbox confines the filesystem to the workspace, so the
+            // shape parser and workspace-containment checks are dropped (they would
+            // reject commands the sandbox safely contains, e.g. `bash -lc ...`).
+            // But the OS profiles allow writes anywhere *under* the workspace —
+            // including `.git`/`.alan`/`.agents`, which Landlock cannot carve out —
+            // so still block explicit writes to those protected subpaths.
+            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
+        } else {
             self.validate_shell_features(cmd)?;
-            self.validate_command_paths(cmd, cwd)?;
+            self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
         }
 
         // A command only reaches execution after policy/reviewer/human clearance.
@@ -326,22 +343,39 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(&self, cmd: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_paths(&self, cmd: &str, cwd: &Path, mode: PathCheckMode) -> Result<()> {
+        let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
         let normalized = normalize_shell_line_continuations(cmd);
         let trimmed = normalized.trim();
         if trimmed.is_empty() {
-            return Err(anyhow!("Command cannot be empty"));
+            // Under an OS sandbox an empty command is the executor's problem.
+            return if protected_only {
+                Ok(())
+            } else {
+                Err(anyhow!("Command cannot be empty"))
+            };
         }
 
-        let tokens = shell_word_tokens(trimmed)?;
-        let commands = shell_commands(trimmed)?;
-        self.validate_direct_command_shapes(&commands)?;
-        self.validate_nested_command_evaluators(&commands)?;
+        // When the OS sandbox confines the command, an unparseable shape is not a
+        // reason to reject — the kernel is the boundary; only block what we can
+        // positively identify as a protected-subpath write.
+        let tokens = match shell_word_tokens(trimmed) {
+            Ok(tokens) => tokens,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
+        let commands = match shell_commands(trimmed) {
+            Ok(commands) => commands,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
+        if !protected_only {
+            self.validate_direct_command_shapes(&commands)?;
+            self.validate_nested_command_evaluators(&commands)?;
+        }
 
         let mut expects_redirection_target = false;
         for token in tokens {
             if expects_redirection_target {
-                self.validate_redirection_target(&token, cwd)?;
+                self.validate_redirection_target(&token, cwd, protected_only)?;
                 expects_redirection_target = false;
                 continue;
             }
@@ -352,7 +386,7 @@ impl Sandbox {
             }
 
             for candidate in path_like_subtokens(&token) {
-                self.validate_command_path_candidate(candidate, cwd)?;
+                self.validate_command_path_candidate(candidate, cwd, protected_only)?;
             }
         }
 
@@ -380,7 +414,9 @@ impl Sandbox {
             if is_allowed_absolute_command_path(Path::new(literal)) {
                 continue;
             }
-            if !self.is_in_workspace(Path::new(literal)) {
+            // Workspace containment is enforced by the kernel under an OS sandbox;
+            // only the protected-subpath check applies in protected-only mode.
+            if !protected_only && !self.is_in_workspace(Path::new(literal)) {
                 return Err(anyhow!(
                     "Command contains absolute path outside workspace: {}",
                     literal
@@ -499,12 +535,22 @@ impl Sandbox {
         }
         resolved
     }
-    fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_path_candidate(
+        &self,
+        token: &str,
+        cwd: &Path,
+        protected_only: bool,
+    ) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
         }
 
         if token.starts_with('~') {
+            // ~ resolves outside the workspace (kernel-confined under an OS
+            // sandbox) and never names a protected subpath.
+            if protected_only {
+                return Ok(());
+            }
             return Err(anyhow!(
                 "Command references HOME paths outside workspace: {}",
                 token
@@ -524,7 +570,7 @@ impl Sandbox {
             if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
                 return Ok(());
             }
-            if !self.is_in_workspace(&candidate) {
+            if !protected_only && !self.is_in_workspace(&candidate) {
                 return Err(anyhow!(
                     "Command references path outside workspace: {}",
                     token
@@ -537,12 +583,20 @@ impl Sandbox {
         Ok(())
     }
 
-    fn validate_redirection_target(&self, token: &str, cwd: &Path) -> Result<()> {
+    fn validate_redirection_target(
+        &self,
+        token: &str,
+        cwd: &Path,
+        protected_only: bool,
+    ) -> Result<()> {
         if token.is_empty() {
             return Err(anyhow!("Command ends with an incomplete redirection"));
         }
 
         if token.starts_with('~') {
+            if protected_only {
+                return Ok(());
+            }
             return Err(anyhow!(
                 "Command references HOME paths outside workspace: {}",
                 token
@@ -557,7 +611,7 @@ impl Sandbox {
         if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
             return Ok(());
         }
-        if !self.is_in_workspace(&candidate) {
+        if !protected_only && !self.is_in_workspace(&candidate) {
             return Err(anyhow!(
                 "Command references path outside workspace: {}",
                 token

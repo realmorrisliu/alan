@@ -1995,3 +1995,37 @@ async fn test_sandbox_exec_blocks_protected_path_in_option_assignment() {
             .contains("protected subpath .git")
     );
 }
+
+#[tokio::test]
+async fn test_os_backend_still_blocks_protected_subpath_redirection() {
+    // With an OS sandbox active the shape parser is dropped, but the OS profile
+    // allows writes anywhere under the workspace (and Landlock can't carve out
+    // protected subdirs), so explicit writes to .git/.alan/.agents must still be
+    // blocked before the command runs.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    for cmd in [
+        "echo x > .git/config",
+        "echo x > .alan/agents/default/policy.yaml",
+    ] {
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                cmd,
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(result.is_err(), "protected write not blocked: {cmd}");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("protected subpath"),
+            "wrong rejection for: {cmd}"
+        );
+    }
+}

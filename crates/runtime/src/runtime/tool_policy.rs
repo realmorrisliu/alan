@@ -86,6 +86,19 @@ fn is_reset_hard(command: &str) -> bool {
         && tokens.iter().any(|t| t == "--hard")
 }
 
+/// Detect a privilege-escalation command in any whitespace/quoting form (errs
+/// toward always-human). The substring rule only catches `sudo ` with a trailing
+/// space; tokenization catches `sudo\tls` and `/usr/bin/sudo` etc.
+fn is_privilege_escalation(command: &str) -> bool {
+    normalized_tokens(command).iter().any(|t| {
+        matches!(t.as_str(), "sudo" | "doas" | "pkexec" | "su")
+            || t.ends_with("/sudo")
+            || t.ends_with("/doas")
+            || t.ends_with("/pkexec")
+            || t.ends_with("/su")
+    })
+}
+
 /// Detect a recursive `rm` in any flag ordering / bundling (errs toward
 /// escalation). Catches `-r`/`-R`/`--recursive` and bundles like `-rf`/`-fr`.
 fn is_recursive_rm(command: &str) -> bool {
@@ -219,6 +232,26 @@ pub(super) fn evaluate_tool_policy(
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("review-recursive-rm".to_string());
         policy_reason = Some("recursive delete requires review".to_string());
+    }
+
+    // Privilege escalation is a human red line in any whitespace/quoting form
+    // (the substring `sudo ` rule misses `sudo\tls`). Promote to a *human*
+    // escalation even when another rule already escalated to the reviewer, so the
+    // autonomous reviewer can never approve a privilege-escalation attempt. The
+    // `human-` rule id forces always-human routing in `escalation_route`.
+    if tool_name == "bash"
+        && policy_source == "builtin_autonomous"
+        && action != crate::policy::PolicyAction::Deny
+        && is_privilege_escalation(
+            arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        )
+    {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("human-privilege-escalation".to_string());
+        policy_reason = Some("privilege escalation requires human approval".to_string());
     }
 
     // Safe degradation: under the builtin autonomous posture, bash can open
@@ -434,6 +467,40 @@ mod tests {
             "builtin_autonomous",
             false
         ));
+    }
+
+    #[test]
+    fn sudo_token_variants_route_to_human() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "sudo ls",
+            "sudo\tls",
+            "/usr/bin/sudo ls",
+            "doas rm x",
+            "pkexec sh",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Unknown,
+                None,
+                // Network confined, so degradation doesn't fire — the privilege
+                // promotion alone must force always-human routing.
+                SandboxConfinement::os_enforced(),
+            );
+            match result {
+                ToolPolicyDecision::Escalate { route, .. } => {
+                    assert_eq!(route, EscalationRoute::AlwaysHuman, "not human: {cmd}")
+                }
+                other => panic!("expected human escalation for {cmd}, got {:?}", other),
+            }
+        }
+        assert!(is_privilege_escalation("sudo\tls"));
+        assert!(is_privilege_escalation("/usr/bin/sudo ls"));
+        assert!(!is_privilege_escalation("echo hello"));
+        assert!(!is_privilege_escalation("subprocess.run(cmd)"));
     }
 
     #[test]
