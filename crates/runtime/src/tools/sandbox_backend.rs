@@ -189,7 +189,12 @@ pub fn apply_landlock(workspace_root: &Path, allow_network: bool) -> std::io::Re
         RulesetCreatedAttr, path_beneath_rules,
     };
 
-    let fs_abi = ABI::V1;
+    // Handle the highest filesystem ABI the crate knows so newer rights (e.g.
+    // `LANDLOCK_ACCESS_FS_TRUNCATE` from ABI v3, `IOCTL_DEV` from v5) are also
+    // restricted to the workspace — Landlock leaves any *unhandled* right
+    // allowed, so a V1-only ruleset would let `truncate(2)` escape the workspace.
+    // `CompatLevel::BestEffort` degrades gracefully on older kernels.
+    let fs_abi = ABI::V5;
     let net_abi = ABI::V4;
     let mut writable = vec![workspace_root.to_path_buf()];
     for extra in [

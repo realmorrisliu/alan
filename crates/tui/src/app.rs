@@ -67,15 +67,14 @@ pub struct HydratedMessage {
 pub struct SessionHydration {
     pub history: Vec<HydratedMessage>,
     pub replay_events: usize,
+    /// A pending yield recovered from the snapshot signal, used as a fallback only
+    /// when the buffered event log has evicted the original `Yield` (otherwise the
+    /// live-stream drain replays the full `Yield` in order).
     pub pending: Option<PendingHydration>,
-    /// The original `Yield` event recovered from the buffered event log, carrying
-    /// the full payload (form questions / approval command+diff). When present it
-    /// reconstructs a fully-resumable prompt; otherwise the minimal `pending`
-    /// signal is used as a fallback.
-    pub pending_event: Option<Box<alan_protocol::EventEnvelope>>,
-    /// The latest buffered event id at hydration time. Used as the live event
-    /// stream's replay cursor so events emitted between hydration and the first
-    /// subscribe (and across reconnects) are drained rather than missed.
+    /// The replay cursor: the last buffered event id before the in-flight turn (or
+    /// the latest at hydration when idle). Seeds the live event stream so the
+    /// in-flight turn — and any events between hydration and the first subscribe or
+    /// across reconnects — is drained rather than missed.
     pub latest_event_id: Option<String>,
 }
 
@@ -147,7 +146,6 @@ impl SessionHydration {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize,
             pending,
-            pending_event: None,
             latest_event_id: reconnect
                 .get("replay")
                 .and_then(|r| r.get("latest_event_id"))
@@ -230,12 +228,10 @@ impl TuiApp {
                     "session hydrated"
                 );
                 self.restore_history(hydration.history);
-                // Prefer the full Yield event from the buffered log (real form
-                // questions / approval payload); fall back to the minimal signal
-                // reconstruction only when the buffer no longer has it.
-                if let Some(event) = hydration.pending_event {
-                    self.reducer.apply_envelope(*event);
-                } else if let Some(pending) = hydration.pending {
+                // The in-flight turn (incl. the full Yield) is replayed in order by
+                // the live-stream drain from the replay cursor. The snapshot signal
+                // is only a fallback for when the buffer has evicted the Yield.
+                if let Some(pending) = hydration.pending {
                     self.restore_pending_yield(pending);
                 }
                 self.sync_form();
@@ -925,40 +921,6 @@ mod tests {
         let pending = app.reducer.pending_yield.clone().expect("pending restored");
         assert_eq!(pending.request_id, "req-si");
         assert_eq!(pending.kind, alan_protocol::YieldKind::StructuredInput);
-    }
-
-    #[test]
-    fn hydration_applies_full_yield_event_over_signal_fallback() {
-        let mut app = app();
-        let mut hydration = SessionHydration::from_values(
-            &serde_json::json!({ "messages": [] }),
-            &serde_json::json!({ "notifications": { "signals": [
-                { "signal_type": "pending_structured_input", "request_id": "req-f", "yield_kind": "structured_input" }
-            ]}}),
-        );
-        // Buffered event log carries the full payload (real form questions).
-        hydration.pending_event = Some(Box::new(envelope_with_event(
-            1,
-            alan_protocol::Event::Yield {
-                request_id: "req-f".into(),
-                kind: alan_protocol::YieldKind::StructuredInput,
-                payload: serde_json::json!({
-                    "title": "Pick",
-                    "questions": [{
-                        "id": "env", "label": "env", "prompt": "env?",
-                        "kind": "single_select", "required": true,
-                        "options": [{"value": "a", "label": "A"}]
-                    }]
-                }),
-            },
-        )));
-        app.dispatch(AppEvent::Hydrated(hydration));
-        let pending = app.reducer.pending_yield.clone().expect("pending restored");
-        assert_eq!(pending.request_id, "req-f");
-        assert!(
-            !pending.questions.is_empty(),
-            "full Yield payload restores the form questions for keyed answers"
-        );
     }
 
     #[test]

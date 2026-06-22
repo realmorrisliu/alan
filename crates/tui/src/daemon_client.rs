@@ -220,56 +220,69 @@ impl DaemonClient {
         Ok(serde_json::from_value(events).unwrap_or_default())
     }
 
-    /// Find the `Yield` event for `request_id` in the buffered log. The reconnect
-    /// signal points at the *current* yield, which sits near the end of the
-    /// buffer, so page forward (`/events/read` is forward-only with a default
-    /// page size) until the yield is found rather than reading only the oldest
-    /// page.
-    async fn find_pending_yield_event(
-        &self,
-        session_id: &str,
-        request_id: &str,
-    ) -> Option<EventEnvelope> {
+    /// Read the entire buffered event log (`/events/read` is forward-only with a
+    /// default page size, so page from the oldest event to the tail).
+    async fn read_all_buffered_events(&self, session_id: &str) -> Vec<EventEnvelope> {
         const PAGE: usize = 1000;
+        let mut all = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
-            let page = self
+            let page = match self
                 .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
                 .await
-                .ok()?;
+            {
+                Ok(page) => page,
+                Err(_) => break,
+            };
             if page.is_empty() {
-                return None;
+                break;
             }
-            // The yield is near the tail, so scan newest-first within the page.
-            if let Some(found) = page.iter().rev().find(|env| {
-                matches!(
-                    &env.event,
-                    alan_protocol::Event::Yield { request_id: rid, .. } if rid == request_id
-                )
-            }) {
-                return Some(found.clone());
-            }
-            // A short page means we reached the end of the buffer.
-            if page.len() < PAGE {
-                return None;
-            }
+            let full = page.len() >= PAGE;
             cursor = page.last().map(|env| env.event_id.clone());
+            all.extend(page);
+            if !full {
+                break;
+            }
         }
+        all
     }
 
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
         let history = self.read_history(session_id).await?;
         let reconnect = self.read_reconnect_snapshot(session_id).await?;
         let mut hydration = SessionHydration::from_values(&history, &reconnect);
-        // The snapshot signal carries only the yield's id+kind. Recover the full
-        // payload (form questions, approval command/diff) from the buffered event
-        // log so the restored prompt is fully resumable; the NDJSON stream is
-        // future-only and won't replay the original Yield.
-        if let Some(pending) = &hydration.pending {
-            hydration.pending_event = self
-                .find_pending_yield_event(session_id, &pending.request_id)
-                .await
-                .map(Box::new);
+
+        let buffer = self.read_all_buffered_events(session_id).await;
+        if !buffer.is_empty() {
+            // Replay cursor: start *after* the last completed turn so the live
+            // stream drains the in-flight turn's buffered events (partial
+            // assistant deltas, tool starts, the pending Yield with full payload).
+            // `/history` has final messages only and the `/events` stream is
+            // future-only, so without this a mid-turn attach shows truncated
+            // output. Completed turns are already in `/history`, so they are not
+            // replayed; `None` means the buffer holds no completed turn (all
+            // in-flight) → replay it all.
+            hydration.latest_event_id = buffer
+                .iter()
+                .rev()
+                .find(|env| matches!(&env.event, alan_protocol::Event::TurnCompleted { .. }))
+                .map(|env| env.event_id.clone());
+
+            // If the pending Yield is in the buffer, the drain replays it in order
+            // with full payload — drop the snapshot-signal reconstruction to avoid
+            // a duplicate. Keep the signal only as a fallback for when the buffer
+            // has evicted the Yield.
+            if let Some(pending) = &hydration.pending
+                && buffer.iter().any(|env| {
+                    matches!(
+                        &env.event,
+                        alan_protocol::Event::Yield { request_id, .. }
+                            if *request_id == pending.request_id
+                    )
+                })
+            {
+                hydration.pending = None;
+            }
         }
         Ok(hydration)
     }
