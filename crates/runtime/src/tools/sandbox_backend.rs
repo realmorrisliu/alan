@@ -61,6 +61,12 @@ pub fn os_backend_active() -> bool {
     detect_backend().is_os_enforced()
 }
 
+/// Name of the active execution backend for audits/sessions/snapshots (the
+/// real `seatbelt`/`landlock` when one is enforcing, else the path guard).
+pub fn active_backend_name() -> &'static str {
+    detect_backend().name()
+}
+
 /// Detect the strongest available backend for the host.
 ///
 /// Conservative by design: returns an OS backend only when its tooling is

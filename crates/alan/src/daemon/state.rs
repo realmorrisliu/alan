@@ -501,7 +501,7 @@ impl SessionEntry {
             resolved_model,
             reasoning_effort,
             governance,
-            execution_backend: alan_runtime::tools::Sandbox::backend_name_static().to_string(),
+            execution_backend: alan_runtime::tools::active_backend_name().to_string(),
             streaming_mode,
             partial_stream_recovery_mode,
             durability_required: durability.required,
@@ -1771,7 +1771,7 @@ impl AppState {
                             .get(id)
                             .map(|entry| entry.execution_backend.clone())
                             .unwrap_or_else(|| {
-                                alan_runtime::tools::Sandbox::backend_name_static().to_string()
+                                alan_runtime::tools::active_backend_name().to_string()
                             })
                     },
                     request_controls: alan_runtime::ResolvedRequestControls::default(),

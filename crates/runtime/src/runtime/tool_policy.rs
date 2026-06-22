@@ -94,7 +94,7 @@ pub(super) fn evaluate_tool_policy(
     capability: alan_protocol::ToolCapability,
     current_cwd: Option<&std::path::Path>,
 ) -> ToolPolicyDecision {
-    let sandbox_backend = crate::tools::Sandbox::backend_name_static();
+    let sandbox_backend = crate::tools::active_backend_name();
     if let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
         return ToolPolicyDecision::Forbidden {
             reason: reason.clone(),

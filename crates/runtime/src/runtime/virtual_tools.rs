@@ -476,7 +476,7 @@ fn runtime_virtual_tool_audit(reason: &str) -> alan_protocol::ToolDecisionAudit 
         action: "allow".to_string(),
         reason: Some(reason.to_string()),
         capability: "write".to_string(),
-        sandbox_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+        sandbox_backend: crate::tools::active_backend_name().to_string(),
     }
 }
 

@@ -1511,7 +1511,7 @@ mod tests {
                 durable,
                 required: false,
             },
-            execution_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+            execution_backend: crate::tools::active_backend_name().to_string(),
             request_controls: crate::ResolvedRequestControls::default(),
             warnings: Vec::new(),
         }

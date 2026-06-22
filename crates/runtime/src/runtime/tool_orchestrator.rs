@@ -1189,7 +1189,7 @@ fn workspace_routing_preflight(
         action: "deny".to_string(),
         reason: payload["error"].as_str().map(ToString::to_string),
         capability: capability_label(capability).to_string(),
-        sandbox_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+        sandbox_backend: crate::tools::active_backend_name().to_string(),
     };
     Some((payload, preview, audit))
 }

@@ -70,6 +70,11 @@ impl FormState {
         let map: Map<String, Value> = self
             .fields
             .iter()
+            // Omit blank optional fields: the resume validator treats a field as
+            // omitted only when its key is absent, so sending "" would fail
+            // type-specific validation (bool/number/select) for optional fields.
+            // A blank required field is kept so the validator reports it.
+            .filter(|field| !field.value.trim().is_empty() || field.question.required)
             .map(|field| {
                 (
                     field.question.id.clone(),
@@ -168,6 +173,20 @@ mod tests {
         assert_eq!(form.fields[1].value, "a");
         form.prev_field();
         assert_eq!(form.focus, 0);
+    }
+
+    #[test]
+    fn answers_json_omits_blank_optional_fields() {
+        let optional = serde_json::from_value::<StructuredInputQuestion>(serde_json::json!({
+            "id": "note", "label": "note", "prompt": "note?", "kind": "text", "required": false
+        }))
+        .unwrap();
+        let form = FormState::new("r1".into(), vec![question("name", "text"), optional]);
+        // Both blank: required "name" is kept (validator will flag it), optional
+        // "note" is omitted entirely.
+        let json: Value = serde_json::from_str(&form.answers_json()).unwrap();
+        assert!(json.get("name").is_some());
+        assert!(json.get("note").is_none());
     }
 
     #[test]
