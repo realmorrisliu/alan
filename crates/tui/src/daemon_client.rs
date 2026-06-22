@@ -11,6 +11,14 @@ use std::time::Duration;
 
 use crate::app::{AppEvent, SessionHydration};
 
+/// A page of buffered events from `/events/read`, plus the daemon's `gap` flag
+/// (true when the requested cursor had fallen out of the buffer, so the page is a
+/// truncated tail rather than a complete replay).
+pub struct BufferedEventsPage {
+    pub events: Vec<EventEnvelope>,
+    pub gap: bool,
+}
+
 /// Path construction contract supplied by the daemon crate.
 pub trait EndpointContract: Send + Sync {
     fn health(&self) -> &'static str;
@@ -204,7 +212,7 @@ impl DaemonClient {
         session_id: &str,
         after_event_id: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<EventEnvelope>> {
+    ) -> Result<BufferedEventsPage> {
         let mut path = format!(
             "{}?limit={limit}",
             self.endpoints.session_events_read(session_id)
@@ -217,7 +225,15 @@ impl DaemonClient {
             .get("events")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        Ok(serde_json::from_value(events).unwrap_or_default())
+        Ok(BufferedEventsPage {
+            events: serde_json::from_value(events).unwrap_or_default(),
+            // The daemon sets `gap: true` when the cursor fell out of the buffer,
+            // so the page replays only the tail — evicted events are lost.
+            gap: value
+                .get("gap")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        })
     }
 
     /// Read the entire buffered event log (`/events/read` is forward-only with a
@@ -231,7 +247,7 @@ impl DaemonClient {
                 .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
                 .await
             {
-                Ok(page) => page,
+                Ok(page) => page.events,
                 Err(_) => break,
             };
             if page.is_empty() {
@@ -420,11 +436,25 @@ async fn drain_replay(
             Ok(page) => page,
             Err(_) => return,
         };
-        if page.is_empty() {
+        // The cursor fell out of the daemon buffer: events between it and the
+        // replayed tail are gone. Surface a recoverable error so the user knows
+        // the transcript may be missing tool/yield state, rather than silently
+        // continuing as if replay were complete.
+        if page.gap {
+            let _ = tx
+                .send(AppEvent::Error(
+                    "reconnect replay incomplete: some buffered events were evicted; \
+                     transcript may be missing recent tool/approval state"
+                        .to_string(),
+                ))
+                .await;
+        }
+        let events = page.events;
+        if events.is_empty() {
             return;
         }
-        let full = page.len() >= PAGE;
-        for envelope in page {
+        let full = events.len() >= PAGE;
+        for envelope in events {
             *cursor = Some(envelope.event_id.clone());
             if envelope.sequence > *last_seq {
                 *last_seq = envelope.sequence;

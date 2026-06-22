@@ -83,6 +83,10 @@ Protected-subpath writes SHALL remain blocked on every backend.
 - **WHEN** a command writes to a protected subpath (`.git`, `.alan`, `.agents`) via an explicit path operand, directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
 - **THEN** the write is blocked by the path-guard parser, which checks direct operands and recurses into shell-wrapper inline scripts. The protected subpaths are NOT kernel-denied — denying `.git` would break git itself, which must write `.git` — so program-internal writes by purpose-built tools (git porcelain to `.git`, the agent to `.alan/memory`) are allowed
 
+#### Scenario: Out-of-workspace reads stay contained under an OS sandbox
+- **WHEN** an auto-approved read-classified bash command references a path outside the workspace (`cat ~/.ssh/id_rsa`, `cat /etc/passwd`), under any backend including a wrapper form
+- **THEN** it is rejected by the path-guard parser's containment check — the OS sandbox confines writes and network but permits reads, so dropping the shape parser must NOT drop path containment; secrets cannot be read into tool output without approval
+
 #### Scenario: Carve-outs are preserved under recursion
 - **WHEN** an OS-sandboxed command writes to an agent-writable carve-out within a protected root (`.alan/memory`), directly or inside a wrapper
 - **THEN** the write is allowed, because the recursive protected check honors the same carve-outs as the direct path check
@@ -106,3 +110,7 @@ buffered `/events/read` replay API from the last seen event id before each
 #### Scenario: Overlap between replay and live stream is deduped
 - **WHEN** a drained buffered event and a live-stream event refer to the same sequence
 - **THEN** it is delivered once, deduped by sequence
+
+#### Scenario: A replay gap is surfaced, not silently dropped
+- **WHEN** `/events/read` reports `gap: true` (the replay cursor had fallen out of the daemon buffer, so only a truncated tail is returned)
+- **THEN** the client surfaces a recoverable error to the user instead of continuing as if replay were complete, so missed tool/approval state is not hidden

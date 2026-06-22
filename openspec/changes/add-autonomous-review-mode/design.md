@@ -85,8 +85,8 @@ recorded here with explicit decisions.
 
 | Gap | Platform | Decision |
 | --- | --- | --- |
-| Landlock cannot carve a protected subdir out of the writable workspace tree (no deny within an allowed path) | Linux/Landlock | **Closed.** Landlock no longer drops the shape parser: only a backend that kernel-enforces protected-subpath writes (Seatbelt) runs in protected-only mode; Landlock keeps the full parser, rejecting opaque writers like the path-guard fallback. A protected write cannot be hidden from the parser on Landlock. |
-| Opaque interpreter writing a protected path (`python -c 'open(".git/x","w")'`, `python scripts/setup.py`) | Linux/Landlock | **Closed** by the same change — opaque writers are rejected by the shape parser under Landlock. On Seatbelt they run, but the kernel denies the protected write. |
+| Protected subpaths cannot be kernel-confined without breaking the tools that write them | all OS backends | **Resolved by the autonomy-first posture (see below).** No backend kernel-denies `.git`/`.alan`/`.agents`. The path-guard parser blocks direct + shell-wrapper-nested non-git tampering on every backend; Landlock keeps the full shape parser (rejects opaque writers); Seatbelt runs wrappers (`permits_autonomous_bash`) and the guardian reviewer policy explicitly denies protected-control-state writes by non-porcelain means. |
+| Out-of-workspace reads under an OS sandbox (`cat ~/.ssh/id_rsa`) | all OS backends | **Closed.** Seatbelt/Landlock confine *writes* + network but permit reads, so the parser enforces workspace containment for read operands in every mode (ProtectedOnly drops only the syntactic shape checks, never path containment). Out-of-workspace read/write operands are rejected; only wrapper-hidden/obfuscated reads remain a residual. |
 | Kernel-denying `.git`/`.alan`/`.agents` breaks the tools that must write them | all OS backends | **Resolved by removing the kernel deny** (empirically verified: `git init`/`add`/`commit` fail when `.git` is denied; `.alan/memory` writes fail when `.alan` is denied). Protected-subpath integrity now rests on the path-guard parser (direct + shell-wrapper-nested operands), not the kernel. |
 | `.git` tampering by *approved* code that writes it internally (git porcelain via `git config core.hooksPath`, a reviewer-approved `cargo test`/`pytest` whose code writes `.git`) | all | Accept + document. The kernel cannot protect `.git` from code without breaking git; the parser only sees explicit path operands, not program-internal writes. Mitigations: the command was reviewer- or human-approved; the workspace + network boundary is still kernel-enforced; the circuit breaker caps repeated denials. Direct/nested non-git tampering is still blocked. |
 | Variable-expansion indirection hides a protected target (`D=.git; echo > $D/x`) | all | Accept + document. The parser cannot resolve shell expansion. Same residual class as approved-code writes above; the literal and shell-wrapper-nested forms are caught. |
@@ -98,3 +98,41 @@ Invariant captured for future work: **any new red line MUST be token/basename
 aware and MUST declare reviewer-eligible vs always-human vs deny; any new OS-
 sandbox gate MUST keep kernel-uncontainable checks (protected subpaths, network,
 irreversibility) while only dropping what the kernel enforces (containment, shape).**
+
+## Follow-up: Option C — real per-path protection (deferred engineering project)
+
+The maintainer chose **autonomy-first** for the `.git`/`.alan`/`.agents`
+protection tradeoff (see the audit rows above): the kernel cannot deny those
+subpaths without breaking the tools that must write them (`git`, agent memory),
+so their integrity rests on the path-guard parser (unapproved direct/nested
+tampering) plus the reviewer policy (approved code that writes them) plus the
+kernel-enforced workspace/network boundary. The accepted residual is that
+*approved* or *obfuscated* (`D=.git; … $D/…`) program-internal writes to those
+paths are not kernel-blocked.
+
+**Option C is the way to close that residual without sacrificing autonomy or
+breaking git** — kernel-enforced *per-path* protection that allows the legitimate
+writers while denying everyone else. It is a separate project, NOT part of this
+change, and should be revisited if the approved/obfuscated `.git`-write residual
+becomes unacceptable (e.g. running fully-untrusted task code).
+
+Sketch of the approach:
+
+- **Linux (with Landlock/namespaces):** run the sandboxed shell in a mount
+  namespace and bind-mount the protected subpaths read-only over the workspace
+  (`mount --bind -o ro` / a read-only overlay of `.git`, `.alan` except
+  `.alan/memory`, `.agents`). This kernel-enforces "no writes here" independent of
+  command syntax, while a *git-aware* path could be granted to porcelain if
+  needed. Pairs with the existing Landlock fs ruleset + seccomp for network.
+- **macOS (Seatbelt):** SBPL cannot conditionally allow "git but not others" to
+  write a path. Closing it there likely needs an Endpoint Security / authorization
+  hook or running git through a separate, narrowly-profiled helper that owns
+  `.git` writes. Lower priority — the parser+reviewer cover the common cases.
+- **Cross-cutting:** a dedicated git tool (instead of `git` via bash) that runs
+  outside the broad bash sandbox under a git-specific profile would let the kernel
+  deny `.git` to *bash* while git itself writes it. Biggest blast-radius change.
+
+Acceptance criteria when taken up: `git init/add/commit` and `.alan/memory` writes
+still work; an opaque/obfuscated write to `.git/config`/`.git/hooks`/`.alan/agents`
+from a sandboxed command is kernel-denied (not merely reviewer-judged); validated
+on macOS + Linux. Until then, the autonomy-first posture above stands.
