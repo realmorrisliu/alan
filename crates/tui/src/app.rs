@@ -797,6 +797,35 @@ mod tests {
     }
 
     #[test]
+    fn pending_form_bypasses_stale_completion_popup() {
+        let mut app = app();
+        // Open a completion popup.
+        press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert!(app.completion.is_some());
+        // A multi-question form yield arrives while the popup is still open.
+        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
+            1,
+            alan_protocol::Event::Yield {
+                request_id: "form-3".into(),
+                kind: alan_protocol::YieldKind::StructuredInput,
+                payload: serde_json::json!({
+                    "title": "Deploy",
+                    "questions": [
+                        {"id": "a", "label": "A", "prompt": "A?", "kind": "text", "required": true},
+                        {"id": "b", "label": "B", "prompt": "B?", "kind": "text", "required": true}
+                    ]
+                }),
+            },
+        ))));
+        assert!(app.form.is_some());
+        // Tab must navigate the form, not be swallowed by the stale popup.
+        press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.form.as_ref().unwrap().focus, 1, "Tab reached the form");
+        assert!(app.completion.is_none(), "stale popup should be cleared");
+    }
+
+    #[test]
     fn esc_dismisses_completion_when_idle() {
         let mut app = app();
         press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
