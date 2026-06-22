@@ -65,7 +65,7 @@ impl SandboxBackendKind {
     /// parser blocking direct + shell-wrapper-nested tampering; program-internal
     /// writes by approved code (git porcelain, a reviewer-approved test runner)
     /// are trusted — see the residual-gap audit.
-    pub const fn confines_protected_writes(self) -> bool {
+    pub const fn permits_autonomous_bash(self) -> bool {
         matches!(self, SandboxBackendKind::Seatbelt)
     }
 }

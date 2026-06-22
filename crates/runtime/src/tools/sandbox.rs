@@ -230,7 +230,7 @@ impl Sandbox {
 
         // The shell-feature / command-path checks are the workspace-path-guard
         // parser standing in for confinement.
-        if self.active_backend().confines_protected_writes() {
+        if self.active_backend().permits_autonomous_bash() {
             // The kernel sandbox confines the filesystem *including* protected
             // subpaths (Seatbelt), so the shape parser and workspace-containment
             // checks are dropped — they would reject commands the sandbox safely

@@ -2068,14 +2068,16 @@ async fn test_os_backend_wrapper_honors_memory_carve_out() {
 }
 
 #[test]
-fn only_seatbelt_kernel_confines_protected_writes() {
+fn only_seatbelt_permits_autonomous_bash() {
     use crate::tools::SandboxBackendKind;
-    // Seatbelt kernel-denies protected subpaths, so it may drop the shape parser.
-    assert!(SandboxBackendKind::Seatbelt.confines_protected_writes());
-    // Landlock cannot carve out protected subdirs, so it must keep the parser
-    // (reject opaque writers) — likewise the path-guard fallback.
-    assert!(!SandboxBackendKind::Landlock.confines_protected_writes());
-    assert!(!SandboxBackendKind::WorkspacePathGuard.confines_protected_writes());
+    // Seatbelt is a complete bash boundary (workspace fs + network), so wrappers
+    // run and escalated bash is reviewer-eligible.
+    assert!(SandboxBackendKind::Seatbelt.permits_autonomous_bash());
+    // Landlock (network confinement is kernel-conditional) and the path-guard
+    // fallback are treated conservatively: full shape parser, escalated bash to a
+    // human.
+    assert!(!SandboxBackendKind::Landlock.permits_autonomous_bash());
+    assert!(!SandboxBackendKind::WorkspacePathGuard.permits_autonomous_bash());
 }
 
 #[tokio::test]

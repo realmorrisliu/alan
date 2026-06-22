@@ -183,15 +183,17 @@ fn mode_grants_world_write(token: &str) -> bool {
     false
 }
 
-/// What the active sandbox backend confines, used to gate degradation/preflight.
-/// Protected-write and network confinement are tracked separately: Landlock
-/// confines the workspace filesystem but cannot carve out protected subpaths, and
-/// may lack network-rule support on older kernels.
+/// What the active sandbox backend permits/confines, used to gate the bash
+/// degradation and the syntactic preflight.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SandboxConfinement {
-    /// The backend kernel-denies protected-subpath writes (Seatbelt) — only then
-    /// is it safe to drop the syntactic shape preflight.
-    pub confines_protected: bool,
+    /// The backend is a complete bash boundary (workspace fs + network kernel-
+    /// enforced — Seatbelt), so wrappers may run and escalated bash is reviewer-
+    /// eligible rather than routed to a human. This does NOT mean `.git`/`.alan`/
+    /// `.agents` are kernel-protected (they cannot be without breaking git) —
+    /// protected-subpath tampering is blocked by the path-guard parser, and
+    /// protected writes by approved code are caught by the reviewer policy.
+    pub permits_autonomous_bash: bool,
     /// The OS backend confines network effects (else bash must go to a human).
     pub network: bool,
 }
@@ -200,7 +202,7 @@ impl SandboxConfinement {
     /// Resolve from the active backend.
     pub fn detect() -> Self {
         Self {
-            confines_protected: crate::tools::detect_backend().confines_protected_writes(),
+            permits_autonomous_bash: crate::tools::detect_backend().permits_autonomous_bash(),
             network: crate::tools::confines_network(),
         }
     }
@@ -208,7 +210,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn os_enforced() -> Self {
         Self {
-            confines_protected: true,
+            permits_autonomous_bash: true,
             network: true,
         }
     }
@@ -216,7 +218,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn none() -> Self {
         Self {
-            confines_protected: false,
+            permits_autonomous_bash: false,
             network: false,
         }
     }
@@ -237,7 +239,7 @@ pub(super) fn evaluate_tool_policy(
     // independent of command syntax, so this syntactic deny must not block
     // commands the sandbox would safely contain (e.g. `python -c ...`,
     // `bash -lc ...`). Apply it only on the path-guard fallback.
-    if !confinement.confines_protected
+    if !confinement.permits_autonomous_bash
         && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments)
     {
         return ToolPolicyDecision::Forbidden {
@@ -351,7 +353,7 @@ pub(super) fn evaluate_tool_policy(
     // `review-unknown`). Auto-allowed bash (`touch`, `echo`, `ls`) is left alone —
     // it is a recognized command whose path operands the parser already confined
     // to non-protected workspace paths. (`human-` ids never reach the reviewer.)
-    let fully_confined = confinement.network && confinement.confines_protected;
+    let fully_confined = confinement.network && confinement.permits_autonomous_bash;
     if should_degrade_bash(action, tool_name, &policy_source, fully_confined) {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("human-bash-unconfined".to_string());
@@ -696,7 +698,7 @@ mod tests {
                 None,
                 // Landlock: network confined, protected subpaths NOT confined.
                 SandboxConfinement {
-                    confines_protected: false,
+                    permits_autonomous_bash: false,
                     network: true,
                 },
             );
@@ -717,7 +719,7 @@ mod tests {
             alan_protocol::ToolCapability::Write,
             None,
             SandboxConfinement {
-                confines_protected: false,
+                permits_autonomous_bash: false,
                 network: true,
             },
         );
@@ -741,7 +743,7 @@ mod tests {
             alan_protocol::ToolCapability::Unknown,
             None,
             SandboxConfinement {
-                confines_protected: true,
+                permits_autonomous_bash: true,
                 network: false,
             },
         );
