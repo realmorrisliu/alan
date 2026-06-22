@@ -49,9 +49,9 @@ contain. When the sandbox cannot confine an effect, the operation SHALL be route
 to a human (or denied) rather than left for the reviewer, and the reviewer SHALL
 NOT be able to convert a sandbox-uncontainable operation into an executed one.
 
-#### Scenario: Bash without network confinement goes to a human
-- **WHEN** a builtin bash command would otherwise be reviewer-eligible but the active backend does not confine network (no OS sandbox, or Landlock on a kernel without network rules)
-- **THEN** the command is routed always-human, because bash can open sockets the sandbox would not contain
+#### Scenario: Bash is autonomous only when fully confined
+- **WHEN** a builtin bash command would otherwise be auto-run or reviewer-eligible but the active backend does not FULLY confine bash — either network is unconfined (no OS sandbox, or Landlock without network rules) or protected-subpath writes are not kernel-denied (Landlock cannot carve them out, or the path-guard fallback)
+- **THEN** the command is routed always-human, because bash runs arbitrary code that could open sockets or write protected paths (`cargo test`/`pytest` writing `.git`) the sandbox would not contain; only Seatbelt (confines both) keeps bash autonomous
 
 #### Scenario: Reviewer timeout falls back to a human
 - **WHEN** the reviewer provider stalls beyond the configured request timeout
@@ -86,3 +86,19 @@ Protected-subpath writes SHALL remain blocked on every backend.
 #### Scenario: Approved network intent is preserved
 - **WHEN** a command classified as a network capability is approved and executed
 - **THEN** it runs with the sandbox network restriction lifted (still filesystem-confined) so the approved network call is not futile
+
+### Requirement: The client never silently drops events across a reconnect
+
+The TUI's live event stream SHALL preserve a replay cursor so that no event is
+lost between hydration and the first subscribe, or across a disconnect and
+resubscribe. The future-only `/events` stream SHALL be backstopped by draining the
+buffered `/events/read` replay API from the last seen event id before each
+(re)subscribe, with sequence-based dedup against any overlap.
+
+#### Scenario: Events emitted during a reconnect gap are replayed
+- **WHEN** the live `/events` stream errors or ends and the client waits and resubscribes, and one or more events (e.g. a `Yield`) were emitted during the gap
+- **THEN** the client drains `/events/read` after the last seen event id and delivers the missed events before resuming the live stream, so a pending approval/form still appears
+
+#### Scenario: Overlap between replay and live stream is deduped
+- **WHEN** a drained buffered event and a live-stream event refer to the same sequence
+- **THEN** it is delivered once, deduped by sequence

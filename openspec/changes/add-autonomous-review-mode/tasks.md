@@ -61,3 +61,9 @@
 - [x] 9.2 Landlock keeps the full shape parser (rejects opaque writers); only Seatbelt (kernel-denies protected subpaths) drops it — gated on `SandboxBackendKind::confines_protected_writes()`
 - [x] 9.3 Governance profile deserializer accepts only known string aliases and rejects typos / wrong-typed values instead of silently resolving to Autonomous
 - [x] 9.4 Tests (find escalation, backend protected-write capability, Landlock opaque-writer rejection, malformed-profile rejection); Linux/OrbStack Landlock re-validated
+
+## 10. Full-confinement bash gate + reconnect replay
+
+- [x] 10.1 Bash is auto-run/reviewer-eligible only under full confinement (network AND protected-subpath writes = Seatbelt); Landlock and path-guard route builtin bash to a human (closes `cargo test`/`pytest` writing protected paths under Landlock)
+- [x] 10.2 Live event stream carries a replay cursor: hydrate before subscribing; drain `/events/read` after the last event id before each (re)subscribe; dedupe the live stream by sequence — no missed `Yield` across a reconnect gap
+- [x] 10.3 Tests: code runner under Landlock → human; hydration captures `latest_event_id`
