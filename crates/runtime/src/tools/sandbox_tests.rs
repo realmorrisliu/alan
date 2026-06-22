@@ -2008,8 +2008,12 @@ async fn test_os_backend_still_blocks_protected_subpath_redirection() {
         crate::tools::SandboxBackendKind::Seatbelt,
     );
     for cmd in [
+        // Direct redirection.
         "echo x > .git/config",
         "echo x > .alan/agents/default/policy.yaml",
+        // Nested/quoted wrapper form — the inner script is inspected recursively.
+        "bash -lc 'echo x > .git/config'",
+        "sh -c \"echo x > .alan/agents/default/policy.yaml\"",
     ] {
         let result = sandbox
             .exec_with_timeout_and_capability(
@@ -2026,6 +2030,39 @@ async fn test_os_backend_still_blocks_protected_subpath_redirection() {
                 .to_string()
                 .contains("protected subpath"),
             "wrong rejection for: {cmd}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_os_backend_wrapper_honors_memory_carve_out() {
+    // The recursive wrapper inspection must honor the same carve-outs as direct
+    // commands: `.alan/memory` is agent-writable even though `.alan` is protected.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let memory_dir = temp.path().join(".alan/memory");
+    tokio::fs::create_dir_all(&memory_dir).await.unwrap();
+    tokio::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n")
+        .await
+        .unwrap();
+    // A wrapper writing into the carved-out memory subpath must pass validation
+    // (it should fail later at sandbox-exec on non-macOS, not at the protected
+    // check), so assert it is NOT rejected for a protected-subpath reason.
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "bash -lc 'echo hi > .alan/memory/NOTES.md'",
+            temp.path(),
+            None,
+            Some(alan_protocol::ToolCapability::Write),
+        )
+        .await;
+    if let Err(err) = result {
+        assert!(
+            !err.to_string().contains("protected subpath"),
+            "memory subpath wrongly blocked: {err}"
         );
     }
 }

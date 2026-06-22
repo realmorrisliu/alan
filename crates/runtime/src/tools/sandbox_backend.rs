@@ -117,7 +117,8 @@ fn landlock_available() -> bool {
 pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
     // sandbox-exec evaluates real (symlink-resolved) paths, so the subpath
     // rules must use canonical paths (e.g. /var -> /private/var on macOS).
-    let root = sbpl_quote(&canonical_string(workspace_root));
+    let canonical_root = canonical_string(workspace_root);
+    let root = sbpl_quote(&canonical_root);
     let tmpdir = std::env::var("TMPDIR").ok();
     let mut writable = vec![
         root,
@@ -135,6 +136,18 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
         .map(|path| format!("(allow file-write* (subpath {path}))"))
         .collect::<Vec<_>>()
         .join("\n");
+    // Kernel-deny writes to protected subpaths, placed *after* the workspace allow
+    // so the more-specific deny wins (SBPL: last match wins). This confines them
+    // independently of command syntax — covering nested forms the path-guard
+    // parser cannot see, e.g. `bash -lc 'echo x > .git/config'`.
+    let protected_denies = super::sandbox::PROTECTED_SUBPATHS
+        .iter()
+        .map(|sub| {
+            let path = sbpl_quote(&format!("{}/{sub}", canonical_root.trim_end_matches('/')));
+            format!("(deny file-write* (subpath {path}))")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     // Network is denied by default; an approved network call runs with it allowed
     // (still filesystem-confined) so approval is not futile.
     let network_rule = if allow_network {
@@ -148,6 +161,7 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
          {network_rule}\
          (deny file-write*)\n\
          {write_allows}\n\
+         {protected_denies}\n\
          (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
     )
 }

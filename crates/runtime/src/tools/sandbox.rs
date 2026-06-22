@@ -18,7 +18,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
-const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
+pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
 /// How thoroughly to validate command paths. Under an OS sandbox the kernel
 /// enforces workspace containment, so only protected-subpath writes need the
@@ -372,6 +372,19 @@ impl Sandbox {
             self.validate_nested_command_evaluators(&commands)?;
         }
 
+        // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands
+        // inside a quoted script the outer tokenizer can't decompose. Under an OS
+        // sandbox these are allowed to run, so recurse into the inline script and
+        // apply the same protected-subpath checks (with their carve-outs, e.g.
+        // `.alan/memory`) to the wrapped command.
+        if protected_only {
+            for words in &commands {
+                if let Some(inner) = shell_wrapper_inline_script(words) {
+                    self.validate_command_paths(&inner, cwd, PathCheckMode::ProtectedOnly)?;
+                }
+            }
+        }
+
         let mut expects_redirection_target = false;
         for token in tokens {
             if expects_redirection_target {
@@ -713,6 +726,28 @@ fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) 
     }
 
     Ok(())
+}
+
+/// Extract the inline script of a shell wrapper command (`sh -c <script>`,
+/// `bash -lc <script>`, …) so it can be recursively inspected. Returns `None`
+/// for non-wrapper commands or wrappers without an inline script argument.
+fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
+    let command_index = words.iter().position(|word| !is_env_assignment(word))?;
+    let base = command_basename(&words[command_index]);
+    if !matches!(base, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return None;
+    }
+    // The script follows the first short-flag cluster containing `c` (e.g. `-c`,
+    // `-lc`, `-ic`).
+    let mut index = command_index + 1;
+    while index < words.len() {
+        let word = &words[index];
+        if word.starts_with('-') && !word.starts_with("--") && word.contains('c') {
+            return words.get(index + 1).cloned();
+        }
+        index += 1;
+    }
+    None
 }
 
 fn validate_shell_features(cmd: &str, backend_name: &str) -> Result<()> {
