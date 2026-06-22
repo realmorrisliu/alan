@@ -49,9 +49,13 @@ contain. When the sandbox cannot confine an effect, the operation SHALL be route
 to a human (or denied) rather than left for the reviewer, and the reviewer SHALL
 NOT be able to convert a sandbox-uncontainable operation into an executed one.
 
-#### Scenario: Bash is autonomous only when fully confined
-- **WHEN** a builtin bash command would otherwise be auto-run or reviewer-eligible but the active backend does not FULLY confine bash — either network is unconfined (no OS sandbox, or Landlock without network rules) or protected-subpath writes are not kernel-denied (Landlock cannot carve them out, or the path-guard fallback)
-- **THEN** the command is routed always-human, because bash runs arbitrary code that could open sockets or write protected paths (`cargo test`/`pytest` writing `.git`) the sandbox would not contain; only Seatbelt (confines both) keeps bash autonomous
+#### Scenario: Escalated bash goes to a human when not fully confined
+- **WHEN** a builtin bash command that needs judgment (escalated — destructive like `rm -rf build`, irreversible like `git reset --hard`, or opaque/unknown like `cargo test`/`pytest`/`python script.py`) runs under a backend that does not FULLY confine bash (network unconfined, or protected-subpath writes not kernel-denied — Landlock or the path-guard fallback)
+- **THEN** it is routed always-human, because the reviewer is not a security boundary for code the sandbox cannot fully contain; only Seatbelt (confines network + protected writes) keeps such commands reviewer-eligible
+
+#### Scenario: Recognized benign bash still auto-runs
+- **WHEN** a builtin bash command is auto-approved (a recognized read/write like `touch`, `echo`, `ls` whose path operands the parser confined to non-protected workspace paths)
+- **THEN** it still runs without prompting even when the backend is not fully confining, because the path guard already contains it — the human gate applies only to escalated commands
 
 #### Scenario: Reviewer timeout falls back to a human
 - **WHEN** the reviewer provider stalls beyond the configured request timeout

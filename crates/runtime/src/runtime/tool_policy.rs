@@ -328,14 +328,19 @@ pub(super) fn evaluate_tool_policy(
             Some("broadly weakening file permissions requires human approval".to_string());
     }
 
-    // Safe degradation: bash runs arbitrary code, so it is only safe to auto-run
-    // or reviewer-route when the sandbox FULLY confines it — both network (it can
-    // open sockets) and protected-subpath writes (its code, e.g. `cargo test` /
-    // `pytest`, can write `.git`/`.alan`/`.agents`). Seatbelt confines both;
-    // Landlock cannot carve protected subpaths out of the writable workspace, and
-    // the path-guard fallback confines nothing. When not fully confined, any
-    // non-denied builtin bash must go to a human (`human-` ids never reach the
-    // reviewer). Operator policies are untouched.
+    // Safe degradation: when the sandbox does not FULLY confine bash — network
+    // (it can open sockets) and protected-subpath writes (opaque code like
+    // `cargo test`/`pytest` can write `.git`) — the reviewer is not a security
+    // boundary for it, so an *escalated* bash command must go to a human instead.
+    // Only Seatbelt confines both; Landlock cannot carve protected subpaths out of
+    // the writable workspace, and the path-guard fallback confines nothing.
+    //
+    // This applies only to commands already escalated (`action == Escalate`):
+    // destructive (`rm -rf build`), irreversible (`git reset --hard`), and opaque
+    // / unknown ones (`cargo test`, `python script.py`, which all hit
+    // `review-unknown`). Auto-allowed bash (`touch`, `echo`, `ls`) is left alone —
+    // it is a recognized command whose path operands the parser already confined
+    // to non-protected workspace paths. (`human-` ids never reach the reviewer.)
     let fully_confined = confinement.network && confinement.confines_protected;
     if should_degrade_bash(action, tool_name, &policy_source, fully_confined) {
         action = crate::policy::PolicyAction::Escalate;
@@ -426,13 +431,12 @@ fn should_degrade_bash(
     fully_confined: bool,
 ) -> bool {
     // Unless the sandbox FULLY confines bash (network + protected-subpath writes),
-    // the reviewer is not a security boundary for it, so *any* non-denied builtin
-    // bash must go to a human — including commands already escalated to the
-    // reviewer (`rm -rf build`, `git reset --hard`), opaque ones that could open
-    // sockets (`python script.py`), and code runners that could write protected
-    // paths the kernel can't deny (`cargo test`, `pytest` on Landlock). Denials
-    // stay denied.
-    action != crate::policy::PolicyAction::Deny
+    // an *escalated* builtin bash command must go to a human rather than the
+    // reviewer, which is not a security boundary here — destructive (`rm -rf
+    // build`), irreversible (`git reset --hard`), and opaque/unknown commands
+    // (`cargo test`, `python script.py`, all of which reach `review-unknown`).
+    // Auto-allowed bash is recognized and parser-confined, so it is left alone.
+    action == crate::policy::PolicyAction::Escalate
         && tool_name == "bash"
         && policy_source == "builtin_autonomous"
         && !fully_confined
@@ -490,53 +494,44 @@ mod tests {
     }
 
     #[test]
-    fn bash_degrades_to_human_when_network_unconfined_under_builtin() {
+    fn escalated_bash_degrades_to_human_when_not_fully_confined() {
         use crate::policy::PolicyAction;
-        // The 4th arg is `network_confined`. Builtin bash + no network
-        // confinement (no OS sandbox, or Landlock without network rules) → human.
+        // The 4th arg is `fully_confined` (network AND protected-subpath writes).
+        // An *escalated* builtin bash, not fully confined → human.
         assert!(should_degrade_bash(
+            PolicyAction::Escalate,
+            "bash",
+            "builtin_autonomous",
+            false
+        ));
+        // Fully confined (Seatbelt) → the reviewer path is fine.
+        assert!(!should_degrade_bash(
+            PolicyAction::Escalate,
+            "bash",
+            "builtin_autonomous",
+            true
+        ));
+        // Auto-allowed bash (`touch`, `echo`) is recognized + parser-confined, so
+        // it is NOT downgraded even when not fully confined.
+        assert!(!should_degrade_bash(
             PolicyAction::Allow,
             "bash",
             "builtin_autonomous",
             false
         ));
-        // Network confined (e.g. Seatbelt deny-network, Landlock with net) →
-        // bash may auto-run / be reviewer-judged (sandbox contains it).
-        assert!(!should_degrade_bash(
-            PolicyAction::Allow,
-            "bash",
-            "builtin_autonomous",
-            true
-        ));
         // Explicit operator policies are respected (not downgraded).
         assert!(!should_degrade_bash(
-            PolicyAction::Allow,
+            PolicyAction::Escalate,
             "bash",
             "workspace_policy_file",
             false
         ));
         // Non-bash tools (contained by the path guard) are unaffected.
         assert!(!should_degrade_bash(
-            PolicyAction::Allow,
+            PolicyAction::Escalate,
             "edit_file",
             "builtin_autonomous",
             false
-        ));
-        // Already-escalated bash (e.g. `rm -rf`, `git reset --hard`) and opaque
-        // bash (`python script.py`) must also go to a human when network is
-        // unconfined — the reviewer is not a boundary.
-        assert!(should_degrade_bash(
-            PolicyAction::Escalate,
-            "bash",
-            "builtin_autonomous",
-            false
-        ));
-        // ...but with network confinement the reviewer path is fine.
-        assert!(!should_degrade_bash(
-            PolicyAction::Escalate,
-            "bash",
-            "builtin_autonomous",
-            true
         ));
         // Denials are never downgraded to escalation.
         assert!(!should_degrade_bash(
@@ -686,7 +681,8 @@ mod tests {
                 &alan_protocol::GovernanceConfig::default(),
                 "bash",
                 &json!({ "command": cmd }),
-                alan_protocol::ToolCapability::Write,
+                // Code runners classify as Unknown (→ review-unknown → Escalate).
+                alan_protocol::ToolCapability::Unknown,
                 None,
                 // Landlock: network confined, protected subpaths NOT confined.
                 SandboxConfinement {
@@ -701,6 +697,24 @@ mod tests {
                 other => panic!("expected human escalation for {cmd}, got {:?}", other),
             }
         }
+        // A benign auto-allowed write is NOT downgraded under Landlock (recognized
+        // + parser-confined), so it stays auto-approved.
+        let touch = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({ "command": "touch hello.txt" }),
+            alan_protocol::ToolCapability::Write,
+            None,
+            SandboxConfinement {
+                confines_protected: false,
+                network: true,
+            },
+        );
+        assert!(
+            matches!(touch, ToolPolicyDecision::Allow { .. }),
+            "benign write should stay auto-approved under Landlock, got {touch:?}"
+        );
     }
 
     #[test]
