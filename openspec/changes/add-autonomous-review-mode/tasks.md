@@ -44,3 +44,13 @@
 
 - [x] 7.1 `just verify` (fmt + lint + test + mock smoke) green across protocol + runtime; Linux net validated on the VM
 - [ ] 7.2 On-machine smoke (macOS + Linux VM) with a live LLM: routine actions silent; reviewer-judged escalation approved/denied; red-line goes to human; reviewer-unavailable falls back to human
+
+## 8. Sandbox-autonomy invariants (post-review hardening)
+
+- [x] 8.1 Token/quote/basename-aware red lines: force-push, reset-hard, recursive-rm, privilege-escalation (sudo/doas/pkexec/su); path-qualified network/write classification by basename
+- [x] 8.2 Catastrophic root delete (`rm -rf /` and permutations) denied outright; world-writable `chmod` (numeric + symbolic) routed always-human
+- [x] 8.3 Reviewer is not a boundary: bash routed to a human when network is unconfined; reviewer call bounded by `llm_request_timeout_secs` → `Unavailable` on stall
+- [x] 8.4 OS-sandbox confinement independent of syntax: drop shape/containment parsing under an OS backend; keep protected-subpath writes blocked via Seatbelt kernel-deny + shell-wrapper-recursive path check (honoring carve-outs like `.alan/memory`)
+- [x] 8.5 Reconnect hydration: full pending-payload recovery from the buffered `Yield`; form/composer resume; multi-select defaults; blank optional fields; paste into the active form; stale-completion bypass; cursor-paged buffer scan
+- [x] 8.6 Tests for each invariant (red-line token variants, catastrophic deny, world-writable chmod, network confinement degradation, nested protected-path block + carve-out, basename network classification); validated on macOS (Seatbelt) and Linux/OrbStack (Landlock)
+- [x] 8.7 Residual-gap audit recorded in design.md with explicit accept/defer decisions

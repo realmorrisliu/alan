@@ -74,3 +74,25 @@ Rollback: if the reviewer is disabled/unavailable, escalations fall back to the 
 - Exact reviewer transcript budget (token cap) and which assistant updates count as "surfaced".
 - Whether review-activity needs dedicated protocol events or can reuse transient notices.
 - Whether `git push --force` should be reviewer-judged given remote protection (currently always-human).
+
+## Sandbox-autonomy invariants: residual-gap audit (post-review hardening)
+
+PR #564 review surfaced a recurring root cause: deterministic guards classified by
+substring or parsed only the outer shell, and OS-sandbox gating was applied
+without separating kernel-containable concerns from kernel-uncontainable ones.
+The `sandbox-autonomy-invariants` spec delta fixes the class. Remaining gaps are
+recorded here with explicit decisions.
+
+| Gap | Platform | Decision |
+| --- | --- | --- |
+| Landlock cannot carve a protected subdir out of the writable workspace tree (no deny within an allowed path) | Linux/Landlock | Accept + document. Protected writes are caught by the shell-wrapper-recursive path check; the Seatbelt profile additionally kernel-denies them. Landlock relies on the parser only. |
+| Variable-expansion / indirection hides a protected target on Landlock (`D=.git; echo > $D/x`) | Linux/Landlock | Accept + document. The parser cannot resolve expansion and Landlock cannot kernel-deny. On Seatbelt the kernel deny still applies. Not reachable on the user's primary (macOS) platform. |
+| `python -c '... open(".git/x","w") ...'` writing a protected path | Linux/Landlock | Accept + document. Same Landlock limitation; Seatbelt kernel-denies. Inner-script recursion covers shell wrappers, not arbitrary interpreters. |
+| `mkfs` / `dd of=/dev/…` deny rules remain substring | both | Accept for now. These name block devices outside the workspace that the OS sandbox already denies; the substring deny is a belt for the path-guard fallback. Token-awareness is a low-value follow-up. |
+| Reviewer runs on the main model, not a dedicated connection profile | both | Deferred (task 4.2); functional, a later refinement. |
+| Full buffered-event transcript replay on reconnect (beyond `/history` + the pending `Yield`) | both | Deferred; `/history` + buffered-Yield payload cover the user-visible surface. Cursor-coordinated replay is a separate follow-up. |
+
+Invariant captured for future work: **any new red line MUST be token/basename
+aware and MUST declare reviewer-eligible vs always-human vs deny; any new OS-
+sandbox gate MUST keep kernel-uncontainable checks (protected subpaths, network,
+irreversibility) while only dropping what the kernel enforces (containment, shape).**

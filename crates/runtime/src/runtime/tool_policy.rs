@@ -115,6 +115,48 @@ fn is_recursive_rm(command: &str) -> bool {
     has_rm && has_recursive
 }
 
+/// Detect a recursive `rm` whose target is a filesystem or home root, in any flag
+/// ordering (errs toward deny). Catches `rm -rf /`, `rm -fr /`, `rm -rf /*`,
+/// `rm -rf ~`, `rm -rf $HOME`.
+fn is_catastrophic_recursive_delete(command: &str) -> bool {
+    if !is_recursive_rm(command) {
+        return false;
+    }
+    normalized_tokens(command).iter().any(|t| {
+        matches!(
+            t.as_str(),
+            "/" | "/*" | "~" | "~/" | "$HOME" | "${HOME}" | "$HOME/" | "/*/"
+        )
+    })
+}
+
+/// Detect a `chmod` that grants write to "others"/"all" in any numeric or
+/// symbolic form (errs toward always-human). Catches `777`, `0777`, `-R 777`,
+/// `a+rwx`, `o+w`, `a=rw`; ignores owner-only (`u+w`) and revocations (`o-w`).
+fn is_world_writable_chmod(command: &str) -> bool {
+    let tokens = normalized_tokens(command);
+    let has_chmod = tokens.iter().any(|t| t == "chmod" || t.ends_with("/chmod"));
+    has_chmod && tokens.iter().any(|t| mode_grants_world_write(t))
+}
+
+fn mode_grants_world_write(token: &str) -> bool {
+    // Numeric octal mode (e.g. 777, 0777, 1777): the "others" digit (last) has
+    // the write bit (0o2) set.
+    if (3..=4).contains(&token.len())
+        && token.bytes().all(|b| b.is_ascii_digit() && b <= b'7')
+        && let Some(others) = token.chars().last().and_then(|c| c.to_digit(8))
+    {
+        return others & 0o2 != 0;
+    }
+    // Symbolic mode granting write to others/all (e.g. `o+w`, `a+w`, `a=rwx`).
+    if let Some(op) = token.find(['+', '=']) {
+        let (who, rest) = token.split_at(op);
+        let perms = &rest[1..];
+        return (who.contains('o') || who.contains('a')) && perms.contains('w');
+    }
+    false
+}
+
 /// What the active sandbox backend confines, used to gate degradation/preflight.
 /// Filesystem and network are tracked separately because Landlock can confine the
 /// filesystem on a kernel that lacks network-rule support.
@@ -195,63 +237,65 @@ pub(super) fn evaluate_tool_policy(
     let mut policy_reason = policy_decision.reason.clone();
     let mut action = policy_decision.action;
 
-    // Token-aware irreversible-git gate under the builtin posture: variant
-    // orderings (e.g. `git -C repo reset --hard`, `git reset HEAD --hard`) miss
-    // the substring rules and would fall through to allow, so escalate them for
-    // review. (Force-push is already escalated via the `git push` rule and routed
-    // to a human in `escalation_route`.)
-    if action == crate::policy::PolicyAction::Allow
-        && tool_name == "bash"
-        && policy_source == "builtin_autonomous"
-        && is_reset_hard(
-            arguments
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(""),
-        )
-    {
+    // Token-aware red-line gates applied under the builtin posture. The policy
+    // engine's `match_command` rules are substring-based and miss equivalent
+    // shell forms (flag ordering/bundling, quoting, path-qualified heads), so
+    // these gates re-classify with whitespace/quote-normalized tokens. Each is a
+    // documented invariant in the autonomous-review contract.
+    let command_arg = arguments
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let builtin_bash = tool_name == "bash" && policy_source == "builtin_autonomous";
+
+    // Catastrophic recursive delete of a filesystem/home root → hard deny in any
+    // flag ordering (the substring `rm -rf /` rule misses `rm -fr /`).
+    if builtin_bash && is_catastrophic_recursive_delete(command_arg) {
+        action = crate::policy::PolicyAction::Deny;
+        rule_id = Some("deny-recursive-root-delete".to_string());
+        policy_reason =
+            Some("recursive delete of a filesystem or home root is forbidden".to_string());
+    }
+
+    // Irreversible git reset in any token ordering/quoting → reviewer.
+    if action == crate::policy::PolicyAction::Allow && builtin_bash && is_reset_hard(command_arg) {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("review-git-reset-hard".to_string());
         policy_reason = Some("irreversible git reset requires review".to_string());
     }
 
-    // Token-aware recursive-rm gate: the substring rule only catches `rm -rf`, so
-    // flag permutations (`rm -fr build`, `rm -R -f target`, `rm --recursive ...`)
-    // fall through to allow. A recursive delete is destructive even when the OS
-    // sandbox contains it to the workspace, so escalate it for review.
-    if action == crate::policy::PolicyAction::Allow
-        && tool_name == "bash"
-        && policy_source == "builtin_autonomous"
-        && is_recursive_rm(
-            arguments
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(""),
-        )
+    // Recursive rm in any flag ordering/bundling (`rm -fr`, `rm -R -f`,
+    // `rm --recursive`) → reviewer; destructive even when sandbox-contained.
+    if action == crate::policy::PolicyAction::Allow && builtin_bash && is_recursive_rm(command_arg)
     {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("review-recursive-rm".to_string());
         policy_reason = Some("recursive delete requires review".to_string());
     }
 
-    // Privilege escalation is a human red line in any whitespace/quoting form
-    // (the substring `sudo ` rule misses `sudo\tls`). Promote to a *human*
-    // escalation even when another rule already escalated to the reviewer, so the
-    // autonomous reviewer can never approve a privilege-escalation attempt. The
-    // `human-` rule id forces always-human routing in `escalation_route`.
-    if tool_name == "bash"
-        && policy_source == "builtin_autonomous"
+    // Privilege escalation (`sudo`/`doas`/`pkexec`/`su`, incl. `\t` and absolute
+    // paths) → human, even when already reviewer-escalated, so the reviewer can
+    // never approve it. The `human-` rule id forces always-human routing.
+    if builtin_bash
         && action != crate::policy::PolicyAction::Deny
-        && is_privilege_escalation(
-            arguments
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(""),
-        )
+        && is_privilege_escalation(command_arg)
     {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("human-privilege-escalation".to_string());
         policy_reason = Some("privilege escalation requires human approval".to_string());
+    }
+
+    // World-writable chmod broadly weakens permissions — a human red line in any
+    // numeric/symbolic form (`chmod 0777`, `chmod -R 777`, `chmod a+rwx`,
+    // `chmod o+w`). The substring `chmod 777` rule misses all but the first.
+    if builtin_bash
+        && action != crate::policy::PolicyAction::Deny
+        && is_world_writable_chmod(command_arg)
+    {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("human-chmod-world-writable".to_string());
+        policy_reason =
+            Some("broadly weakening file permissions requires human approval".to_string());
     }
 
     // Safe degradation: under the builtin autonomous posture, bash can open
@@ -467,6 +511,71 @@ mod tests {
             "builtin_autonomous",
             false
         ));
+    }
+
+    #[test]
+    fn catastrophic_root_delete_variants_are_denied() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "rm -rf /",
+            "rm -fr /",
+            "rm -R -f /",
+            "rm -rf /*",
+            "rm -rf ~",
+            "rm -rf $HOME",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+                SandboxConfinement::os_enforced(),
+            );
+            assert!(
+                matches!(result, ToolPolicyDecision::Forbidden { .. }),
+                "catastrophic delete not denied: {cmd}"
+            );
+        }
+        // A scoped recursive delete is escalated for review, not denied outright.
+        assert!(
+            is_recursive_rm("rm -rf build") && !is_catastrophic_recursive_delete("rm -rf build")
+        );
+    }
+
+    #[test]
+    fn world_writable_chmod_variants_route_to_human() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "chmod 777 x",
+            "chmod 0777 x",
+            "chmod -R 777 dir",
+            "chmod a+rwx x",
+            "chmod o+w x",
+            "chmod a=rw x",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+                SandboxConfinement::os_enforced(),
+            );
+            match result {
+                ToolPolicyDecision::Escalate { route, .. } => {
+                    assert_eq!(route, EscalationRoute::AlwaysHuman, "not human: {cmd}")
+                }
+                other => panic!("expected human escalation for {cmd}, got {:?}", other),
+            }
+        }
+        // Owner-only grants, read-only modes, and revocations are not world-write.
+        assert!(!is_world_writable_chmod("chmod u+w file"));
+        assert!(!is_world_writable_chmod("chmod 644 file"));
+        assert!(!is_world_writable_chmod("chmod 755 file"));
+        assert!(!is_world_writable_chmod("chmod o-w file"));
     }
 
     #[test]
