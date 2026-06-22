@@ -48,25 +48,61 @@ pub enum AppAction {
 }
 
 /// A pending-input signal recovered from a reconnect snapshot, enough to let the
-/// user answer the outstanding yield (full transcript replay is a follow-up).
+/// user answer the outstanding yield.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingHydration {
     pub request_id: String,
     pub kind: String,
 }
 
+/// A persisted message from `/history`, rendered into the transcript on attach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HydratedMessage {
+    pub role: String,
+    pub content: String,
+    pub tool_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionHydration {
-    pub history_messages: usize,
+    pub history: Vec<HydratedMessage>,
     pub replay_events: usize,
     pub pending: Option<PendingHydration>,
 }
 
 impl SessionHydration {
     pub fn from_values(history: &serde_json::Value, reconnect: &serde_json::Value) -> Self {
+        // `/history` returns `{ messages: [{ role, content, tool_name? }] }`.
+        let history = history
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .filter_map(|message| {
+                        Some(HydratedMessage {
+                            role: message
+                                .get("role")
+                                .and_then(serde_json::Value::as_str)?
+                                .to_string(),
+                            content: message
+                                .get("content")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            tool_name: message
+                                .get("tool_name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // The reconnect snapshot exposes a pending yield under
-        // `notifications.signals[] { signal_type: "pending_yield", request_id,
-        // yield_kind }`, and the replay count under `replay.buffered_event_count`.
+        // `notifications.signals[] { signal_type, request_id, yield_kind }` — both
+        // `pending_yield` (confirmation/custom) and `pending_structured_input`.
         let pending = reconnect
             .get("notifications")
             .and_then(|n| n.get("signals"))
@@ -74,10 +110,12 @@ impl SessionHydration {
             .into_iter()
             .flatten()
             .find(|signal| {
-                signal
-                    .get("signal_type")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("pending_yield")
+                matches!(
+                    signal
+                        .get("signal_type")
+                        .and_then(serde_json::Value::as_str),
+                    Some("pending_yield" | "pending_structured_input")
+                )
             })
             .and_then(|signal| {
                 Some(PendingHydration {
@@ -93,10 +131,7 @@ impl SessionHydration {
                 })
             });
         Self {
-            history_messages: history
-                .get("messages")
-                .and_then(serde_json::Value::as_array)
-                .map_or(0, Vec::len),
+            history,
             replay_events: reconnect
                 .get("replay")
                 .and_then(|r| r.get("buffered_event_count"))
@@ -166,11 +201,12 @@ impl TuiApp {
             }
             AppEvent::Hydrated(hydration) => {
                 tracing::debug!(
-                    history_messages = hydration.history_messages,
+                    history_messages = hydration.history.len(),
                     replay_events = hydration.replay_events,
                     pending = hydration.pending.is_some(),
                     "session hydrated"
                 );
+                self.restore_history(hydration.history);
                 if let Some(pending) = hydration.pending {
                     self.restore_pending_yield(pending);
                 }
@@ -186,6 +222,30 @@ impl TuiApp {
                 self.reducer.transient_notice = Some(message);
                 None
             }
+        }
+    }
+
+    /// Render persisted `/history` messages into the transcript on attach, so a
+    /// reattached session shows the prior conversation instead of an empty pane.
+    fn restore_history(&mut self, history: Vec<HydratedMessage>) {
+        for message in history {
+            let cell = match message.role.as_str() {
+                "user" if !message.content.is_empty() => {
+                    crate::history::HistoryCell::User(message.content)
+                }
+                "assistant" if !message.content.is_empty() => {
+                    crate::history::HistoryCell::Assistant(message.content)
+                }
+                "tool" => crate::history::HistoryCell::Tool {
+                    title: message.tool_name.unwrap_or_else(|| "tool".to_string()),
+                    status: crate::history::ToolStatus::Complete,
+                    preview: Some(message.content).filter(|c| !c.is_empty()),
+                    presentation: None,
+                },
+                // Skip system/context and empty messages.
+                _ => continue,
+            };
+            self.reducer.cells.push(cell);
         }
     }
 
@@ -763,6 +823,44 @@ mod tests {
         app.dispatch(AppEvent::Hydrated(hydration));
         assert!(app.reducer.cells.is_empty());
         assert!(app.reducer.pending_yield.is_none());
+    }
+
+    #[test]
+    fn hydration_renders_persisted_history_messages() {
+        let mut app = app();
+        let hydration = SessionHydration::from_values(
+            &serde_json::json!({ "messages": [
+                { "role": "user", "content": "hi", "timestamp": "t" },
+                { "role": "assistant", "content": "hello", "timestamp": "t" },
+                { "role": "tool", "content": "ok", "tool_name": "read_file", "timestamp": "t" },
+                { "role": "system", "content": "ignored", "timestamp": "t" }
+            ]}),
+            &serde_json::json!({ "replay": { "buffered_event_count": 0 } }),
+        );
+        app.dispatch(AppEvent::Hydrated(hydration));
+        let cells = &app.reducer.cells;
+        assert_eq!(cells.len(), 3, "system message should be skipped");
+        assert!(matches!(&cells[0], HistoryCell::User(t) if t == "hi"));
+        assert!(matches!(&cells[1], HistoryCell::Assistant(t) if t == "hello"));
+        assert!(matches!(&cells[2], HistoryCell::Tool { title, .. } if title == "read_file"));
+    }
+
+    #[test]
+    fn hydration_restores_structured_input_pending_signal() {
+        let mut app = app();
+        let hydration = SessionHydration::from_values(
+            &serde_json::json!({ "messages": [] }),
+            &serde_json::json!({
+                "replay": { "buffered_event_count": 0 },
+                "notifications": { "signals": [
+                    { "signal_type": "pending_structured_input", "request_id": "req-si", "yield_kind": "structured_input" }
+                ]}
+            }),
+        );
+        app.dispatch(AppEvent::Hydrated(hydration));
+        let pending = app.reducer.pending_yield.clone().expect("pending restored");
+        assert_eq!(pending.request_id, "req-si");
+        assert_eq!(pending.kind, alan_protocol::YieldKind::StructuredInput);
     }
 
     #[test]
