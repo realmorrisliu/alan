@@ -119,6 +119,8 @@ pub fn tool_presentation(
 const PRESENTATION_MAX_STREAM_CHARS: usize = 16_000;
 /// Maximum rows carried in a `Listing` / lines in a `Diff` presentation.
 const PRESENTATION_MAX_ROWS: usize = 1_000;
+/// Maximum characters carried per diff line (caps single huge/minified lines).
+const PRESENTATION_MAX_LINE_CHARS: usize = 2_000;
 
 /// Cap a text stream to a byte budget (on a char boundary). Returns the capped
 /// text and whether it was truncated.
@@ -208,8 +210,21 @@ fn line_diff(old: &str, new: &str) -> DiffHunk {
     }
 }
 
-/// Cap the number of diff lines carried in a presentation.
+/// Cap a diff presentation by both line count and per-line size, so a generated
+/// or minified file (one very long line) cannot balloon the event.
 fn cap_diff_lines(lines: &mut Vec<DiffLine>) {
+    for line in lines.iter_mut() {
+        let (DiffLine::Context { text } | DiffLine::Added { text } | DiffLine::Removed { text }) =
+            line;
+        if text.len() > PRESENTATION_MAX_LINE_CHARS {
+            let mut end = PRESENTATION_MAX_LINE_CHARS;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push('…');
+        }
+    }
     if lines.len() > PRESENTATION_MAX_ROWS {
         let hidden = lines.len() - PRESENTATION_MAX_ROWS;
         lines.truncate(PRESENTATION_MAX_ROWS);
@@ -354,6 +369,27 @@ mod tests {
                 assert!(stdout.contains("output truncated"));
             }
             _ => panic!("expected command"),
+        }
+    }
+
+    #[test]
+    fn single_huge_diff_line_is_capped_on_char_boundary() {
+        // One very long line of multi-byte chars must be capped without panicking.
+        let huge = "界".repeat(PRESENTATION_MAX_LINE_CHARS);
+        let p = tool_presentation(
+            "write_file",
+            &json!({"path": "min.js", "content": huge}),
+            &json!({"path": "min.js"}),
+        )
+        .unwrap();
+        match p {
+            ToolResultPresentation::Diff { hunks, .. } => {
+                let DiffLine::Added { text } = &hunks[0].lines[0] else {
+                    panic!("expected added line");
+                };
+                assert!(text.len() <= PRESENTATION_MAX_LINE_CHARS + 4);
+            }
+            _ => panic!("expected diff"),
         }
     }
 

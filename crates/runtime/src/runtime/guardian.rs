@@ -104,7 +104,13 @@ pub(crate) fn build_transcript(messages: &[crate::tape::Message]) -> String {
             let role = format!("{:?}", message.role()).to_lowercase();
             let mut text = message.text_content();
             if text.len() > TRANSCRIPT_MAX_CHARS_PER_MESSAGE {
-                text.truncate(TRANSCRIPT_MAX_CHARS_PER_MESSAGE);
+                // Truncate on a UTF-8 char boundary — `truncate` would panic mid
+                // codepoint on non-ASCII (emoji/CJK) messages.
+                let mut end = TRANSCRIPT_MAX_CHARS_PER_MESSAGE;
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                text.truncate(end);
                 text.push('…');
             }
             format!("{role}: {text}")
@@ -190,6 +196,15 @@ mod tests {
             transcript: "user: do the task",
             approval_request: request,
         }
+    }
+
+    #[test]
+    fn build_transcript_truncates_long_non_ascii_without_panicking() {
+        // A long multi-byte message must not panic when truncated mid-budget.
+        let long = "界".repeat(TRANSCRIPT_MAX_CHARS_PER_MESSAGE);
+        let messages = vec![crate::tape::Message::user(long)];
+        let transcript = build_transcript(&messages);
+        assert!(transcript.ends_with('…'));
     }
 
     #[test]

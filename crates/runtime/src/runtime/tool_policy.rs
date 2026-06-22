@@ -57,9 +57,14 @@ fn is_force_push(command: &str) -> bool {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let has_git = tokens.contains(&"git");
     let has_push = tokens.contains(&"push");
-    let has_force = tokens
-        .iter()
-        .any(|t| *t == "-f" || *t == "--force" || t.starts_with("--force-with-lease"));
+    let has_force = tokens.iter().any(|t| {
+        *t == "-f"
+            || *t == "--force"
+            || t.starts_with("--force-with-lease")
+            // A leading `+` on a push refspec (e.g. `+main:main`) forces a
+            // non-fast-forward update — equivalent to --force for that ref.
+            || (t.starts_with('+') && t.len() > 1)
+    });
     has_git && has_push && has_force
 }
 
@@ -372,6 +377,9 @@ mod tests {
                 "force-push not routed to human: {cmd}"
             );
         }
+        // A leading-`+` refspec forces a non-fast-forward update.
+        assert!(is_force_push("git push origin +main:main"));
+        assert!(is_force_push("git push origin +refs/heads/main"));
         // A plain push is not misclassified as force.
         assert!(!is_force_push("git push origin main"));
     }
