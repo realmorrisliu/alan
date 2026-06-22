@@ -364,10 +364,24 @@ pub fn spawn_event_stream(
     client: DaemonClient,
     session_id: String,
     tx: tokio::sync::mpsc::Sender<AppEvent>,
+    initial_cursor: Option<String>,
 ) {
     tokio::spawn(async move {
+        // Replay cursor: `cursor` is the last event id for the `/events/read`
+        // `after` param; `last_seq` is the last sequence, for deduping any overlap
+        // with the live stream. Event ids encode the monotonic sequence.
+        let mut cursor = initial_cursor;
+        let mut last_seq = cursor
+            .as_deref()
+            .and_then(|id| id.parse::<u64>().ok())
+            .unwrap_or(0);
         loop {
-            if !stream_events_once(&client, &session_id, &tx).await {
+            // Drain events emitted since the cursor before resubscribing — this
+            // covers the hydration→subscribe window and any disconnect gap, which
+            // the future-only `/events` stream would otherwise skip (e.g. a `Yield`
+            // the user must answer to resume).
+            drain_replay(&client, &session_id, &tx, &mut cursor, &mut last_seq).await;
+            if !stream_events_once(&client, &session_id, &tx, &mut cursor, &mut last_seq).await {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -375,16 +389,62 @@ pub fn spawn_event_stream(
     });
 }
 
+/// Page through buffered events after `cursor`, forwarding ones newer than
+/// `last_seq`. Best-effort: a read error returns and lets the live stream resume.
+async fn drain_replay(
+    client: &DaemonClient,
+    session_id: &str,
+    tx: &tokio::sync::mpsc::Sender<AppEvent>,
+    cursor: &mut Option<String>,
+    last_seq: &mut u64,
+) {
+    const PAGE: usize = 1000;
+    loop {
+        let page = match client
+            .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
+            .await
+        {
+            Ok(page) => page,
+            Err(_) => return,
+        };
+        if page.is_empty() {
+            return;
+        }
+        let full = page.len() >= PAGE;
+        for envelope in page {
+            *cursor = Some(envelope.event_id.clone());
+            if envelope.sequence > *last_seq {
+                *last_seq = envelope.sequence;
+                if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
+                    return;
+                }
+            }
+        }
+        if !full {
+            return;
+        }
+    }
+}
+
 async fn stream_events_once(
     client: &DaemonClient,
     session_id: &str,
     tx: &tokio::sync::mpsc::Sender<AppEvent>,
+    cursor: &mut Option<String>,
+    last_seq: &mut u64,
 ) -> bool {
     match client.events(session_id).await {
         Ok(mut events) => {
             while let Some(event) = events.next().await {
                 match event {
                     Ok(envelope) => {
+                        // Skip anything already delivered via the drain (or an
+                        // earlier subscribe) so a buffer/live overlap can't dupe.
+                        if envelope.sequence <= *last_seq {
+                            continue;
+                        }
+                        *last_seq = envelope.sequence;
+                        *cursor = Some(envelope.event_id.clone());
                         if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
                             return false;
                         }

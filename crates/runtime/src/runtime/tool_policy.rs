@@ -328,18 +328,21 @@ pub(super) fn evaluate_tool_policy(
             Some("broadly weakening file permissions requires human approval".to_string());
     }
 
-    // Safe degradation: under the builtin autonomous posture, bash can open
-    // sockets the sandbox may not contain. Filesystem confinement alone is not
-    // enough — without network confinement (no OS sandbox, or Landlock on a
-    // kernel without network rules) an opaque bash (`python script.py`, `./deploy`)
-    // could reach the network after a reviewer allow. So any non-denied builtin
-    // bash must go to a human whenever the network is unconfined. (`human-` rule
-    // ids route to a person, never the reviewer.) Operator policies are untouched.
-    if should_degrade_bash(action, tool_name, &policy_source, confinement.network) {
+    // Safe degradation: bash runs arbitrary code, so it is only safe to auto-run
+    // or reviewer-route when the sandbox FULLY confines it — both network (it can
+    // open sockets) and protected-subpath writes (its code, e.g. `cargo test` /
+    // `pytest`, can write `.git`/`.alan`/`.agents`). Seatbelt confines both;
+    // Landlock cannot carve protected subpaths out of the writable workspace, and
+    // the path-guard fallback confines nothing. When not fully confined, any
+    // non-denied builtin bash must go to a human (`human-` ids never reach the
+    // reviewer). Operator policies are untouched.
+    let fully_confined = confinement.network && confinement.confines_protected;
+    if should_degrade_bash(action, tool_name, &policy_source, fully_confined) {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("human-bash-unconfined".to_string());
         policy_reason = Some(
-            "bash is not fully sandbox-confined (network); requires human approval".to_string(),
+            "bash is not fully sandbox-confined (network/protected paths); requires human approval"
+                .to_string(),
         );
         policy_source = "safe_degradation".to_string();
     }
@@ -420,18 +423,19 @@ fn should_degrade_bash(
     action: crate::policy::PolicyAction,
     tool_name: &str,
     policy_source: &str,
-    network_confined: bool,
+    fully_confined: bool,
 ) -> bool {
-    // Without network confinement the reviewer is not a security boundary for
-    // bash, so *any* non-denied builtin bash must go to a human — including
-    // commands already escalated to the reviewer (e.g. `rm -rf build`,
-    // `git reset --hard`) and opaque ones that could open sockets
-    // (`python script.py`), which would otherwise reach the network after a
-    // reviewer allow. Denials stay denied.
+    // Unless the sandbox FULLY confines bash (network + protected-subpath writes),
+    // the reviewer is not a security boundary for it, so *any* non-denied builtin
+    // bash must go to a human — including commands already escalated to the
+    // reviewer (`rm -rf build`, `git reset --hard`), opaque ones that could open
+    // sockets (`python script.py`), and code runners that could write protected
+    // paths the kernel can't deny (`cargo test`, `pytest` on Landlock). Denials
+    // stay denied.
     action != crate::policy::PolicyAction::Deny
         && tool_name == "bash"
         && policy_source == "builtin_autonomous"
-        && !network_confined
+        && !fully_confined
 }
 
 fn bash_shape_preflight_reason(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
@@ -667,6 +671,36 @@ mod tests {
         assert!(is_privilege_escalation("/usr/bin/sudo ls"));
         assert!(!is_privilege_escalation("echo hello"));
         assert!(!is_privilege_escalation("subprocess.run(cmd)"));
+    }
+
+    #[test]
+    fn code_runner_routes_to_human_under_landlock() {
+        // Landlock confines the workspace + network but cannot carve out protected
+        // subpaths, so a code runner whose test/build code could write `.git`
+        // (`cargo test`, `pytest`) must go to a human, not auto-run or be
+        // reviewer-routed — the sandbox does not fully confine bash here.
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in ["cargo test", "pytest -q", "make"] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+                // Landlock: network confined, protected subpaths NOT confined.
+                SandboxConfinement {
+                    confines_protected: false,
+                    network: true,
+                },
+            );
+            match result {
+                ToolPolicyDecision::Escalate { route, .. } => {
+                    assert_eq!(route, EscalationRoute::AlwaysHuman, "not human: {cmd}")
+                }
+                other => panic!("expected human escalation for {cmd}, got {:?}", other),
+            }
+        }
     }
 
     #[test]

@@ -73,6 +73,10 @@ pub struct SessionHydration {
     /// reconstructs a fully-resumable prompt; otherwise the minimal `pending`
     /// signal is used as a fallback.
     pub pending_event: Option<Box<alan_protocol::EventEnvelope>>,
+    /// The latest buffered event id at hydration time. Used as the live event
+    /// stream's replay cursor so events emitted between hydration and the first
+    /// subscribe (and across reconnects) are drained rather than missed.
+    pub latest_event_id: Option<String>,
 }
 
 impl SessionHydration {
@@ -144,6 +148,11 @@ impl SessionHydration {
                 .unwrap_or(0) as usize,
             pending,
             pending_event: None,
+            latest_event_id: reconnect
+                .get("replay")
+                .and_then(|r| r.get("latest_event_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
         }
     }
 }
@@ -874,6 +883,7 @@ mod tests {
         );
         assert_eq!(hydration.replay_events, 1);
         assert!(hydration.pending.is_none());
+        assert!(hydration.latest_event_id.is_none());
         app.dispatch(AppEvent::Hydrated(hydration));
         assert!(app.reducer.cells.is_empty());
         assert!(app.reducer.pending_yield.is_none());
@@ -958,12 +968,13 @@ mod tests {
         let hydration = SessionHydration::from_values(
             &serde_json::json!({ "messages": [] }),
             &serde_json::json!({
-                "replay": { "buffered_event_count": 0 },
+                "replay": { "buffered_event_count": 0, "latest_event_id": "42" },
                 "notifications": { "signals": [
                     { "signal_type": "pending_yield", "request_id": "req-x", "yield_kind": "confirmation" }
                 ]}
             }),
         );
+        assert_eq!(hydration.latest_event_id.as_deref(), Some("42"));
         app.dispatch(AppEvent::Hydrated(hydration));
         let pending = app.reducer.pending_yield.clone().expect("pending restored");
         assert_eq!(pending.request_id, "req-x");

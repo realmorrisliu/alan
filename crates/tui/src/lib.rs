@@ -174,10 +174,14 @@ pub async fn run(config: RunConfig) -> Result<()> {
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<AppEvent>(128);
     terminal::spawn_terminal_events(tx.clone());
-    daemon_client::spawn_event_stream(client.clone(), session.session_id.clone(), tx);
 
+    // Hydrate first to capture the replay cursor, then start the live stream from
+    // it so events emitted between hydration and the first subscribe are drained,
+    // not missed (the `/events` stream is future-only).
+    let mut replay_cursor = None;
     match client.hydrate_session(&session.session_id).await {
         Ok(hydration) => {
+            replay_cursor = hydration.latest_event_id.clone();
             app.dispatch(AppEvent::Hydrated(hydration));
         }
         Err(err) => {
@@ -186,6 +190,12 @@ pub async fn run(config: RunConfig) -> Result<()> {
             )));
         }
     }
+    daemon_client::spawn_event_stream(
+        client.clone(),
+        session.session_id.clone(),
+        tx,
+        replay_cursor,
+    );
 
     let mut frame_tick = tokio::time::interval(Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
