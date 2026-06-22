@@ -2066,3 +2066,35 @@ async fn test_os_backend_wrapper_honors_memory_carve_out() {
         );
     }
 }
+
+#[test]
+fn only_seatbelt_kernel_confines_protected_writes() {
+    use crate::tools::SandboxBackendKind;
+    // Seatbelt kernel-denies protected subpaths, so it may drop the shape parser.
+    assert!(SandboxBackendKind::Seatbelt.confines_protected_writes());
+    // Landlock cannot carve out protected subdirs, so it must keep the parser
+    // (reject opaque writers) — likewise the path-guard fallback.
+    assert!(!SandboxBackendKind::Landlock.confines_protected_writes());
+    assert!(!SandboxBackendKind::WorkspacePathGuard.confines_protected_writes());
+}
+
+#[tokio::test]
+async fn test_landlock_keeps_shape_parser_for_opaque_writers() {
+    // Landlock can't kernel-deny protected subpaths, so opaque writers (which the
+    // protected-only check can't inspect) must still be rejected by the shape
+    // parser — the same posture as the path-guard fallback.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Landlock,
+    );
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "python -c 'open(\".git/config\",\"w\").write(\"x\")'",
+            temp.path(),
+            None,
+            Some(alan_protocol::ToolCapability::Write),
+        )
+        .await;
+    assert!(result.is_err(), "opaque writer not rejected under Landlock");
+}

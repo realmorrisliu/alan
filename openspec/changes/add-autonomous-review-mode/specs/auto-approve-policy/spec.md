@@ -22,3 +22,7 @@ The agent SHALL operate in a single posture named `Autonomous` in which routine 
 #### Scenario: Legacy profile names resolve to Autonomous
 - **WHEN** a configuration specifies a legacy profile value (such as `auto_approve`, `conservative`, or `autonomous`)
 - **THEN** it resolves to the single `Autonomous` posture without error
+
+#### Scenario: Malformed profile values are rejected
+- **WHEN** a configuration or API request specifies an unrecognized profile string (e.g. `"conservativ"`) or a wrong-typed value (a boolean, number, or object)
+- **THEN** deserialization fails with an error rather than silently resolving to `Autonomous`, so a typo'd profile surfaces as a config error instead of a false sense of a stricter mode

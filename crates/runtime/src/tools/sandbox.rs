@@ -229,20 +229,20 @@ impl Sandbox {
         self.ensure_path_not_protected(cwd, "process cwd")?;
 
         // The shell-feature / command-path checks are the workspace-path-guard
-        // parser standing in for confinement. With a kernel-enforced OS sandbox
-        // active, confinement is independent of command syntax, so skip these
-        // syntactic checks and let Seatbelt/Landlock confine the command (e.g.
-        // `bash -lc ...`, `python -c ...`). They still apply on the path-guard
-        // fallback.
-        if self.active_backend().is_os_enforced() {
-            // The kernel sandbox confines the filesystem to the workspace, so the
-            // shape parser and workspace-containment checks are dropped (they would
-            // reject commands the sandbox safely contains, e.g. `bash -lc ...`).
-            // But the OS profiles allow writes anywhere *under* the workspace —
-            // including `.git`/`.alan`/`.agents`, which Landlock cannot carve out —
-            // so still block explicit writes to those protected subpaths.
+        // parser standing in for confinement.
+        if self.active_backend().confines_protected_writes() {
+            // The kernel sandbox confines the filesystem *including* protected
+            // subpaths (Seatbelt), so the shape parser and workspace-containment
+            // checks are dropped — they would reject commands the sandbox safely
+            // contains (`bash -lc ...`, `python -c ...`). The protected-only check
+            // still blocks explicit and shell-wrapper-nested writes to
+            // .git/.alan/.agents.
             self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
         } else {
+            // No kernel protected-subpath enforcement (Landlock cannot carve a
+            // protected subdir out of the writable tree, or the path-guard
+            // fallback): keep the full shape parser so opaque writers — which could
+            // hide a protected write the kernel won't deny — are rejected.
             self.validate_shell_features(cmd)?;
             self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
         }

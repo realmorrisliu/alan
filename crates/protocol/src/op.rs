@@ -39,9 +39,21 @@ impl<'de> Deserialize<'de> for GovernanceProfile {
     where
         D: serde::Deserializer<'de>,
     {
-        // Accept and ignore any legacy profile value; the posture is locked.
-        serde::de::IgnoredAny::deserialize(deserializer)?;
-        Ok(GovernanceProfile::Autonomous)
+        // The posture is locked to `Autonomous`, but we still validate input:
+        // only the known string aliases resolve to it. A non-string value
+        // (bool/number/object) or an unrecognized string is rejected rather than
+        // silently treated as Autonomous, so a typo'd or wrong-typed profile
+        // surfaces as a config error instead of a false sense of a stricter mode.
+        let raw = String::deserialize(deserializer)?;
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "autonomous" | "auto_approve" | "auto-approve" | "autoapprove" | "conservative" => {
+                Ok(GovernanceProfile::Autonomous)
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown governance profile {other:?}; expected one of: \
+                 autonomous, auto_approve, conservative"
+            ))),
+        }
     }
 }
 
@@ -331,6 +343,13 @@ mod tests {
         assert_eq!(legacy, GovernanceProfile::Autonomous);
         let legacy2: GovernanceProfile = serde_json::from_str("\"auto_approve\"").unwrap();
         assert_eq!(legacy2, GovernanceProfile::Autonomous);
+        // Typos and wrong-typed values are rejected, not silently autonomous.
+        for bad in ["\"conservativ\"", "\"strict\"", "false", "{}", "5"] {
+            assert!(
+                serde_json::from_str::<GovernanceProfile>(bad).is_err(),
+                "malformed governance profile accepted: {bad}"
+            );
+        }
     }
 
     #[test]

@@ -53,6 +53,16 @@ impl SandboxBackendKind {
     pub const fn allows_unattended_bash_and_network(self) -> bool {
         self.is_os_enforced()
     }
+
+    /// Whether the backend kernel-denies writes to protected subpaths
+    /// (`.git`/`.alan`/`.agents`) independently of command syntax. Only then is it
+    /// safe to drop the workspace-path-guard shape parser (which otherwise rejects
+    /// opaque writers that could hide a protected write). Landlock cannot carve a
+    /// protected subdir out of the writable workspace tree, so it does NOT qualify
+    /// and must keep the shape parser.
+    pub const fn confines_protected_writes(self) -> bool {
+        matches!(self, SandboxBackendKind::Seatbelt)
+    }
 }
 
 /// Whether an OS-enforced sandbox backend is active on this host. The policy

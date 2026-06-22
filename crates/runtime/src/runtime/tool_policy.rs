@@ -115,6 +115,22 @@ fn is_recursive_rm(command: &str) -> bool {
     has_rm && has_recursive
 }
 
+/// Detect a destructive `find` action (`-delete`, `-exec`/`-execdir`,
+/// `-ok`/`-okdir`) in any token form (errs toward escalation). `find` with these
+/// actions deletes files or runs arbitrary commands, which the bare write
+/// classification would otherwise auto-allow in-workspace.
+fn is_destructive_find(command: &str) -> bool {
+    let tokens = normalized_tokens(command);
+    let has_find = tokens.iter().any(|t| t == "find" || t.ends_with("/find"));
+    has_find
+        && tokens.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir"
+            )
+        })
+}
+
 /// Detect a recursive `rm` whose target is a filesystem or home root, in any flag
 /// ordering (errs toward deny). Catches `rm -rf /`, `rm -fr /`, `rm -rf /*`,
 /// `rm -rf ~`, `rm -rf $HOME`.
@@ -158,12 +174,14 @@ fn mode_grants_world_write(token: &str) -> bool {
 }
 
 /// What the active sandbox backend confines, used to gate degradation/preflight.
-/// Filesystem and network are tracked separately because Landlock can confine the
-/// filesystem on a kernel that lacks network-rule support.
+/// Protected-write and network confinement are tracked separately: Landlock
+/// confines the workspace filesystem but cannot carve out protected subpaths, and
+/// may lack network-rule support on older kernels.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SandboxConfinement {
-    /// The OS backend confines filesystem effects (skip the syntactic preflight).
-    pub fs: bool,
+    /// The backend kernel-denies protected-subpath writes (Seatbelt) — only then
+    /// is it safe to drop the syntactic shape preflight.
+    pub confines_protected: bool,
     /// The OS backend confines network effects (else bash must go to a human).
     pub network: bool,
 }
@@ -172,7 +190,7 @@ impl SandboxConfinement {
     /// Resolve from the active backend.
     pub fn detect() -> Self {
         Self {
-            fs: crate::tools::os_backend_active(),
+            confines_protected: crate::tools::detect_backend().confines_protected_writes(),
             network: crate::tools::confines_network(),
         }
     }
@@ -180,7 +198,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn os_enforced() -> Self {
         Self {
-            fs: true,
+            confines_protected: true,
             network: true,
         }
     }
@@ -188,7 +206,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn none() -> Self {
         Self {
-            fs: false,
+            confines_protected: false,
             network: false,
         }
     }
@@ -209,7 +227,7 @@ pub(super) fn evaluate_tool_policy(
     // independent of command syntax, so this syntactic deny must not block
     // commands the sandbox would safely contain (e.g. `python -c ...`,
     // `bash -lc ...`). Apply it only on the path-guard fallback.
-    if !confinement.fs
+    if !confinement.confines_protected
         && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments)
     {
         return ToolPolicyDecision::Forbidden {
@@ -271,6 +289,18 @@ pub(super) fn evaluate_tool_policy(
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("review-recursive-rm".to_string());
         policy_reason = Some("recursive delete requires review".to_string());
+    }
+
+    // Destructive `find` actions (`-delete`, `-exec …`) delete files or run
+    // arbitrary commands; the bare write classification would auto-allow them
+    // in-workspace, so escalate for review.
+    if action == crate::policy::PolicyAction::Allow
+        && builtin_bash
+        && is_destructive_find(command_arg)
+    {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("review-destructive-find".to_string());
+        policy_reason = Some("destructive find action requires review".to_string());
     }
 
     // Privilege escalation (`sudo`/`doas`/`pkexec`/`su`, incl. `\t` and absolute
@@ -545,6 +575,33 @@ mod tests {
     }
 
     #[test]
+    fn destructive_find_actions_are_reviewed() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -exec rm {} +",
+            "find /work -execdir sh -c 'x' \\;",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+                SandboxConfinement::os_enforced(),
+            );
+            assert!(
+                matches!(result, ToolPolicyDecision::Escalate { .. }),
+                "destructive find not escalated: {cmd}"
+            );
+        }
+        // A read-only find is not gated by this rule.
+        assert!(!is_destructive_find("find . -name '*.rs'"));
+    }
+
+    #[test]
     fn world_writable_chmod_variants_route_to_human() {
         let policy = crate::policy::PolicyEngine::autonomous();
         for cmd in [
@@ -626,7 +683,7 @@ mod tests {
             alan_protocol::ToolCapability::Unknown,
             None,
             SandboxConfinement {
-                fs: true,
+                confines_protected: true,
                 network: false,
             },
         );

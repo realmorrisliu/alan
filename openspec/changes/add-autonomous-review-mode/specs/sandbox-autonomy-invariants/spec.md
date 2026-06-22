@@ -22,6 +22,10 @@ be the sole guard for any red line.
 - **WHEN** a builtin bash command is a recursive `rm` in any flag ordering or bundling (`rm -rf`, `rm -fr`, `rm -R -f`, `rm --recursive`, `/bin/rm -fr`)
 - **THEN** it is escalated for review instead of auto-approved
 
+#### Scenario: Destructive find actions are reviewed
+- **WHEN** a builtin bash command runs `find` with a destructive action (`-delete`, `-exec`/`-execdir`, `-ok`/`-okdir`)
+- **THEN** it is escalated for review instead of auto-approved as a bare in-workspace write
+
 #### Scenario: Catastrophic root delete is denied outright
 - **WHEN** a builtin bash command is a recursive `rm` whose target is a filesystem or home root (`rm -rf /`, `rm -fr /`, `rm -rf /*`, `rm -rf ~`, `rm -rf $HOME`)
 - **THEN** it is denied outright and never reaches the reviewer or the human
@@ -55,16 +59,21 @@ NOT be able to convert a sandbox-uncontainable operation into an executed one.
 
 ### Requirement: OS-sandbox confinement is independent of command syntax
 
-A kernel-enforced sandbox (Seatbelt/Landlock), when active, SHALL enforce
+The syntactic shape parser SHALL be dropped only for a backend that
+kernel-enforces protected-subpath writes (Seatbelt); such a backend enforces
 deterministic filesystem confinement at the kernel rather than via the
-workspace-path-guard command parser. Syntactic shape rejection and
-workspace-containment parsing SHALL be skipped for OS-confined commands, while
-protected-subpath writes SHALL remain blocked by means independent of command
-shape.
+workspace-path-guard command parser. A backend that confines the workspace but
+cannot carve out protected subpaths (Landlock) SHALL keep the full shape parser
+so opaque writers cannot hide a protected write the kernel will not deny.
+Protected-subpath writes SHALL remain blocked on every backend.
 
-#### Scenario: OS-sandboxed wrappers are not shape-denied
-- **WHEN** an OS sandbox is active and a command uses a shell wrapper or interpreter (`bash -lc …`, `python -c …`)
-- **THEN** it is not rejected by the syntactic preflight or execution-path shape parser; the kernel sandbox confines it
+#### Scenario: Wrappers run under a protected-write-enforcing sandbox
+- **WHEN** a backend that kernel-denies protected-subpath writes (Seatbelt) is active and a command uses a shell wrapper or interpreter (`bash -lc …`, `python -c …`)
+- **THEN** it is not rejected by the syntactic preflight or execution-path shape parser; the kernel sandbox confines it (protected subpaths included)
+
+#### Scenario: Opaque writers stay rejected under Landlock
+- **WHEN** Landlock is active (it cannot carve a protected subdir out of the writable workspace) and a command is an opaque writer the path check cannot inspect (`python -c 'open(".git/config","w")…'`, `python scripts/setup.py`)
+- **THEN** it is rejected by the shape parser, the same posture as the path-guard fallback, because the kernel cannot deny the protected write
 
 #### Scenario: Protected-subpath writes are blocked under an OS sandbox
 - **WHEN** an OS-sandboxed command writes to a protected subpath (`.git`, `.alan`, `.agents`), directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
