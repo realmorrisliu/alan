@@ -18,7 +18,10 @@ async fn test_sandbox_read_write() {
 #[tokio::test]
 async fn test_sandbox_blocks_outside_workspace() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     // Try to read outside workspace
     let outside_path = PathBuf::from("/etc/passwd");
@@ -39,7 +42,10 @@ async fn test_sandbox_exec() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_outside_workspace_path_reference() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox.exec("cat /etc/passwd", temp.path()).await;
     assert!(result.is_err());
@@ -70,7 +76,10 @@ async fn test_sandbox_exec_allows_dev_null_redirection() {
 #[tokio::test]
 async fn test_sandbox_blocks_write_to_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
@@ -130,7 +139,10 @@ async fn test_sandbox_allows_write_to_workspace_memory_subpath() {
 #[tokio::test]
 async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
         .unwrap();
@@ -176,7 +188,10 @@ async fn test_sandbox_exec_allows_direct_command_for_workspace_memory_subpath() 
 #[tokio::test]
 async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
         .unwrap();
@@ -202,7 +217,10 @@ async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_mutating_command_for_protected_path() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected = temp.path().join(".alan/config.toml");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
@@ -228,7 +246,10 @@ async fn test_sandbox_exec_blocks_mutating_command_for_protected_path() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_read_only_command_for_protected_path() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected = temp.path().join(".git/HEAD");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
@@ -257,7 +278,10 @@ async fn test_sandbox_exec_blocks_read_only_command_for_protected_path() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_mutating_cwd_inside_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".agents");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -281,7 +305,10 @@ async fn test_sandbox_exec_blocks_mutating_cwd_inside_protected_subpath() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_bare_protected_directory_token() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -305,7 +332,10 @@ async fn test_sandbox_exec_blocks_bare_protected_directory_token() {
 #[tokio::test]
 async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
     let alias = temp.path().join("safe");
@@ -324,7 +354,10 @@ async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
 #[tokio::test]
 async fn test_sandbox_blocks_hardlink_alias_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
@@ -346,7 +379,10 @@ async fn test_sandbox_blocks_hardlink_alias_into_protected_subpath() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -370,7 +406,10 @@ async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_globbed_process_paths() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -395,7 +434,10 @@ async fn test_sandbox_exec_blocks_globbed_process_paths() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_set_plus_f_glob_bypass_attempt() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -420,7 +462,10 @@ async fn test_sandbox_exec_blocks_set_plus_f_glob_bypass_attempt() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_read_only_variable_expansion() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -442,7 +487,10 @@ async fn test_sandbox_exec_blocks_read_only_variable_expansion() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_brace_expansion() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -464,7 +512,10 @@ async fn test_sandbox_exec_blocks_brace_expansion() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_multiline_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -486,7 +537,10 @@ async fn test_sandbox_exec_blocks_multiline_nested_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -508,7 +562,10 @@ async fn test_sandbox_exec_blocks_nested_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_nested_python_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -530,7 +587,10 @@ async fn test_sandbox_exec_blocks_nested_python_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_shell_eval_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -552,7 +612,10 @@ async fn test_sandbox_exec_blocks_shell_eval_wrapper_with_leading_option() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_python_eval_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -574,7 +637,10 @@ async fn test_sandbox_exec_blocks_python_eval_wrapper_with_leading_option() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_node_print_eval_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -596,7 +662,10 @@ async fn test_sandbox_exec_blocks_node_print_eval_wrapper_with_leading_option() 
 #[tokio::test]
 async fn test_sandbox_exec_blocks_node_inline_long_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -618,7 +687,10 @@ async fn test_sandbox_exec_blocks_node_inline_long_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_node_inline_long_print_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -640,7 +712,10 @@ async fn test_sandbox_exec_blocks_node_inline_long_print_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_shell_inline_long_command_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -681,7 +756,10 @@ async fn test_sandbox_exec_allows_literal_sh_dash_c_arguments() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_eval_builtin() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -703,7 +781,10 @@ async fn test_sandbox_exec_blocks_eval_builtin() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_command_eval_builtin() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -725,7 +806,10 @@ async fn test_sandbox_exec_blocks_command_eval_builtin() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_source_builtin() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -747,7 +831,10 @@ async fn test_sandbox_exec_blocks_source_builtin() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_env_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -769,7 +856,10 @@ async fn test_sandbox_exec_blocks_env_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_bang_prefixed_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -791,7 +881,10 @@ async fn test_sandbox_exec_blocks_bang_prefixed_nested_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_if_prefixed_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -813,7 +906,10 @@ async fn test_sandbox_exec_blocks_if_prefixed_nested_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_env_split_string_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -835,7 +931,10 @@ async fn test_sandbox_exec_blocks_env_split_string_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_xargs_dispatcher() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -857,7 +956,10 @@ async fn test_sandbox_exec_blocks_xargs_dispatcher() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_find_exec_dispatcher() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -933,7 +1035,10 @@ async fn test_sandbox_exec_does_not_treat_non_find_exec_flag_as_dispatcher() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_python_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
         .unwrap();
@@ -958,7 +1063,10 @@ async fn test_sandbox_exec_blocks_python_script_file_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_python_module_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -985,7 +1093,10 @@ fn test_bash_preflight_allows_python_module_pytest() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_wrapped_python_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
         .unwrap();
@@ -1010,7 +1121,10 @@ async fn test_sandbox_exec_blocks_wrapped_python_script_file_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_shell_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.sh"), "echo ok")
         .await
         .unwrap();
@@ -1035,7 +1149,10 @@ async fn test_sandbox_exec_blocks_shell_script_file_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_node_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.js"), "console.log('ok')")
         .await
         .unwrap();
@@ -1060,7 +1177,10 @@ async fn test_sandbox_exec_blocks_node_script_file_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_node_stdin_interpreter_via_pipe() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1082,7 +1202,10 @@ async fn test_sandbox_exec_blocks_node_stdin_interpreter_via_pipe() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_awk_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
         .await
         .unwrap();
@@ -1107,7 +1230,10 @@ async fn test_sandbox_exec_blocks_awk_script_file_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_inline_awk_script_file_option_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
         .await
         .unwrap();
@@ -1132,7 +1258,10 @@ async fn test_sandbox_exec_blocks_inline_awk_script_file_option_interpreter() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_inline_php_script_file_option_interpreter() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.php"), "<?php echo 'ok';")
         .await
         .unwrap();
@@ -1189,7 +1318,10 @@ async fn test_sandbox_exec_allows_direct_command_with_leading_env_assignment() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_nice_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1211,7 +1343,10 @@ async fn test_sandbox_exec_blocks_nice_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_timeout_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
         .unwrap();
@@ -1236,7 +1371,10 @@ async fn test_sandbox_exec_blocks_timeout_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_chained_wrapped_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1258,7 +1396,10 @@ async fn test_sandbox_exec_blocks_chained_wrapped_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_nohup_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     tokio::fs::write(temp.path().join("script.sh"), "echo ok")
         .await
         .unwrap();
@@ -1283,7 +1424,10 @@ async fn test_sandbox_exec_blocks_nohup_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_stdbuf_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1305,7 +1449,10 @@ async fn test_sandbox_exec_blocks_stdbuf_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_setsid_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1327,7 +1474,10 @@ async fn test_sandbox_exec_blocks_setsid_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_time_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1349,7 +1499,10 @@ async fn test_sandbox_exec_blocks_time_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_timeout_query_mode_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1371,7 +1524,10 @@ async fn test_sandbox_exec_blocks_timeout_query_mode_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_clustered_env_split_string_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1393,7 +1549,10 @@ async fn test_sandbox_exec_blocks_clustered_env_split_string_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_command_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1415,7 +1574,10 @@ async fn test_sandbox_exec_blocks_command_wrapper_with_leading_option() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_command_query_mode_with_eval_like_argv() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1438,7 +1600,10 @@ async fn test_sandbox_exec_blocks_command_query_mode_with_eval_like_argv() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_builtin_eval_after_end_of_options() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1460,7 +1625,10 @@ async fn test_sandbox_exec_blocks_builtin_eval_after_end_of_options() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1482,7 +1650,10 @@ async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper_with_argv0_option() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1558,7 +1729,10 @@ async fn test_sandbox_exec_allows_bracket_test_syntax() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_protected_redirection_without_whitespace() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -1582,7 +1756,10 @@ async fn test_sandbox_exec_blocks_protected_redirection_without_whitespace() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_protected_path_with_line_continuation() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -1606,7 +1783,10 @@ async fn test_sandbox_exec_blocks_protected_path_with_line_continuation() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_post_comment_line_continuation_nested_eval() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1628,7 +1808,10 @@ async fn test_sandbox_exec_blocks_post_comment_line_continuation_nested_eval() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_eval_wrapper_name_with_line_continuation() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1650,7 +1833,10 @@ async fn test_sandbox_exec_blocks_eval_wrapper_name_with_line_continuation() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_wrapper_query_with_line_continuation() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
@@ -1672,7 +1858,10 @@ async fn test_sandbox_exec_blocks_wrapper_query_with_line_continuation() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_attached_short_option_path_argument() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
     tokio::fs::write(temp.path().join("payload"), "ok")
@@ -1699,7 +1888,10 @@ async fn test_sandbox_exec_blocks_attached_short_option_path_argument() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_hardlink_process_path_reference() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
         .await
@@ -1728,7 +1920,10 @@ async fn test_sandbox_exec_blocks_hardlink_process_path_reference() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_protected_path_built_from_quoted_segments() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 
@@ -1777,7 +1972,10 @@ async fn test_sandbox_exec_allows_quoted_relative_glob_path_patterns() {
 #[tokio::test]
 async fn test_sandbox_exec_blocks_protected_path_in_option_assignment() {
     let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
 

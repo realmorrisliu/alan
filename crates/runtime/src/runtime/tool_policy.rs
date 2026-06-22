@@ -102,6 +102,43 @@ fn is_recursive_rm(command: &str) -> bool {
     has_rm && has_recursive
 }
 
+/// What the active sandbox backend confines, used to gate degradation/preflight.
+/// Filesystem and network are tracked separately because Landlock can confine the
+/// filesystem on a kernel that lacks network-rule support.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SandboxConfinement {
+    /// The OS backend confines filesystem effects (skip the syntactic preflight).
+    pub fs: bool,
+    /// The OS backend confines network effects (else bash must go to a human).
+    pub network: bool,
+}
+
+impl SandboxConfinement {
+    /// Resolve from the active backend.
+    pub fn detect() -> Self {
+        Self {
+            fs: crate::tools::os_backend_active(),
+            network: crate::tools::confines_network(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn os_enforced() -> Self {
+        Self {
+            fs: true,
+            network: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn none() -> Self {
+        Self {
+            fs: false,
+            network: false,
+        }
+    }
+}
+
 pub(super) fn evaluate_tool_policy(
     policy_engine: &crate::policy::PolicyEngine,
     governance: &alan_protocol::GovernanceConfig,
@@ -109,7 +146,7 @@ pub(super) fn evaluate_tool_policy(
     arguments: &serde_json::Value,
     capability: alan_protocol::ToolCapability,
     current_cwd: Option<&std::path::Path>,
-    os_backend_active: bool,
+    confinement: SandboxConfinement,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::active_backend_name();
     // The bash-shape preflight is the workspace-path-guard parser standing in for
@@ -117,7 +154,9 @@ pub(super) fn evaluate_tool_policy(
     // independent of command syntax, so this syntactic deny must not block
     // commands the sandbox would safely contain (e.g. `python -c ...`,
     // `bash -lc ...`). Apply it only on the path-guard fallback.
-    if !os_backend_active && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
+    if !confinement.fs
+        && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments)
+    {
         return ToolPolicyDecision::Forbidden {
             reason: reason.clone(),
             audit: alan_protocol::ToolDecisionAudit {
@@ -182,14 +221,19 @@ pub(super) fn evaluate_tool_policy(
         policy_reason = Some("recursive delete requires review".to_string());
     }
 
-    // Safe degradation: under the builtin autonomous posture, without an
-    // OS-enforced sandbox bash can do arbitrary uncontained effects, so it must
-    // not auto-run — escalate to a human. (`human-` rule ids route to a person,
-    // never the reviewer.) Explicit operator policies are left as configured.
-    if should_degrade_bash(action, tool_name, &policy_source, os_backend_active) {
+    // Safe degradation: under the builtin autonomous posture, bash can open
+    // sockets the sandbox may not contain. Filesystem confinement alone is not
+    // enough — without network confinement (no OS sandbox, or Landlock on a
+    // kernel without network rules) an opaque bash (`python script.py`, `./deploy`)
+    // could reach the network after a reviewer allow. So any non-denied builtin
+    // bash must go to a human whenever the network is unconfined. (`human-` rule
+    // ids route to a person, never the reviewer.) Operator policies are untouched.
+    if should_degrade_bash(action, tool_name, &policy_source, confinement.network) {
         action = crate::policy::PolicyAction::Escalate;
-        rule_id = Some("human-no-os-sandbox".to_string());
-        policy_reason = Some("no OS sandbox active; bash requires human approval".to_string());
+        rule_id = Some("human-bash-unconfined".to_string());
+        policy_reason = Some(
+            "bash is not fully sandbox-confined (network); requires human approval".to_string(),
+        );
         policy_source = "safe_degradation".to_string();
     }
 
@@ -263,23 +307,24 @@ pub(super) fn evaluate_tool_policy(
     }
 }
 
-/// Whether a builtin-autonomous bash allow must be downgraded to a human
-/// escalation because no OS sandbox can contain it on this host.
+/// Whether a builtin-autonomous bash decision must be downgraded to a human
+/// escalation because the active sandbox cannot confine its network effects.
 fn should_degrade_bash(
     action: crate::policy::PolicyAction,
     tool_name: &str,
     policy_source: &str,
-    os_backend_active: bool,
+    network_confined: bool,
 ) -> bool {
-    // Without an OS sandbox the reviewer is not a security boundary, so *any*
-    // non-denied builtin bash must go to a human — including commands already
-    // escalated to the reviewer (e.g. `rm -rf build`, `git reset --hard`), which
-    // would otherwise run uncontained under workspace_path_guard after a reviewer
-    // allow. Denials stay denied.
+    // Without network confinement the reviewer is not a security boundary for
+    // bash, so *any* non-denied builtin bash must go to a human — including
+    // commands already escalated to the reviewer (e.g. `rm -rf build`,
+    // `git reset --hard`) and opaque ones that could open sockets
+    // (`python script.py`), which would otherwise reach the network after a
+    // reviewer allow. Denials stay denied.
     action != crate::policy::PolicyAction::Deny
         && tool_name == "bash"
         && policy_source == "builtin_autonomous"
-        && !os_backend_active
+        && !network_confined
 }
 
 fn bash_shape_preflight_reason(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
@@ -322,7 +367,7 @@ mod tests {
             &json!({"id":"123"}),
             alan_protocol::ToolCapability::Unknown,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { details, .. } => {
@@ -334,16 +379,18 @@ mod tests {
     }
 
     #[test]
-    fn bash_degrades_to_human_only_without_os_backend_under_builtin() {
+    fn bash_degrades_to_human_when_network_unconfined_under_builtin() {
         use crate::policy::PolicyAction;
-        // Builtin autonomous + bash + no OS backend → escalate to a human.
+        // The 4th arg is `network_confined`. Builtin bash + no network
+        // confinement (no OS sandbox, or Landlock without network rules) → human.
         assert!(should_degrade_bash(
             PolicyAction::Allow,
             "bash",
             "builtin_autonomous",
             false
         ));
-        // With an OS backend, bash auto-runs (sandbox contains it).
+        // Network confined (e.g. Seatbelt deny-network, Landlock with net) →
+        // bash may auto-run / be reviewer-judged (sandbox contains it).
         assert!(!should_degrade_bash(
             PolicyAction::Allow,
             "bash",
@@ -364,15 +411,16 @@ mod tests {
             "builtin_autonomous",
             false
         ));
-        // Already-escalated bash (e.g. `rm -rf`, `git reset --hard`) must also go
-        // to a human without an OS sandbox — the reviewer is not a boundary.
+        // Already-escalated bash (e.g. `rm -rf`, `git reset --hard`) and opaque
+        // bash (`python script.py`) must also go to a human when network is
+        // unconfined — the reviewer is not a boundary.
         assert!(should_degrade_bash(
             PolicyAction::Escalate,
             "bash",
             "builtin_autonomous",
             false
         ));
-        // ...but with an OS backend the reviewer path is fine (sandbox contains).
+        // ...but with network confinement the reviewer path is fine.
         assert!(!should_degrade_bash(
             PolicyAction::Escalate,
             "bash",
@@ -389,6 +437,32 @@ mod tests {
     }
 
     #[test]
+    fn opaque_bash_routes_to_human_without_network_confinement() {
+        // FS confined but network not (e.g. Landlock without network rules): an
+        // opaque command that could open a socket must go to a human, not the
+        // reviewer, since the sandbox can't contain its network after an allow.
+        let policy = crate::policy::PolicyEngine::autonomous();
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({"command":"python script.py"}),
+            alan_protocol::ToolCapability::Unknown,
+            None,
+            SandboxConfinement {
+                fs: true,
+                network: false,
+            },
+        );
+        match result {
+            ToolPolicyDecision::Escalate { route, .. } => {
+                assert_eq!(route, EscalationRoute::AlwaysHuman)
+            }
+            other => panic!("expected human escalation, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_force_push_routes_to_always_human() {
         let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
@@ -398,7 +472,7 @@ mod tests {
             &json!({"command":"git push --force origin main"}),
             alan_protocol::ToolCapability::Unknown,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -418,7 +492,7 @@ mod tests {
             &json!({"command":"git push origin main"}),
             alan_protocol::ToolCapability::Unknown,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -482,7 +556,7 @@ mod tests {
                 &json!({ "command": cmd }),
                 alan_protocol::ToolCapability::Write,
                 None,
-                true,
+                SandboxConfinement::os_enforced(),
             );
             assert!(
                 matches!(result, ToolPolicyDecision::Escalate { .. }),
@@ -511,7 +585,7 @@ mod tests {
                 &json!({ "command": cmd }),
                 alan_protocol::ToolCapability::Write,
                 None,
-                true,
+                SandboxConfinement::os_enforced(),
             );
             assert!(
                 matches!(result, ToolPolicyDecision::Escalate { .. }),
@@ -535,7 +609,7 @@ mod tests {
             &json!({"command":"git push origin main --force"}),
             alan_protocol::ToolCapability::Unknown,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -576,7 +650,7 @@ mod tests {
             &json!({"query":"rust"}),
             alan_protocol::ToolCapability::Network,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {
@@ -590,7 +664,7 @@ mod tests {
     #[test]
     fn bash_shape_preflight_only_denies_without_os_sandbox() {
         let policy = crate::policy::PolicyEngine::autonomous();
-        let eval = |os_backend_active: bool| {
+        let eval = |confinement: SandboxConfinement| {
             evaluate_tool_policy(
                 &policy,
                 &alan_protocol::GovernanceConfig {
@@ -601,11 +675,11 @@ mod tests {
                 &json!({"command":"bash -lc 'rg TODO src'"}),
                 alan_protocol::ToolCapability::Unknown,
                 None,
-                os_backend_active,
+                confinement,
             )
         };
         // Path-guard fallback: the syntactic preflight hard-denies the wrapper.
-        match eval(false) {
+        match eval(SandboxConfinement::none()) {
             ToolPolicyDecision::Forbidden { reason, audit } => {
                 assert!(
                     reason.contains("rejects nested command evaluators")
@@ -624,7 +698,7 @@ mod tests {
         // policy instead — here escalated, not Forbidden by preflight).
         assert!(
             !matches!(
-                eval(true),
+                eval(SandboxConfinement::os_enforced()),
                 ToolPolicyDecision::Forbidden { audit, .. } if audit.policy_source == "sandbox_preflight"
             ),
             "OS-sandboxed bash must not be shape-denied by the preflight"
@@ -644,7 +718,7 @@ mod tests {
             &json!({"path":"a.txt","content":"x"}),
             alan_protocol::ToolCapability::Write,
             None,
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Allow { audit } => {
@@ -685,7 +759,7 @@ default_action: allow
             &json!({"path":"../deploy/prod.yaml","content":"version = 2"}),
             alan_protocol::ToolCapability::Write,
             Some(Path::new("/workspace/repo/src")),
-            true,
+            SandboxConfinement::os_enforced(),
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {

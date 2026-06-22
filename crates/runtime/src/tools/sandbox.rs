@@ -32,12 +32,36 @@ pub struct ExecResult {
 #[derive(Clone)]
 pub struct Sandbox {
     workspace_root: PathBuf,
+    /// Forces a specific backend instead of host detection (tests only).
+    backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
 }
 
 impl Sandbox {
     /// Create a new sandbox restricted to the given workspace
     pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+        Self {
+            workspace_root,
+            backend_override: None,
+        }
+    }
+
+    /// Construct a sandbox pinned to a specific backend (tests only), so the
+    /// path-guard parser can be exercised regardless of the host's OS sandbox.
+    #[cfg(test)]
+    pub fn with_backend(
+        workspace_root: PathBuf,
+        backend: super::sandbox_backend::SandboxBackendKind,
+    ) -> Self {
+        Self {
+            workspace_root,
+            backend_override: Some(backend),
+        }
+    }
+
+    /// The backend in effect (override for tests, else host detection).
+    fn active_backend(&self) -> super::sandbox_backend::SandboxBackendKind {
+        self.backend_override
+            .unwrap_or_else(super::sandbox_backend::detect_backend)
     }
 
     /// Name of the active sandbox backend.
@@ -195,8 +219,16 @@ impl Sandbox {
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
 
-        self.validate_shell_features(cmd)?;
-        self.validate_command_paths(cmd, cwd)?;
+        // The shell-feature / command-path checks are the workspace-path-guard
+        // parser standing in for confinement. With a kernel-enforced OS sandbox
+        // active, confinement is independent of command syntax, so skip these
+        // syntactic checks and let Seatbelt/Landlock confine the command (e.g.
+        // `bash -lc ...`, `python -c ...`). They still apply on the path-guard
+        // fallback.
+        if !self.active_backend().is_os_enforced() {
+            self.validate_shell_features(cmd)?;
+            self.validate_command_paths(cmd, cwd)?;
+        }
 
         // A command only reaches execution after policy/reviewer/human clearance.
         // If it is classified as a network capability, run it with the sandbox's
@@ -235,7 +267,7 @@ impl Sandbox {
     /// directly under the best-effort path guard.
     fn build_confined_command(&self, cmd: &str, allow_network: bool) -> tokio::process::Command {
         // Defense in depth: start the shell with pathname expansion disabled.
-        match super::sandbox_backend::detect_backend() {
+        match self.active_backend() {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
                 let profile =
                     super::sandbox_backend::seatbelt_profile(&self.workspace_root, allow_network);

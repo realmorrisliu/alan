@@ -528,7 +528,7 @@ where
             &tool_arguments,
             tool_capability,
             current_tool_cwd.as_deref(),
-            crate::tools::os_backend_active(),
+            super::tool_policy::SandboxConfinement::detect(),
         ),
         allow_approved_tool_escalation_execution,
     );
