@@ -54,12 +54,17 @@ impl SandboxBackendKind {
         self.is_os_enforced()
     }
 
-    /// Whether the backend kernel-denies writes to protected subpaths
-    /// (`.git`/`.alan`/`.agents`) independently of command syntax. Only then is it
-    /// safe to drop the workspace-path-guard shape parser (which otherwise rejects
-    /// opaque writers that could hide a protected write). Landlock cannot carve a
-    /// protected subdir out of the writable workspace tree, so it does NOT qualify
-    /// and must keep the shape parser.
+    /// Whether the backend confines bash strongly enough to run shell wrappers
+    /// and reviewer-route escalated bash: the workspace filesystem boundary AND
+    /// network are kernel-enforced (Seatbelt). Landlock does not qualify — it
+    /// cannot guarantee network confinement on older kernels — so it keeps the
+    /// full shape parser and routes escalated bash to a human.
+    ///
+    /// NOTE: protected subpaths (`.git`/`.alan`/`.agents`) are NOT kernel-confined
+    /// (denying `.git` breaks git itself). Their integrity rests on the path-guard
+    /// parser blocking direct + shell-wrapper-nested tampering; program-internal
+    /// writes by approved code (git porcelain, a reviewer-approved test runner)
+    /// are trusted — see the residual-gap audit.
     pub const fn confines_protected_writes(self) -> bool {
         matches!(self, SandboxBackendKind::Seatbelt)
     }
@@ -146,20 +151,14 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
         .map(|path| format!("(allow file-write* (subpath {path}))"))
         .collect::<Vec<_>>()
         .join("\n");
-    // Kernel-deny writes to protected subpaths, placed *after* the workspace allow
-    // so the more-specific deny wins (SBPL: last match wins). This confines them
-    // independently of command syntax — covering nested forms the path-guard
-    // parser cannot see, e.g. `bash -lc 'echo x > .git/config'`.
-    let protected_denies = super::sandbox::PROTECTED_SUBPATHS
-        .iter()
-        .map(|sub| {
-            let path = sbpl_quote(&format!("{}/{sub}", canonical_root.trim_end_matches('/')));
-            format!("(deny file-write* (subpath {path}))")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    // Network is denied by default; an approved network call runs with it allowed
-    // (still filesystem-confined) so approval is not futile.
+    // NOTE: we do NOT kernel-deny the protected subpaths (`.git`/`.alan`/
+    // `.agents`). The kernel cannot distinguish a tool's tampering from the
+    // legitimate program-internal writes those dirs are designed for — denying
+    // `.git` breaks `git` itself (init/add/commit all write `.git`), and denying
+    // `.alan` breaks the agent's own `.alan/memory`. Protected-subpath tampering is
+    // instead blocked by the path-guard parser (direct + shell-wrapper-nested path
+    // writes), which leaves program-internal writes (git porcelain, memory) intact.
+    // The OS sandbox's role here is the workspace + network boundary.
     let network_rule = if allow_network {
         ""
     } else {
@@ -171,7 +170,6 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
          {network_rule}\
          (deny file-write*)\n\
          {write_allows}\n\
-         {protected_denies}\n\
          (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
     )
 }

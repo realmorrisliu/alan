@@ -79,9 +79,9 @@ Protected-subpath writes SHALL remain blocked on every backend.
 - **WHEN** Landlock is active (it cannot carve a protected subdir out of the writable workspace) and a command is an opaque writer the path check cannot inspect (`python -c 'open(".git/config","w")…'`, `python scripts/setup.py`)
 - **THEN** it is rejected by the shape parser, the same posture as the path-guard fallback, because the kernel cannot deny the protected write
 
-#### Scenario: Protected-subpath writes are blocked under an OS sandbox
-- **WHEN** an OS-sandboxed command writes to a protected subpath (`.git`, `.alan`, `.agents`), directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
-- **THEN** the write is blocked: the Seatbelt profile kernel-denies protected-subpath writes, and the protected-only path check recurses into shell-wrapper inline scripts and re-applies the protected-subpath check
+#### Scenario: Direct/nested protected-subpath tampering is blocked
+- **WHEN** a command writes to a protected subpath (`.git`, `.alan`, `.agents`) via an explicit path operand, directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
+- **THEN** the write is blocked by the path-guard parser, which checks direct operands and recurses into shell-wrapper inline scripts. The protected subpaths are NOT kernel-denied — denying `.git` would break git itself, which must write `.git` — so program-internal writes by purpose-built tools (git porcelain to `.git`, the agent to `.alan/memory`) are allowed
 
 #### Scenario: Carve-outs are preserved under recursion
 - **WHEN** an OS-sandboxed command writes to an agent-writable carve-out within a protected root (`.alan/memory`), directly or inside a wrapper

@@ -64,7 +64,7 @@ fn normalized_tokens(command: &str) -> Vec<String> {
 
 fn is_force_push(command: &str) -> bool {
     let tokens = normalized_tokens(command);
-    let has_git = tokens.iter().any(|t| t == "git");
+    let has_git = tokens.iter().any(|t| t == "git" || t.ends_with("/git"));
     let has_push = tokens.iter().any(|t| t == "push");
     let rewrites_remote = tokens.iter().any(|t| {
         t == "-f"
@@ -91,7 +91,7 @@ fn is_force_push(command: &str) -> bool {
 /// escalation).
 fn is_reset_hard(command: &str) -> bool {
     let tokens = normalized_tokens(command);
-    tokens.iter().any(|t| t == "git")
+    tokens.iter().any(|t| t == "git" || t.ends_with("/git"))
         && tokens.iter().any(|t| t == "reset")
         && tokens.iter().any(|t| t == "--hard")
 }
@@ -813,6 +813,8 @@ mod tests {
             "git -C repo push --force",
             "git push -f origin main",
             "git push --force-with-lease=origin/main",
+            // Path-qualified git matches by basename.
+            "/usr/bin/git -C repo push --force origin main",
             // Mirror/delete/prune also rewrite or remove remote refs.
             "git push --mirror origin",
             "git push origin --delete feature",
