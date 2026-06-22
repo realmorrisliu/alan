@@ -93,6 +93,7 @@ recorded here with explicit decisions.
 | `mkfs` / `dd of=/dev/…` deny rules remain substring | both | Accept for now. These name block devices outside the workspace that the OS sandbox already denies; the substring deny is a belt for the path-guard fallback. Token-awareness is a low-value follow-up. |
 | Reviewer runs on the main model, not a dedicated connection profile | both | Deferred (task 4.2); functional, a later refinement. |
 | Full buffered-event transcript replay on reconnect (beyond `/history` + the pending `Yield`) | both | Deferred; `/history` + buffered-Yield payload cover the user-visible surface. Cursor-coordinated replay is a separate follow-up. |
+| A turn completing during hydration (between the buffer scan and `/history` read) straddles the two reads | both | Mitigated, not eliminated. The buffer is read *before* `/history` so the cursor points before the racy turn — it is replayed (possible rare duplicate) rather than dropped (data loss). A fully race-free fix needs the daemon to expose a cursor linking the `/history` response to the event buffer (`/history` currently returns no event-id boundary); deferred. |
 
 Invariant captured for future work: **any new red line MUST be token/basename
 aware and MUST declare reviewer-eligible vs always-human vs deny; any new OS-

@@ -264,11 +264,19 @@ impl DaemonClient {
     }
 
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
+        // Read the buffer FIRST, then `/history`. The replay cursor is the last
+        // completed turn observed in the buffer; reading the buffer before history
+        // means a turn that completes *during* hydration is captured by `/history`
+        // (read later) while the cursor still points before it, so the drain
+        // replays it too. That risks a rare duplicate turn rather than a *dropped*
+        // turn (the worse failure) when the two reads straddle a turn boundary.
+        // (A fully race-free fix needs a daemon-provided cursor linking `/history`
+        // to the event buffer — a follow-up; `/history` carries no such boundary.)
+        let buffer = self.read_all_buffered_events(session_id).await;
         let history = self.read_history(session_id).await?;
         let reconnect = self.read_reconnect_snapshot(session_id).await?;
         let mut hydration = SessionHydration::from_values(&history, &reconnect);
 
-        let buffer = self.read_all_buffered_events(session_id).await;
         if !buffer.is_empty() {
             // Replay cursor: start *after* the last completed turn so the live
             // stream drains the in-flight turn's buffered events (partial
