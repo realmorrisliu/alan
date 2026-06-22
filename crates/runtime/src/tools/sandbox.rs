@@ -228,22 +228,25 @@ impl Sandbox {
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
 
-        // The shell-feature / command-path checks are the workspace-path-guard
-        // parser standing in for confinement.
+        // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
+        // mode. Expansion defeats the static path-containment check — the parser
+        // sees a literal, in-workspace-looking token (`$HOME/.ssh/id_rsa`) but
+        // `/bin/sh -c` then expands it to escape the workspace. Seatbelt permits
+        // reads, so an auto-approved read must not be able to exfiltrate this way.
+        self.validate_shell_features(cmd)?;
+
         if self.active_backend().permits_autonomous_bash() {
-            // The kernel sandbox confines the filesystem *including* protected
-            // subpaths (Seatbelt), so the shape parser and workspace-containment
-            // checks are dropped — they would reject commands the sandbox safely
-            // contains (`bash -lc ...`, `python -c ...`). The protected-only check
-            // still blocks explicit and shell-wrapper-nested writes to
-            // .git/.alan/.agents.
+            // Seatbelt kernel-confines the workspace fs + network, so the syntactic
+            // *shape* checks are dropped — they would reject commands the sandbox
+            // safely contains (`bash -lc ...`, `python -c ...`). Path containment
+            // and the protected-subpath check (incl. shell-wrapper-nested) still
+            // run in ProtectedOnly mode.
             self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
             // protected subdir out of the writable tree, or the path-guard
             // fallback): keep the full shape parser so opaque writers — which could
             // hide a protected write the kernel won't deny — are rejected.
-            self.validate_shell_features(cmd)?;
             self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
         }
 

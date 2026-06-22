@@ -1049,8 +1049,28 @@ where
 
     match tool_result {
         Ok(value) => {
+            // `Ok` is only the transport result — the tool may report a logical
+            // failure in its payload (e.g. bash `{ "success": false, "exit_code": 1
+            // }`). Derive completion + effect status from that, so a failed
+            // side-effecting command is not cached as `Applied` (which would make a
+            // retry skip physical execution) and is not rendered as a success.
+            let payload_success =
+                value.get("success").and_then(serde_json::Value::as_bool) != Some(false);
             if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
                 let durable_value = crate::rollout::build_durable_tool_payload(&value);
+                let (status, applied_at, reason) = if payload_success {
+                    (
+                        crate::rollout::EffectStatus::Applied,
+                        Some(chrono::Utc::now().to_rfc3339()),
+                        None,
+                    )
+                } else {
+                    (
+                        crate::rollout::EffectStatus::Failed,
+                        None,
+                        Some("tool reported failure in payload".to_string()),
+                    )
+                };
                 state.session.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
                     run_id: effect_start.run_id.clone(),
@@ -1060,9 +1080,9 @@ where
                     request_fingerprint: identity.request_fingerprint.clone(),
                     result_digest: Some(durable_value.digest),
                     result_payload: Some(durable_value.payload),
-                    status: crate::rollout::EffectStatus::Applied,
-                    applied_at: Some(chrono::Utc::now().to_rfc3339()),
-                    reason: None,
+                    status,
+                    applied_at,
+                    reason,
                     dedupe_hit: false,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 });
@@ -1075,7 +1095,7 @@ where
                 ),
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
-                success: Some(true),
+                success: Some(payload_success),
                 result_preview: tool_result_preview(&value),
                 audit: tool_audit.clone(),
             })
@@ -1084,7 +1104,7 @@ where
                 &tool_call.name,
                 tool_arguments.clone(),
                 value.clone(),
-                true,
+                payload_success,
                 tool_audit.clone(),
             );
             state
@@ -1093,7 +1113,7 @@ where
             info!(
                 tool_name = %tool_call.name,
                 elapsed_ms = tool_start.elapsed().as_millis(),
-                success = true,
+                success = payload_success,
                 "Tool done"
             );
             Ok(ToolOrchestratorOutcome::ContinueToolBatch {

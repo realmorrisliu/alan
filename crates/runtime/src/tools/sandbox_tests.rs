@@ -2135,3 +2135,34 @@ async fn test_os_backend_still_blocks_out_of_workspace_reads() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_os_backend_rejects_shell_expansion_reads() {
+    // Shell expansion defeats static path containment: `$HOME/.ssh/id_rsa` looks
+    // workspace-relative to the parser but `/bin/sh -c` expands it to escape.
+    // validate_shell_features must run in ProtectedOnly mode too, rejecting `$`.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    for cmd in [
+        "cat $HOME/.ssh/id_rsa",
+        "ls $HOME",
+        "cat $(echo /etc/passwd)",
+    ] {
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                cmd,
+                temp.path(),
+                None,
+                Some(alan_protocol::ToolCapability::Read),
+            )
+            .await;
+        assert!(result.is_err(), "shell expansion not rejected: {cmd}");
+        assert!(
+            result.unwrap_err().to_string().contains("expansion"),
+            "wrong rejection for: {cmd}"
+        );
+    }
+}

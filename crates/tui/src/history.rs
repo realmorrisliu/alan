@@ -81,6 +81,9 @@ pub struct PendingYieldCell {
     pub title: String,
     pub prompt: Option<String>,
     pub options: Vec<String>,
+    /// The option submitted on a blank confirmation reply (the runtime's
+    /// `default_option`), which may not be the first option.
+    pub default_option: Option<String>,
     pub questions: Vec<StructuredInputQuestion>,
     /// Policy capability for an escalation (e.g. `network`, `write`).
     pub capability: Option<String>,
@@ -426,6 +429,7 @@ impl SessionReducer {
                 let title = yield_title(&kind, &payload);
                 let prompt = yield_prompt(&kind, &payload);
                 let options = yield_options(&kind, &payload);
+                let default_option = yield_default_option(&kind, &payload);
                 let questions = yield_questions(&kind, &payload);
                 let cell = PendingYieldCell {
                     request_id,
@@ -433,6 +437,7 @@ impl SessionReducer {
                     title,
                     prompt,
                     options,
+                    default_option,
                     questions,
                     capability: yield_capability(&payload),
                     reason: yield_reason(&payload),
@@ -549,7 +554,11 @@ impl PendingYieldCell {
     pub fn resume_content(&self, input: &str) -> Result<Vec<ContentPart>, String> {
         match self.kind {
             YieldKind::Confirmation => {
-                let choice = normalize_confirmation_choice(input, &self.options)?;
+                let choice = normalize_confirmation_choice(
+                    input,
+                    &self.options,
+                    self.default_option.as_deref(),
+                )?;
                 Ok(vec![ContentPart::structured(serde_json::json!({
                     "choice": choice
                 }))])
@@ -647,6 +656,16 @@ fn yield_options(kind: &YieldKind, payload: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+fn yield_default_option(kind: &YieldKind, payload: &serde_json::Value) -> Option<String> {
+    if !matches!(kind, YieldKind::Confirmation) {
+        return None;
+    }
+    payload
+        .get("default_option")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 fn yield_questions(kind: &YieldKind, payload: &serde_json::Value) -> Vec<StructuredInputQuestion> {
     if !matches!(kind, YieldKind::StructuredInput) {
         return Vec::new();
@@ -660,12 +679,18 @@ fn yield_questions(kind: &YieldKind, payload: &serde_json::Value) -> Vec<Structu
         .collect()
 }
 
-fn normalize_confirmation_choice(input: &str, options: &[String]) -> Result<String, String> {
+fn normalize_confirmation_choice(
+    input: &str,
+    options: &[String],
+    default_option: Option<&str>,
+) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Ok(options
-            .first()
-            .cloned()
+        // Blank Enter uses the runtime's default_option (which may not be the
+        // first option), falling back to the first option, then "approve".
+        return Ok(default_option
+            .map(str::to_string)
+            .or_else(|| options.first().cloned())
             .unwrap_or_else(|| "approve".to_string()));
     }
     if options.is_empty() {
@@ -1082,6 +1107,28 @@ mod tests {
         let content = pending.resume_content("reject").unwrap();
         assert!(
             matches!(&content[0], ContentPart::Structured { data } if data["choice"] == "reject")
+        );
+    }
+
+    #[test]
+    fn confirmation_blank_enter_uses_default_option_not_first() {
+        let mut reducer = SessionReducer::default();
+        reducer.apply_envelope(envelope(Event::Yield {
+            request_id: "c-1".into(),
+            kind: YieldKind::Confirmation,
+            // Options ordered reject-first, but the runtime defaults to approve.
+            payload: serde_json::json!({
+                "message": "Approve?",
+                "options": ["reject", "approve"],
+                "default_option": "approve"
+            }),
+        }));
+        let pending = reducer.pending_yield.expect("pending yield");
+        assert_eq!(pending.default_option.as_deref(), Some("approve"));
+        // Blank Enter submits the default_option (approve), not the first option.
+        let content = pending.resume_content("").unwrap();
+        assert!(
+            matches!(&content[0], ContentPart::Structured { data } if data["choice"] == "approve")
         );
     }
 

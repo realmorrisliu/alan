@@ -295,6 +295,7 @@ impl TuiApp {
             title: "pending input restored".to_string(),
             prompt: None,
             options,
+            default_option: None,
             questions: Vec::new(),
             capability: None,
             reason: None,
