@@ -345,3 +345,76 @@ MUST NOT silently apply a guarded close mutation when terminal work is active.
 #### Scenario: Force close is not implicit
 - **WHEN** a control client sends an existing close command without an explicit future force-close contract
 - **THEN** Alan treats the command as non-forcing and applies confirmation-required semantics for active terminal work
+
+### Requirement: macOS control transport delegates reusable command semantics
+The macOS shell control plane SHALL delegate reusable command validation,
+workspace reducer dispatch, stable error codes, and authoritative response
+projection to the Rust shell core after the control reducer module has Rust
+contract tests and adapter tests.
+
+The macOS control plane SHALL continue to own socket transport, file polling,
+request size limits, response deadlines, runtime service calls, event store IO,
+and diagnostics recording.
+
+#### Scenario: Domain command is received over socket
+- **WHEN** a socket client sends a workspace-domain control command after shell
+  core control integration
+- **THEN** the macOS transport decodes and bounds the request
+- **AND** the Rust shell core validates and reduces the command
+- **AND** the macOS control plane publishes the returned state, events, runtime
+  intents, and response through existing transport semantics
+
+#### Scenario: Runtime command is reduced
+- **WHEN** a control command targets terminal runtime behavior such as text
+  delivery
+- **THEN** the shell core returns domain target validation and a runtime intent
+- **AND** the macOS terminal runtime service supplies the platform-specific
+  delivery outcome for the final control response
+
+### Requirement: Stable control response compatibility is maintained
+Rust-backed control command reduction SHALL preserve existing macOS shell
+control response shapes and stable error codes unless a later spec explicitly
+changes them.
+
+#### Scenario: Missing target error is returned
+- **WHEN** a Rust-backed control command references a missing Space, Tab,
+  PaneSlot, or ContentInstance
+- **THEN** the returned response uses the same stable error semantics expected
+  by current macOS shell control clients
+- **AND** clients do not need to infer the failure from raw state snapshots
+
+### Requirement: Portable control commands use shell-core outcomes
+The macOS shell control plane SHALL route portable workspace-domain command
+validation, stable errors, reducer dispatch, and response projection through
+Rust shell core once the command is covered by the shell-core control reducer.
+
+#### Scenario: Workspace command succeeds
+- **WHEN** a local control client sends a portable command such as `space.create`,
+  `tab.open`, `tab.pin`, `pane.split`, `pane.focus`, or `attention.set`
+- **THEN** the applied response is derived from the shell-core control result
+- **AND** Swift applies the returned state or side effects without recomputing
+  command validity or response fields through a duplicate switch branch
+
+#### Scenario: Workspace command is rejected
+- **WHEN** shell core rejects a portable control command with a stable error
+- **THEN** the macOS control response reports that shell-core error
+- **AND** Swift does not translate the same command through an alternate
+  platform mutation path to produce a different result
+
+#### Scenario: Command requires terminal runtime delivery
+- **WHEN** a control command requires platform terminal runtime work, such as
+  sending text or focusing a terminal surface
+- **THEN** shell core owns target validation and the portable intent
+- **AND** Swift owns the runtime delivery attempt and merges the platform
+  outcome into the response
+
+### Requirement: Host-only commands are explicit platform commands
+Mac-only control commands MUST remain in Swift under explicit host ownership
+when they cannot be represented as portable shell-domain commands, rather than
+being mixed into shell-core fallback branches.
+
+#### Scenario: Performance diagnostic command is handled
+- **WHEN** a control command operates only on macOS diagnostics, exported files,
+  or app runtime settings
+- **THEN** Swift handles it as a host command
+- **AND** the command does not masquerade as a failed shell-core domain command

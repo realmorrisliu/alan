@@ -89,3 +89,63 @@ or Ask alan command-input actions.
 - **THEN** normal terminal tab creation remains available through the registry
   without requiring a first-party alan tab action
 
+### Requirement: macOS shell actions consume shared shell core action contract
+The macOS shell action registry SHALL consume shared action IDs, target
+resolution, availability, shortcut metadata, and action-to-effect mapping from
+the Rust shell core after the action module has Rust contract tests and adapter
+tests.
+
+Swift SHALL continue to own menu bar, context menu, keyboard, drag/drop, and
+visual presentation of actions.
+
+#### Scenario: Menu invokes a shared action
+- **WHEN** a macOS menu item invokes a reusable shell action after shell core
+  action integration
+- **THEN** action availability and effect mapping come from the Rust shell core
+- **AND** Swift performs only platform presentation and dispatch through the
+  adapter
+
+#### Scenario: Context target is resolved
+- **WHEN** a macOS context menu supplies a clicked Tab, Space, or PaneSlot target
+- **THEN** the Rust shell core resolves the target according to shared action
+  rules
+- **AND** Swift does not maintain a separate target-resolution implementation
+  for the same reusable action
+
+### Requirement: macOS-only presentation actions remain platform-owned
+macOS-only presentation actions SHALL remain platform-owned.
+
+Actions that are purely macOS presentation, windowing, update UI, file picker,
+or AppKit behavior MUST NOT be forced into the shared shell core action
+registry.
+
+#### Scenario: Platform-only command is invoked
+- **WHEN** a command only opens a macOS panel, presents a Sparkle update UI, or
+  performs AppKit window behavior
+- **THEN** Swift may own that command outside the shell core action registry
+- **AND** the command does not duplicate reusable workspace mutation semantics
+
+### Requirement: Shared shell action registry is shell-core authoritative
+The macOS shell SHALL obtain shared action descriptors, default shortcuts,
+keyboard mapping, target availability, and action effects from Rust shell core
+once the action is included in the shell-core registry.
+
+#### Scenario: Action descriptor is requested
+- **WHEN** a menu, context menu, toolbar, or keyboard surface asks for a shared
+  shell action descriptor
+- **THEN** Swift obtains the descriptor from shell core
+- **AND** Swift does not use a separate registry table for the same action
+
+#### Scenario: Action availability is checked
+- **WHEN** Swift checks whether a shared shell action can run for a target
+- **THEN** the availability result comes from shell core target resolution
+- **AND** Swift does not perform a separate domain availability check after a
+  core error
+
+#### Scenario: Core action registry is unavailable
+- **WHEN** shell core cannot answer a shared action registry request
+- **THEN** the action surface reports the action as unavailable with an explicit
+  core failure reason
+- **AND** it does not silently dispatch a Swift implementation of the same
+  action
+

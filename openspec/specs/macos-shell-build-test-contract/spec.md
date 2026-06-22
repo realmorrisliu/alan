@@ -1167,3 +1167,163 @@ Managed User no-fallback enforcement.
 - **THEN** contract checks reject using `do shell script ... with administrator
   privileges`, raw sudoers editing, or `sudo -n -iu <target>` as the
   helper-backed Managed User executor or readiness path
+
+### Requirement: Shell core migration has Rust contract and adapter validation
+Shell core migration slices SHALL include focused Rust contract tests and Swift
+adapter validation before replacing macOS Swift shell domain logic.
+
+#### Scenario: Rust module is introduced
+- **WHEN** a Rust shell core module implements existing Swift shell domain
+  behavior
+- **THEN** focused Rust unit tests cover its local behavior
+- **AND** Rust contract tests cover the same domain semantics and stable errors
+
+#### Scenario: Swift call path is replaced
+- **WHEN** a macOS Swift call path switches to Rust shell core behavior through
+  a binding facade
+- **THEN** Swift adapter tests cover request encoding, response decoding, error
+  mapping, schema or ABI version mismatch, and fallback removal expectations
+- **AND** the focused Apple script tests for the affected domain run in the same
+  validation slice
+
+### Requirement: Existing shell checks remain in the migration matrix
+Shell core migration SHALL continue to run the existing focused macOS shell
+script checks that cover the replaced behavior.
+
+#### Scenario: Split and reducer behavior changes
+- **WHEN** split tree or workspace reducer behavior is migrated to Rust
+- **THEN** Rust split-tree/reducer contract tests and affected FFI-backed Swift
+  checks remain part of validation
+
+#### Scenario: Manifest behavior changes
+- **WHEN** workspace manifest behavior is migrated to Rust
+- **THEN** `clients/apple/scripts/test-shell-workspace-manifest.sh` remains part
+  of validation
+- **AND** existing manifest compatibility cases are represented in Rust contract
+  tests and FFI-backed Swift manifest adapter checks
+
+#### Scenario: Control or automation command behavior changes
+- **WHEN** shell control command reduction or automation command seams are
+  migrated to Rust
+- **THEN** `clients/apple/scripts/test-shell-automation-command-seams.sh` and
+  `clients/apple/scripts/check-shell-contracts.sh` remain part of validation
+
+### Requirement: Binding generator output is pinned and checked
+If a binding generator such as UniFFI is used for Swift integration, Alan SHALL
+pin the generator version and validate generated Swift, header, and modulemap
+output so binding drift is intentional.
+
+#### Scenario: Binding facade is regenerated
+- **WHEN** generated binding output changes
+- **THEN** validation makes the generated Swift/header/modulemap drift visible
+- **AND** the change records whether the drift came from schema changes,
+  generator-version changes, or facade implementation changes
+
+### Requirement: Validation rejects replaced Swift domain fallbacks
+Alan's shell validation scripts SHALL reject runtime Swift fallback patterns
+that recompute core-owned shell-domain behavior after shell core has a tested
+authority path.
+
+#### Scenario: Manifest fallback is reintroduced
+- **WHEN** a macOS runtime path calls shell core for manifest defaulting,
+  pruning, migration, or materialization
+- **AND** the same expression or error path falls back to a Swift manifest
+  domain implementation
+- **THEN** shell contract validation fails with a message identifying the
+  forbidden fallback
+
+#### Scenario: Reducer fallback is reintroduced
+- **WHEN** a replaced reducer or control-command path handles a shell-core
+  failure by applying a Swift mutation algorithm for the same operation
+- **THEN** shell contract or architecture validation fails
+
+#### Scenario: Legitimate platform fallback remains
+- **WHEN** Swift code contains fallback behavior for UI labels, Ghostty runtime
+  initialization, corrupt-file quarantine, pasteboard input, or diagnostics
+  presentation
+- **THEN** validation allows that platform fallback when it is not a duplicate
+  shell-domain implementation
+
+### Requirement: Adapter tests replace Swift domain oracle tests
+For core-owned behavior, Swift tests SHALL verify shell-core adapter behavior
+and platform integration rather than preserving the removed Swift implementation
+as a runtime oracle.
+
+#### Scenario: Swift manifest materializer test is updated
+- **WHEN** the Swift manifest materializer runtime implementation is removed
+- **THEN** remaining Swift tests cover adapter encode/decode, error handling,
+  corrupt-file recovery, and app startup integration
+- **AND** portable manifest default/prune/materialize assertions live in Rust
+  shell-core tests or facade fixture tests
+
+#### Scenario: Control command adapter test is updated
+- **WHEN** portable control command behavior moves fully behind shell core
+- **THEN** Swift tests verify that returned core results and side effects are
+  applied correctly
+- **AND** portable command validation and stable error assertions live in Rust
+  shell-core tests or facade fixture tests
+
+### Requirement: Background terminal render scheduling has focused verification
+The Apple client SHALL include focused automated verification for terminal
+runtime priority derivation, render wakeup coalescing, hidden-to-visible
+catch-up, foreground-first scheduling, and hidden runtime publication throttling.
+
+#### Scenario: Priority derivation is tested
+- **WHEN** tests model selected panes, visible split siblings, hidden tabs,
+  hidden spaces, split zoom, and window occlusion
+- **THEN** the expected terminal runtime priority is derived for each affected
+  terminal ContentInstance
+
+#### Scenario: Hidden wakeups are coalesced
+- **WHEN** a fake hidden background terminal handle emits repeated render
+  wakeups
+- **THEN** tests verify that Alan does not schedule one immediate surface
+  refresh per wakeup
+- **AND** the fake runtime still records pending state for later catch-up
+
+#### Scenario: Foreground work wins over background output
+- **WHEN** fake foreground and background terminal handles have pending work in
+  the same coordinator drain
+- **THEN** tests verify that foreground interactive work is drained before
+  visible background and hidden background work
+
+#### Scenario: Hidden terminal catches up on visibility
+- **WHEN** a hidden terminal handle with pending output becomes visible
+- **THEN** tests verify that catch-up tick and refresh work is requested for the
+  existing terminal ContentInstance handle
+- **AND** the fake runtime is not restarted or replaced
+
+#### Scenario: Hidden publication is throttled
+- **WHEN** a fake hidden background terminal emits high-frequency scrollback or
+  renderer updates
+- **THEN** tests verify that SwiftUI-facing publication is coalesced or deferred
+- **AND** title, cwd, exit, bell, attention, and failure summaries remain
+  observable on a bounded path
+
+### Requirement: High-output background terminal stress smoke is documented
+Terminal scheduling changes SHALL include documented stress-smoke evidence for
+many live terminals or high-output background panes before implementation is
+marked complete.
+
+#### Scenario: Background command emits continuous output
+- **WHEN** a developer runs a high-output command in a background tab, space, or
+  hidden split sibling while interacting with the foreground terminal
+- **THEN** the foreground terminal remains responsive to typing and focus
+  changes
+- **AND** the background command continues running in real time
+- **AND** switching back to the background terminal shows current output without
+  process restart or scrollback loss
+
+#### Scenario: Multiple background panes are active
+- **WHEN** several background terminal panes emit frequent output at the same
+  time
+- **THEN** debug evidence or test instrumentation records coalesced wakeups,
+  bounded coordinator drain latency, and fewer hidden surface refreshes than
+  hidden output wakeups
+
+#### Scenario: Manual app verification is performed after install
+- **WHEN** the implementation is ready for visual verification
+- **THEN** the Apple client is built and installed with the project-supported
+  command
+- **AND** the running Alan app is relaunched before manual responsiveness and
+  catch-up verification is treated as complete

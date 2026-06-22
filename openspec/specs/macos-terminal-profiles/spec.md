@@ -174,3 +174,75 @@ with `managed_user` launch identity rather than `sudo_user`.
 - **THEN** alan preserves the manual profile as operator-managed startup state
 - **AND** alan does not convert it to `managed_user` without Managed User
   ownership evidence
+
+### Requirement: macOS delegates Terminal Profile domain semantics to shell core
+Alan for macOS SHALL delegate Terminal Profile document validation, editor
+semantics, deterministic resolution order, missing/unavailable profile state,
+and terminal launch-intent construction to the Rust shell core after the
+Terminal Profile module has Rust contract tests and adapter tests.
+
+The macOS platform layer SHALL continue to own profile store file IO, channel
+Application Support path selection, terminal runtime spawn translation, and
+privileged Managed Terminal Account apply operations.
+
+#### Scenario: Terminal Profile is resolved for pane startup
+- **WHEN** macOS creates terminal content with a Terminal Profile reference
+  after shell core profile integration
+- **THEN** the Rust shell core resolves the profile and returns a launch intent
+- **AND** the macOS terminal runtime adapter translates that intent into the
+  concrete Ghostty or shell startup operation
+
+#### Scenario: Profile store is saved
+- **WHEN** a Terminal Profile document is edited after shell core profile
+  integration
+- **THEN** the Rust shell core validates document semantics
+- **AND** the macOS platform layer writes the document to its channel-scoped
+  store location
+
+### Requirement: Privileged account effects stay platform-owned
+Privileged account effects SHALL remain platform-owned.
+
+Managed Terminal Account privileged apply, sudoers writes, AppleScript
+authorization, account lookup commands, and platform verification executors SHALL
+remain outside the shell core and MUST stay platform-owned.
+
+The shell core MAY own portable request, plan, validation, handoff, or profile
+intent semantics only when those semantics do not execute OS effects directly.
+
+#### Scenario: Managed account apply is approved
+- **WHEN** the user approves a Managed Terminal Account provisioning plan on
+  macOS
+- **THEN** macOS executes privileged account and sudoers operations through the
+  platform-owned executor
+- **AND** shell core does not receive reusable privileged credentials or invoke
+  AppleScript, sudoers writes, or account-management commands directly
+
+### Requirement: Terminal Profile domain decisions use shell core
+The macOS shell SHALL use Rust shell core for Terminal Profile validation,
+editor-domain results, deterministic profile resolution, and terminal launch
+intent construction once those operations are exposed through the shell-core
+facade.
+
+Swift SHALL continue to own profile file storage, corrupt-file preservation,
+process spawning, privileged helper readiness checks, and user-interface
+presentation.
+
+#### Scenario: Profile definition is validated
+- **WHEN** Swift validates or creates a Terminal Profile definition
+- **THEN** the domain validation result comes from shell core
+- **AND** Swift does not maintain a separate validation implementation for the
+  same profile fields
+
+#### Scenario: Terminal launch intent is resolved
+- **WHEN** a terminal is created with an explicit, Space, content, global
+  default, or fallback profile reference
+- **THEN** Swift asks shell core to resolve the launch intent
+- **AND** Swift translates the returned intent into macOS process or helper
+  startup behavior
+
+#### Scenario: Core profile resolution fails
+- **WHEN** shell core cannot resolve a Terminal Profile launch intent because
+  the facade fails or the payload is invalid
+- **THEN** Swift reports an explicit profile-resolution failure
+- **AND** Swift does not silently run a duplicate profile resolution algorithm
+  for the same launch request
