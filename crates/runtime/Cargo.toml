@@ -45,6 +45,8 @@ landlock = "0.4"
 tracing-subscriber.workspace = true
 tempfile.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
+# test-util (paused clock) is not part of tokio's "full" feature set.
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = []

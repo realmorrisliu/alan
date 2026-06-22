@@ -505,6 +505,7 @@ where
             tool_arguments,
             alan_protocol::ToolCapability::Write,
             state.tools.default_cwd().as_deref(),
+            crate::tools::os_backend_active(),
         ),
         allow_approved_tool_escalation_execution,
     );

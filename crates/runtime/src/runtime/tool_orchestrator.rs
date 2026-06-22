@@ -528,6 +528,7 @@ where
             &tool_arguments,
             tool_capability,
             current_tool_cwd.as_deref(),
+            crate::tools::os_backend_active(),
         ),
         allow_approved_tool_escalation_execution,
     );
@@ -580,7 +581,12 @@ where
                         transcript: &transcript,
                         approval_request: &details,
                     };
-                    super::guardian::review(&mut state.llm_client, &review_ctx).await
+                    super::guardian::review(
+                        &mut state.llm_client,
+                        &review_ctx,
+                        state.runtime_config.llm_request_timeout_secs,
+                    )
+                    .await
                 };
                 match outcome {
                     super::guardian::ReviewOutcome::Allow => {

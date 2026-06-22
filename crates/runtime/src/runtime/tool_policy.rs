@@ -86,6 +86,22 @@ fn is_reset_hard(command: &str) -> bool {
         && tokens.iter().any(|t| t == "--hard")
 }
 
+/// Detect a recursive `rm` in any flag ordering / bundling (errs toward
+/// escalation). Catches `-r`/`-R`/`--recursive` and bundles like `-rf`/`-fr`.
+fn is_recursive_rm(command: &str) -> bool {
+    let tokens = normalized_tokens(command);
+    let has_rm = tokens.iter().any(|t| t == "rm" || t.ends_with("/rm"));
+    let has_recursive = tokens.iter().any(|t| {
+        t == "--recursive"
+            // Short-flag bundle (e.g. `-rf`, `-fr`, `-Rf`) — any cluster of
+            // single-dash flags containing r/R, but not a `--long` option.
+            || (t.starts_with('-')
+                && !t.starts_with("--")
+                && t.chars().skip(1).any(|c| c == 'r' || c == 'R'))
+    });
+    has_rm && has_recursive
+}
+
 pub(super) fn evaluate_tool_policy(
     policy_engine: &crate::policy::PolicyEngine,
     governance: &alan_protocol::GovernanceConfig,
@@ -93,9 +109,15 @@ pub(super) fn evaluate_tool_policy(
     arguments: &serde_json::Value,
     capability: alan_protocol::ToolCapability,
     current_cwd: Option<&std::path::Path>,
+    os_backend_active: bool,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::active_backend_name();
-    if let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
+    // The bash-shape preflight is the workspace-path-guard parser standing in for
+    // confinement. With a kernel-enforced OS sandbox active, confinement is
+    // independent of command syntax, so this syntactic deny must not block
+    // commands the sandbox would safely contain (e.g. `python -c ...`,
+    // `bash -lc ...`). Apply it only on the path-guard fallback.
+    if !os_backend_active && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments) {
         return ToolPolicyDecision::Forbidden {
             reason: reason.clone(),
             audit: alan_protocol::ToolDecisionAudit {
@@ -141,16 +163,30 @@ pub(super) fn evaluate_tool_policy(
         policy_reason = Some("irreversible git reset requires review".to_string());
     }
 
+    // Token-aware recursive-rm gate: the substring rule only catches `rm -rf`, so
+    // flag permutations (`rm -fr build`, `rm -R -f target`, `rm --recursive ...`)
+    // fall through to allow. A recursive delete is destructive even when the OS
+    // sandbox contains it to the workspace, so escalate it for review.
+    if action == crate::policy::PolicyAction::Allow
+        && tool_name == "bash"
+        && policy_source == "builtin_autonomous"
+        && is_recursive_rm(
+            arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        )
+    {
+        action = crate::policy::PolicyAction::Escalate;
+        rule_id = Some("review-recursive-rm".to_string());
+        policy_reason = Some("recursive delete requires review".to_string());
+    }
+
     // Safe degradation: under the builtin autonomous posture, without an
     // OS-enforced sandbox bash can do arbitrary uncontained effects, so it must
     // not auto-run — escalate to a human. (`human-` rule ids route to a person,
     // never the reviewer.) Explicit operator policies are left as configured.
-    if should_degrade_bash(
-        action,
-        tool_name,
-        &policy_source,
-        crate::tools::os_backend_active(),
-    ) {
+    if should_degrade_bash(action, tool_name, &policy_source, os_backend_active) {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("human-no-os-sandbox".to_string());
         policy_reason = Some("no OS sandbox active; bash requires human approval".to_string());
@@ -286,6 +322,7 @@ mod tests {
             &json!({"id":"123"}),
             alan_protocol::ToolCapability::Unknown,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { details, .. } => {
@@ -361,6 +398,7 @@ mod tests {
             &json!({"command":"git push --force origin main"}),
             alan_protocol::ToolCapability::Unknown,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -380,6 +418,7 @@ mod tests {
             &json!({"command":"git push origin main"}),
             alan_protocol::ToolCapability::Unknown,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -443,6 +482,7 @@ mod tests {
                 &json!({ "command": cmd }),
                 alan_protocol::ToolCapability::Write,
                 None,
+                true,
             );
             assert!(
                 matches!(result, ToolPolicyDecision::Escalate { .. }),
@@ -451,6 +491,38 @@ mod tests {
         }
         assert!(is_reset_hard("git -C repo reset --hard"));
         assert!(!is_reset_hard("git reset HEAD~1")); // soft reset is not gated
+    }
+
+    #[test]
+    fn recursive_rm_permutations_escalate_under_builtin() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        for cmd in [
+            "rm -rf build",
+            "rm -fr build",
+            "rm -R -f target",
+            "rm --recursive node_modules",
+            "rm -vrf dist",
+            "/bin/rm -fr build",
+        ] {
+            let result = evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig::default(),
+                "bash",
+                &json!({ "command": cmd }),
+                alan_protocol::ToolCapability::Write,
+                None,
+                true,
+            );
+            assert!(
+                matches!(result, ToolPolicyDecision::Escalate { .. }),
+                "recursive rm not escalated: {cmd}"
+            );
+        }
+        // Non-recursive rm and unrelated commands are not gated by this rule.
+        assert!(!is_recursive_rm("rm file.txt"));
+        assert!(!is_recursive_rm("rm -f file.txt"));
+        assert!(!is_recursive_rm("rmdir build"));
+        assert!(!is_recursive_rm("cargo run -- --recursive"));
     }
 
     #[test]
@@ -463,6 +535,7 @@ mod tests {
             &json!({"command":"git push origin main --force"}),
             alan_protocol::ToolCapability::Unknown,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { route, .. } => {
@@ -503,6 +576,7 @@ mod tests {
             &json!({"query":"rust"}),
             alan_protocol::ToolCapability::Network,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {
@@ -514,20 +588,24 @@ mod tests {
     }
 
     #[test]
-    fn test_bash_shape_preflight_blocks_unsupported_wrapper_before_policy_allow() {
+    fn bash_shape_preflight_only_denies_without_os_sandbox() {
         let policy = crate::policy::PolicyEngine::autonomous();
-        let result = evaluate_tool_policy(
-            &policy,
-            &alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
-                policy_path: None,
-            },
-            "bash",
-            &json!({"command":"bash -lc 'rg TODO src'"}),
-            alan_protocol::ToolCapability::Unknown,
-            None,
-        );
-        match result {
+        let eval = |os_backend_active: bool| {
+            evaluate_tool_policy(
+                &policy,
+                &alan_protocol::GovernanceConfig {
+                    profile: alan_protocol::GovernanceProfile::Autonomous,
+                    policy_path: None,
+                },
+                "bash",
+                &json!({"command":"bash -lc 'rg TODO src'"}),
+                alan_protocol::ToolCapability::Unknown,
+                None,
+                os_backend_active,
+            )
+        };
+        // Path-guard fallback: the syntactic preflight hard-denies the wrapper.
+        match eval(false) {
             ToolPolicyDecision::Forbidden { reason, audit } => {
                 assert!(
                     reason.contains("rejects nested command evaluators")
@@ -536,8 +614,21 @@ mod tests {
                 assert_eq!(audit.policy_source, "sandbox_preflight");
                 assert_eq!(audit.action, "deny");
             }
-            other => panic!("expected preflight denial, got {:?}", other),
+            other => panic!(
+                "expected preflight denial without OS sandbox, got {:?}",
+                other
+            ),
         }
+        // With a kernel-enforced OS sandbox, confinement is independent of
+        // command syntax: the wrapper is not shape-denied (it routes through
+        // policy instead — here escalated, not Forbidden by preflight).
+        assert!(
+            !matches!(
+                eval(true),
+                ToolPolicyDecision::Forbidden { audit, .. } if audit.policy_source == "sandbox_preflight"
+            ),
+            "OS-sandboxed bash must not be shape-denied by the preflight"
+        );
     }
 
     #[test]
@@ -553,6 +644,7 @@ mod tests {
             &json!({"path":"a.txt","content":"x"}),
             alan_protocol::ToolCapability::Write,
             None,
+            true,
         );
         match result {
             ToolPolicyDecision::Allow { audit } => {
@@ -593,6 +685,7 @@ default_action: allow
             &json!({"path":"../deploy/prod.yaml","content":"version = 2"}),
             alan_protocol::ToolCapability::Write,
             Some(Path::new("/workspace/repo/src")),
+            true,
         );
         match result {
             ToolPolicyDecision::Escalate { audit, .. } => {

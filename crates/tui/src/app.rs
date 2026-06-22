@@ -392,7 +392,13 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppAction> {
-        if self.completion.is_some() && self.consume_completion_key(key) {
+        // A pending form/confirmation takes priority over a completion popup that
+        // was open when the yield arrived: otherwise a stale popup would swallow
+        // Enter/Tab/Up/Down meant for the prompt. Drop it and route to the prompt.
+        let pending_input = self.form.is_some() || self.reducer.pending_yield.is_some();
+        if pending_input {
+            self.completion = None;
+        } else if self.completion.is_some() && self.consume_completion_key(key) {
             return None;
         }
         if self.form.is_some() {
