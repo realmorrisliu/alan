@@ -198,10 +198,43 @@ impl DaemonClient {
             .await
     }
 
+    /// Buffered transport events for cursor-based replay (`/events/read`); used to
+    /// recover the full payload of a yield the NDJSON stream won't replay.
+    pub async fn read_buffered_events(&self, session_id: &str) -> Result<Vec<EventEnvelope>> {
+        let value = self
+            .get_json(self.endpoints.session_events_read(session_id))
+            .await?;
+        let events = value
+            .get("events")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        Ok(serde_json::from_value(events).unwrap_or_default())
+    }
+
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
         let history = self.read_history(session_id).await?;
         let reconnect = self.read_reconnect_snapshot(session_id).await?;
-        Ok(SessionHydration::from_values(&history, &reconnect))
+        let mut hydration = SessionHydration::from_values(&history, &reconnect);
+        // The snapshot signal carries only the yield's id+kind. Recover the full
+        // payload (form questions, approval command/diff) from the buffered event
+        // log so the restored prompt is fully resumable; the NDJSON stream is
+        // future-only and won't replay the original Yield.
+        if let Some(pending) = &hydration.pending
+            && let Ok(events) = self.read_buffered_events(session_id).await
+        {
+            hydration.pending_event = events
+                .into_iter()
+                .rev()
+                .find(|env| {
+                    matches!(
+                        &env.event,
+                        alan_protocol::Event::Yield { request_id, .. }
+                            if *request_id == pending.request_id
+                    )
+                })
+                .map(Box::new);
+        }
+        Ok(hydration)
     }
 
     pub async fn events(&self, session_id: &str) -> Result<NdjsonEventStream> {

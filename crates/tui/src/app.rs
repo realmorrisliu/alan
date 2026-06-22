@@ -63,11 +63,16 @@ pub struct HydratedMessage {
     pub tool_name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SessionHydration {
     pub history: Vec<HydratedMessage>,
     pub replay_events: usize,
     pub pending: Option<PendingHydration>,
+    /// The original `Yield` event recovered from the buffered event log, carrying
+    /// the full payload (form questions / approval command+diff). When present it
+    /// reconstructs a fully-resumable prompt; otherwise the minimal `pending`
+    /// signal is used as a fallback.
+    pub pending_event: Option<Box<alan_protocol::EventEnvelope>>,
 }
 
 impl SessionHydration {
@@ -138,6 +143,7 @@ impl SessionHydration {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize,
             pending,
+            pending_event: None,
         }
     }
 }
@@ -207,7 +213,12 @@ impl TuiApp {
                     "session hydrated"
                 );
                 self.restore_history(hydration.history);
-                if let Some(pending) = hydration.pending {
+                // Prefer the full Yield event from the buffered log (real form
+                // questions / approval payload); fall back to the minimal signal
+                // reconstruction only when the buffer no longer has it.
+                if let Some(event) = hydration.pending_event {
+                    self.reducer.apply_envelope(*event);
+                } else if let Some(pending) = hydration.pending {
                     self.restore_pending_yield(pending);
                 }
                 self.sync_form();
@@ -861,6 +872,40 @@ mod tests {
         let pending = app.reducer.pending_yield.clone().expect("pending restored");
         assert_eq!(pending.request_id, "req-si");
         assert_eq!(pending.kind, alan_protocol::YieldKind::StructuredInput);
+    }
+
+    #[test]
+    fn hydration_applies_full_yield_event_over_signal_fallback() {
+        let mut app = app();
+        let mut hydration = SessionHydration::from_values(
+            &serde_json::json!({ "messages": [] }),
+            &serde_json::json!({ "notifications": { "signals": [
+                { "signal_type": "pending_structured_input", "request_id": "req-f", "yield_kind": "structured_input" }
+            ]}}),
+        );
+        // Buffered event log carries the full payload (real form questions).
+        hydration.pending_event = Some(Box::new(envelope_with_event(
+            1,
+            alan_protocol::Event::Yield {
+                request_id: "req-f".into(),
+                kind: alan_protocol::YieldKind::StructuredInput,
+                payload: serde_json::json!({
+                    "title": "Pick",
+                    "questions": [{
+                        "id": "env", "label": "env", "prompt": "env?",
+                        "kind": "single_select", "required": true,
+                        "options": [{"value": "a", "label": "A"}]
+                    }]
+                }),
+            },
+        )));
+        app.dispatch(AppEvent::Hydrated(hydration));
+        let pending = app.reducer.pending_yield.clone().expect("pending restored");
+        assert_eq!(pending.request_id, "req-f");
+        assert!(
+            !pending.questions.is_empty(),
+            "full Yield payload restores the form questions for keyed answers"
+        );
     }
 
     #[test]
