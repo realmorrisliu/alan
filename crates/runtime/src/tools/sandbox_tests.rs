@@ -2166,3 +2166,49 @@ async fn test_os_backend_rejects_shell_expansion_reads() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() {
+    // Transparent wrappers (`env`, `command`, `timeout`, ...) must be peeled so the
+    // inline shell script is still inspected under ProtectedOnly — otherwise the
+    // quoted script is opaque and its .git write / out-of-workspace read escapes.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+
+    let protected = sandbox
+        .exec_with_timeout_and_capability(
+            "env bash -lc 'echo x > .git/config'",
+            temp.path(),
+            None,
+            Some(alan_protocol::ToolCapability::Write),
+        )
+        .await;
+    assert!(protected.is_err(), "wrapper-hidden .git write not blocked");
+    assert!(
+        protected
+            .unwrap_err()
+            .to_string()
+            .contains("protected subpath"),
+        "wrong rejection for wrapper-hidden .git write"
+    );
+
+    let read = sandbox
+        .exec_with_timeout_and_capability(
+            "command bash -lc 'cat ~/.ssh/id_rsa'",
+            temp.path(),
+            None,
+            Some(alan_protocol::ToolCapability::Read),
+        )
+        .await;
+    assert!(
+        read.is_err(),
+        "wrapper-hidden out-of-workspace read not blocked"
+    );
+    assert!(
+        read.unwrap_err().to_string().contains("outside workspace"),
+        "wrong rejection for wrapper-hidden read"
+    );
+}

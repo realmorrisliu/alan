@@ -723,18 +723,22 @@ fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) 
 /// `bash -lc <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
 fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
-    let command_index = words.iter().position(|word| !is_env_assignment(word))?;
-    let base = command_basename(&words[command_index]);
-    if !matches!(base, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+    // Peel transparent wrappers (`env VAR=x`, `command`, `timeout 5`, `nice`,
+    // `nohup`, `stdbuf`, `setsid`, ...) so the inline script is found even when the
+    // shell is not the direct head — e.g. `env bash -lc '...'`. Otherwise the
+    // quoted script stays an opaque token and its `.git`/out-of-workspace paths
+    // escape the ProtectedOnly checks.
+    let view = nested_evaluator_view(words)?;
+    if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
         return None;
     }
     // The script follows the first short-flag cluster containing `c` (e.g. `-c`,
     // `-lc`, `-ic`).
-    let mut index = command_index + 1;
-    while index < words.len() {
-        let word = &words[index];
+    let mut index = 0;
+    while index < view.args.len() {
+        let word = &view.args[index];
         if word.starts_with('-') && !word.starts_with("--") && word.contains('c') {
-            return words.get(index + 1).cloned();
+            return view.args.get(index + 1).cloned();
         }
         index += 1;
     }
