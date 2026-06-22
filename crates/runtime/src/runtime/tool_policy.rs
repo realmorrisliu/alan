@@ -66,15 +66,23 @@ fn is_force_push(command: &str) -> bool {
     let tokens = normalized_tokens(command);
     let has_git = tokens.iter().any(|t| t == "git");
     let has_push = tokens.iter().any(|t| t == "push");
-    let has_force = tokens.iter().any(|t| {
+    let rewrites_remote = tokens.iter().any(|t| {
         t == "-f"
             || t == "--force"
             || t.starts_with("--force-with-lease")
+            // `--mirror` force-updates changed refs and deletes refs missing
+            // locally; `--delete`/`-d` removes remote refs. Both rewrite remote
+            // history like a force-push.
+            || t == "--mirror"
+            || t == "--delete"
+            || t == "-d"
             // A leading `+` on a push refspec (e.g. `+main:main`) forces a
-            // non-fast-forward update — equivalent to --force for that ref.
+            // non-fast-forward update; a leading `:` (e.g. `:main`) deletes the
+            // remote ref — equivalent to --force / --delete for that ref.
             || (t.starts_with('+') && t.len() > 1)
+            || (t.starts_with(':') && t.len() > 1)
     });
-    has_git && has_push && has_force
+    has_git && has_push && rewrites_remote
 }
 
 /// Detect a `git reset --hard` in any token ordering / quoting (errs toward
@@ -803,21 +811,29 @@ mod tests {
             "git -C repo push --force",
             "git push -f origin main",
             "git push --force-with-lease=origin/main",
+            // Mirror/delete also rewrite or remove remote refs.
+            "git push --mirror origin",
+            "git push origin --delete feature",
+            "git push -d origin feature",
         ] {
             assert_eq!(
                 escalation_route(Some("review-git-push"), Unknown, cmd),
                 EscalationRoute::AlwaysHuman,
-                "force-push not routed to human: {cmd}"
+                "remote-rewrite push not routed to human: {cmd}"
             );
         }
-        // A leading-`+` refspec forces a non-fast-forward update.
+        // A leading-`+` refspec forces a non-fast-forward update; a leading-`:`
+        // refspec deletes the remote ref.
         assert!(is_force_push("git push origin +main:main"));
         assert!(is_force_push("git push origin +refs/heads/main"));
+        assert!(is_force_push("git push origin :feature"));
         // Quoted flag forms are normalized and still detected.
         assert!(is_force_push("git push origin main '--force'"));
         assert!(is_force_push("git push \"-f\" origin main"));
-        // A plain push is not misclassified as force.
+        assert!(is_force_push("git push '--mirror' origin"));
+        // A plain push (and a normal src:dst refspec) is not misclassified.
         assert!(!is_force_push("git push origin main"));
+        assert!(!is_force_push("git push origin main:main"));
     }
 
     #[test]

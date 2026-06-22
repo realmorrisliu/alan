@@ -438,6 +438,18 @@ async fn stream_events_once(
             while let Some(event) = events.next().await {
                 match event {
                     Ok(envelope) => {
+                        // Control/out-of-band envelopes (stream lag, resume
+                        // failure) use the sentinel `sequence == 0` and a
+                        // `control_*` event id; always forward them and never
+                        // advance the replay cursor — sequence-based de-dupe would
+                        // otherwise drop them (last_seq starts at 0) and hide the
+                        // recoverable error behind a generic reconnect loop.
+                        if envelope.sequence == 0 {
+                            if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
+                                return false;
+                            }
+                            continue;
+                        }
                         // Skip anything already delivered via the drain (or an
                         // earlier subscribe) so a buffer/live overlap can't dupe.
                         if envelope.sequence <= *last_seq {
