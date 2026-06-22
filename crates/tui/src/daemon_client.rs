@@ -198,17 +198,63 @@ impl DaemonClient {
             .await
     }
 
-    /// Buffered transport events for cursor-based replay (`/events/read`); used to
-    /// recover the full payload of a yield the NDJSON stream won't replay.
-    pub async fn read_buffered_events(&self, session_id: &str) -> Result<Vec<EventEnvelope>> {
-        let value = self
-            .get_json(self.endpoints.session_events_read(session_id))
-            .await?;
+    /// Read one page of buffered transport events (`/events/read`) from a cursor.
+    pub async fn read_buffered_events_page(
+        &self,
+        session_id: &str,
+        after_event_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EventEnvelope>> {
+        let mut path = format!(
+            "{}?limit={limit}",
+            self.endpoints.session_events_read(session_id)
+        );
+        if let Some(after) = after_event_id {
+            path.push_str(&format!("&after_event_id={after}"));
+        }
+        let value = self.get_json(path).await?;
         let events = value
             .get("events")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         Ok(serde_json::from_value(events).unwrap_or_default())
+    }
+
+    /// Find the `Yield` event for `request_id` in the buffered log. The reconnect
+    /// signal points at the *current* yield, which sits near the end of the
+    /// buffer, so page forward (`/events/read` is forward-only with a default
+    /// page size) until the yield is found rather than reading only the oldest
+    /// page.
+    async fn find_pending_yield_event(
+        &self,
+        session_id: &str,
+        request_id: &str,
+    ) -> Option<EventEnvelope> {
+        const PAGE: usize = 1000;
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self
+                .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
+                .await
+                .ok()?;
+            if page.is_empty() {
+                return None;
+            }
+            // The yield is near the tail, so scan newest-first within the page.
+            if let Some(found) = page.iter().rev().find(|env| {
+                matches!(
+                    &env.event,
+                    alan_protocol::Event::Yield { request_id: rid, .. } if rid == request_id
+                )
+            }) {
+                return Some(found.clone());
+            }
+            // A short page means we reached the end of the buffer.
+            if page.len() < PAGE {
+                return None;
+            }
+            cursor = page.last().map(|env| env.event_id.clone());
+        }
     }
 
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
@@ -219,19 +265,10 @@ impl DaemonClient {
         // payload (form questions, approval command/diff) from the buffered event
         // log so the restored prompt is fully resumable; the NDJSON stream is
         // future-only and won't replay the original Yield.
-        if let Some(pending) = &hydration.pending
-            && let Ok(events) = self.read_buffered_events(session_id).await
-        {
-            hydration.pending_event = events
-                .into_iter()
-                .rev()
-                .find(|env| {
-                    matches!(
-                        &env.event,
-                        alan_protocol::Event::Yield { request_id, .. }
-                            if *request_id == pending.request_id
-                    )
-                })
+        if let Some(pending) = &hydration.pending {
+            hydration.pending_event = self
+                .find_pending_yield_event(session_id, &pending.request_id)
+                .await
                 .map(Box::new);
         }
         Ok(hydration)

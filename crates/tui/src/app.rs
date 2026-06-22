@@ -191,7 +191,15 @@ impl TuiApp {
         match event {
             AppEvent::Terminal(TerminalEvent::Key(key)) => self.handle_key(key),
             AppEvent::Terminal(TerminalEvent::Paste(text)) => {
-                self.composer.insert_text(&text);
+                // Route paste into the focused form field when a form is open,
+                // otherwise into the composer.
+                if let Some(form) = self.form.as_mut() {
+                    for ch in text.chars().filter(|ch| !ch.is_control()) {
+                        form.insert_char(ch);
+                    }
+                } else {
+                    self.composer.insert_text(&text);
+                }
                 None
             }
             AppEvent::Terminal(TerminalEvent::Resize(width, height)) => {
@@ -1018,6 +1026,35 @@ mod tests {
             other => panic!("expected Resume, got {other:?}"),
         }
         assert!(app.form.is_none());
+    }
+
+    #[test]
+    fn paste_routes_into_active_form_field() {
+        let mut app = app();
+        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
+            1,
+            alan_protocol::Event::Yield {
+                request_id: "form-2".into(),
+                kind: alan_protocol::YieldKind::StructuredInput,
+                payload: serde_json::json!({
+                    "title": "Deploy",
+                    "questions": [
+                        {"id": "path", "label": "Path", "prompt": "Path?", "kind": "text", "required": true},
+                        {"id": "note", "label": "Note", "prompt": "Note?", "kind": "text", "required": false}
+                    ]
+                }),
+            },
+        ))));
+        assert!(
+            app.form.is_some(),
+            "multi-question yield should open a form"
+        );
+        app.dispatch(AppEvent::Terminal(TerminalEvent::Paste(
+            "/etc/hosts".to_string(),
+        )));
+        // Paste lands in the focused form field, not the hidden composer.
+        assert_eq!(app.form.as_ref().unwrap().fields[0].value, "/etc/hosts");
+        assert!(app.composer.text().is_empty());
     }
 
     #[test]

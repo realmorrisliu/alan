@@ -675,6 +675,11 @@ fn validate_question_answer(
         if let Some(default) = &question.default_value {
             return validate_question_answer(question, default);
         }
+        // Multi-select defaults are normalized into `default_values`; honor them
+        // on blank input so a defaulted single multi-select submits its default.
+        if !question.default_values.is_empty() {
+            return validate_question_answer(question, &question.default_values.join(","));
+        }
         if question.required {
             return Err(format!("{} is required", question.id));
         }
@@ -1098,6 +1103,37 @@ mod tests {
         assert!(pending.resume_content("qa").is_err());
         let content = pending.resume_content("Production").unwrap();
         assert!(matches!(&content[0], ContentPart::Structured { data } if data["env"] == "prod"));
+    }
+
+    #[test]
+    fn single_multi_select_honors_default_values_on_blank_input() {
+        let mut reducer = SessionReducer::default();
+        reducer.apply_envelope(envelope(Event::Yield {
+            request_id: "r-1".into(),
+            kind: YieldKind::StructuredInput,
+            payload: serde_json::json!({
+                "title": "Pick targets",
+                "questions": [{
+                    "id": "env",
+                    "label": "Environment",
+                    "prompt": "Environment?",
+                    "kind": "multi_select",
+                    "required": true,
+                    "defaults": ["staging"],
+                    "options": [
+                        {"value": "staging", "label": "Staging"},
+                        {"value": "prod", "label": "Production"}
+                    ]
+                }]
+            }),
+        }));
+        let pending = reducer.pending_yield.expect("pending yield");
+        // Blank input on a required single multi-select submits the default,
+        // instead of reporting the field as required.
+        let content = pending.resume_content("").unwrap();
+        assert!(
+            matches!(&content[0], ContentPart::Structured { data } if data["env"] == serde_json::json!(["staging"]))
+        );
     }
 
     #[test]
