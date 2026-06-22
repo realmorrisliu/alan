@@ -79,6 +79,20 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
+    /// Fail-closed policy for when a policy file is present but cannot be read or
+    /// parsed. The profile is locked to autonomous and `policy.yaml` is the only
+    /// way to *tighten* rules, so silently falling back to the permissive builtin
+    /// would let a malformed *restrictive* policy quietly allow everything. Deny
+    /// by default so the misconfiguration surfaces immediately and nothing runs
+    /// until it is fixed.
+    fn fail_closed() -> Self {
+        Self {
+            rules: Vec::new(),
+            default_action: PolicyAction::Deny,
+            source: "policy_load_failed",
+        }
+    }
+
     pub fn autonomous() -> Self {
         Self {
             rules: vec![
@@ -255,12 +269,13 @@ impl PolicyEngine {
                 source: "governance_policy_file",
             },
             Err(err) => {
-                tracing::warn!(
+                tracing::error!(
                     path = %resolved.display(),
                     error = %err,
-                    "Failed to parse governance policy file, falling back to auto-approve"
+                    "Failed to load explicit governance policy file; failing closed (deny-all) \
+                     instead of silently using the permissive builtin"
                 );
-                Self::autonomous()
+                Self::fail_closed()
             }
         }
     }
@@ -287,12 +302,13 @@ impl PolicyEngine {
                 source: "workspace_policy_file",
             },
             Err(err) => {
-                tracing::warn!(
+                tracing::error!(
                     path = %policy_path.display(),
                     error = %err,
-                    "Failed to parse policy file, falling back to auto-approve"
+                    "Failed to parse present policy file; failing closed (deny-all) instead of \
+                     silently using the permissive builtin"
                 );
-                Self::autonomous()
+                Self::fail_closed()
             }
         }
     }
@@ -719,6 +735,27 @@ default_action: allow
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
         assert_eq!(decision.source, "workspace_policy_file");
+    }
+
+    #[test]
+    fn malformed_policy_file_fails_closed_not_permissive() {
+        let tmp = TempDir::new().unwrap();
+        let policy_dir = tmp.path().join("workspace-alan");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        // A present-but-broken policy file (YAML/schema error).
+        std::fs::write(policy_dir.join("policy.yaml"), "rules: [ this is not valid").unwrap();
+
+        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        // Must NOT silently become the permissive builtin; deny by default so the
+        // misconfiguration surfaces instead of allowing routine writes.
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "write_file",
+            arguments: &json!({"path": "a.txt"}),
+            capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
+        });
+        assert_eq!(decision.action, PolicyAction::Deny);
+        assert_eq!(decision.source, "policy_load_failed");
     }
 
     #[test]

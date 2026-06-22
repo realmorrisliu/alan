@@ -1795,8 +1795,12 @@ fn is_builtin_query(tokens: &[&str]) -> bool {
 }
 
 fn git_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
-    if tokens.first().copied() != Some("git") {
-        return None;
+    // Match on the basename so path-qualified git (`/usr/bin/git -C repo push`)
+    // is classified like bare `git`; otherwise a push/fetch misses network
+    // classification and runs with the sandbox network deny in force.
+    match tokens.first() {
+        Some(first) if command_basename(first) == "git" => {}
+        _ => return None,
     }
 
     let mut idx = 1;
@@ -3549,6 +3553,15 @@ mod tests {
         assert_eq!(
             classify_bash_command("/bin/rm file.txt"),
             alan_protocol::ToolCapability::Write
+        );
+        // Path-qualified git subcommands classify via the basename gate too.
+        assert_eq!(
+            classify_bash_command("/usr/bin/git -C repo push"),
+            alan_protocol::ToolCapability::Network
+        );
+        assert_eq!(
+            classify_bash_command("/usr/bin/git fetch origin"),
+            alan_protocol::ToolCapability::Network
         );
     }
 

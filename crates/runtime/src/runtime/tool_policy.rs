@@ -71,11 +71,13 @@ fn is_force_push(command: &str) -> bool {
             || t == "--force"
             || t.starts_with("--force-with-lease")
             // `--mirror` force-updates changed refs and deletes refs missing
-            // locally; `--delete`/`-d` removes remote refs. Both rewrite remote
+            // locally; `--delete`/`-d` removes remote refs; `--prune` removes
+            // remote refs with no local counterpart. All rewrite/remove remote
             // history like a force-push.
             || t == "--mirror"
             || t == "--delete"
             || t == "-d"
+            || t == "--prune"
             // A leading `+` on a push refspec (e.g. `+main:main`) forces a
             // non-fast-forward update; a leading `:` (e.g. `:main`) deletes the
             // remote ref — equivalent to --force / --delete for that ref.
@@ -811,10 +813,11 @@ mod tests {
             "git -C repo push --force",
             "git push -f origin main",
             "git push --force-with-lease=origin/main",
-            // Mirror/delete also rewrite or remove remote refs.
+            // Mirror/delete/prune also rewrite or remove remote refs.
             "git push --mirror origin",
             "git push origin --delete feature",
             "git push -d origin feature",
+            "git push --prune origin",
         ] {
             assert_eq!(
                 escalation_route(Some("review-git-push"), Unknown, cmd),
