@@ -235,7 +235,12 @@ fn should_degrade_bash(
     policy_source: &str,
     os_backend_active: bool,
 ) -> bool {
-    action == crate::policy::PolicyAction::Allow
+    // Without an OS sandbox the reviewer is not a security boundary, so *any*
+    // non-denied builtin bash must go to a human — including commands already
+    // escalated to the reviewer (e.g. `rm -rf build`, `git reset --hard`), which
+    // would otherwise run uncontained under workspace_path_guard after a reviewer
+    // allow. Denials stay denied.
+    action != crate::policy::PolicyAction::Deny
         && tool_name == "bash"
         && policy_source == "builtin_autonomous"
         && !os_backend_active
@@ -319,6 +324,28 @@ mod tests {
         assert!(!should_degrade_bash(
             PolicyAction::Allow,
             "edit_file",
+            "builtin_autonomous",
+            false
+        ));
+        // Already-escalated bash (e.g. `rm -rf`, `git reset --hard`) must also go
+        // to a human without an OS sandbox — the reviewer is not a boundary.
+        assert!(should_degrade_bash(
+            PolicyAction::Escalate,
+            "bash",
+            "builtin_autonomous",
+            false
+        ));
+        // ...but with an OS backend the reviewer path is fine (sandbox contains).
+        assert!(!should_degrade_bash(
+            PolicyAction::Escalate,
+            "bash",
+            "builtin_autonomous",
+            true
+        ));
+        // Denials are never downgraded to escalation.
+        assert!(!should_degrade_bash(
+            PolicyAction::Deny,
+            "bash",
             "builtin_autonomous",
             false
         ));

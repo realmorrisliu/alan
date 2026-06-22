@@ -570,7 +570,18 @@ impl PendingYieldCell {
     fn validate_structured_answers(&self, input: &str) -> Result<Map<String, Value>, String> {
         if self.questions.len() == 1 {
             let question = &self.questions[0];
-            let value = validate_question_answer(question, input.trim())?;
+            let trimmed = input.trim();
+            // A blank optional single question with no default submits an empty
+            // answer map (mirrors the multi-field form omitting blank optional
+            // fields), so the user isn't forced to invent a typed value.
+            if trimmed.is_empty()
+                && !question.required
+                && question.default_value.is_none()
+                && question.default_values.is_empty()
+            {
+                return Ok(Map::new());
+            }
+            let value = validate_question_answer(question, trimmed)?;
             return Ok(Map::from_iter([(question.id.clone(), value)]));
         }
 
@@ -1103,6 +1114,30 @@ mod tests {
         assert!(pending.resume_content("qa").is_err());
         let content = pending.resume_content("Production").unwrap();
         assert!(matches!(&content[0], ContentPart::Structured { data } if data["env"] == "prod"));
+    }
+
+    #[test]
+    fn single_optional_typed_prompt_accepts_blank_input() {
+        let mut reducer = SessionReducer::default();
+        reducer.apply_envelope(envelope(Event::Yield {
+            request_id: "r-1".into(),
+            kind: YieldKind::StructuredInput,
+            payload: serde_json::json!({
+                "title": "Optional count",
+                "questions": [{
+                    "id": "count", "label": "Count", "prompt": "How many?",
+                    "kind": "integer", "required": false
+                }]
+            }),
+        }));
+        let pending = reducer.pending_yield.expect("pending yield");
+        // Blank Enter on an optional typed prompt submits an empty answer map
+        // instead of failing type validation.
+        let content = pending.resume_content("").unwrap();
+        assert!(matches!(
+            &content[0],
+            ContentPart::Structured { data } if data.as_object().is_some_and(|m| m.is_empty())
+        ));
     }
 
     #[test]
