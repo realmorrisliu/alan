@@ -47,15 +47,51 @@ pub enum AppAction {
     Quit,
 }
 
+/// A pending-input signal recovered from a reconnect snapshot, enough to let the
+/// user answer the outstanding yield (full transcript replay is a follow-up).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingHydration {
+    pub request_id: String,
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionHydration {
     pub history_messages: usize,
     pub replay_events: usize,
-    pub pending_signal: bool,
+    pub pending: Option<PendingHydration>,
 }
 
 impl SessionHydration {
     pub fn from_values(history: &serde_json::Value, reconnect: &serde_json::Value) -> Self {
+        // The reconnect snapshot exposes a pending yield under
+        // `notifications.signals[] { signal_type: "pending_yield", request_id,
+        // yield_kind }`, and the replay count under `replay.buffered_event_count`.
+        let pending = reconnect
+            .get("notifications")
+            .and_then(|n| n.get("signals"))
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|signal| {
+                signal
+                    .get("signal_type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("pending_yield")
+            })
+            .and_then(|signal| {
+                Some(PendingHydration {
+                    request_id: signal
+                        .get("request_id")
+                        .and_then(serde_json::Value::as_str)?
+                        .to_string(),
+                    kind: signal
+                        .get("yield_kind")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("confirmation")
+                        .to_string(),
+                })
+            });
         Self {
             history_messages: history
                 .get("messages")
@@ -63,11 +99,10 @@ impl SessionHydration {
                 .map_or(0, Vec::len),
             replay_events: reconnect
                 .get("replay")
-                .and_then(serde_json::Value::as_array)
-                .map_or(0, Vec::len),
-            pending_signal: reconnect
-                .get("pending_signal")
-                .is_some_and(|value| !value.is_null()),
+                .and_then(|r| r.get("buffered_event_count"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize,
+            pending,
         }
     }
 }
@@ -133,12 +168,13 @@ impl TuiApp {
                 tracing::debug!(
                     history_messages = hydration.history_messages,
                     replay_events = hydration.replay_events,
-                    pending_signal = hydration.pending_signal,
+                    pending = hydration.pending.is_some(),
                     "session hydrated"
                 );
-                if hydration.pending_signal {
-                    self.reducer.transient_notice = Some("pending input restored".into());
+                if let Some(pending) = hydration.pending {
+                    self.restore_pending_yield(pending);
                 }
+                self.sync_form();
                 None
             }
             AppEvent::Status(message) => {
@@ -151,6 +187,39 @@ impl TuiApp {
                 None
             }
         }
+    }
+
+    /// Reconstruct a resumable pending yield from a reconnect snapshot signal so
+    /// the user can answer an outstanding approval/input after reattaching. The
+    /// snapshot carries only the request id + kind (no payload), so confirmation
+    /// options default to approve/reject; full transcript replay is a follow-up.
+    fn restore_pending_yield(&mut self, pending: PendingHydration) {
+        let kind = match pending.kind.as_str() {
+            "confirmation" => alan_protocol::YieldKind::Confirmation,
+            "structured_input" => alan_protocol::YieldKind::StructuredInput,
+            "dynamic_tool" => alan_protocol::YieldKind::DynamicTool,
+            other => alan_protocol::YieldKind::Custom(other.to_string()),
+        };
+        let options = if matches!(kind, alan_protocol::YieldKind::Confirmation) {
+            vec!["approve".to_string(), "reject".to_string()]
+        } else {
+            Vec::new()
+        };
+        let cell = crate::history::PendingYieldCell {
+            request_id: pending.request_id,
+            kind,
+            title: "pending input restored".to_string(),
+            prompt: None,
+            options,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        };
+        self.reducer.pending_yield = Some(cell.clone());
+        self.reducer
+            .cells
+            .push(crate::history::HistoryCell::PendingYield(cell));
     }
 
     fn record_sequence_gap(&mut self, envelope: &alan_protocol::EventEnvelope) {
@@ -683,18 +752,42 @@ mod tests {
     }
 
     #[test]
-    fn hydration_does_not_create_transcript_cell() {
+    fn hydration_without_pending_creates_no_transcript_cell() {
         let mut app = app();
         let hydration = SessionHydration::from_values(
             &serde_json::json!({ "messages": [{}, {}] }),
-            &serde_json::json!({ "replay": [{}], "pending_signal": { "type": "confirmation" } }),
+            &serde_json::json!({ "replay": { "buffered_event_count": 1 } }),
         );
+        assert_eq!(hydration.replay_events, 1);
+        assert!(hydration.pending.is_none());
         app.dispatch(AppEvent::Hydrated(hydration));
         assert!(app.reducer.cells.is_empty());
-        assert_eq!(
-            app.reducer.transient_notice.as_deref(),
-            Some("pending input restored")
+        assert!(app.reducer.pending_yield.is_none());
+    }
+
+    #[test]
+    fn hydration_restores_resumable_pending_yield_from_snapshot() {
+        let mut app = app();
+        // Real reconnect snapshot shape: notifications.signals[].pending_yield.
+        let hydration = SessionHydration::from_values(
+            &serde_json::json!({ "messages": [] }),
+            &serde_json::json!({
+                "replay": { "buffered_event_count": 0 },
+                "notifications": { "signals": [
+                    { "signal_type": "pending_yield", "request_id": "req-x", "yield_kind": "confirmation" }
+                ]}
+            }),
         );
+        app.dispatch(AppEvent::Hydrated(hydration));
+        let pending = app.reducer.pending_yield.clone().expect("pending restored");
+        assert_eq!(pending.request_id, "req-x");
+        assert_eq!(pending.options, vec!["approve", "reject"]);
+        // The user can answer it with a single key after reconnecting.
+        let action = press(&mut app, KeyCode::Char('1'), KeyModifiers::NONE);
+        assert!(matches!(
+            action,
+            Some(AppAction::Resume { request_id, .. }) if request_id == "req-x"
+        ));
     }
 
     #[test]

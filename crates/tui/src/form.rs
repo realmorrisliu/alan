@@ -23,7 +23,14 @@ impl FormState {
         let fields = questions
             .into_iter()
             .map(|question| {
-                let value = question.default_value.clone().unwrap_or_default();
+                // Multi-select defaults are normalized into `default_values`
+                // (comma-joined to match multi-select answer parsing); other
+                // kinds use the single `default_value`.
+                let value = if !question.default_values.is_empty() {
+                    question.default_values.join(",")
+                } else {
+                    question.default_value.clone().unwrap_or_default()
+                };
                 FormField { question, value }
             })
             .collect();
@@ -187,6 +194,21 @@ mod tests {
         let json: Value = serde_json::from_str(&form.answers_json()).unwrap();
         assert!(json.get("name").is_some());
         assert!(json.get("note").is_none());
+    }
+
+    #[test]
+    fn multi_select_defaults_seed_the_field() {
+        let q = serde_json::from_value::<StructuredInputQuestion>(serde_json::json!({
+            "id": "env", "label": "env", "prompt": "env?", "kind": "multi_select",
+            "required": true, "defaults": ["staging", "prod"],
+            "options": [{"value":"staging","label":"S"},{"value":"prod","label":"P"}]
+        }))
+        .unwrap();
+        let form = FormState::new("r1".into(), vec![q]);
+        assert_eq!(form.fields[0].value, "staging,prod");
+        // Pressing Enter without editing submits the defaulted selection.
+        let json: Value = serde_json::from_str(&form.answers_json()).unwrap();
+        assert_eq!(json["env"], "staging,prod");
     }
 
     #[test]
