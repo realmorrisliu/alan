@@ -53,13 +53,22 @@ pub(super) fn escalation_route(
 /// Detect a `git push` with a force flag in any token ordering (errs toward
 /// always-human). Coarse whitespace tokenization is sufficient — obfuscated
 /// commands are caught by the sandbox/reviewer backstops.
+/// Split a command into whitespace tokens with surrounding shell quotes stripped
+/// (`'--hard'` → `--hard`), so quoted flag forms are detected like bare ones.
+fn normalized_tokens(command: &str) -> Vec<String> {
+    command
+        .split_whitespace()
+        .map(|t| t.trim_matches(['\'', '"']).to_string())
+        .collect()
+}
+
 fn is_force_push(command: &str) -> bool {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let has_git = tokens.contains(&"git");
-    let has_push = tokens.contains(&"push");
+    let tokens = normalized_tokens(command);
+    let has_git = tokens.iter().any(|t| t == "git");
+    let has_push = tokens.iter().any(|t| t == "push");
     let has_force = tokens.iter().any(|t| {
-        *t == "-f"
-            || *t == "--force"
+        t == "-f"
+            || t == "--force"
             || t.starts_with("--force-with-lease")
             // A leading `+` on a push refspec (e.g. `+main:main`) forces a
             // non-fast-forward update — equivalent to --force for that ref.
@@ -68,10 +77,13 @@ fn is_force_push(command: &str) -> bool {
     has_git && has_push && has_force
 }
 
-/// Detect a `git reset --hard` in any token ordering (errs toward escalation).
+/// Detect a `git reset --hard` in any token ordering / quoting (errs toward
+/// escalation).
 fn is_reset_hard(command: &str) -> bool {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    tokens.contains(&"git") && tokens.contains(&"reset") && tokens.contains(&"--hard")
+    let tokens = normalized_tokens(command);
+    tokens.iter().any(|t| t == "git")
+        && tokens.iter().any(|t| t == "reset")
+        && tokens.iter().any(|t| t == "--hard")
 }
 
 pub(super) fn evaluate_tool_policy(
@@ -380,6 +392,9 @@ mod tests {
         // A leading-`+` refspec forces a non-fast-forward update.
         assert!(is_force_push("git push origin +main:main"));
         assert!(is_force_push("git push origin +refs/heads/main"));
+        // Quoted flag forms are normalized and still detected.
+        assert!(is_force_push("git push origin main '--force'"));
+        assert!(is_force_push("git push \"-f\" origin main"));
         // A plain push is not misclassified as force.
         assert!(!is_force_push("git push origin main"));
     }
@@ -391,6 +406,8 @@ mod tests {
             "git reset --hard",
             "git -C repo reset --hard",
             "git reset HEAD --hard",
+            "git reset '--hard'",
+            "git -C repo reset \"--hard\"",
         ] {
             let result = evaluate_tool_policy(
                 &policy,

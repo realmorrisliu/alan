@@ -143,6 +143,20 @@ fn result_path(result: &Value, args: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Truncate a string to a char budget on a UTF-8 boundary, appending `…`.
+fn truncate_chars(mut text: String, max: usize) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text.push('…');
+    text
+}
+
 fn listing_rows(result: &Value) -> Vec<String> {
     // grep/glob use `matches`; list_dir uses `entries` ({name, type, size}).
     let rows: Vec<String> = if let Some(matches) = result.get("matches").and_then(Value::as_array) {
@@ -152,6 +166,12 @@ fn listing_rows(result: &Value) -> Vec<String> {
     } else {
         Vec::new()
     };
+
+    // Cap each row's size (a single minified match line can be megabytes).
+    let rows: Vec<String> = rows
+        .into_iter()
+        .map(|row| truncate_chars(row, PRESENTATION_MAX_LINE_CHARS))
+        .collect();
 
     if rows.len() > PRESENTATION_MAX_ROWS {
         let hidden = rows.len() - PRESENTATION_MAX_ROWS;
@@ -339,6 +359,24 @@ mod tests {
         match p {
             ToolResultPresentation::Listing { rows } => {
                 assert_eq!(rows, vec!["src/".to_string(), "Cargo.toml".to_string()]);
+            }
+            _ => panic!("expected listing"),
+        }
+    }
+
+    #[test]
+    fn huge_listing_row_is_capped() {
+        let huge = "x".repeat(PRESENTATION_MAX_LINE_CHARS * 4);
+        let p = tool_presentation(
+            "grep",
+            &json!({"pattern": "x"}),
+            &json!({"matches": [{"path": "min.js", "line": 1, "content": huge}]}),
+        )
+        .unwrap();
+        match p {
+            ToolResultPresentation::Listing { rows } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0].len() <= PRESENTATION_MAX_LINE_CHARS + 64);
             }
             _ => panic!("expected listing"),
         }
