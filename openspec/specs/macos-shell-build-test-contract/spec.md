@@ -941,48 +941,56 @@ inheritance, and UI before those changes are accepted.
 
 ### Requirement: Managed Terminal Account Provisioning Has Focused Verification
 Alan for macOS SHALL require focused verification for Managed Terminal Account
-planning, helper diagnosis, helper-backed account repair, helper-owned PTY
-spawn verification, legacy sudoers cleanup, rollback, and UI safety wording.
+planning, sudoers generation, validation, execution boundaries, repair,
+rollback, multiple-user catalog behavior, read-only managed profiles, and UI
+safety wording.
 
 #### Scenario: Dry-run planner tests run
 - **WHEN** provisioning planning behavior changes
-- **THEN** focused tests cover missing account, existing Alan-managed account,
-  existing non-Alan account, missing home, invalid shell, legacy Alan sudoers
-  state, missing Terminal Profile, and already-ready account states
+- **THEN** focused tests cover missing account, existing account, existing
+  sudoers entry, missing Terminal Profile, and already-ready account states
 
-#### Scenario: Helper diagnosis tests run
-- **WHEN** helper-backed diagnosis behavior changes
-- **THEN** focused tests cover helper unavailable, helper outdated, invalid
-  helper signature, account not Alan managed, account repairable, legacy sudoers
-  cleanup available, and ready account states
+#### Scenario: Multiple managed user tests run
+- **WHEN** Managed User catalog, creation, or display behavior changes
+- **THEN** focused tests cover multiple users with independent status, Unix user
+  name plus display label input, derived home/shell/sudoers/profile values, and
+  no automatic Space binding after successful creation
 
-#### Scenario: Helper apply tests run
-- **WHEN** helper-backed repair behavior changes
-- **THEN** focused tests cover typed plan validation, identifier rejection,
-  home path derivation, shell allowlist enforcement, no reusable credentials,
-  and rejection of raw shell, arbitrary executable, or raw sudoers requests
+#### Scenario: Sudoers generation tests run
+- **WHEN** sudoers rendering behavior changes
+- **THEN** focused tests cover generated rule scope, identifier escaping or
+  rejection, no passwordless root grant, no unrelated-user grant, and stable
+  Alan-owned file paths
 
-#### Scenario: Managed-user PTY verification tests run
-- **WHEN** managed-user terminal readiness or launch behavior changes
-- **THEN** focused tests cover helper-owned PTY spawn success, PTY spawn
-  failure, helper rejection, child exit, signal/terminate routing, and no
-  `sudo_user` fallback for `managed_user` profiles
+#### Scenario: Validation failure tests run
+- **WHEN** sudoers validation or non-interactive sudo verification behavior
+  changes
+- **THEN** focused tests cover validation failure, sudo failure, partial
+  provisioning state, and repair-plan generation
+
+#### Scenario: Managed profile tests run
+- **WHEN** Terminal Profile handoff or editing behavior changes
+- **THEN** focused tests cover read-only managed profiles, editable non-managed
+  profiles, missing managed profile repair state, and failed provisioning not
+  creating a ready profile
+
+#### Scenario: Space menu default tests run
+- **WHEN** Space profile menu or terminal startup resolution changes
+- **THEN** focused tests cover `Login shell` selected for unbound Spaces,
+  absence of a separate `Default` profile item, managed user selection binding
+  the Space, and selecting `Login shell` clearing the binding
 
 #### Scenario: Rollback tests run
 - **WHEN** rollback behavior changes
-- **THEN** focused tests cover removal of Alan-owned helper/Profile integration
-  and verified legacy Alan sudoers cleanup
+- **THEN** focused tests cover removal of Alan-owned sudoers/Profile integration
 - **AND** tests confirm account and home-directory deletion require a separate
   destructive confirmation
-- **AND** tests confirm non-Alan sudoers files and ordinary macOS accounts are
-  preserved
 
 #### Scenario: UI safety tests run
 - **WHEN** Settings provisioning UI changes
-- **THEN** focused UI or model tests cover helper install/update/invalid
-  states, no GUI-autologin wording, privileged plan preview, explicit
-  confirmation, password redaction, ready state, repairable state, and account
-  not Alan managed state
+- **THEN** focused UI or model tests cover no GUI-autologin wording, privileged
+  plan preview, explicit confirmation, password redaction, ready state,
+  repairable state, and conflict state
 
 ### Requirement: Sidebar Space slider layout has focused verification
 The Apple client SHALL include focused automated or documented verification for
@@ -1327,3 +1335,48 @@ marked complete.
   command
 - **AND** the running Alan app is relaunched before manual responsiveness and
   catch-up verification is treated as complete
+
+### Requirement: Performance diagnostics have focused verification
+The Apple client SHALL include focused verification for the performance
+diagnostics toggle, bounded capture, export format, privacy boundary, and
+behavior-neutral probe contract.
+
+#### Scenario: Diagnostics toggle verified
+- **WHEN** focused diagnostics tests exercise the Settings diagnostics toggle
+- **THEN** tests verify that diagnostics are disabled by default, start
+  recording only after the toggle is enabled, and stop recording after the
+  toggle is disabled
+
+#### Scenario: Export bundle verified
+- **WHEN** diagnostics export is tested with retained events
+- **THEN** tests verify the exported bundle contains `events.jsonl`,
+  `summary.json`, app/build metadata, schema version, sampling interval, and
+  capture-window metadata
+
+#### Scenario: Privacy boundary verified
+- **WHEN** diagnostics tests create terminal output, command-like text, cwd-like
+  strings, path-like strings, and secret-like strings in fixtures
+- **THEN** export validation verifies those values are absent from the
+  diagnostics bundle
+- **AND** validation verifies process samples do not include command lines,
+  command arguments, cwd strings, environment variables, or raw secret values
+
+#### Scenario: Bounded capture verified
+- **WHEN** diagnostics tests generate more events than the configured retention
+  limit
+- **THEN** tests verify older events are evicted and diagnostics memory state
+  remains bounded
+
+#### Scenario: Behavior-neutral probes verified
+- **WHEN** diagnostics are enabled in focused runtime tests
+- **THEN** tests verify terminal scheduling, rendering priority, focus,
+  publication, and process lifecycle results match the same scenario with
+  diagnostics disabled
+
+#### Scenario: Real-workload diagnosis captured
+- **WHEN** maintainers run a real multi-Codex terminal workload for performance
+  investigation
+- **THEN** the recorded diagnostics summary can distinguish Alan main-thread
+  long events, Ghostty tick or refresh spikes, shell projection spikes, runtime
+  publication spikes, and child-process aggregate CPU pressure without
+  inspecting terminal content
