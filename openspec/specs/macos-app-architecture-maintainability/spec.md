@@ -376,6 +376,14 @@ settings summaries, and Terminal Profile resolution.
 - **AND** shell contract validation still rejects optional Swift domain fallback
   for core-owned operations
 
+#### Scenario: Action registry metadata FFI owners are validated
+- **WHEN** action registry descriptors, availability, shortcuts, or keyboard
+  lookup are routed through shell core
+- **THEN** architecture validation allows high-level Swift calls only in
+  `ShellActionCoordinator`
+- **AND** raw action metadata operation names remain confined to the shell-core
+  action adapter owner
+
 ### Requirement: Shell host controller narrows to orchestration
 `ShellHostController.swift` SHALL stop owning shell-core-backed domain routing
 and large platform helper implementations directly. It SHALL coordinate

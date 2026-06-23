@@ -468,9 +468,9 @@ Terminal Profile reference when one exists.
 - **AND** alan reports the missing profile state in shell metadata
 
 ### Requirement: Destructive terminal close requests are guarded
-The macOS shell host SHALL guard destructive pane, tab, window, app, and Quick
-Terminal close requests before mutating authoritative shell state or releasing
-terminal ContentInstance runtimes.
+The macOS shell host SHALL guard destructive pane, tab, window, and app close
+requests before mutating authoritative shell state or releasing terminal
+ContentInstance runtimes.
 
 #### Scenario: Closing a pane with active work
 - **WHEN** the user requests close for a PaneSlot that mounts terminal content with a foreground command, running alan session, pending yield, or unknown live active-task state

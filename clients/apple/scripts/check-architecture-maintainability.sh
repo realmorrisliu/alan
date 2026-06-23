@@ -204,27 +204,41 @@ require_shell_core_ffi_raw_symbol_owners() {
     done < <(grep -RIl --include='*.swift' -F "alan_shell_core_ffi_" "$SOURCE_ROOT" || true)
 }
 
-reject_shell_core_action_metadata_query_ffi() {
-    local matched=0
-    local pattern
-
-    for pattern in \
+require_shell_core_action_metadata_query_owners() {
+    require_single_owner_pattern \
         "ShellCoreFFIAdapter.shared.actionTitle" \
-        "ShellCoreFFIAdapter.shared.actionAvailability" \
-        "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
-        "ShellCoreFFIAdapter.shared.keyboardAction" \
-        "actions.standard_descriptors" \
-        "actions.default_shortcut" \
-        "actions.keyboard_action"
-    do
-        if grep -RIn --include='*.swift' -F "$pattern" "$SOURCE_ROOT" >&2; then
-            matched=1
-        fi
-    done
+        "Services/Shell/ShellActionCoordinator.swift" \
+        "shell-core action title lookup"
 
-    if [[ "$matched" -ne 0 ]]; then
-        fail "shell action metadata, availability, and keyboard lookup must stay Swift-local; only actual action execution may call shell-core FFI"
-    fi
+    require_single_owner_pattern \
+        "ShellCoreFFIAdapter.shared.actionAvailability" \
+        "Services/Shell/ShellActionCoordinator.swift" \
+        "shell-core action availability lookup"
+
+    require_single_owner_pattern \
+        "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
+        "Services/Shell/ShellActionCoordinator.swift" \
+        "shell-core action shortcut lookup"
+
+    require_single_owner_pattern \
+        "ShellCoreFFIAdapter.shared.keyboardAction" \
+        "Services/Shell/ShellActionCoordinator.swift" \
+        "shell-core keyboard action lookup"
+
+    require_single_owner_pattern \
+        "actions.standard_descriptors" \
+        "Services/Shell/ShellCoreFFIActionAdapter.swift" \
+        "shell-core action descriptor FFI operation"
+
+    require_single_owner_pattern \
+        "actions.default_shortcut" \
+        "Services/Shell/ShellCoreFFIActionAdapter.swift" \
+        "shell-core default shortcut FFI operation"
+
+    require_single_owner_pattern \
+        "actions.keyboard_action" \
+        "Services/Shell/ShellCoreFFIActionAdapter.swift" \
+        "shell-core keyboard action FFI operation"
 }
 
 reject_shell_host_published_terminal_runtime() {
@@ -402,7 +416,7 @@ require_single_owner_pattern \
 require_shell_core_ffi_shared_callsite_owners
 require_shell_core_ffi_direct_init_owners
 require_shell_core_ffi_raw_symbol_owners
-reject_shell_core_action_metadata_query_ffi
+require_shell_core_action_metadata_query_owners
 reject_shell_host_published_terminal_runtime
 reject_swiftui_shell_hot_path_sync_boundaries
 
