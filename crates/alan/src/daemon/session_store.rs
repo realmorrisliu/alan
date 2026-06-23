@@ -812,7 +812,7 @@ mod tests {
             workspace_path: PathBuf::from("/tmp/test-workspace"),
             created_at: chrono::Utc::now().to_rfc3339(),
             governance: alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             agent_name: None,

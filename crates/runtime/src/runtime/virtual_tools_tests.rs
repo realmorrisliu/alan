@@ -1544,15 +1544,13 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal(
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_conservative_policy()
-{
+async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_escalating_policy() {
     let mut state = create_test_agent_loop_state();
     state.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Conservative,
+        profile: alan_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
-    state.runtime_config.policy_engine =
-        crate::policy::PolicyEngine::for_profile(crate::policy::PolicyProfile::Conservative);
+    state.runtime_config.policy_engine = crate::policy::PolicyEngine::escalate_all();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
 
@@ -1610,10 +1608,8 @@ default_action: allow
         profile: alan_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
-    state.runtime_config.policy_engine = crate::policy::PolicyEngine::load_or_profile(
-        Some(temp.path()),
-        crate::policy::PolicyProfile::Autonomous,
-    );
+    state.runtime_config.policy_engine =
+        crate::policy::PolicyEngine::load_or_default(Some(temp.path()));
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
 

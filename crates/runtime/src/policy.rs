@@ -6,17 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-/// Builtin policy profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyProfile {
-    /// Conservative profile: closer to current defaults.
-    Conservative,
-    /// Autonomous profile: fewer restrictions, keep only critical boundaries.
-    #[default]
-    Autonomous,
-}
-
 /// Policy decision action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -90,85 +79,167 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
-    pub fn for_profile(profile: PolicyProfile) -> Self {
-        match profile {
-            PolicyProfile::Conservative => Self {
-                rules: vec![
-                    PolicyRule {
-                        id: Some("deny-network".to_string()),
-                        tool: Some("*".to_string()),
-                        capability: Some("network".to_string()),
-                        match_command: None,
-                        match_path_prefix: None,
-                        action: PolicyAction::Deny,
-                        reason: Some(
-                            "network access is denied by conservative profile".to_string(),
-                        ),
-                    },
-                    PolicyRule {
-                        id: Some("review-write".to_string()),
-                        tool: Some("*".to_string()),
-                        capability: Some("write".to_string()),
-                        match_command: None,
-                        match_path_prefix: None,
-                        action: PolicyAction::Escalate,
-                        reason: Some("write operations require escalation".to_string()),
-                    },
-                    PolicyRule {
-                        id: Some("review-unknown".to_string()),
-                        tool: Some("*".to_string()),
-                        capability: Some("unknown".to_string()),
-                        match_command: None,
-                        match_path_prefix: None,
-                        action: PolicyAction::Escalate,
-                        reason: Some("unknown capability requires escalation".to_string()),
-                    },
-                ],
-                default_action: PolicyAction::Allow,
-                source: "builtin_conservative",
-            },
-            PolicyProfile::Autonomous => Self {
-                rules: vec![
-                    PolicyRule {
-                        id: Some("deny-rm-root".to_string()),
-                        tool: Some("bash".to_string()),
-                        capability: None,
-                        match_command: Some("rm -rf /".to_string()),
-                        match_path_prefix: None,
-                        action: PolicyAction::Deny,
-                        reason: Some("dangerous destructive command".to_string()),
-                    },
-                    PolicyRule {
-                        id: Some("deny-filesystem-wipe".to_string()),
-                        tool: Some("bash".to_string()),
-                        capability: None,
-                        match_command: Some("mkfs".to_string()),
-                        match_path_prefix: None,
-                        action: PolicyAction::Deny,
-                        reason: Some("dangerous filesystem operation".to_string()),
-                    },
-                    PolicyRule {
-                        id: Some("review-force-push".to_string()),
-                        tool: Some("bash".to_string()),
-                        capability: None,
-                        match_command: Some("git push --force".to_string()),
-                        match_path_prefix: None,
-                        action: PolicyAction::Escalate,
-                        reason: Some("force push requires escalation".to_string()),
-                    },
-                    PolicyRule {
-                        id: Some("review-unknown".to_string()),
-                        tool: Some("*".to_string()),
-                        capability: Some("unknown".to_string()),
-                        match_command: None,
-                        match_path_prefix: None,
-                        action: PolicyAction::Escalate,
-                        reason: Some("unknown capability requires escalation".to_string()),
-                    },
-                ],
-                default_action: PolicyAction::Allow,
-                source: "builtin_autonomous",
-            },
+    /// Fail-closed policy for when a policy file is present but cannot be read or
+    /// parsed. The profile is locked to autonomous and `policy.yaml` is the only
+    /// way to *tighten* rules, so silently falling back to the permissive builtin
+    /// would let a malformed *restrictive* policy quietly allow everything. Deny
+    /// by default so the misconfiguration surfaces immediately and nothing runs
+    /// until it is fixed.
+    fn fail_closed() -> Self {
+        Self {
+            rules: Vec::new(),
+            default_action: PolicyAction::Deny,
+            source: "policy_load_failed",
+        }
+    }
+
+    pub fn autonomous() -> Self {
+        Self {
+            rules: vec![
+                PolicyRule {
+                    id: Some("deny-rm-root".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("rm -rf /".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Deny,
+                    reason: Some("dangerous destructive command".to_string()),
+                },
+                PolicyRule {
+                    id: Some("deny-filesystem-wipe".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("mkfs".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Deny,
+                    reason: Some("dangerous filesystem operation".to_string()),
+                },
+                PolicyRule {
+                    id: Some("deny-block-device-write".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("dd of=/dev/".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Deny,
+                    reason: Some("writing a block device".to_string()),
+                },
+                PolicyRule {
+                    id: Some("deny-git-hooks".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some(".git/hooks".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Deny,
+                    reason: Some("modifying git hooks".to_string()),
+                },
+                // --- always-human red line (routed to a person, never the reviewer) ---
+                PolicyRule {
+                    id: Some("human-git-force-push".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("git push --force".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("force push rewrites remote history".to_string()),
+                },
+                PolicyRule {
+                    id: Some("human-git-force-with-lease".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("git push --force-with-lease".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("force push rewrites remote history".to_string()),
+                },
+                PolicyRule {
+                    id: Some("human-sudo".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("sudo ".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("privilege escalation".to_string()),
+                },
+                PolicyRule {
+                    id: Some("human-chmod-777".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("chmod 777".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("broadly weakening file permissions".to_string()),
+                },
+                PolicyRule {
+                    id: Some("review-network".to_string()),
+                    tool: Some("*".to_string()),
+                    capability: Some("network".to_string()),
+                    match_command: None,
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("network access needs human judgment".to_string()),
+                },
+                PolicyRule {
+                    id: Some("review-destructive-rm".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("rm -rf".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("recursive delete needs human judgment".to_string()),
+                },
+                PolicyRule {
+                    id: Some("review-git-push".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("git push".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("publishing changes needs human judgment".to_string()),
+                },
+                PolicyRule {
+                    id: Some("review-git-reset-hard".to_string()),
+                    tool: Some("bash".to_string()),
+                    capability: None,
+                    match_command: Some("git reset --hard".to_string()),
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("irreversible reset needs human judgment".to_string()),
+                },
+                PolicyRule {
+                    id: Some("review-unknown".to_string()),
+                    tool: Some("*".to_string()),
+                    capability: Some("unknown".to_string()),
+                    match_command: None,
+                    match_path_prefix: None,
+                    action: PolicyAction::Escalate,
+                    reason: Some("unknown capability needs human judgment".to_string()),
+                },
+            ],
+            // Reads and in-workspace writes proceed automatically; writes
+            // outside the workspace are stopped by the execution path guard.
+            default_action: PolicyAction::Allow,
+            source: "builtin_autonomous",
+        }
+    }
+
+    /// Test-only: a policy that allows everything (to exercise execution paths
+    /// independent of the locked auto-approve posture).
+    #[cfg(test)]
+    pub fn allow_all() -> Self {
+        Self {
+            rules: Vec::new(),
+            default_action: PolicyAction::Allow,
+            source: "test_allow_all",
+        }
+    }
+
+    /// Test-only: a policy that escalates everything (to exercise approval paths).
+    #[cfg(test)]
+    pub fn escalate_all() -> Self {
+        Self {
+            rules: Vec::new(),
+            default_action: PolicyAction::Escalate,
+            source: "test_escalate_all",
         }
     }
 
@@ -184,9 +255,10 @@ impl PolicyEngine {
         default_policy_path: Option<&Path>,
         governance: &alan_protocol::GovernanceConfig,
     ) -> Self {
-        let profile: PolicyProfile = governance.profile.into();
+        // The governance profile is locked to the auto-approve posture; only an
+        // explicit `policy.yaml` can fine-tune individual rules.
         let Some(policy_path) = governance.policy_path.as_deref() else {
-            return Self::load_or_profile_with_default_policy_path(default_policy_path, profile);
+            return Self::load_or_default_with_default_policy_path(default_policy_path);
         };
 
         let resolved = resolve_policy_path(workspace_alan_dir, Path::new(policy_path));
@@ -197,33 +269,30 @@ impl PolicyEngine {
                 source: "governance_policy_file",
             },
             Err(err) => {
-                tracing::warn!(
+                tracing::error!(
                     path = %resolved.display(),
                     error = %err,
-                    "Failed to parse governance policy file, falling back to builtin profile"
+                    "Failed to load explicit governance policy file; failing closed (deny-all) \
+                     instead of silently using the permissive builtin"
                 );
-                Self::for_profile(profile)
+                Self::fail_closed()
             }
         }
     }
 
-    pub fn load_or_profile(workspace_alan_dir: Option<&Path>, profile: PolicyProfile) -> Self {
-        Self::load_or_profile_with_default_policy_path(
+    pub fn load_or_default(workspace_alan_dir: Option<&Path>) -> Self {
+        Self::load_or_default_with_default_policy_path(
             workspace_alan_dir.map(workspace_policy_path).as_deref(),
-            profile,
         )
     }
 
-    pub fn load_or_profile_with_default_policy_path(
-        default_policy_path: Option<&Path>,
-        profile: PolicyProfile,
-    ) -> Self {
+    pub fn load_or_default_with_default_policy_path(default_policy_path: Option<&Path>) -> Self {
         let Some(policy_path) = default_policy_path else {
-            return Self::for_profile(profile);
+            return Self::autonomous();
         };
 
         if !policy_path.exists() {
-            return Self::for_profile(profile);
+            return Self::autonomous();
         }
 
         match load_policy_file(policy_path) {
@@ -233,12 +302,13 @@ impl PolicyEngine {
                 source: "workspace_policy_file",
             },
             Err(err) => {
-                tracing::warn!(
+                tracing::error!(
                     path = %policy_path.display(),
                     error = %err,
-                    "Failed to parse policy file, falling back to builtin profile"
+                    "Failed to parse present policy file; failing closed (deny-all) instead of \
+                     silently using the permissive builtin"
                 );
-                Self::for_profile(profile)
+                Self::fail_closed()
             }
         }
     }
@@ -559,24 +629,6 @@ fn capability_label(capability: alan_protocol::ToolCapability) -> &'static str {
     }
 }
 
-impl From<alan_protocol::GovernanceProfile> for PolicyProfile {
-    fn from(value: alan_protocol::GovernanceProfile) -> Self {
-        match value {
-            alan_protocol::GovernanceProfile::Autonomous => PolicyProfile::Autonomous,
-            alan_protocol::GovernanceProfile::Conservative => PolicyProfile::Conservative,
-        }
-    }
-}
-
-impl From<PolicyProfile> for alan_protocol::GovernanceProfile {
-    fn from(value: PolicyProfile) -> Self {
-        match value {
-            PolicyProfile::Autonomous => alan_protocol::GovernanceProfile::Autonomous,
-            PolicyProfile::Conservative => alan_protocol::GovernanceProfile::Conservative,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,33 +636,67 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn conservative_denies_network() {
-        let engine = PolicyEngine::for_profile(PolicyProfile::Conservative);
-        let decision = engine.evaluate(PolicyContext {
-            tool_name: "bash",
-            arguments: &json!({"command":"curl https://example.com"}),
-            capability: alan_protocol::ToolCapability::Network,
-            cwd: None,
-        });
-        assert_eq!(decision.action, PolicyAction::Deny);
-        assert_eq!(decision.rule_id.as_deref(), Some("deny-network"));
+    fn auto_approve_boundary_matches_human_in_the_end_posture() {
+        let engine = PolicyEngine::autonomous();
+        let decide = |tool: &str, cap, args: serde_json::Value| {
+            engine
+                .evaluate(PolicyContext {
+                    tool_name: tool,
+                    arguments: &args,
+                    capability: cap,
+                    cwd: None,
+                })
+                .action
+        };
+        use alan_protocol::ToolCapability as Cap;
+        // Routine work auto-approves.
+        assert_eq!(
+            decide("read_file", Cap::Read, serde_json::json!({"path": "a.rs"})),
+            PolicyAction::Allow
+        );
+        assert_eq!(
+            decide("edit_file", Cap::Write, serde_json::json!({"path": "a.rs"})),
+            PolicyAction::Allow
+        );
+        // Judgment-needing work escalates.
+        assert_eq!(
+            decide("fetch", Cap::Network, serde_json::json!({})),
+            PolicyAction::Escalate
+        );
+        assert_eq!(
+            decide(
+                "bash",
+                Cap::Unknown,
+                serde_json::json!({"command": "git push origin main"})
+            ),
+            PolicyAction::Escalate
+        );
+        assert_eq!(
+            decide(
+                "bash",
+                Cap::Unknown,
+                serde_json::json!({"command": "git reset --hard HEAD~1"})
+            ),
+            PolicyAction::Escalate
+        );
+        assert_eq!(
+            decide("custom_tool", Cap::Unknown, serde_json::json!({})),
+            PolicyAction::Escalate
+        );
+        // Catastrophic commands are denied outright.
+        assert_eq!(
+            decide(
+                "bash",
+                Cap::Unknown,
+                serde_json::json!({"command": "rm -rf /"})
+            ),
+            PolicyAction::Deny
+        );
     }
 
     #[test]
-    fn autonomous_allows_network_by_default() {
-        let engine = PolicyEngine::for_profile(PolicyProfile::Autonomous);
-        let decision = engine.evaluate(PolicyContext {
-            tool_name: "bash",
-            arguments: &json!({"command":"curl https://example.com"}),
-            capability: alan_protocol::ToolCapability::Network,
-            cwd: None,
-        });
-        assert_eq!(decision.action, PolicyAction::Allow);
-    }
-
-    #[test]
-    fn autonomous_denies_dangerous_bash() {
-        let engine = PolicyEngine::for_profile(PolicyProfile::Autonomous);
+    fn auto_approve_denies_dangerous_bash() {
+        let engine = PolicyEngine::autonomous();
         let decision = engine.evaluate(PolicyContext {
             tool_name: "bash",
             arguments: &json!({"command":"rm -rf / --no-preserve-root"}),
@@ -639,8 +725,7 @@ default_action: allow
         )
         .unwrap();
 
-        let engine =
-            PolicyEngine::load_or_profile(Some(policy_dir.as_path()), PolicyProfile::Autonomous);
+        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({}),
@@ -650,6 +735,27 @@ default_action: allow
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
         assert_eq!(decision.source, "workspace_policy_file");
+    }
+
+    #[test]
+    fn malformed_policy_file_fails_closed_not_permissive() {
+        let tmp = TempDir::new().unwrap();
+        let policy_dir = tmp.path().join("workspace-alan");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        // A present-but-broken policy file (YAML/schema error).
+        std::fs::write(policy_dir.join("policy.yaml"), "rules: [ this is not valid").unwrap();
+
+        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        // Must NOT silently become the permissive builtin; deny by default so the
+        // misconfiguration surfaces instead of allowing routine writes.
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "write_file",
+            arguments: &json!({"path": "a.txt"}),
+            capability: alan_protocol::ToolCapability::Write,
+            cwd: None,
+        });
+        assert_eq!(decision.action, PolicyAction::Deny);
+        assert_eq!(decision.source, "policy_load_failed");
     }
 
     #[test]
@@ -837,8 +943,7 @@ default_action: allow
         )
         .unwrap();
 
-        let engine =
-            PolicyEngine::load_or_profile(Some(policy_dir.as_path()), PolicyProfile::Autonomous);
+        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({"path":".env.production"}),
@@ -853,7 +958,7 @@ default_action: allow
 
     #[test]
     fn autonomous_escalates_unknown_capability() {
-        let engine = PolicyEngine::for_profile(PolicyProfile::Autonomous);
+        let engine = PolicyEngine::autonomous();
         let decision = engine.evaluate(PolicyContext {
             tool_name: "bash",
             arguments: &json!({"command":"python3 script.py"}),

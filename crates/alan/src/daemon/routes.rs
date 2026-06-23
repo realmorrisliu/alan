@@ -2562,7 +2562,7 @@ Body
             "gpt-5.4".to_string(),
             Some(alan_protocol::ReasoningEffort::Medium),
             alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             alan_runtime::StreamingMode::Auto,
@@ -3057,7 +3057,7 @@ Body
 
         assert_eq!(
             resp.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert!(!resp.durability.durable);
         assert!(!resp.durability.required);
@@ -3081,7 +3081,7 @@ Body
             .unwrap();
         assert_eq!(
             read_resp.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert!(!read_resp.durability.durable);
         assert!(!read_resp.durability.required);
@@ -3648,7 +3648,7 @@ Body
         assert!(resp.sessions.iter().all(|s| s.active));
         assert_eq!(
             resp.sessions[0].governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.sessions[0].streaming_mode,
@@ -3659,7 +3659,7 @@ Body
         assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
             resp.sessions[0].execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert_eq!(
             resp.sessions[1].governance.profile,
@@ -3674,7 +3674,7 @@ Body
         assert_eq!(resp.sessions[1].governance.policy_path, None);
         assert_eq!(
             resp.sessions[1].execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
     }
 
@@ -3785,11 +3785,11 @@ Body
         assert_eq!(resp.workspace_id, expected_workspace_id);
         assert_eq!(
             resp.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(resp.durability.durable);
@@ -4061,7 +4061,7 @@ Body
         );
         assert_eq!(
             snapshot.execution.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert_eq!(
             snapshot.execution.next_action,
@@ -4113,7 +4113,7 @@ Body
         assert_eq!(snapshot.execution.next_action, None);
         assert_eq!(
             snapshot.execution.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert!(!snapshot.execution.resume_required);
         assert!(snapshot.notifications.signals.is_empty());
@@ -4478,11 +4478,11 @@ Body
         assert!(info.0.active);
         assert_eq!(
             info.0.execution_backend,
-            alan_runtime::tools::Sandbox::backend_name_static()
+            alan_runtime::tools::active_backend_name()
         );
         assert_eq!(
             info.0.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(info.0.streaming_mode, alan_runtime::StreamingMode::Auto);
         assert!(info.0.durability.durable);

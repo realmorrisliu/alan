@@ -50,6 +50,10 @@ pub enum Event {
         id: String,
         /// Name of the tool being called.
         name: String,
+        /// Optional human-readable title formatted by the runtime (e.g.
+        /// `Read src/foo.rs`). Frontends display it without parsing tool args.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
         /// Optional audit metadata for the policy decision.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audit: Option<ToolDecisionAudit>,
@@ -65,9 +69,13 @@ pub enum Event {
         /// Whether the tool completed successfully, when known.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         success: Option<bool>,
-        /// Human-readable preview of the tool result.
+        /// Human-readable preview of the tool result (fallback when no
+        /// structured presentation is available).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_preview: Option<String>,
+        /// Optional structured, presentation-form result for rich rendering.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        presentation: Option<ToolResultPresentation>,
         /// Optional audit metadata for the policy decision.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audit: Option<ToolDecisionAudit>,
@@ -158,6 +166,56 @@ pub struct ToolDecisionAudit {
     pub sandbox_backend: String,
 }
 
+/// Presentation-form tool result, decoupled from tool identity. Built-in tools
+/// map their output to one of these; dynamic/MCP/unknown tools fall back to
+/// [`ToolResultPresentation::PlainText`]. Frontends render one renderer per form.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "form", rename_all = "snake_case")]
+pub enum ToolResultPresentation {
+    /// A unified diff for edit/write tools.
+    Diff { path: String, hunks: Vec<DiffHunk> },
+    /// File content for read/glob tools.
+    FileContent {
+        path: String,
+        lines: u64,
+        #[serde(default)]
+        truncated: bool,
+    },
+    /// A shell command and its outcome for bash tools.
+    Command {
+        cmdline: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default)]
+        stdout: String,
+        #[serde(default)]
+        stderr: String,
+        #[serde(default)]
+        truncated: bool,
+    },
+    /// Tabular rows for grep/list_dir tools.
+    Listing { rows: Vec<String> },
+    /// Universal fallback for any tool result.
+    PlainText { body: String },
+}
+
+/// A single diff hunk.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiffHunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    pub lines: Vec<DiffLine>,
+}
+
+/// A single diff line, tagged by change kind.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DiffLine {
+    Context { text: String },
+    Added { text: String },
+    Removed { text: String },
+}
+
 /// Kind of Yield — tells the client what UI to render.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -212,6 +270,84 @@ mod tests {
 
         let deserialized: Event = serde_json::from_str(&json).unwrap();
         assert!(matches!(deserialized, Event::TurnStarted {}));
+    }
+
+    #[test]
+    fn tool_presentation_fields_are_additive_and_round_trip() {
+        // Absent fields stay absent in serialization (older consumers unaffected).
+        let bare = Event::ToolCallCompleted {
+            id: "t1".into(),
+            name: Some("edit".into()),
+            success: Some(true),
+            result_preview: Some("ok".into()),
+            presentation: None,
+            audit: None,
+        };
+        let json = serde_json::to_string(&bare).unwrap();
+        assert!(!json.contains("presentation"));
+
+        // Each presentation primitive round-trips through JSON.
+        for presentation in [
+            ToolResultPresentation::Diff {
+                path: "a.rs".into(),
+                hunks: vec![DiffHunk {
+                    header: None,
+                    lines: vec![DiffLine::Added { text: "x".into() }],
+                }],
+            },
+            ToolResultPresentation::FileContent {
+                path: "a.rs".into(),
+                lines: 10,
+                truncated: true,
+            },
+            ToolResultPresentation::Command {
+                cmdline: "ls".into(),
+                exit_code: Some(0),
+                stdout: "out".into(),
+                stderr: String::new(),
+                truncated: false,
+            },
+            ToolResultPresentation::Listing {
+                rows: vec!["one".into()],
+            },
+            ToolResultPresentation::PlainText { body: "hi".into() },
+        ] {
+            let event = Event::ToolCallCompleted {
+                id: "t1".into(),
+                name: None,
+                success: Some(true),
+                result_preview: None,
+                presentation: Some(presentation.clone()),
+                audit: None,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            let back: Event = serde_json::from_str(&json).unwrap();
+            match back {
+                Event::ToolCallCompleted {
+                    presentation: Some(round),
+                    ..
+                } => assert_eq!(round, presentation),
+                _ => panic!("expected ToolCallCompleted with presentation"),
+            }
+        }
+    }
+
+    #[test]
+    fn tool_started_title_round_trips() {
+        let event = Event::ToolCallStarted {
+            id: "t1".into(),
+            name: "edit".into(),
+            title: Some("Edit a.rs".into()),
+            audit: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: Event = serde_json::from_str(&json).unwrap();
+        match back {
+            Event::ToolCallStarted { title, .. } => {
+                assert_eq!(title.as_deref(), Some("Edit a.rs"))
+            }
+            _ => panic!("expected ToolCallStarted"),
+        }
     }
 
     #[test]
@@ -274,6 +410,7 @@ mod tests {
         let event = Event::ToolCallStarted {
             id: "call-1".to_string(),
             name: "web_search".to_string(),
+            title: None,
             audit: None,
         };
 
@@ -283,7 +420,12 @@ mod tests {
 
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::ToolCallStarted { id, name, audit } => {
+            Event::ToolCallStarted {
+                id,
+                name,
+                title: _,
+                audit,
+            } => {
                 assert_eq!(id, "call-1");
                 assert_eq!(name, "web_search");
                 assert!(audit.is_none());
@@ -299,6 +441,7 @@ mod tests {
             name: Some("web_search".to_string()),
             success: Some(true),
             result_preview: Some("5 records".to_string()),
+            presentation: None,
             audit: None,
         };
 
@@ -313,6 +456,7 @@ mod tests {
                 name,
                 success,
                 result_preview,
+                presentation: _,
                 audit,
             } => {
                 assert_eq!(id, "call-1");
@@ -412,6 +556,7 @@ mod tests {
             name: None,
             success: None,
             result_preview: None,
+            presentation: None,
             audit: None,
         };
 
@@ -426,6 +571,7 @@ mod tests {
                 name,
                 success,
                 result_preview,
+                presentation: _,
                 audit,
             } => {
                 assert_eq!(id, "call-2");

@@ -38,10 +38,15 @@ eventsource-stream.workspace = true
 futures-core.workspace = true
 pin-utils.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [dev-dependencies]
 tracing-subscriber.workspace = true
 tempfile.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
+# test-util (paused clock) is not part of tokio's "full" feature set.
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = []

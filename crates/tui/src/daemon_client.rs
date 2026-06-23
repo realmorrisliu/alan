@@ -11,6 +11,14 @@ use std::time::Duration;
 
 use crate::app::{AppEvent, SessionHydration};
 
+/// A page of buffered events from `/events/read`, plus the daemon's `gap` flag
+/// (true when the requested cursor had fallen out of the buffer, so the page is a
+/// truncated tail rather than a complete replay).
+pub struct BufferedEventsPage {
+    pub events: Vec<EventEnvelope>,
+    pub gap: bool,
+}
+
 /// Path construction contract supplied by the daemon crate.
 pub trait EndpointContract: Send + Sync {
     fn health(&self) -> &'static str;
@@ -193,10 +201,114 @@ impl DaemonClient {
             .await
     }
 
+    pub async fn read_skills_catalog(&self) -> Result<serde_json::Value> {
+        self.get_json(self.endpoints.skills_catalog().to_string())
+            .await
+    }
+
+    /// Read one page of buffered transport events (`/events/read`) from a cursor.
+    pub async fn read_buffered_events_page(
+        &self,
+        session_id: &str,
+        after_event_id: Option<&str>,
+        limit: usize,
+    ) -> Result<BufferedEventsPage> {
+        let mut path = format!(
+            "{}?limit={limit}",
+            self.endpoints.session_events_read(session_id)
+        );
+        if let Some(after) = after_event_id {
+            path.push_str(&format!("&after_event_id={after}"));
+        }
+        let value = self.get_json(path).await?;
+        let events = value
+            .get("events")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        Ok(BufferedEventsPage {
+            events: serde_json::from_value(events).unwrap_or_default(),
+            // The daemon sets `gap: true` when the cursor fell out of the buffer,
+            // so the page replays only the tail — evicted events are lost.
+            gap: value
+                .get("gap")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+
+    /// Read the entire buffered event log (`/events/read` is forward-only with a
+    /// default page size, so page from the oldest event to the tail).
+    async fn read_all_buffered_events(&self, session_id: &str) -> Vec<EventEnvelope> {
+        const PAGE: usize = 1000;
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = match self
+                .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
+                .await
+            {
+                Ok(page) => page.events,
+                Err(_) => break,
+            };
+            if page.is_empty() {
+                break;
+            }
+            let full = page.len() >= PAGE;
+            cursor = page.last().map(|env| env.event_id.clone());
+            all.extend(page);
+            if !full {
+                break;
+            }
+        }
+        all
+    }
+
     pub async fn hydrate_session(&self, session_id: &str) -> Result<SessionHydration> {
+        // Read the buffer FIRST, then `/history`. The replay cursor is the last
+        // completed turn observed in the buffer; reading the buffer before history
+        // means a turn that completes *during* hydration is captured by `/history`
+        // (read later) while the cursor still points before it, so the drain
+        // replays it too. That risks a rare duplicate turn rather than a *dropped*
+        // turn (the worse failure) when the two reads straddle a turn boundary.
+        // (A fully race-free fix needs a daemon-provided cursor linking `/history`
+        // to the event buffer — a follow-up; `/history` carries no such boundary.)
+        let buffer = self.read_all_buffered_events(session_id).await;
         let history = self.read_history(session_id).await?;
         let reconnect = self.read_reconnect_snapshot(session_id).await?;
-        Ok(SessionHydration::from_values(&history, &reconnect))
+        let mut hydration = SessionHydration::from_values(&history, &reconnect);
+
+        if !buffer.is_empty() {
+            // Replay cursor: start *after* the last completed turn so the live
+            // stream drains the in-flight turn's buffered events (partial
+            // assistant deltas, tool starts, the pending Yield with full payload).
+            // `/history` has final messages only and the `/events` stream is
+            // future-only, so without this a mid-turn attach shows truncated
+            // output. Completed turns are already in `/history`, so they are not
+            // replayed; `None` means the buffer holds no completed turn (all
+            // in-flight) → replay it all.
+            hydration.latest_event_id = buffer
+                .iter()
+                .rev()
+                .find(|env| matches!(&env.event, alan_protocol::Event::TurnCompleted { .. }))
+                .map(|env| env.event_id.clone());
+
+            // If the pending Yield is in the buffer, the drain replays it in order
+            // with full payload — drop the snapshot-signal reconstruction to avoid
+            // a duplicate. Keep the signal only as a fallback for when the buffer
+            // has evicted the Yield.
+            if let Some(pending) = &hydration.pending
+                && buffer.iter().any(|env| {
+                    matches!(
+                        &env.event,
+                        alan_protocol::Event::Yield { request_id, .. }
+                            if *request_id == pending.request_id
+                    )
+                })
+            {
+                hydration.pending = None;
+            }
+        }
+        Ok(hydration)
     }
 
     pub async fn events(&self, session_id: &str) -> Result<NdjsonEventStream> {
@@ -289,10 +401,24 @@ pub fn spawn_event_stream(
     client: DaemonClient,
     session_id: String,
     tx: tokio::sync::mpsc::Sender<AppEvent>,
+    initial_cursor: Option<String>,
 ) {
     tokio::spawn(async move {
+        // Replay cursor: `cursor` is the last event id for the `/events/read`
+        // `after` param; `last_seq` is the last sequence, for deduping any overlap
+        // with the live stream. Event ids encode the monotonic sequence.
+        let mut cursor = initial_cursor;
+        let mut last_seq = cursor
+            .as_deref()
+            .and_then(|id| id.parse::<u64>().ok())
+            .unwrap_or(0);
         loop {
-            if !stream_events_once(&client, &session_id, &tx).await {
+            // Drain events emitted since the cursor before resubscribing — this
+            // covers the hydration→subscribe window and any disconnect gap, which
+            // the future-only `/events` stream would otherwise skip (e.g. a `Yield`
+            // the user must answer to resume).
+            drain_replay(&client, &session_id, &tx, &mut cursor, &mut last_seq).await;
+            if !stream_events_once(&client, &session_id, &tx, &mut cursor, &mut last_seq).await {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -300,16 +426,88 @@ pub fn spawn_event_stream(
     });
 }
 
+/// Page through buffered events after `cursor`, forwarding ones newer than
+/// `last_seq`. Best-effort: a read error returns and lets the live stream resume.
+async fn drain_replay(
+    client: &DaemonClient,
+    session_id: &str,
+    tx: &tokio::sync::mpsc::Sender<AppEvent>,
+    cursor: &mut Option<String>,
+    last_seq: &mut u64,
+) {
+    const PAGE: usize = 1000;
+    loop {
+        let page = match client
+            .read_buffered_events_page(session_id, cursor.as_deref(), PAGE)
+            .await
+        {
+            Ok(page) => page,
+            Err(_) => return,
+        };
+        // The cursor fell out of the daemon buffer: events between it and the
+        // replayed tail are gone. Surface a recoverable error so the user knows
+        // the transcript may be missing tool/yield state, rather than silently
+        // continuing as if replay were complete.
+        if page.gap {
+            let _ = tx
+                .send(AppEvent::Error(
+                    "reconnect replay incomplete: some buffered events were evicted; \
+                     transcript may be missing recent tool/approval state"
+                        .to_string(),
+                ))
+                .await;
+        }
+        let events = page.events;
+        if events.is_empty() {
+            return;
+        }
+        let full = events.len() >= PAGE;
+        for envelope in events {
+            *cursor = Some(envelope.event_id.clone());
+            if envelope.sequence > *last_seq {
+                *last_seq = envelope.sequence;
+                if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
+                    return;
+                }
+            }
+        }
+        if !full {
+            return;
+        }
+    }
+}
+
 async fn stream_events_once(
     client: &DaemonClient,
     session_id: &str,
     tx: &tokio::sync::mpsc::Sender<AppEvent>,
+    cursor: &mut Option<String>,
+    last_seq: &mut u64,
 ) -> bool {
     match client.events(session_id).await {
         Ok(mut events) => {
             while let Some(event) = events.next().await {
                 match event {
                     Ok(envelope) => {
+                        // Control/out-of-band envelopes (stream lag, resume
+                        // failure) use the sentinel `sequence == 0` and a
+                        // `control_*` event id; always forward them and never
+                        // advance the replay cursor — sequence-based de-dupe would
+                        // otherwise drop them (last_seq starts at 0) and hide the
+                        // recoverable error behind a generic reconnect loop.
+                        if envelope.sequence == 0 {
+                            if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
+                                return false;
+                            }
+                            continue;
+                        }
+                        // Skip anything already delivered via the drain (or an
+                        // earlier subscribe) so a buffer/live overlap can't dupe.
+                        if envelope.sequence <= *last_seq {
+                            continue;
+                        }
+                        *last_seq = envelope.sequence;
+                        *cursor = Some(envelope.event_id.clone());
                         if tx.send(AppEvent::Daemon(Box::new(envelope))).await.is_err() {
                             return false;
                         }

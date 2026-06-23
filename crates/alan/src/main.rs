@@ -1164,6 +1164,8 @@ async fn prepare_tui_config(agent_name: Option<String>) -> Result<alan_tui::RunC
 
     let mut config = alan_tui::RunConfig::new(base_url, endpoints);
     config.agent_name = agent_name;
+    config.history_path =
+        alan_runtime::AlanHomePaths::detect().map(|paths| paths.alan_home_dir.join("tui_history"));
     Ok(config)
 }
 

@@ -25,7 +25,9 @@ pub use compaction::{
     CompactionSkipReason, CompactionTrigger, FailedCompactionOutcome, SkippedCompactionOutcome,
 };
 pub use content::{ContentPart, parts_to_text};
-pub use event::{Event, EventEnvelope, ToolDecisionAudit, YieldKind};
+pub use event::{
+    DiffHunk, DiffLine, Event, EventEnvelope, ToolDecisionAudit, ToolResultPresentation, YieldKind,
+};
 pub use host_auth::{
     AuthErrorCode, AuthErrorResponse, AuthEvent, AuthEventEnvelope, AuthLoginMethod,
     AuthPendingLoginSummary, AuthProviderId, AuthStatusKind, AuthStatusSnapshot,

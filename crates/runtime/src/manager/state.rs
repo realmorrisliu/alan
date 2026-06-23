@@ -306,7 +306,7 @@ mod tests {
         let mut state = WorkspaceState::new("test-workspace".to_string());
         let mut runtime_config = crate::runtime::WorkspaceRuntimeConfig::default();
         runtime_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-            profile: alan_protocol::GovernanceProfile::Conservative,
+            profile: alan_protocol::GovernanceProfile::Autonomous,
             policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
         };
         runtime_config
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(
             state.config.governance,
             Some(alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             })
         );

@@ -583,7 +583,10 @@ fn contains_unsupported_shell_form(tokens: &[&str]) -> bool {
 }
 
 fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
-    let head = tokens[0];
+    // Match on the basename so path-qualified forms (`/usr/bin/curl`) classify
+    // like the bare head; otherwise an approved network call would run with the
+    // sandbox network deny still in force and fail.
+    let head = command_basename(tokens[0]);
     if matches!(
         head,
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "nc" | "netcat" | "socat" | "telnet" | "ftp"
@@ -611,7 +614,9 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
 }
 
 fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {
-    let head = tokens[0];
+    // Match on the basename so path-qualified forms (`/bin/rm`) classify like the
+    // bare head instead of falling through to Unknown.
+    let head = command_basename(tokens[0]);
     if matches!(
         head,
         "rm" | "rmdir" | "mv" | "cp" | "chmod" | "chown" | "mkdir" | "touch" | "truncate"
@@ -1790,8 +1795,12 @@ fn is_builtin_query(tokens: &[&str]) -> bool {
 }
 
 fn git_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
-    if tokens.first().copied() != Some("git") {
-        return None;
+    // Match on the basename so path-qualified git (`/usr/bin/git -C repo push`)
+    // is classified like bare `git`; otherwise a push/fetch misses network
+    // classification and runs with the sandbox network deny in force.
+    match tokens.first() {
+        Some(first) if command_basename(first) == "git" => {}
+        _ => return None,
     }
 
     let mut idx = 1;
@@ -3526,6 +3535,34 @@ mod tests {
     fn test_classify_bash_command_priority_network_over_write() {
         let cap = classify_bash_command("mkdir out && curl https://example.com");
         assert_eq!(cap, alan_protocol::ToolCapability::Network);
+    }
+
+    #[test]
+    fn test_classify_path_qualified_network_tool() {
+        // Path-qualified executables classify by basename so an approved network
+        // call isn't run with the sandbox network deny still in force.
+        assert_eq!(
+            classify_bash_command("/usr/bin/curl example.com"),
+            alan_protocol::ToolCapability::Network
+        );
+        assert_eq!(
+            classify_bash_command("/usr/bin/wget https://example.com/x"),
+            alan_protocol::ToolCapability::Network
+        );
+        // Path-qualified write tools likewise classify by basename.
+        assert_eq!(
+            classify_bash_command("/bin/rm file.txt"),
+            alan_protocol::ToolCapability::Write
+        );
+        // Path-qualified git subcommands classify via the basename gate too.
+        assert_eq!(
+            classify_bash_command("/usr/bin/git -C repo push"),
+            alan_protocol::ToolCapability::Network
+        );
+        assert_eq!(
+            classify_bash_command("/usr/bin/git fetch origin"),
+            alan_protocol::ToolCapability::Network
+        );
     }
 
     #[test]

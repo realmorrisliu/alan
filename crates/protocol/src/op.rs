@@ -17,15 +17,44 @@ pub enum ToolCapability {
     Unknown,
 }
 
-/// Builtin governance profile for tool policy behavior.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// Governance profile for tool policy behavior.
+///
+/// The agent runs a single, locked `Autonomous` posture: routine reads and
+/// in-workspace writes proceed automatically; operations needing judgment
+/// (network, destructive/irreversible commands, unknown capability) escalate
+/// and are routed to the reviewer (see the `autonomous-review-mode` capability),
+/// with a deterministic red line bypassing the reviewer to deny or to the human.
+/// There is intentionally no mode switcher. Legacy config values (e.g.
+/// `auto_approve`, `conservative`) are accepted for backward compatibility but
+/// always resolve to `Autonomous`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GovernanceProfile {
-    /// Favor autonomous execution and escalate only explicit boundaries.
     #[default]
     Autonomous,
-    /// Favor stricter defaults (for example deny network, escalate writes).
-    Conservative,
+}
+
+impl<'de> Deserialize<'de> for GovernanceProfile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // The posture is locked to `Autonomous`, but we still validate input:
+        // only the known string aliases resolve to it. A non-string value
+        // (bool/number/object) or an unrecognized string is rejected rather than
+        // silently treated as Autonomous, so a typo'd or wrong-typed profile
+        // surfaces as a config error instead of a false sense of a stricter mode.
+        let raw = String::deserialize(deserializer)?;
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "autonomous" | "auto_approve" | "auto-approve" | "autoapprove" | "conservative" => {
+                Ok(GovernanceProfile::Autonomous)
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown governance profile {other:?}; expected one of: \
+                 autonomous, auto_approve, conservative"
+            ))),
+        }
+    }
 }
 
 /// Session/runtime governance configuration.
@@ -309,8 +338,18 @@ mod tests {
     fn test_governance_profile_serialization() {
         let json = serde_json::to_string(&GovernanceProfile::Autonomous).unwrap();
         assert_eq!(json, "\"autonomous\"");
-        let parsed: GovernanceProfile = serde_json::from_str("\"conservative\"").unwrap();
-        assert_eq!(parsed, GovernanceProfile::Conservative);
+        // Legacy values are accepted but resolve to the locked Autonomous posture.
+        let legacy: GovernanceProfile = serde_json::from_str("\"conservative\"").unwrap();
+        assert_eq!(legacy, GovernanceProfile::Autonomous);
+        let legacy2: GovernanceProfile = serde_json::from_str("\"auto_approve\"").unwrap();
+        assert_eq!(legacy2, GovernanceProfile::Autonomous);
+        // Typos and wrong-typed values are rejected, not silently autonomous.
+        for bad in ["\"conservativ\"", "\"strict\"", "false", "{}", "5"] {
+            assert!(
+                serde_json::from_str::<GovernanceProfile>(bad).is_err(),
+                "malformed governance profile accepted: {bad}"
+            );
+        }
     }
 
     #[test]

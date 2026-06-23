@@ -7,6 +7,7 @@ mod child_agents;
 mod child_runs;
 mod compaction;
 mod engine;
+mod guardian;
 mod loop_guard;
 mod memory_flush;
 mod memory_promotion;
@@ -17,6 +18,7 @@ mod response_guardrails;
 mod submission_handlers;
 mod tool_orchestrator;
 mod tool_policy;
+mod tool_presentation;
 mod turn_driver;
 mod turn_executor;
 mod turn_state;
@@ -103,9 +105,7 @@ impl Default for RuntimeConfig {
             compaction_hard_trigger_ratio: crate::config::Config::default()
                 .effective_compaction_hard_trigger_ratio(),
             governance: alan_protocol::GovernanceConfig::default(),
-            policy_engine: crate::policy::PolicyEngine::for_profile(
-                crate::policy::PolicyProfile::Autonomous,
-            ),
+            policy_engine: crate::policy::PolicyEngine::autonomous(),
             request_control_intent: crate::RequestControlIntent::default(),
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
@@ -132,9 +132,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             compaction_soft_trigger_ratio: config.effective_compaction_soft_trigger_ratio(),
             compaction_hard_trigger_ratio: config.effective_compaction_hard_trigger_ratio(),
             governance: alan_protocol::GovernanceConfig::default(),
-            policy_engine: crate::policy::PolicyEngine::for_profile(
-                crate::policy::PolicyProfile::Autonomous,
-            ),
+            policy_engine: crate::policy::PolicyEngine::autonomous(),
             request_control_intent: crate::RequestControlIntent::from_config(config),
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,

@@ -18,7 +18,16 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
-const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
+pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
+
+/// How thoroughly to validate command paths. Under an OS sandbox the kernel
+/// enforces workspace containment, so only protected-subpath writes need the
+/// parser; on the path-guard fallback the full syntactic checks apply.
+#[derive(Debug, Clone, Copy)]
+enum PathCheckMode {
+    Full,
+    ProtectedOnly,
+}
 
 /// Execution result from sandbox
 #[derive(Debug, Clone)]
@@ -32,12 +41,36 @@ pub struct ExecResult {
 #[derive(Clone)]
 pub struct Sandbox {
     workspace_root: PathBuf,
+    /// Forces a specific backend instead of host detection (tests only).
+    backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
 }
 
 impl Sandbox {
     /// Create a new sandbox restricted to the given workspace
     pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+        Self {
+            workspace_root,
+            backend_override: None,
+        }
+    }
+
+    /// Construct a sandbox pinned to a specific backend (tests only), so the
+    /// path-guard parser can be exercised regardless of the host's OS sandbox.
+    #[cfg(test)]
+    pub fn with_backend(
+        workspace_root: PathBuf,
+        backend: super::sandbox_backend::SandboxBackendKind,
+    ) -> Self {
+        Self {
+            workspace_root,
+            backend_override: Some(backend),
+        }
+    }
+
+    /// The backend in effect (override for tests, else host detection).
+    fn active_backend(&self) -> super::sandbox_backend::SandboxBackendKind {
+        self.backend_override
+            .unwrap_or_else(super::sandbox_backend::detect_backend)
     }
 
     /// Name of the active sandbox backend.
@@ -69,7 +102,7 @@ impl Sandbox {
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd) {
+        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -184,7 +217,7 @@ impl Sandbox {
         cmd: &str,
         cwd: &Path,
         timeout: Option<Duration>,
-        _capability: Option<alan_protocol::ToolCapability>,
+        capability: Option<alan_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
@@ -195,12 +228,35 @@ impl Sandbox {
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
 
+        // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
+        // mode. Expansion defeats the static path-containment check — the parser
+        // sees a literal, in-workspace-looking token (`$HOME/.ssh/id_rsa`) but
+        // `/bin/sh -c` then expands it to escape the workspace. Seatbelt permits
+        // reads, so an auto-approved read must not be able to exfiltrate this way.
         self.validate_shell_features(cmd)?;
-        self.validate_command_paths(cmd, cwd)?;
 
-        let mut command = tokio::process::Command::new("sh");
-        // Defense in depth: start the shell with pathname expansion disabled.
-        command.arg("-f").arg("-c").arg(cmd).current_dir(cwd);
+        if self.active_backend().permits_autonomous_bash() {
+            // Seatbelt kernel-confines the workspace fs + network, so the syntactic
+            // *shape* checks are dropped — they would reject commands the sandbox
+            // safely contains (`bash -lc ...`, `python -c ...`). Path containment
+            // and the protected-subpath check (incl. shell-wrapper-nested) still
+            // run in ProtectedOnly mode.
+            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
+        } else {
+            // No kernel protected-subpath enforcement (Landlock cannot carve a
+            // protected subdir out of the writable tree, or the path-guard
+            // fallback): keep the full shape parser so opaque writers — which could
+            // hide a protected write the kernel won't deny — are rejected.
+            self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
+        }
+
+        // A command only reaches execution after policy/reviewer/human clearance.
+        // If it is classified as a network capability, run it with the sandbox's
+        // network restriction lifted (still filesystem-confined) so an approved
+        // network call actually runs instead of failing under a deny-all profile.
+        let allow_network = matches!(capability, Some(alan_protocol::ToolCapability::Network));
+        let mut command = self.build_confined_command(cmd, allow_network);
+        command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
                 Ok(result) => result.map_err(|e| anyhow!("Failed to execute command: {}", e))?,
@@ -225,6 +281,49 @@ impl Sandbox {
         })
     }
 
+    /// Build the shell command, confined by an OS sandbox backend when one is
+    /// available. On macOS with Seatbelt this wraps the shell in `sandbox-exec`
+    /// with a workspace-write/no-network profile; otherwise it runs the shell
+    /// directly under the best-effort path guard.
+    fn build_confined_command(&self, cmd: &str, allow_network: bool) -> tokio::process::Command {
+        // Defense in depth: start the shell with pathname expansion disabled.
+        match self.active_backend() {
+            super::sandbox_backend::SandboxBackendKind::Seatbelt => {
+                let profile =
+                    super::sandbox_backend::seatbelt_profile(&self.workspace_root, allow_network);
+                let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
+                command
+                    .arg("-p")
+                    .arg(profile)
+                    .arg("sh")
+                    .arg("-f")
+                    .arg("-c")
+                    .arg(cmd);
+                command
+            }
+            #[cfg(target_os = "linux")]
+            super::sandbox_backend::SandboxBackendKind::Landlock => {
+                use std::os::unix::process::CommandExt;
+                let workspace_root = self.workspace_root.clone();
+                let mut command = std::process::Command::new("sh");
+                command.arg("-f").arg("-c").arg(cmd);
+                // SAFETY: pre_exec runs in the forked child before exec; it only
+                // applies a Landlock ruleset (no shared-state mutation).
+                unsafe {
+                    command.pre_exec(move || {
+                        super::sandbox_backend::apply_landlock(&workspace_root, allow_network)
+                    });
+                }
+                tokio::process::Command::from(command)
+            }
+            _ => {
+                let mut command = tokio::process::Command::new("sh");
+                command.arg("-f").arg("-c").arg(cmd);
+                command
+            }
+        }
+    }
+
     /// List directory contents
     pub async fn list_dir(&self, path: &Path) -> Result<Vec<tokio::fs::DirEntry>> {
         if !self.is_in_workspace(path) {
@@ -247,17 +346,47 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(&self, cmd: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_paths(&self, cmd: &str, cwd: &Path, mode: PathCheckMode) -> Result<()> {
+        let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
         let normalized = normalize_shell_line_continuations(cmd);
         let trimmed = normalized.trim();
         if trimmed.is_empty() {
-            return Err(anyhow!("Command cannot be empty"));
+            // Under an OS sandbox an empty command is the executor's problem.
+            return if protected_only {
+                Ok(())
+            } else {
+                Err(anyhow!("Command cannot be empty"))
+            };
         }
 
-        let tokens = shell_word_tokens(trimmed)?;
-        let commands = shell_commands(trimmed)?;
-        self.validate_direct_command_shapes(&commands)?;
-        self.validate_nested_command_evaluators(&commands)?;
+        // In ProtectedOnly mode an unparseable shape is tolerated (the OS sandbox
+        // confines writes + network), but parseable path operands are still
+        // containment-checked below — only the syntactic shape checks are dropped.
+        let tokens = match shell_word_tokens(trimmed) {
+            Ok(tokens) => tokens,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
+        let commands = match shell_commands(trimmed) {
+            Ok(commands) => commands,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
+        if !protected_only {
+            self.validate_direct_command_shapes(&commands)?;
+            self.validate_nested_command_evaluators(&commands)?;
+        }
+
+        // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands
+        // inside a quoted script the outer tokenizer can't decompose. Under an OS
+        // sandbox these are allowed to run, so recurse into the inline script and
+        // apply the same protected-subpath checks (with their carve-outs, e.g.
+        // `.alan/memory`) to the wrapped command.
+        if protected_only {
+            for words in &commands {
+                if let Some(inner) = shell_wrapper_inline_script(words) {
+                    self.validate_command_paths(&inner, cwd, PathCheckMode::ProtectedOnly)?;
+                }
+            }
+        }
 
         let mut expects_redirection_target = false;
         for token in tokens {
@@ -301,6 +430,9 @@ impl Sandbox {
             if is_allowed_absolute_command_path(Path::new(literal)) {
                 continue;
             }
+            // Containment applies in every mode: the OS sandbox does not confine
+            // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
+            // must still be rejected by the parser.
             if !self.is_in_workspace(Path::new(literal)) {
                 return Err(anyhow!(
                     "Command contains absolute path outside workspace: {}",
@@ -420,6 +552,11 @@ impl Sandbox {
         }
         resolved
     }
+    // Workspace containment is enforced for ALL modes, including ProtectedOnly.
+    // The OS sandbox confines *writes* (and network) to the workspace, but Seatbelt
+    // permits reads by default, so an auto-approved read like `cat ~/.ssh/id_rsa`
+    // would otherwise exfiltrate secrets into tool output. ProtectedOnly only drops
+    // the syntactic *shape* checks (so wrappers may run), never path containment.
     fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
@@ -580,6 +717,32 @@ fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) 
     }
 
     Ok(())
+}
+
+/// Extract the inline script of a shell wrapper command (`sh -c <script>`,
+/// `bash -lc <script>`, …) so it can be recursively inspected. Returns `None`
+/// for non-wrapper commands or wrappers without an inline script argument.
+fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
+    // Peel transparent wrappers (`env VAR=x`, `command`, `timeout 5`, `nice`,
+    // `nohup`, `stdbuf`, `setsid`, ...) so the inline script is found even when the
+    // shell is not the direct head — e.g. `env bash -lc '...'`. Otherwise the
+    // quoted script stays an opaque token and its `.git`/out-of-workspace paths
+    // escape the ProtectedOnly checks.
+    let view = nested_evaluator_view(words)?;
+    if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return None;
+    }
+    // The script follows the first short-flag cluster containing `c` (e.g. `-c`,
+    // `-lc`, `-ic`).
+    let mut index = 0;
+    while index < view.args.len() {
+        let word = &view.args[index];
+        if word.starts_with('-') && !word.starts_with("--") && word.contains('c') {
+            return view.args.get(index + 1).cloned();
+        }
+        index += 1;
+    }
+    None
 }
 
 fn validate_shell_features(cmd: &str, backend_name: &str) -> Result<()> {

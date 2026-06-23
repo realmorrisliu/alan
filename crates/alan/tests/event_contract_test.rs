@@ -111,11 +111,13 @@ fn contract_text_response_must_emit_displayable_event() {
 fn contract_tool_call_must_emit_tool_events() {
     let events = vec![
         Event::ToolCallStarted {
+            title: None,
             id: "call_1".to_string(),
             name: "read_file".to_string(),
             audit: None,
         },
         Event::ToolCallCompleted {
+            presentation: None,
             id: "call_1".to_string(),
             name: Some("read_file".to_string()),
             success: Some(true),
@@ -206,23 +208,58 @@ fn contract_turn_must_emit_complete_event_sequence() {
 }
 
 #[test]
-fn rust_tui_reducer_covers_representative_protocol_event_types() {
+fn rust_tui_reducer_tiers_representative_protocol_event_types() {
+    use alan_tui::history::HistoryCell;
+
     let events = representative_protocol_events();
-    let event_count = events.len();
     let mut reducer = alan_tui::history::SessionReducer::default();
 
     for event in events {
         reducer.apply_envelope(create_test_envelope(event));
     }
 
+    // Only conversational substance becomes permanent transcript content:
+    // the streamed assistant text, the completed tool call, the plan snapshot,
+    // and the pending-input record. Turn boundaries, in-flight thinking, running
+    // tools, rollback/compaction/memory/warning/recoverable-error are ephemeral
+    // and must not be committed as cells.
     assert_eq!(
         reducer.cells.len(),
-        event_count - 1,
-        "tool completion updates the existing tool cell; every other representative event should render"
+        4,
+        "only permanent-tier events render as transcript cells: {:?}",
+        reducer.cells
+    );
+    assert!(
+        reducer
+            .cells
+            .iter()
+            .any(|cell| matches!(cell, HistoryCell::Assistant(_)))
+    );
+    assert!(
+        reducer
+            .cells
+            .iter()
+            .any(|cell| matches!(cell, HistoryCell::Tool { .. }))
+    );
+    assert!(
+        reducer
+            .cells
+            .iter()
+            .any(|cell| matches!(cell, HistoryCell::Plan(_)))
+    );
+    assert!(
+        reducer
+            .cells
+            .iter()
+            .any(|cell| matches!(cell, HistoryCell::PendingYield(_)))
     );
     assert!(
         reducer.pending_yield.is_some(),
         "Yield events must surface as pending input in the Rust TUI"
+    );
+    assert!(
+        reducer.transient_notice.is_some(),
+        "Recoverable notices must surface as ephemeral transient state"
     );
 }
 
@@ -255,11 +292,13 @@ fn representative_protocol_events() -> Vec<Event> {
             is_final: false,
         },
         Event::ToolCallStarted {
+            title: None,
             id: "tool-1".to_string(),
             name: "read_file".to_string(),
             audit: None,
         },
         Event::ToolCallCompleted {
+            presentation: None,
             id: "tool-1".to_string(),
             name: Some("read_file".to_string()),
             success: Some(true),

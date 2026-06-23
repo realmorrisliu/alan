@@ -66,9 +66,36 @@ pub(crate) struct TurnState {
     plan_snapshot: Option<PlanSnapshot>,
     /// Best-effort follow-up work queued after a turn completes.
     deferred_runtime_actions: VecDeque<DeferredRuntimeAction>,
+    /// Guardian rejection circuit breaker: consecutive denials and a rolling
+    /// window of recent review outcomes (true = denied) in the active turn.
+    guardian_consecutive_denials: u32,
+    guardian_recent_reviews: VecDeque<bool>,
 }
 
+/// Guardian rejection circuit-breaker thresholds (Codex parity).
+const GUARDIAN_MAX_CONSECUTIVE_DENIALS: u32 = 3;
+const GUARDIAN_DENIAL_WINDOW: usize = 50;
+const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
+
 impl TurnState {
+    /// Record a guardian review outcome (true = denied). Returns true when the
+    /// rejection circuit breaker trips (≥3 consecutive, or ≥10 denials within
+    /// the last 50 reviews this turn). A non-denial resets the consecutive count.
+    pub(crate) fn record_guardian_review(&mut self, denied: bool) -> bool {
+        if denied {
+            self.guardian_consecutive_denials = self.guardian_consecutive_denials.saturating_add(1);
+        } else {
+            self.guardian_consecutive_denials = 0;
+        }
+        self.guardian_recent_reviews.push_back(denied);
+        while self.guardian_recent_reviews.len() > GUARDIAN_DENIAL_WINDOW {
+            self.guardian_recent_reviews.pop_front();
+        }
+        let denials_in_window = self.guardian_recent_reviews.iter().filter(|d| **d).count();
+        self.guardian_consecutive_denials >= GUARDIAN_MAX_CONSECUTIVE_DENIALS
+            || denials_in_window >= GUARDIAN_MAX_DENIALS_IN_WINDOW
+    }
+
     pub(crate) fn has_pending_interaction(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -83,6 +110,8 @@ impl TurnState {
         self.active_skills.clear();
         self.active_turn_request_control_intent = crate::RequestControlIntent::default();
         self.reset_auto_mid_turn_compaction_state();
+        self.guardian_consecutive_denials = 0;
+        self.guardian_recent_reviews.clear();
     }
 
     pub(crate) fn clear_plan_snapshot(&mut self) {
@@ -315,6 +344,38 @@ fn remove_key(order: &mut Vec<String>, key: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn guardian_breaker_trips_on_three_consecutive_denials() {
+        let mut state = TurnState::default();
+        assert!(!state.record_guardian_review(true));
+        assert!(!state.record_guardian_review(true));
+        assert!(state.record_guardian_review(true)); // third consecutive trips
+    }
+
+    #[test]
+    fn guardian_breaker_resets_on_allow() {
+        let mut state = TurnState::default();
+        assert!(!state.record_guardian_review(true));
+        assert!(!state.record_guardian_review(true));
+        assert!(!state.record_guardian_review(false)); // reset
+        assert!(!state.record_guardian_review(true));
+        assert!(!state.record_guardian_review(true));
+        assert!(state.record_guardian_review(true)); // three consecutive again
+    }
+
+    #[test]
+    fn guardian_breaker_trips_on_ten_denials_in_window() {
+        let mut state = TurnState::default();
+        // Interleave allow/deny so it never hits 3 consecutive, but reaches 10
+        // denials within the rolling window.
+        let mut tripped = false;
+        for _ in 0..10 {
+            state.record_guardian_review(false);
+            tripped = state.record_guardian_review(true);
+        }
+        assert!(tripped);
+    }
 
     #[test]
     fn test_confirmation_set_and_pending() {

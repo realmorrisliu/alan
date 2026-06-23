@@ -497,6 +497,7 @@ where
         })
         .await;
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(false),
@@ -527,6 +528,7 @@ where
             &tool_arguments,
             tool_capability,
             current_tool_cwd.as_deref(),
+            super::tool_policy::SandboxConfinement::detect(),
         ),
         allow_approved_tool_escalation_execution,
     );
@@ -555,42 +557,133 @@ where
             summary,
             mut details,
             audit,
+            route,
         } => {
+            details["escalation_route"] = json!(match route {
+                super::tool_policy::EscalationRoute::Reviewer => "reviewer",
+                super::tool_policy::EscalationRoute::AlwaysHuman => "always_human",
+            });
             details["replay_tool_call"] = json!({
                 "call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
             details = append_skill_permission_hints(details, state.turn_state.active_skills());
-            let pending = PendingConfirmation {
-                checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
-                checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
-                summary,
-                details,
-                options: vec!["approve".to_string(), "reject".to_string()],
+
+            // Reviewer-routed escalations consult the guardian before pausing for
+            // a human. The sandbox + the deterministic red line remain the
+            // boundary; the reviewer only decides whether to bother the human.
+            let go_human = if matches!(route, super::tool_policy::EscalationRoute::Reviewer) {
+                let transcript = super::guardian::build_transcript(state.session.tape.messages());
+                let outcome = {
+                    let review_ctx = super::guardian::ReviewContext {
+                        policy: super::guardian::DEFAULT_REVIEWER_POLICY,
+                        transcript: &transcript,
+                        approval_request: &details,
+                    };
+                    super::guardian::review(
+                        &mut state.llm_client,
+                        &review_ctx,
+                        state.runtime_config.llm_request_timeout_secs,
+                    )
+                    .await
+                };
+                match outcome {
+                    super::guardian::ReviewOutcome::Allow => {
+                        state.turn_state.record_guardian_review(false);
+                        false
+                    }
+                    super::guardian::ReviewOutcome::Deny { rationale } => {
+                        let tripped = state.turn_state.record_guardian_review(true);
+                        emit(Event::Warning {
+                            message: format!("auto-review denied: {rationale}"),
+                        })
+                        .await;
+                        if tripped {
+                            emit(Event::Warning {
+                                message: "auto-review circuit breaker tripped; pausing for you"
+                                    .to_string(),
+                            })
+                            .await;
+                            true
+                        } else {
+                            // Self-correction: feed the denial back to the agent.
+                            let denied_payload = json!({
+                                "status": "denied_by_reviewer",
+                                "reason": rationale,
+                                "instruction": "Do not work around this denial. Pursue a \
+                                 materially safer alternative, or stop and ask the user."
+                            });
+                            emit(Event::ToolCallCompleted {
+                                presentation: None,
+                                id: tool_call.id.clone(),
+                                name: Some(tool_call.name.clone()),
+                                success: Some(false),
+                                result_preview: tool_result_preview(&denied_payload),
+                                audit: Some(audit.clone()),
+                            })
+                            .await;
+                            state.session.record_tool_call_with_audit(
+                                &tool_call.name,
+                                tool_arguments.clone(),
+                                denied_payload.clone(),
+                                false,
+                                Some(audit),
+                            );
+                            state.session.add_tool_message(
+                                &tool_call.id,
+                                &tool_call.name,
+                                denied_payload,
+                            );
+                            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                                refresh_context: false,
+                            });
+                        }
+                    }
+                    super::guardian::ReviewOutcome::Unavailable { reason } => {
+                        tracing::warn!(%reason, "auto-review unavailable; pausing for human");
+                        true
+                    }
+                }
+            } else {
+                // Always-human red line.
+                true
             };
-            state.session.record_tool_call_with_audit(
-                &tool_call.name,
-                tool_arguments.clone(),
-                json!({"status":"escalation_required"}),
-                true,
-                Some(audit),
-            );
-            state.turn_state.set_confirmation(pending.clone());
-            emit(Event::Yield {
-                request_id: pending.checkpoint_id,
-                kind: alan_protocol::YieldKind::Confirmation,
-                payload: serde_json::to_value(confirmation_payload(
-                    &state.session.client_capabilities,
-                    pending.checkpoint_type,
-                    pending.summary,
-                    pending.details,
-                    pending.options,
-                ))
-                .unwrap_or_else(|_| json!({})),
-            })
-            .await;
-            return Ok(ToolOrchestratorOutcome::PauseTurn);
+
+            if go_human {
+                let pending = PendingConfirmation {
+                    checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
+                    checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+                    summary,
+                    details,
+                    options: vec!["approve".to_string(), "reject".to_string()],
+                };
+                state.session.record_tool_call_with_audit(
+                    &tool_call.name,
+                    tool_arguments.clone(),
+                    json!({"status":"escalation_required"}),
+                    true,
+                    Some(audit),
+                );
+                state.turn_state.set_confirmation(pending.clone());
+                emit(Event::Yield {
+                    request_id: pending.checkpoint_id,
+                    kind: alan_protocol::YieldKind::Confirmation,
+                    payload: serde_json::to_value(confirmation_payload(
+                        &state.session.client_capabilities,
+                        pending.checkpoint_type,
+                        pending.summary,
+                        pending.details,
+                        pending.options,
+                    ))
+                    .unwrap_or_else(|_| json!({})),
+                })
+                .await;
+                return Ok(ToolOrchestratorOutcome::PauseTurn);
+            }
+
+            // Reviewer approved — proceed to execute (still sandboxed).
+            Some(audit)
         }
         ToolPolicyDecision::Forbidden { reason, audit } => {
             let blocked_payload = json!({
@@ -606,6 +699,7 @@ where
             })
             .await;
             emit(Event::ToolCallCompleted {
+                presentation: None,
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
                 success: Some(false),
@@ -631,6 +725,7 @@ where
 
     if is_dynamic_tool {
         emit(Event::ToolCallStarted {
+            title: None,
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
             audit: tool_audit.clone(),
@@ -755,6 +850,7 @@ where
     }
 
     emit(Event::ToolCallStarted {
+        title: super::tool_presentation::tool_title(&tool_call.name, &tool_arguments),
         id: tool_call.id.clone(),
         name: tool_call.name.clone(),
         audit: tool_audit.clone(),
@@ -780,6 +876,7 @@ where
                 })
             });
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(true),
@@ -916,6 +1013,7 @@ where
         })
         .await;
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: tool_call.id.clone(),
             name: Some(tool_call.name.clone()),
             success: Some(false),
@@ -951,8 +1049,28 @@ where
 
     match tool_result {
         Ok(value) => {
+            // `Ok` is only the transport result — the tool may report a logical
+            // failure in its payload (e.g. bash `{ "success": false, "exit_code": 1
+            // }`). Derive completion + effect status from that, so a failed
+            // side-effecting command is not cached as `Applied` (which would make a
+            // retry skip physical execution) and is not rendered as a success.
+            let payload_success =
+                value.get("success").and_then(serde_json::Value::as_bool) != Some(false);
             if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
                 let durable_value = crate::rollout::build_durable_tool_payload(&value);
+                let (status, applied_at, reason) = if payload_success {
+                    (
+                        crate::rollout::EffectStatus::Applied,
+                        Some(chrono::Utc::now().to_rfc3339()),
+                        None,
+                    )
+                } else {
+                    (
+                        crate::rollout::EffectStatus::Failed,
+                        None,
+                        Some("tool reported failure in payload".to_string()),
+                    )
+                };
                 state.session.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
                     run_id: effect_start.run_id.clone(),
@@ -962,17 +1080,22 @@ where
                     request_fingerprint: identity.request_fingerprint.clone(),
                     result_digest: Some(durable_value.digest),
                     result_payload: Some(durable_value.payload),
-                    status: crate::rollout::EffectStatus::Applied,
-                    applied_at: Some(chrono::Utc::now().to_rfc3339()),
-                    reason: None,
+                    status,
+                    applied_at,
+                    reason,
                     dedupe_hit: false,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 });
             }
             emit(Event::ToolCallCompleted {
+                presentation: super::tool_presentation::tool_presentation(
+                    &tool_call.name,
+                    &tool_arguments,
+                    &value,
+                ),
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
-                success: Some(true),
+                success: Some(payload_success),
                 result_preview: tool_result_preview(&value),
                 audit: tool_audit.clone(),
             })
@@ -981,7 +1104,7 @@ where
                 &tool_call.name,
                 tool_arguments.clone(),
                 value.clone(),
-                true,
+                payload_success,
                 tool_audit.clone(),
             );
             state
@@ -990,7 +1113,7 @@ where
             info!(
                 tool_name = %tool_call.name,
                 elapsed_ms = tool_start.elapsed().as_millis(),
-                success = true,
+                success = payload_success,
                 "Tool done"
             );
             Ok(ToolOrchestratorOutcome::ContinueToolBatch {
@@ -1019,6 +1142,7 @@ where
                 });
             }
             emit(Event::ToolCallCompleted {
+                presentation: None,
                 id: tool_call.id.clone(),
                 name: Some(tool_call.name.clone()),
                 success: Some(false),
@@ -1091,7 +1215,7 @@ fn workspace_routing_preflight(
         action: "deny".to_string(),
         reason: payload["error"].as_str().map(ToString::to_string),
         capability: capability_label(capability).to_string(),
-        sandbox_backend: crate::tools::Sandbox::backend_name_static().to_string(),
+        sandbox_backend: crate::tools::active_backend_name().to_string(),
     };
     Some((payload, preview, audit))
 }
@@ -1359,12 +1483,14 @@ where
             "error": "Skipped due to queued user steering input."
         });
         emit(Event::ToolCallStarted {
+            title: None,
             id: skipped.id.clone(),
             name: skipped.name.clone(),
             audit: None,
         })
         .await;
         emit(Event::ToolCallCompleted {
+            presentation: None,
             id: skipped.id.clone(),
             name: Some(skipped.name.clone()),
             success: Some(false),
@@ -1559,6 +1685,87 @@ mod tests {
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn reviewer_response(decision: &str) -> alan_llm::GenerationResponse {
+        alan_llm::GenerationResponse {
+            content: format!("{{\"decision\":\"{decision}\",\"rationale\":\"test\"}}"),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            finish_reason: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn escalating_state_with_reviewer(
+        counter: &Arc<AtomicUsize>,
+        decision: &str,
+    ) -> RuntimeLoopState {
+        let mut session = Session::new();
+        session.add_user_message("do the thing");
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            // Unknown capability → autonomous policy escalates → reviewer route.
+            name: "do_thing",
+            capability: ToolCapability::Unknown,
+            counter: Arc::clone(counter),
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.llm_client = LlmClient::new(
+            alan_llm::MockLlmProvider::new().with_response(reviewer_response(decision)),
+        );
+        state
+    }
+
+    #[tokio::test]
+    async fn reviewer_allow_executes_escalated_tool() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut state = escalating_state_with_reviewer(&counter, "allow");
+        let _ = execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "reviewer-approved escalation should execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn reviewer_deny_blocks_escalated_tool_and_feeds_back() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut state = escalating_state_with_reviewer(&counter, "deny");
+        let (_, events) = execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "reviewer-denied escalation must not execute"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Warning { message } if message.contains("auto-review denied")
+        )));
+    }
+
+    #[tokio::test]
+    async fn reviewer_repeated_denials_trip_breaker_to_human() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut state = escalating_state_with_reviewer(&counter, "deny");
+        // Third consecutive denial trips the circuit breaker and pauses for a human.
+        execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
+        execute_single_tool_call(&mut state, "c2", "do_thing", json!({})).await;
+        let (_, events) = execute_single_tool_call(&mut state, "c3", "do_thing", json!({})).await;
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Yield {
+                kind: alan_protocol::YieldKind::Confirmation,
+                ..
+            }
+        )));
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 
     fn create_test_state_with_session_and_tools(
@@ -2738,6 +2945,9 @@ mod tests {
             counter: Arc::clone(&counter),
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
+        // Exercise effect dedupe independent of the locked auto-approve posture
+        // (which would otherwise escalate the network call).
+        state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
             "headers": {
@@ -2796,6 +3006,9 @@ mod tests {
             counter: Arc::clone(&counter),
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
+        // Exercise effect recording independent of the locked auto-approve
+        // posture (which would otherwise escalate the network call).
+        state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
             "headers": {

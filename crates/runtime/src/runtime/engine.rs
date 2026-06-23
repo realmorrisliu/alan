@@ -192,7 +192,7 @@ fn best_effort_durability_warning(err: &anyhow::Error) -> String {
 }
 
 fn current_execution_backend() -> String {
-    crate::tools::Sandbox::backend_name_static().to_string()
+    crate::tools::active_backend_name().to_string()
 }
 
 fn runtime_host_capabilities(
@@ -2974,7 +2974,7 @@ required = true
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: Some(alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Conservative,
+                profile: alan_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             }),
         };
@@ -2983,7 +2983,7 @@ required = true
 
         assert_eq!(
             config.agent_config.runtime_config.governance.profile,
-            alan_protocol::GovernanceProfile::Conservative
+            alan_protocol::GovernanceProfile::Autonomous
         );
     }
 
