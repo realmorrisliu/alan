@@ -94,8 +94,8 @@ struct ShellActionCoordinator {
         try? ShellCoreFFIAdapter.shared.defaultActionShortcut(id, target: target)
     }
 
-    func keyboardAction(for shortcut: ShellActionShortcut) -> ShellKeyboardAction? {
-        try? ShellCoreFFIAdapter.shared.keyboardAction(shortcut)
+    func keyboardAction(for shortcut: ShellActionShortcut) throws -> ShellKeyboardAction? {
+        try ShellCoreFFIAdapter.shared.keyboardAction(shortcut)
     }
 
     func perform(

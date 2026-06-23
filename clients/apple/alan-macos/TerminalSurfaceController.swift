@@ -358,6 +358,7 @@ struct AlanTerminalKeyInput: Equatable {
 enum AlanTerminalKeyboardRoutingDecision: Equatable {
     case nativeCommand(String)
     case shellAction(ShellActionID, ShellActionTarget)
+    case shellActionLookupFailed(String)
     case terminalKey
     case interpretTextInput
     case drop
@@ -651,6 +652,12 @@ final class AlanTerminalInputRouter {
         case suppressingFocusTransfer
     }
 
+    private enum ShellActionLookup {
+        case action(ShellKeyboardAction)
+        case unmapped
+        case failed(String)
+    }
+
     private let pointerAdapter = AlanTerminalPointerAdapter()
     private var primaryButtonSequence = PrimaryButtonSequence.idle
 
@@ -687,8 +694,13 @@ final class AlanTerminalInputRouter {
         _ input: AlanTerminalKeyInput,
         hasMarkedText: Bool
     ) -> AlanTerminalKeyboardRoutingDecision {
-        if let action = routeShellAction(input) {
+        switch routeShellActionLookup(input) {
+        case .action(let action):
             return .shellAction(action.id, action.target)
+        case .failed(let reason):
+            return .shellActionLookupFailed(reason)
+        case .unmapped:
+            break
         }
 
         if input.phase == .down,
@@ -733,11 +745,21 @@ final class AlanTerminalInputRouter {
     }
 
     func routeShellAction(_ input: AlanTerminalKeyInput) -> ShellKeyboardAction? {
-        guard input.phase == .down, !input.isRepeat else { return nil }
-        guard input.modifiers.contains(.command) else { return nil }
+        guard case .action(let action) = routeShellActionLookup(input) else { return nil }
+        return action
+    }
 
-        guard let shortcut = shellActionShortcut(for: input) else { return nil }
-        return ShellActionCoordinator().keyboardAction(for: shortcut)
+    private func routeShellActionLookup(_ input: AlanTerminalKeyInput) -> ShellActionLookup {
+        guard input.phase == .down, !input.isRepeat else { return .unmapped }
+        guard input.modifiers.contains(.command) else { return .unmapped }
+
+        guard let shortcut = shellActionShortcut(for: input) else { return .unmapped }
+        do {
+            let action = try ShellActionCoordinator().keyboardAction(for: shortcut)
+            return action.map(ShellActionLookup.action) ?? .unmapped
+        } catch {
+            return .failed("shell-core keyboard action lookup unavailable")
+        }
     }
 
     private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {
