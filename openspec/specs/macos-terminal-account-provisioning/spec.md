@@ -10,9 +10,7 @@ conservative rollback.
 Alan for macOS SHALL provision Managed Terminal Accounts as local standard Unix
 accounts for terminal identity isolation and SHALL NOT enable macOS GUI
 automatic login as part of this feature. Alan SHALL support multiple Managed
-Terminal Accounts on the same Mac, and helper-backed management SHALL apply only
-to accounts carrying Alan-managed ownership evidence for the active install
-channel.
+Terminal Accounts on the same Mac.
 
 #### Scenario: Create standard terminal account
 - **WHEN** the user provisions Managed Terminal Account `alan`
@@ -20,15 +18,13 @@ channel.
 - **AND** the account has a home directory and login shell suitable for terminal
   sessions
 - **AND** the account is not granted administrator privileges by default
-- **AND** the account carries Alan-managed ownership evidence for the active
-  install channel
 
 #### Scenario: Create multiple terminal accounts
 - **WHEN** the user provisions Managed Terminal Accounts `alan`, `univer`, and
   `lab`
 - **THEN** alan tracks each account as a separate terminal-only local user
-- **AND** each account has independent readiness, helper diagnosis, repair,
-  verification, and Terminal Profile handoff state
+- **AND** each account has independent readiness, sudoers, verification, and
+  Terminal Profile handoff state
 
 #### Scenario: GUI automatic login remains unchanged
 - **WHEN** alan provisions a Managed Terminal Account
@@ -41,53 +37,36 @@ channel.
   lists where the operating system supports that setting
 - **AND** terminal entry remains the readiness criterion for the account
 
-#### Scenario: Existing ordinary account is discovered
-- **WHEN** a local Unix account exists with the same name as a requested Managed
-  Terminal Account but lacks Alan-managed ownership evidence
-- **THEN** alan reports the account as not Alan managed
-- **AND** alan does not repair, delete, hide, or launch terminals through that
-  account as a Managed User
-
 ### Requirement: Provisioning Uses Explicit Privileged Plans
 Alan for macOS SHALL represent account provisioning as a previewable privileged
 plan that the user must explicitly approve before local system state is changed.
-The V1 creation form SHALL ask only for Unix user name and display label, and
-privileged apply SHALL be performed by the signed privileged helper when the
-helper is installed and healthy.
+The V1 creation form SHALL ask only for Unix user name and display label.
 
 #### Scenario: Dry run previews changes
 - **WHEN** the user starts Managed Terminal Account provisioning
 - **THEN** alan presents a dry-run plan listing account creation or repair,
-  home-directory handling, shell selection, hidden-account handling,
-  Alan-managed ownership state, helper verification, legacy sudoers cleanup when
-  present, and Terminal Profile creation
+  home-directory handling, shell selection, hidden-account handling, sudoers
+  changes, validation, verification, and Terminal Profile creation
 - **AND** alan does not apply privileged changes during dry run
 
 #### Scenario: Creation input stays narrow
 - **WHEN** the user creates a Managed Terminal Account
 - **THEN** alan asks for a Unix user name and display label
 - **AND** alan derives home directory, login shell, hidden-login behavior,
-  helper ownership state, verification, and Terminal Profile id from structured
+  sudoers path, verification command, and Terminal Profile id from structured
   defaults
 
 #### Scenario: User cancels before apply
 - **WHEN** the user cancels the previewed provisioning plan
-- **THEN** alan does not create accounts, modify legacy sudoers state, or create
-  Terminal Profiles
+- **THEN** alan does not create accounts, modify sudoers, or create Terminal
+  Profiles
 
 #### Scenario: Privileged executor is isolated
 - **WHEN** alan applies an approved provisioning plan
-- **THEN** privileged account, home, hidden-login, ownership-marker, legacy
-  cleanup, and verification operations are routed through the privileged helper
+- **THEN** privileged account and sudoers operations are routed through a
+  narrow executor boundary
 - **AND** ordinary Settings rendering and shell workspace state do not receive
   reusable privileged credentials
-
-#### Scenario: Helper is unavailable
-- **WHEN** the privileged helper is not installed, outdated, invalidly signed,
-  or not responding
-- **THEN** alan reports helper installation or repair state
-- **AND** alan does not fall back to `osascript`, sudoers writes, or
-  passwordless sudo as the Managed User apply path
 
 ### Requirement: Provisioning Verification Is Mandatory
 Alan for macOS SHALL verify a Managed Terminal Account before marking it ready
@@ -123,7 +102,7 @@ Users surface.
 #### Scenario: Ready account creates profile
 - **WHEN** Managed Terminal Account `alan` verifies successfully
 - **THEN** alan creates or updates Terminal Profile `alan`
-- **AND** the profile uses structured `managed_user` launch mode for Unix user
+- **AND** the profile uses structured `sudo_user` launch mode for Unix user
   `alan`
 - **AND** the profile records that it is owned by Managed Terminal Account
   `alan`
@@ -132,8 +111,8 @@ Users surface.
 - **WHEN** the user views Terminal Profile `alan` created by Managed Terminal
   Account `alan`
 - **THEN** alan shows it as a managed read-only Terminal Profile
-- **AND** alan routes repair, refresh, and removal actions through Managed Users
-  instead of allowing direct profile edits
+- **AND** alan routes repair, refresh, and removal actions through Managed
+  Users instead of allowing direct profile edits
 
 #### Scenario: Failed account does not create ready profile
 - **WHEN** Managed Terminal Account `alan` fails verification
@@ -173,3 +152,19 @@ legacy Alan sudoers state.
 - **THEN** alan does not delete or repair that account during rollback
 - **AND** alan limits rollback to Alan-owned integration unless the user chooses
   a separate destructive operation for an Alan-managed account
+
+### Requirement: Managed Terminal User Catalog Is User Facing
+Alan for macOS SHALL present Managed Terminal Accounts as a user-facing catalog
+separate from Terminal Profiles.
+
+#### Scenario: Managed users list is shown
+- **WHEN** the user opens Settings > Terminal
+- **THEN** alan lists Managed Users by display label and Unix user name
+- **AND** alan shows readiness, repair, conflict, or partial state for each
+  Managed User
+
+#### Scenario: Managed user actions are state based
+- **WHEN** a Managed User is missing, ready, partial, repairable, or conflicting
+- **THEN** alan exposes only actions that match the state, such as Create,
+  Review, Repair, Verify, or Remove
+- **AND** alan does not offer raw sudoers or privileged-script editing
