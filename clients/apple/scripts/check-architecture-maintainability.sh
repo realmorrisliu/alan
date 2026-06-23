@@ -148,6 +148,27 @@ require_single_owner_pattern() {
     done < <(grep -RIl --include='*.swift' -F "$pattern" "$SOURCE_ROOT" || true)
 }
 
+require_existing_single_owner_pattern() {
+    local pattern="$1"
+    local owner="$2"
+    local description="$3"
+    local file
+    local rel
+    local matched=0
+
+    while IFS= read -r file; do
+        matched=1
+        rel="${file#$SOURCE_ROOT/}"
+        if [[ "$rel" != "$owner" ]]; then
+            fail "$description must stay in $owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "$pattern" "$SOURCE_ROOT" || true)
+
+    if [[ "$matched" -eq 0 ]]; then
+        fail "$description must exist in $owner"
+    fi
+}
+
 shell_core_ffi_shared_callsite_owner_allowlist=(
     "Models/Shell/ShellSettingsSurfaceModel.swift"
     "Models/Shell/ShellValueTypes.swift"
@@ -205,40 +226,49 @@ require_shell_core_ffi_raw_symbol_owners() {
 }
 
 require_shell_core_action_metadata_query_owners() {
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "ShellCoreFFIAdapter.shared.actionTitle" \
         "Services/Shell/ShellActionCoordinator.swift" \
         "shell-core action title lookup"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "ShellCoreFFIAdapter.shared.actionAvailability" \
         "Services/Shell/ShellActionCoordinator.swift" \
         "shell-core action availability lookup"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "ShellCoreFFIAdapter.shared.defaultActionShortcut" \
         "Services/Shell/ShellActionCoordinator.swift" \
         "shell-core action shortcut lookup"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "ShellCoreFFIAdapter.shared.keyboardAction" \
         "Services/Shell/ShellActionCoordinator.swift" \
         "shell-core keyboard action lookup"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "actions.standard_descriptors" \
         "Services/Shell/ShellCoreFFIActionAdapter.swift" \
         "shell-core action descriptor FFI operation"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "actions.default_shortcut" \
         "Services/Shell/ShellCoreFFIActionAdapter.swift" \
         "shell-core default shortcut FFI operation"
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "actions.keyboard_action" \
         "Services/Shell/ShellCoreFFIActionAdapter.swift" \
         "shell-core keyboard action FFI operation"
+
+    if grep -RIn --include='*.swift' \
+        -e "ShellActionAvailabilityResolver\\.availability" \
+        -e "ShellActionMetadataCatalog\\.shortcut" \
+        -e "ShellActionMetadataCatalog\\.keyboardAction" \
+        "$SOURCE_ROOT" >&2
+    then
+        fail "production shell action metadata must use shell-core FFI instead of Swift metadata fallback"
+    fi
 }
 
 reject_shell_host_published_terminal_runtime() {
