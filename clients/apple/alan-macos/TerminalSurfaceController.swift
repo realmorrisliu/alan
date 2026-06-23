@@ -358,6 +358,7 @@ struct AlanTerminalKeyInput: Equatable {
 enum AlanTerminalKeyboardRoutingDecision: Equatable {
     case nativeCommand(String)
     case shellAction(ShellActionID, ShellActionTarget)
+    case shellActionLookupFailed(String)
     case terminalKey
     case interpretTextInput
     case drop
@@ -651,8 +652,23 @@ final class AlanTerminalInputRouter {
         case suppressingFocusTransfer
     }
 
+    private enum ShellActionLookup {
+        case action(ShellKeyboardAction)
+        case unmapped
+        case failed(String)
+    }
+
     private let pointerAdapter = AlanTerminalPointerAdapter()
+    private let keyboardActionResolver: (ShellActionShortcut) throws -> ShellKeyboardAction?
     private var primaryButtonSequence = PrimaryButtonSequence.idle
+
+    init(
+        keyboardActionResolver: ((ShellActionShortcut) throws -> ShellKeyboardAction?)? = nil
+    ) {
+        self.keyboardActionResolver = keyboardActionResolver ?? { shortcut in
+            try ShellActionCoordinator().keyboardAction(for: shortcut)
+        }
+    }
 
     func reset() {
         primaryButtonSequence = .idle
@@ -687,15 +703,20 @@ final class AlanTerminalInputRouter {
         _ input: AlanTerminalKeyInput,
         hasMarkedText: Bool
     ) -> AlanTerminalKeyboardRoutingDecision {
-        if let action = routeShellAction(input) {
-            return .shellAction(action.id, action.target)
-        }
-
         if input.phase == .down,
            input.modifiers == .command,
            input.characters?.lowercased() == "q"
         {
             return .nativeCommand("quit")
+        }
+
+        switch routeShellActionLookup(input) {
+        case .action(let action):
+            return .shellAction(action.id, action.target)
+        case .failed(let reason):
+            return .shellActionLookupFailed(reason)
+        case .unmapped:
+            break
         }
 
         if input.phase == .down,
@@ -733,10 +754,23 @@ final class AlanTerminalInputRouter {
     }
 
     func routeShellAction(_ input: AlanTerminalKeyInput) -> ShellKeyboardAction? {
-        guard input.phase == .down, !input.isRepeat else { return nil }
+        guard case .action(let action) = routeShellActionLookup(input) else { return nil }
+        return action
+    }
 
-        guard let shortcut = shellActionShortcut(for: input) else { return nil }
-        return ShellActionMetadataCatalog.keyboardAction(for: shortcut)
+    private func routeShellActionLookup(_ input: AlanTerminalKeyInput) -> ShellActionLookup {
+        guard input.phase == .down, !input.isRepeat else { return .unmapped }
+        guard input.modifiers.contains(.command) else { return .unmapped }
+
+        guard let shortcut = shellActionShortcut(for: input) else { return .unmapped }
+        guard isShellOwnedKeyboardShortcut(shortcut) else { return .unmapped }
+
+        do {
+            let action = try keyboardActionResolver(shortcut)
+            return action.map(ShellActionLookup.action) ?? .unmapped
+        } catch {
+            return .failed("shell-core keyboard action lookup unavailable")
+        }
     }
 
     private func shellActionShortcut(for input: AlanTerminalKeyInput) -> ShellActionShortcut? {
@@ -773,6 +807,52 @@ final class AlanTerminalInputRouter {
             return "="
         }
         return characters
+    }
+
+    private func isShellOwnedKeyboardShortcut(_ shortcut: ShellActionShortcut) -> Bool {
+        Self.shellOwnedKeyboardShortcuts.contains(shortcut)
+    }
+
+    // Bounds lookup-failure consumption; shell-core remains the action mapping source of truth.
+    private static let shellOwnedKeyboardShortcuts: Set<ShellActionShortcut> = {
+        var shortcuts: Set<ShellActionShortcut> = [
+            shellShortcut("t", [.command]),
+            shellShortcut("w", [.command]),
+            shellShortcut("[", [.command, .shift]),
+            shellShortcut("]", [.command, .shift]),
+            shellShortcut("leftArrow", [.command, .option, .shift]),
+            shellShortcut("rightArrow", [.command, .option, .shift]),
+            shellShortcut("d", [.command, .option]),
+            shellShortcut("d", [.command]),
+            shellShortcut("d", [.command, .option, .shift]),
+            shellShortcut("d", [.command, .shift]),
+            shellShortcut("leftArrow", [.command, .control]),
+            shellShortcut("rightArrow", [.command, .control]),
+            shellShortcut("upArrow", [.command, .control]),
+            shellShortcut("downArrow", [.command, .control]),
+            shellShortcut("=", [.command, .option]),
+            shellShortcut("return", [.command, .shift]),
+            shellShortcut("leftArrow", [.command, .control, .shift]),
+            shellShortcut("rightArrow", [.command, .control, .shift]),
+            shellShortcut("upArrow", [.command, .control, .shift]),
+            shellShortcut("downArrow", [.command, .control, .shift]),
+            shellShortcut("w", [.command, .shift]),
+            shellShortcut("k", [.command]),
+            shellShortcut("f", [.command]),
+            shellShortcut("leftArrow", [.command, .option]),
+            shellShortcut("rightArrow", [.command, .option]),
+        ]
+        for index in 1...9 {
+            shortcuts.insert(shellShortcut(String(index), [.command, .option]))
+        }
+        return shortcuts
+    }()
+
+    private static func shellShortcut(
+        _ key: String,
+        _ modifiers: Set<ShellActionModifier>
+    ) -> ShellActionShortcut {
+        ShellActionShortcut(key: key, modifiers: modifiers, context: .shell)
     }
 
     func routePointer(

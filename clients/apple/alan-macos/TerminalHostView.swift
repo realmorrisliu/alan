@@ -1168,6 +1168,8 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
         case .nativeCommand("quit"):
             NSApp.terminate(nil)
             return
+        case .shellActionLookupFailed:
+            return
         case .nativeCommand, .drop:
             return
         case .interpretTextInput, .terminalKey:
@@ -1572,16 +1574,22 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             return routeFindCommandToShellHost()
         case .nativeCommand("quit"):
             return false
-        case .nativeCommand, .shellAction, .terminalKey, .interpretTextInput, .drop:
+        case .nativeCommand,
+             .shellAction,
+             .shellActionLookupFailed,
+             .terminalKey,
+             .interpretTextInput,
+             .drop:
             return false
         }
     }
 
     private func routeShellActionKeyIfNeeded(_ event: NSEvent) -> Bool {
-        guard case .shellAction(let actionID, let target) = surfaceController.routeKeyboard(
+        let decision = surfaceController.routeKeyboard(
             terminalKeyInput(for: event),
             hasMarkedText: markedText.length > 0
-        ) else {
+        )
+        guard case .shellAction(let actionID, let target) = decision else {
             return false
         }
         if actionID == .findOpen {

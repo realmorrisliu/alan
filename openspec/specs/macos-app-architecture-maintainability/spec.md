@@ -260,3 +260,198 @@ architecture checks, and script path references.
 - **AND** it rejects reintroduced `AlanNative` project, path, scheme, or target
   identity unless the occurrence is an explicit compatibility or migration
   fixture
+
+### Requirement: Reusable shell domain logic migrates to Rust shell core
+The Apple client architecture SHALL treat reusable shell workspace domain logic
+as Rust shell core ownership once the corresponding shell core module, Rust
+contract tests, and adapter tests exist.
+
+Swift files in the Apple client SHALL remain platform adapters, presentation
+layers, terminal runtime hosts, and compatibility wrappers rather than the
+stable home for reusable workspace reducer, manifest, action, control-command,
+or Terminal Profile domain semantics.
+
+#### Scenario: New reusable shell behavior is added
+- **WHEN** a developer adds behavior that changes platform-neutral shell
+  workspace semantics after the shell core module for that domain exists
+- **THEN** the behavior is implemented in the Rust shell core
+- **AND** the Apple client consumes it through a platform adapter rather than
+  adding a separate Swift implementation
+
+#### Scenario: Swift logic is replaced
+- **WHEN** a Swift shell domain module is replaced by Rust shell core behavior
+- **THEN** the replaced Swift implementation is removed or narrowed to adapter
+  code
+- **AND** `clients/apple/ARCHITECTURE.md` and architecture validation
+  expectations are updated when warning debt decreases
+
+### Requirement: Architecture debt burn-down follows shell core adoption
+Apple client architecture warning debt SHALL decrease as Swift shell domain
+logic is replaced by Rust shell core modules.
+
+#### Scenario: Rust-backed module lands
+- **WHEN** a Rust-backed shell core module replaces a Swift reducer, manifest,
+  action, control, profile, or settings domain implementation
+- **THEN** the implementation slice records which architecture warning class was
+  reduced or explains why the replacement is an intermediate adapter-only step
+- **AND** new pure domain logic is not added to the large Swift files that the
+  slice is meant to retire
+
+### Requirement: Replaced shell-domain Swift logic is deleted or adapter-only
+After a shell-domain area is replaced by Rust shell core, the Apple client SHALL
+remove the corresponding reusable Swift domain implementation or narrow it to
+adapter-only projection code.
+
+#### Scenario: Large Swift shell file is edited after replacement
+- **WHEN** a developer edits a large Swift shell model, controller, or service
+  file in a replaced core-owned area
+- **THEN** the edit does not add a new reusable shell-domain algorithm
+- **AND** any remaining Swift code is documented or structured as adapter
+  projection, platform effect execution, or platform recovery
+
+#### Scenario: Architecture checks run
+- **WHEN** architecture maintainability checks inspect shell-core replaced
+  areas
+- **THEN** they flag new Swift implementations of core-owned manifest,
+  reducer, action, control-command, profile, or settings-domain behavior as
+  architecture debt or failures according to the active gate mode
+
+### Requirement: Shell-core authority reduces architecture debt
+Each implementation slice MUST remove or narrow the replaced Swift
+implementation enough for the architecture debt record to shrink or become more
+precise when it makes a shell-domain area core-authoritative.
+
+#### Scenario: Manifest authority slice lands
+- **WHEN** the manifest authority slice is completed
+- **THEN** Swift no longer contains a runtime manifest default, prune, or
+  materialize implementation for the same portable behavior
+- **AND** `clients/apple/ARCHITECTURE.md` records the resulting ownership state
+
+### Requirement: Post-core Swift legacy shell-domain code is cleaned up
+After Rust shell core becomes authoritative, the Apple client SHALL remove
+Swift implementations of Rust-owned shell-domain behavior from production
+sources. Remaining script test helpers SHALL be FFI-backed builders or
+platform-only fakes, not duplicate Swift implementations of Rust-owned behavior.
+
+#### Scenario: Cleanup work starts
+- **WHEN** a shell adapter slimming PR begins after shell-core authority
+- **THEN** it records the Swift production files that still contain Rust-owned
+  manifest, reducer/control, action registry, Terminal Profile, settings, or
+  materialization behavior
+- **AND** it declares which legacy implementations will be removed or moved to
+  test support before implementation is considered complete
+
+#### Scenario: Cleanup slice completes
+- **WHEN** a cleanup slice moves Swift code that duplicates Rust-owned behavior
+- **THEN** the normal macOS app target no longer compiles that implementation as
+  production model/controller/service code
+- **AND** any remaining Swift test helper is FFI-backed or platform-only support
+- **AND** the slice does not add a new shell-core fallback path
+
+#### Scenario: Cleanup boundary is missed
+- **WHEN** a cleanup slice finishes while production Swift still carries the
+  promised Rust-owned legacy implementation
+- **THEN** the PR records the remaining blocker in `clients/apple/ARCHITECTURE.md`
+- **AND** the OpenSpec task for that legacy cleanup remains incomplete
+
+### Requirement: Shell-core FFI adapter is split into narrow operation owners
+The Swift shell-core bridge SHALL keep a small public facade while moving
+operation-family implementation details into focused internal owners for
+dynamic loading, envelope send/receive, portable state materialization,
+manifest operations, reducer operations, control commands, action registry,
+settings summaries, and Terminal Profile resolution.
+
+#### Scenario: FFI operation implementation changes
+- **WHEN** a developer changes shell-core request encoding, response decoding,
+  error mapping, or materialization for one operation family
+- **THEN** the change is located in that operation family's adapter owner or a
+  shared envelope/materialization helper
+- **AND** the public `ShellCoreFFIAdapter` surface remains a thin facade for
+  existing macOS call sites
+
+#### Scenario: FFI adapter split is validated
+- **WHEN** an operation-family adapter is moved out of the coarse bridge file
+- **THEN** the shell-core FFI adapter script and any affected operation-family
+  script run successfully
+- **AND** shell contract validation still rejects optional Swift domain fallback
+  for core-owned operations
+
+#### Scenario: Action registry metadata FFI owners are validated
+- **WHEN** action registry descriptors, availability, shortcuts, or keyboard
+  lookup are routed through shell core
+- **THEN** architecture validation allows high-level Swift calls only in
+  `ShellActionCoordinator`
+- **AND** raw action metadata operation names remain confined to the shell-core
+  action adapter owner
+
+### Requirement: Shell host controller narrows to orchestration
+`ShellHostController.swift` SHALL stop owning shell-core-backed domain routing
+and large platform helper implementations directly. It SHALL coordinate
+observable state and delegate manifest startup, persistence scheduling, action
+dispatch, reducer command routing, control response adoption, and platform
+metadata preservation to named collaborators.
+
+#### Scenario: Manifest startup is extracted
+- **WHEN** workspace manifest startup or persistence behavior changes
+- **THEN** the shell host controller delegates loading, shell-core materializing,
+  pruning, failure diagnostics, and write scheduling to a manifest/startup
+  collaborator
+- **AND** the controller does not regain a Swift implementation of portable
+  manifest defaulting, pruning, migration, or materialization
+
+#### Scenario: Shell action or reducer command routing is extracted
+- **WHEN** shell action dispatch, reducer-backed commands, or control response
+  adoption changes
+- **THEN** shell-core invocation and result projection live in a named
+  coordinator or service rather than in unrelated controller methods
+- **AND** Swift platform effects remain explicit and separate from portable
+  shell-domain validation
+
+#### Scenario: Controller split is validated
+- **WHEN** a controller-owned shell-core path is moved
+- **THEN** the affected focused shell script runs with shell contract
+  validation and architecture maintainability validation
+
+### Requirement: Obsolete Swift parity helpers are removed
+The Apple client SHALL remove Swift implementations that only duplicate
+Rust-owned portable shell-domain behavior for parity validation. Swift script
+tests may keep explicit FFI-backed builders or platform-effect fakes, but they
+must not keep a second Swift registry, manifest materializer, reducer, or split
+tree implementation as fallback behavior.
+
+#### Scenario: Action registry parity code is removed
+- **WHEN** Rust action contract tests and FFI adapter tests cover action
+  descriptors, target resolution, availability, shortcuts, and effects
+- **THEN** Swift standard registry tables and resolver fixtures are removed from
+  production and script-support sources
+- **AND** `check-shell-contracts.sh` continues to reject production references
+  to Swift registry implementations as shell-core fallback
+
+#### Scenario: Manifest parity helpers are removed
+- **WHEN** Swift manifest defaulting, pruning, migration, or materialization
+  helpers duplicated Rust-owned behavior
+- **THEN** they are removed from production and script-support sources
+- **AND** Rust shell-core or FFI tests cover the portable behavior
+
+### Requirement: Behavior-preserving splits keep focused verification
+Each shell adapter slimming slice SHALL pair moved ownership with focused tests
+for the behavior being moved, plus architecture validation and shell-core
+authority guards.
+
+#### Scenario: Manifest or runtime metadata owner moves
+- **WHEN** manifest startup, persistence, or runtime metadata preservation is
+  moved to a new owner
+- **THEN** the workspace-manifest, runtime-metadata, shell-contract, and
+  architecture-maintainability scripts run successfully
+
+#### Scenario: Action, settings, profile, or control owner moves
+- **WHEN** action registry, settings summary, Terminal Profile, local control,
+  or shell-core adapter projection code moves to a new owner
+- **THEN** the corresponding focused Swift script runs successfully
+- **AND** Rust shell-core or shell-core-ffi tests still cover portable domain
+  behavior
+
+#### Scenario: Warning ledger changes
+- **WHEN** a cleanup or split removes or narrows a warning from the architecture report
+- **THEN** `clients/apple/ARCHITECTURE.md` is updated in the same PR with the
+  new warning count, remaining owners, and next follow-up boundary

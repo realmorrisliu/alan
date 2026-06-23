@@ -14,6 +14,10 @@ struct TerminalSurfaceControllerTestRunner {
 
 @MainActor
 private enum TerminalSurfaceControllerTests {
+    private enum TestShellActionLookupError: Error {
+        case unavailable
+    }
+
     static func run() {
         verifiesScrollbackMetricsAndTerminalModes()
         verifiesModeTrackerPreservesTerminalScrollRouting()
@@ -23,6 +27,7 @@ private enum TerminalSurfaceControllerTests {
         verifiesTerminalClearIntentRecognition()
         verifiesTypedClearCommandTracker()
         verifiesRegistryBackedShellShortcuts()
+        verifiesShellLookupFailuresOnlyConsumeShellOwnedShortcuts()
         verifiesTUIKeyboardRoutingKeepsTerminalOwnedKeysInTerminal()
         verifiesKeyboardPipelineKeepsPhysicalKeysOnGhosttyKeyPath()
         verifiesGhosttyKeyEquivalentRedispatchContract()
@@ -441,6 +446,54 @@ private enum TerminalSurfaceControllerTests {
         expect(
             indexedSpace == .shellAction(.spaceSelectByIndex, .spaceIndex(1)),
             "command-option-2 must route to the second dynamic space-selection target"
+        )
+    }
+
+    private static func verifiesShellLookupFailuresOnlyConsumeShellOwnedShortcuts() {
+        var lookedUpShortcuts: [ShellActionShortcut] = []
+        let router = AlanTerminalInputRouter(keyboardActionResolver: { shortcut in
+            lookedUpShortcuts.append(shortcut)
+            throw TestShellActionLookupError.unavailable
+        })
+
+        let commandC = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "c",
+                keyCode: 8,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            commandC == .terminalKey,
+            "command-c must remain terminal/AppKit-owned when shell-core lookup is unavailable"
+        )
+        expect(
+            lookedUpShortcuts.isEmpty,
+            "unknown command shortcuts must not ask shell-core before terminal fallback"
+        )
+
+        let commandT = router.routeKeyboard(
+            AlanTerminalKeyInput(
+                characters: "t",
+                keyCode: 17,
+                modifiers: [.command],
+                phase: .down,
+                isRepeat: false
+            ),
+            hasMarkedText: false
+        )
+        expect(
+            commandT == .shellActionLookupFailed("shell-core keyboard action lookup unavailable"),
+            "shell-owned command shortcuts must fail closed when shell-core lookup is unavailable"
+        )
+        expect(
+            lookedUpShortcuts == [
+                ShellActionShortcut(key: "t", modifiers: [.command], context: .shell),
+            ],
+            "shell-owned command shortcuts must still report shell-core lookup failures"
         )
     }
 

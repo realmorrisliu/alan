@@ -384,3 +384,81 @@ without silently changing the pinned template.
 #### Scenario: Pinned tab live structure no longer matches the pin snapshot
 - **WHEN** a close-time transcript snapshot refers to terminal content that is not present in the pinned restore snapshot
 - **THEN** Alan preserves the pinned restore snapshot behavior and ignores the unmatched transcript for that restored tab
+
+### Requirement: macOS delegates portable manifest semantics to shell core
+Alan for macOS SHALL delegate portable workspace manifest semantics to the Rust
+shell core after the manifest module has Rust contract tests and adapter tests.
+
+The macOS platform layer SHALL continue to own Application Support path
+selection, file reads and writes, atomic persistence, corrupt-file evidence, and
+diagnostics presentation.
+
+#### Scenario: macOS loads a workspace manifest
+- **WHEN** Alan for macOS reads a workspace manifest from disk after shell core
+  manifest integration
+- **THEN** macOS passes the manifest bytes and platform context to the shell
+  core for decode, upgrade, materialization, and pruning semantics
+- **AND** macOS remains responsible for preserving corrupt evidence and choosing
+  the file path used for persistence
+
+#### Scenario: Manifest output is persisted
+- **WHEN** the shell core returns an updated manifest or manifest sync hint
+- **THEN** the macOS platform layer writes the result through its persistence
+  store
+- **AND** the shell core does not directly access the user's file system
+
+### Requirement: Manifest compatibility is preserved during migration
+Rust-backed manifest behavior SHALL preserve compatibility with existing macOS
+workspace manifest JSON unless a later spec explicitly changes the manifest
+schema.
+
+#### Scenario: Existing manifest is read by Rust-backed path
+- **WHEN** Alan for macOS reads a manifest written by the current Swift
+  implementation
+- **THEN** the Rust-backed path decodes or upgrades it according to the existing
+  manifest contract
+- **AND** Space, Tab, PaneSlot, ContentInstance, selection, pin/live snapshot,
+  lifecycle, Terminal Profile reference, and legacy `quick_terminal` discard
+  semantics remain intact
+
+### Requirement: Workspace manifest algorithms are shell-core authoritative at runtime
+The macOS shell SHALL use Rust shell core for workspace manifest defaulting,
+legacy migration, lifecycle pruning, and materialization into current shell
+state. Swift SHALL own manifest file IO, corrupt-file preservation, and
+platform diagnostics, but SHALL NOT retain a runtime Swift implementation of
+the same portable manifest algorithms after shell core covers them.
+
+#### Scenario: Missing manifest creates default through core
+- **WHEN** Alan for macOS starts and no workspace manifest exists
+- **THEN** Swift asks shell core to create the default workspace manifest
+- **AND** Swift writes that manifest to the macOS manifest path
+- **AND** Swift does not call a separate `ShellContentWorkspaceManifest`
+  defaulting algorithm as a fallback
+
+#### Scenario: Valid manifest materializes through core
+- **WHEN** Alan for macOS loads a valid workspace manifest
+- **THEN** Swift asks shell core to materialize the current shell state
+- **AND** the launched shell state is derived from the shell-core result
+- **AND** Swift does not materialize an alternate state through a platform
+  `ShellWorkspaceMaterializer`
+
+#### Scenario: Startup pruning runs through core
+- **WHEN** Alan for macOS prunes expired unpinned Tabs during startup
+- **THEN** Swift asks shell core to apply the pruning semantics
+- **AND** Swift persists the returned manifest when it differs from the loaded
+  manifest
+- **AND** Swift does not apply a separate pruning algorithm after a core failure
+
+#### Scenario: Corrupt manifest recovery preserves evidence
+- **WHEN** Alan for macOS detects an unreadable or unsupported manifest file
+- **THEN** Swift quarantines the corrupt file and records recovery diagnostics
+- **AND** Swift asks shell core for the replacement default manifest
+- **AND** Swift does not restore from legacy shell-state snapshots as a domain
+  fallback
+
+#### Scenario: Core manifest authority fails
+- **WHEN** shell core cannot create, prune, migrate, or materialize a workspace
+  manifest
+- **THEN** Alan for macOS reports an explicit shell-core manifest failure
+- **AND** it does not silently launch from a Swift-computed workspace state for
+  the same manifest
