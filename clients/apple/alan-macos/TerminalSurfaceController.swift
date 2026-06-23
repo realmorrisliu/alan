@@ -734,6 +734,7 @@ final class AlanTerminalInputRouter {
 
     func routeShellAction(_ input: AlanTerminalKeyInput) -> ShellKeyboardAction? {
         guard input.phase == .down, !input.isRepeat else { return nil }
+        guard input.modifiers.contains(.command) else { return nil }
 
         guard let shortcut = shellActionShortcut(for: input) else { return nil }
         return ShellActionCoordinator().keyboardAction(for: shortcut)
