@@ -694,6 +694,13 @@ final class AlanTerminalInputRouter {
         _ input: AlanTerminalKeyInput,
         hasMarkedText: Bool
     ) -> AlanTerminalKeyboardRoutingDecision {
+        if input.phase == .down,
+           input.modifiers == .command,
+           input.characters?.lowercased() == "q"
+        {
+            return .nativeCommand("quit")
+        }
+
         switch routeShellActionLookup(input) {
         case .action(let action):
             return .shellAction(action.id, action.target)
@@ -701,13 +708,6 @@ final class AlanTerminalInputRouter {
             return .shellActionLookupFailed(reason)
         case .unmapped:
             break
-        }
-
-        if input.phase == .down,
-           input.modifiers == .command,
-           input.characters?.lowercased() == "q"
-        {
-            return .nativeCommand("quit")
         }
 
         if input.phase == .down,

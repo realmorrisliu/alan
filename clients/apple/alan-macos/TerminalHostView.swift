@@ -1590,9 +1590,6 @@ final class AlanTerminalHostNSView: NSView, NSTextInputClient, TerminalRuntimeHa
             hasMarkedText: markedText.length > 0
         )
         guard case .shellAction(let actionID, let target) = decision else {
-            if case .shellActionLookupFailed = decision {
-                return true
-            }
             return false
         }
         if actionID == .findOpen {

@@ -1470,8 +1470,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "ShellActionMetadataCatalog\\.keyboardAction" \
-    "terminal keyboard shortcuts must use local shell action metadata before terminal bindings"
+    "ShellActionCoordinator\\(\\)\\.keyboardAction" \
+    "terminal keyboard shortcuts must query shell-core action metadata before terminal bindings"
 
 require_pattern \
     "clients/apple/alan-macos/TerminalHostView.swift" \
