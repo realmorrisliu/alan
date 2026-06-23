@@ -51,6 +51,15 @@ existing raw-literal guard into CI — so duplication grows unchecked.
   existing canonical `ShellButtonPressStyle` / `ShellTextField` rather than ad-hoc
   styles.
 
+## Programmable Environment Alignment
+
+This change is a **host-surface/design-system** capability in the programmable
+environment model. It owns the macOS SwiftUI presentation primitives, token usage,
+accessibility baseline, previews, and visual migration discipline that future
+environment surfaces can compose. It does **not** define environment core semantics:
+objects, commands, buffers, views, queries, ledgers, agent policy, or app domain truth
+remain owned by the programmable environment/runtime and by each environment app.
+
 Scope is the primary macOS **shell** SwiftUI presentation layer only. Ghostty/AppKit
 terminal-host internals (`TerminalHostView`, terminal surface input/attachment) and
 the legacy/mobile remote-control console (`Views/Console/`) are explicitly out of

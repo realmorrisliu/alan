@@ -1,3 +1,7 @@
+## 0. Programmable Environment Alignment
+
+- [x] 0.1 Record the macOS shell component system as a host-surface/design-system capability that may render programmable environment views later, while leaving object, command, buffer, view, query, ledger, agent-policy, and app-domain semantics outside the component layer
+
 ## 1. Establish the design-system home
 
 - [ ] 1.1 Create `clients/apple/alan-macos/Views/Shell/Components/` and add it to the Xcode project group
