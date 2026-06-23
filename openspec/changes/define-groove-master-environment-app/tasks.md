@@ -1,3 +1,7 @@
+## 0. Programmable Environment Alignment
+
+- [x] 0.1 Record Groove Master as an environment app with a portable domain core, separate audio runtime, Alan environment adapter, and host-surface boundary; keep current Alan shell internals out of the domain model
+
 ## 1. Product Boundary
 
 - [ ] 1.1 Define Groove Master as a real bass practice app inside the future

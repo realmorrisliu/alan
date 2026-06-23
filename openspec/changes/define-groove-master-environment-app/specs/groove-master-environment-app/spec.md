@@ -19,6 +19,28 @@ purpose SHALL be daily bass practice rather than proving Alan.
 - **AND** Groove Master domain logic remains separate from current macOS shell
   implementation details
 
+### Requirement: Groove Master Uses Environment App Boundaries
+Groove Master SHALL be classified as an environment app with separate domain core,
+audio runtime, Alan environment adapter, and host-surface boundaries. The domain core
+SHALL own music-practice truth; the Alan adapter SHALL expose that truth through
+programmable environment abstractions; host surfaces SHALL render and command the
+domain through the adapter rather than becoming the source of truth.
+
+#### Scenario: Environment app architecture is proposed
+- **WHEN** a future implementation change proposes Groove Master architecture
+- **THEN** it identifies the domain core for practice phases, plan generation,
+  practice blocks, loop metadata, session lifecycle, recordings, markers, reflections,
+  pocket-tracker signals, journal entries, and producer-note records
+- **AND** it identifies the Alan environment adapter for objects, commands, buffers,
+  views, queries, local-first persistence, and producer-agent participation
+- **AND** it identifies the audio runtime and first host surface as separate boundaries
+
+#### Scenario: Host surface renders Groove Master
+- **WHEN** Groove Master is mounted in a macOS or future environment host surface
+- **THEN** the host renders views and invokes commands through the Alan adapter
+- **AND** the host does not own Groove Master domain state, journal records, audio
+  references, plan generation, or producer-note truth
+
 ### Requirement: V1 Provides A Complete Daily Practice Loop
 V1 Groove Master SHALL support one complete daily loop from plan to recorded
 journal entry.
