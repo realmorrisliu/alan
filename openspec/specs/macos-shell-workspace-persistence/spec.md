@@ -418,8 +418,8 @@ schema.
 - **THEN** the Rust-backed path decodes or upgrades it according to the existing
   manifest contract
 - **AND** Space, Tab, PaneSlot, ContentInstance, selection, pin/live snapshot,
-  lifecycle, Terminal Profile reference, and quick terminal restore semantics
-  remain intact
+  lifecycle, Terminal Profile reference, and legacy `quick_terminal` discard
+  semantics remain intact
 
 ### Requirement: Workspace manifest algorithms are shell-core authoritative at runtime
 The macOS shell SHALL use Rust shell core for workspace manifest defaulting,

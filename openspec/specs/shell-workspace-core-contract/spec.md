@@ -59,8 +59,8 @@ sync hints, and stable result or error data.
 ### Requirement: Manifest semantics are portable and versioned
 The shell core SHALL own portable workspace manifest semantics, including schema
 versioning, default manifest creation, legacy upgrade, materialization into
-workspace state, TTL pruning, pinned and live restore snapshots, and quick
-terminal restore records.
+workspace state, TTL pruning, pinned and live restore snapshots, and legacy
+`quick_terminal` load-tolerant discard semantics.
 
 The manifest SHALL store restorable workspace intent and SHALL NOT store
 terminal process handles, PTY file descriptors, renderer objects, Ghostty
@@ -74,6 +74,12 @@ scrollback.
   restore snapshot semantics
 - **AND** platform adapters create new terminal runtimes from returned runtime
   intents rather than restoring renderer or process objects from the manifest
+
+#### Scenario: Legacy quick terminal record is discarded
+- **WHEN** a workspace manifest contains an old `quick_terminal` restore record
+- **THEN** the shell core tolerates the record for load compatibility
+- **AND** materialized workspace state, runtime intents, and future manifest
+  writes omit that record rather than preserving Quick Terminal restore behavior
 
 #### Scenario: Manifest pruning runs
 - **WHEN** the shell core prunes unpinned inactive Tabs outside the configured
@@ -92,6 +98,12 @@ actions.
 - **THEN** action availability and target resolution come from the shell core
 - **AND** the platform surface owns only presentation, input gesture handling,
   and platform-specific menu or shortcut rendering
+
+#### Scenario: Removed quick terminal action is requested
+- **WHEN** a platform surface requests a `shell.quick_terminal.*` action ID
+- **THEN** the shell core reports it as unsupported
+- **AND** the request is not remapped to a replacement app/window command or any
+  reusable workspace action
 
 ### Requirement: Control command reducer returns authoritative outcomes
 The shell core SHALL define reusable shell control command validation, stable
@@ -175,4 +187,3 @@ and FFI adapter checks that prove Rust shell core behavior and Swift projection.
 - **AND** Rust tests pass for those cases
 - **AND** Swift adapter tests verify encode, decode, error mapping, and version
   handling for the replacement path
-
