@@ -88,4 +88,3 @@ encoding, decoding, error mapping, platform effects, and app integration.
 - **THEN** equivalent Rust shell-core tests or fixture tests cover the behavior
 - **AND** Swift tests do not require the removed domain implementation to remain
   available as a runtime fallback
-
