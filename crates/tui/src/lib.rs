@@ -8,6 +8,8 @@ pub mod form;
 pub mod history;
 pub mod terminal;
 pub mod ui;
+pub mod workspace_input;
+pub mod workspace_render;
 
 use crate::app::{AppEvent, TuiApp};
 use crate::completion::CompletionCandidate;
