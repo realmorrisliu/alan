@@ -1,0 +1,13 @@
+[package]
+name = "alan-agent"
+description = "Built-in Alan Agent app projection layer for Alan OS."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-kernel.workspace = true
+alan-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
