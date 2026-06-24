@@ -6,6 +6,62 @@
 
 ---
 
+## Component Names
+
+Use these names consistently in docs, specs, code comments, UI copy, and review
+comments:
+
+| Name | Meaning |
+| ---- | ------- |
+| **Alan** | The product: a programmable personal computing environment. Do not use "programmable environment" as a separate product name. |
+| **Alan OS** | The operating-system boundary for Alan: Alan Kernel, Host Service APIs, System Agent Supervisor, Agent Capability Service, app/capability registry, hosts, and app integration conventions. It is not the daemon, CLI, TUI, macOS app, or agent engine. |
+| **Alan Kernel** / `alan-kernel` | The semantic substrate inside Alan: objects, commands, buffers, views, tasks, actors, permissions, ledgers, projections, and app/capability registry. |
+| **Host Service APIs** | Abstract Alan OS service interfaces for storage, credentials, connection profiles, process/runtime supervision, event transport, scheduling/reconnect, policy, skill catalogs, and OS integration. |
+| **Host Service Implementations** | Concrete providers of Host Service APIs. Today the Alan daemon implements or bridges many of them; future Alan for macOS may embed some; tests may use in-memory providers. |
+| **Alan Daemon** / `alan daemon` | The current local process/gateway exposing HTTP/WS and implementing or bridging Host Service APIs. It is not Alan OS and not an app backend. |
+| **Alan CLI** / `alan` | The operator/client entrypoint for configuration, daemon control, local commands, and developer workflows. |
+| **Alan App** | A registered app module with manifest, object types, commands, task types, buffers/views, projections, required Host Service APIs, and exported capabilities. |
+| **Capability** | A typed ability exported by Alan OS or an Alan App, invoked through command, permission, and audit paths. |
+| **System Agent Supervisor** | The always-available Alan OS agent supervisor with long-lived identity, memory, system awareness, and cross-app continuity. It supervises scoped Agent Runs; it is not a root chat session and not the Alan Agent UI. |
+| **Agent Capability** | A standard Alan OS ability that lets Alan Apps request scoped AI-mediated reading, planning, transformation, delegation, or action through typed Context Grants and Result Contracts without depending on the Alan Agent UI. |
+| **Agent Capability Service** | The Host Service API that starts, schedules, streams, yields, resumes, cancels, and completes Agent Runs using provider, runtime, memory, and execution implementations outside Alan Kernel. |
+| **Agent Run** | A bounded execution of an Agent Capability owned by the requesting app, object, or task by default, with System Agent Supervisor continuity when allowed. |
+| **Alan Agent** | The built-in Agent Workspace Alan App for inspecting, steering, and organizing agent sessions, Agent Runs, supervisor-raised tasks, memory, evidence, and cross-app work. It is not the System Agent Supervisor or Agent Capability Service; it uses an internal Agent Execution Engine and projects work into Alan Kernel semantics. |
+| **Agent Execution Engine** / `alan-runtime` | Current internal execution engine used by Alan Agent: tape, session loop, tools, skills, policy, memory, and persistence. It is not Alan OS or Alan Kernel. Future crate name: `alan-agent-engine`. |
+| **Alan for macOS** | Native Apple host for Alan: renderer, input shell, windowing, and OS integration surface. |
+| **Alan TUI** / `alan-terminal-ui` | Terminal host for Alan, currently implemented with Ratatui in `crates/tui`. |
+| **Alan Agent App Module** / future `alan-agent` | Durable module boundary for the Alan Agent workspace projections, commands, buffers, views, tasks, artifacts, evidence, and compatibility adapters. |
+| **Alan Terminal Renderer** / future `alan-terminal-renderer` | Optional extracted renderer/input adapter for the terminal host. Prefer folding terminal renderer work into `alan-terminal-ui` until an independent crate boundary is justified. |
+| **Alan Apps** | Apps such as Alan Agent and Groove Master that run on Alan OS with app-owned domain cores and Alan adapters. |
+
+---
+
+## Architecture Progression Principle
+
+When implementing OpenSpec changes, move the codebase toward the accepted Alan
+OS target shape, not just the smallest local patch.
+
+- Prefer directory structure, crate boundaries, module names, and public APIs
+  that match the target architecture already recorded in OpenSpec and this
+  guide.
+- When touching old compatibility code, add or extract the next durable layer
+  if it clarifies ownership and reduces future migration risk. For example,
+  keep Alan Kernel semantics in `alan-kernel`, Alan Agent workspace projection
+  in `alan-agent`, host rendering/input in `alan-terminal-ui` or Alan for macOS,
+  and current Agent Execution Engine behavior inside the engine/daemon
+  compatibility layer.
+- Keep each step scoped to the change being implemented: do not perform broad
+  unrelated rewrites, but do leave the touched area with clearer ownership,
+  smaller modules, and more readable layering than before.
+- Prefer explicit adapter/projection boundaries over leaking daemon, TUI,
+  macOS, provider, sandbox, or memory-store details into Alan Kernel or app
+  domain models.
+- If a first implementation slice starts as a compatibility bridge, make the
+  bridge's temporary nature visible in names, docs, and tests so the next slice
+  can replace it without rediscovering the intended architecture.
+
+---
+
 ## Core Concept: AI Turing Machine
 
 alan treats each agent as a **Turing machine** where the LLM is the transition function:
@@ -19,7 +75,13 @@ alan treats each agent as a **Turing machine** where the LLM is the transition f
 | **Side Effects**        | Tool execution — the way the machine acts on the world     |
 | **Halt**                | No more tool calls, final text response emitted            |
 
-`alan-runtime` is the generic machine; it knows nothing about hosting, deployment, or domain-specific behavior. All domain concerns live in outer crates.
+`alan-runtime` currently implements the Agent Execution Engine used by Alan
+Agent. It is the generic Turing-machine loop for agent work, not Alan OS
+or Alan Kernel. Alan OS semantics such as objects, commands, views, tasks,
+actors, ledgers, projections, app registration, and capabilities belong in Alan
+Kernel and Host Service APIs.
+Agent Capability is a standard Alan OS ability, while Alan Agent is the built-in
+Agent Workspace app that exposes, organizes, and supervises agent work for users.
 
 ### Hosting And Execution Model
 
@@ -146,7 +208,7 @@ alan/
 │   │       ├── openrouter.rs       # OpenRouter SDK-backed chat adapter
 │   │       └── anthropic_messages.rs
 │   │
-│   ├── runtime/               # Core runtime (the "machine")
+│   ├── runtime/               # Agent Execution Engine (current alan-runtime)
 │   │   ├── prompts/           # Embedded prompt templates
 │   │   │   ├── runtime_base.md
 │   │   │   ├── system.md
@@ -224,6 +286,10 @@ alan/
 │   │   └── src/
 │   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
 │   │
+│   ├── alan-kernel/           # Alan Kernel substrate primitives
+│   │   └── src/
+│   │       └── lib.rs
+│   │
 │   ├── tui/                   # Rust inline terminal UI linked into alan
 │   │   └── src/
 │   │       ├── lib.rs         # TUI run loop entrypoint
@@ -238,7 +304,7 @@ alan/
 │   │   │   └── main.rs
 │   │   └── tests/
 │   │
-│   └── alan/                  # CLI & daemon (alan binary)
+│   └── alan/                  # CLI & daemon (current host-service implementation/gateway)
 │       └── src/
 │           ├── main.rs        # CLI entry point (clap)
 │           ├── lib.rs         # Library exports
@@ -283,9 +349,11 @@ alan-protocol (base — no internal deps)
     ↑
 alan-llm (depends on alan-protocol)
     ↑
-alan-runtime (depends on alan-protocol, alan-llm)
+alan-runtime (Agent Execution Engine; depends on alan-protocol, alan-llm)
     ↑        ↑
 alan-tools   alan (depends on alan-protocol, alan-runtime)
+
+alan-kernel (Alan Kernel substrate primitives)
 ```
 
 ---

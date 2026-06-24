@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first Alan for macOS Groove Master environment app slice: Today Plan, practice blocks, Groove Journal persistence, Pocket Tracker signals, and a minimal hosted Groove Master content surface.
+**Goal:** Build the first Alan for macOS Groove Master Alan App slice: Today Plan, practice blocks, Groove Journal persistence, Pocket Tracker signals, and a minimal hosted Groove Master content surface.
 
 **Architecture:** Add a portable Groove Master domain core under the macOS client first, then expose it through the existing shell content-container system as a new non-terminal content kind. Keep recording, journal, and Alan hosting behind small interfaces so the domain model can move to a shared Apple module later.
 
@@ -1852,7 +1852,7 @@ If no source changes were needed, do not create an empty commit.
 ## Self-Review Notes
 
 - Spec coverage:
-  - Product boundary: Tasks 4-7 expose Groove Master as non-terminal environment content while keeping domain files separate.
+  - Product boundary: Tasks 4-7 expose Groove Master as non-terminal Alan content while keeping domain files separate.
   - Daily loop: Tasks 1-3 model Today Plan, blocks, journal, markers, reflection, and pocket signals.
   - Practice route: Task 2 implements the fixed 12-month route and weekly cadence.
   - Audio model: Task 3 adds capture interfaces and fake room capture; real AVFoundation can replace the client without changing domain tests.

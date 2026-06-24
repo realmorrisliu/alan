@@ -1,10 +1,10 @@
 # Alan
 
-**Alan is an agent built to be the next computer.**
+**Alan is a programmable personal computing environment built to be the next computer.**
 
 Alan starts from the premise that the next computer is not just a device people
-operate through apps, but an agent that can help humans act across the digital
-world. Here, "computer" does not mean a bare-metal machine. It means the
+operate through apps, but an environment where humans and agents can act across
+the digital world. Here, "computer" does not mean a bare-metal machine. It means the
 complete end-to-end experience: interface, runtime, files, memory, tools,
 permissions, sessions, local state, and native clients designed as one closed
 loop. Alan starts local-first, so the agent can see context, take governed
@@ -23,6 +23,35 @@ a state machine where LLMs drive transitions while the runtime manages tape
 > The authoritative current implementation contract lives in
 > `docs/governance_current_contract.md`; target-design material lives in
 > OpenSpec.
+
+---
+
+## Component Names
+
+Use these names consistently across specs, docs, crates, and UI copy:
+
+| Name | Meaning |
+| --- | --- |
+| **Alan** | The product: a programmable personal computing environment. "Programmable environment" is the category, not a second product name. |
+| **Alan OS** | The operating-system boundary for Alan: Alan Kernel, Host Service APIs, System Agent Supervisor, Agent Capability Service, app/capability registry, hosts, and app integration conventions. It is not the daemon, CLI, TUI, macOS app, or agent engine. |
+| **Alan Kernel** / `alan-kernel` | The semantic substrate inside Alan: objects, commands, buffers, views, tasks, actors, permissions, ledgers, projections, and app/capability registry. |
+| **Host Service APIs** | Abstract Alan OS service interfaces for storage, credentials, connection profiles, process/runtime supervision, event transport, scheduling/reconnect, policy, skill catalogs, and OS integration. |
+| **Host Service Implementations** | Concrete providers of Host Service APIs. Today the Alan daemon implements or bridges many of them; future Alan for macOS may embed some; tests may use in-memory providers. |
+| **Alan Daemon** / `alan daemon` | The current local process/gateway exposing HTTP/WS and implementing or bridging Host Service APIs. It is not Alan OS and not an app backend. |
+| **Alan CLI** / `alan` | The operator/client entrypoint for configuration, daemon control, local commands, and developer workflows. |
+| **Alan App** | A registered app module with manifest, object types, commands, task types, buffers/views, projections, required Host Service APIs, and exported capabilities. |
+| **Capability** | A typed ability exported by Alan OS or an Alan App, invoked through command, permission, and audit paths. |
+| **System Agent Supervisor** | The always-available Alan OS agent supervisor with long-lived identity, memory, system awareness, and cross-app continuity. It supervises scoped Agent Runs; it is not a root chat session and not the Alan Agent UI. |
+| **Agent Capability** | A standard Alan OS ability that lets Alan Apps request scoped AI-mediated reading, planning, transformation, delegation, or action through typed Context Grants and Result Contracts without depending on the Alan Agent UI. |
+| **Agent Capability Service** | The Host Service API that starts, schedules, streams, yields, resumes, cancels, and completes Agent Runs using provider, runtime, memory, and execution implementations outside Alan Kernel. |
+| **Agent Run** | A bounded execution of an Agent Capability owned by the requesting app, object, or task by default, with System Agent Supervisor continuity when allowed. |
+| **Alan Agent** | The built-in Agent Workspace Alan App for inspecting, steering, and organizing agent sessions, Agent Runs, supervisor-raised tasks, memory, evidence, and cross-app work. It is not the System Agent Supervisor or Agent Capability Service; it uses an internal Agent Execution Engine and projects work into Alan Kernel semantics. |
+| **Agent Execution Engine** / `alan-runtime` | The current internal execution engine used by Alan Agent: tape, session loop, tools, skills, policy, memory, and persistence. It is not Alan OS or Alan Kernel. Future crate name: `alan-agent-engine`. |
+| **Alan for macOS** | The native Apple host for Alan: renderer, input shell, windowing, and OS integration surface. |
+| **Alan TUI** / `alan-terminal-ui` | The terminal host for Alan, currently implemented with Ratatui in `crates/tui`. |
+| **Alan Agent App Module** / future `alan-agent` | The durable module boundary for the Alan Agent workspace projections, commands, buffers, views, tasks, artifacts, evidence, and compatibility adapters. |
+| **Alan Terminal Renderer** / future `alan-terminal-renderer` | Optional extracted renderer/input adapter for the terminal host. Prefer folding terminal renderer work into `alan-terminal-ui` until an independent crate boundary is justified. |
+| **Alan Apps** | Apps such as Alan Agent and Groove Master that run on Alan OS with app-owned domain cores and Alan adapters. |
 
 ---
 
@@ -50,9 +79,9 @@ the primary user-facing hosting abstraction.
 
 ### Design Principles
 
-1. **Generic Core** — `alan-runtime` is provider-agnostic, domain-agnostic, and hosting-agnostic
+1. **Alan-Owned OS** — Alan OS semantics live in Alan Kernel, Host Service APIs, and standard OS abilities such as Agent Capability; `alan-runtime` is the internal Agent Execution Engine for Alan Agent
 2. **Checkpointed Reasoning** — Every thought, action, and observation is durably recorded
-3. **Separation of Concerns** — Core handles state transitions; the `alan` binary handles lifecycle & CLI
+3. **Separation of Concerns** — Agent Execution Engine handles agent state transitions; the `alan` binary is the current CLI/daemon implementation and gateway
 4. **Skills over Plugins** — Capabilities are Markdown-based instructions, not compiled code
 5. **Human-in-the-End** — Humans own outcomes, not operations ([docs →](docs/README.md))
 
@@ -64,7 +93,7 @@ the primary user-facing hosting abstraction.
 ┌─────────────────────────────────────────────────────────────┐
 │                        Clients                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
-│  │   TUI    │  │  macOS   │  │   API    │                   │
+│  │ Alan TUI │  │  macOS   │  │   API    │                   │
 │  │  (Rust)  │  │ (SwiftUI)│  │ (HTTP/WS)│                   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘                  │
 └───────┼─────────────┼─────────────┼─────────────────────────┘
@@ -72,8 +101,8 @@ the primary user-facing hosting abstraction.
         └─────────────┴─────────────┘
                       │
               ┌───────▼────────┐
-              │      alan      │  ← Unified CLI & daemon
-              │  daemon server │
+              │      alan      │  ← current Host Service Implementation
+              │ CLI + daemon   │     and HTTP/WS gateway
               └───────┬────────┘
                       │ manages
         ┌─────────────┼─────────────┐
@@ -86,7 +115,7 @@ the primary user-facing hosting abstraction.
         └─────────────┴─────────────┘
                       │
               ┌───────▼───────┐
-              │  alan-runtime │  ← Agent runtime (transition fn + tape)
+              │  alan-runtime │  ← Alan Agent execution engine
               └───────┬───────┘
                       │
         ┌─────────────┼──────────────────┐
@@ -107,10 +136,11 @@ alan/
 │   ├── auth/         # Managed auth storage and ChatGPT/Codex login support
 │   ├── protocol/     # Event/Op protocol definitions + ContentPart
 │   ├── llm/          # LLM provider adapters (ChatGPT/Codex, OpenAI, Gemini, Anthropic, OpenRouter)
-│   ├── runtime/      # Core runtime: tape, session, agent loop, skills, SWE-bench tooling
+│   ├── runtime/      # Agent Execution Engine: tape, session, agent loop, skills, SWE-bench tooling
 │   ├── tools/        # Builtin tool implementations
 │   ├── tui/          # Rust inline terminal UI
-│   └── alan/         # Unified CLI & daemon (workspace, shell, daemon)
+│   ├── alan-kernel/   # Alan Kernel substrate primitives
+│   └── alan/         # Alan CLI + daemon: current host-service implementation/gateway
 ├── clients/
 │   └── apple/        # Native Apple client (SwiftUI, macOS/iOS)
 └── docs/             # Architecture, contracts, maintainer notes, testing strategy
@@ -123,10 +153,11 @@ alan/
 | `alan-auth`            | Managed credential storage and ChatGPT/Codex login helpers          |
 | `alan-protocol`        | Wire format — Events (output), Operations (input), ContentPart      |
 | `alan-llm`             | Pluggable LLM adapters — ChatGPT/Codex managed Responses surface, OpenAI Responses API, OpenAI Chat Completions API, OpenAI Chat Completions API-compatible, Google Gemini GenerateContent API, Anthropic Messages API, and OpenRouter SDK-backed chat |
-| `alan-runtime`         | Core engine — session, tape, agent loop, tool registry, skills      |
+| `alan-runtime`         | Agent Execution Engine — session, tape, agent loop, tool registry, skills; future `alan-agent-engine` |
 | `alan-swebench-tooling` | SWE-bench workspace and suite materialization helpers               |
 | `alan-tools`           | Builtin tool implementations (`read_file`, `bash`, `grep`, etc.)    |
-| `alan`                 | Unified CLI & daemon — workspace lifecycle, HTTP/WS API, ask, chat  |
+| `alan-kernel`          | Alan Kernel substrate primitives: objects, commands, buffers, views, tasks, actors, ledgers, projections, app/capability registry |
+| `alan`                 | Public CLI + daemon; current Host Service API implementation/gateway — workspace lifecycle, HTTP/WS API, ask, chat |
 
 ---
 
@@ -174,7 +205,7 @@ Notes:
   selected model supports named effort.
 - Existing `thinking_budget_tokens` config is rejected; replace it with the
   closest supported `model_reasoning_effort` value.
-- The Rust TUI and daemon event APIs surface thinking deltas when the selected provider emits them.
+- Alan TUI and daemon event APIs surface thinking deltas when the selected provider emits them.
 
 ---
 
@@ -266,8 +297,8 @@ ChatGPT/Codex login, OpenAI API Platform, OpenRouter, Kimi Coding, DeepSeek,
 Google Gemini via Vertex AI, and Anthropic API. Raw API-family selection is kept
 behind `Advanced / custom setup`.
 
-Connection/provider metadata lives in `~/.alan/connections.toml`; agent runtime
-knobs live in `~/.alan/agents/default/agent.toml`. An agent config can pin a
+Connection/provider metadata lives in `~/.alan/connections.toml`; Agent Execution
+Engine knobs live in `~/.alan/agents/default/agent.toml`. An agent config can pin a
 profile with `connection_profile`, otherwise alan resolves a workspace pin or
 the global `default_profile`.
 
@@ -482,7 +513,7 @@ alan connection set-secret openai-main
 alan connection default set chatgpt-main
 alan connection test chatgpt-main
 
-# Interactive Rust TUI
+# Interactive Alan TUI
 alan
 
 # Inspect resolved skills, packages, package exports, and availability
