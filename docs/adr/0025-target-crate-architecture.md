@@ -90,10 +90,12 @@ Alphabets:
   alphabet, kept as compatibility transport behind `alan-agentfs`.
 
 Kernel:
-- `alan-kernel` — rewrite of the current crate; namespace engine, process table,
-  `/proc`, `/srv`, in-process transport. The current V1 modules
-  (`agent_capability`, `descriptors`, `views`, `ledger`, `registry`,
-  `invocation`) are deleted or relocated to `alan-compat`.
+- `alan-kernel` — new; created for the substrate (namespace engine, process
+  table, `/proc`, `/srv`, in-process transport). There is no current `alan-kernel`
+  crate to rewrite (the V1 one was removed); any compatibility code that must move
+  lives today in `alan-runtime` / `alan-protocol` / `crates/alan` / `crates/tui`
+  and migrates into the projection (`alan-agentfs`) or `alan-compat`, not the
+  kernel.
 
 Backends (file-unaware):
 - `alan-agent-engine` — rename of `alan-runtime`; the Turing-machine loop, turn

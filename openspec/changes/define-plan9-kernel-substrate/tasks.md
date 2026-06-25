@@ -79,10 +79,12 @@
   per-process `io/`, `status`, `ctl`, and standard files (D9); `/proc/<pid>` is
   the single source of truth.
 - [ ] 7.1a Implement process creation (spawn) via clone-via-open on
-  `/proc/clone`: write an exec spec (executable + args + child namespace), return
-  the new pid, render `/proc/<pid>`. spawn is aP open+write, no side API. Spawn is
-  capability-preserving: reject any exec-spec namespace entry/descriptor the
-  spawner could not itself open or delegate (no amplification; D6).
+  `/proc/clone`: `open` returns the new pid (pending `/proc/<pid>`); the caller
+  writes the exec spec (executable + args + child namespace) and `clunk`s to
+  commit/start (commit-on-clunk — never start from a partial spec); `clunk` returns
+  success or a commit-time error, no payload. spawn is aP open+write+clunk, no side
+  API. Spawn is capability-preserving: reject any exec-spec namespace entry/
+  descriptor the spawner could not itself open or delegate (no amplification; D6).
 - [ ] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
   posted handles carry access rights; a process sees/mounts only permitted
   handles; a withheld service is not remountable via `/srv` (D6).
