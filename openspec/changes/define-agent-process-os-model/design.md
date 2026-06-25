@@ -17,7 +17,9 @@ Alan Agent remains built in, but only as an optional workspace UI.
 
 **Goals:**
 
-- Define Process and Agent Process as the only Kernel process categories.
+- Define a single `Process` Kernel category; an Agent Process is an ordinary
+  Process recognized by the agent file layout, not a separate kernel category
+  (ADR-0024 D3).
 - Define Root Agent Process as the root of the agent process tree.
 - Replace daemon as architecture concept with Service Manager and file-server
   services.
@@ -50,17 +52,18 @@ Alternative considered: add process kinds for app, service, command, agent run,
 and subagent. That recreates product taxonomy inside Kernel and weakens the
 UNIX-like process model.
 
-### 2. Agent Process is first-class
+### 2. An agent is an ordinary Process recognized by file layout
 
-Agent Process is Kernel-visible because agents are OS citizens, not just normal
-commands that happen to call an LLM. Kernel visibility is minimal: identity,
-parent, credentials, descriptors, lifecycle, status, and file surfaces. Prompt,
-provider, model, tape schema, and tool orchestration remain Agent Runtime
-Service concerns.
+Superseded by ADR-0024 D3: the kernel has a single `Process` category and no
+`Agent Process` type. An agent is an ordinary Process recognized by conforming to
+the agent file layout (AgentFS surfaces under `/agent/<pid>`), discovered by
+walking the process directory. Kernel state stays minimal (identity, parent,
+credentials, descriptors, lifecycle, status, file surfaces); prompt, provider,
+model, tape schema, and tool orchestration remain Agent Runtime Service concerns.
 
-Alternative considered: model agents as ordinary Processes with no Kernel-level
-agent distinction. That would make Root Agent Process, agent process trees, and
-agent-specific descriptor policy second-class conventions.
+Root Agent, agent process trees, and agent policy are not second-class for being
+conventions: Root Agent is a well-known process, the tree is ordinary parentage,
+and policy is namespace + access rights — none needs a kernel agent type.
 
 ### 3. Service Manager replaces daemon conceptually
 

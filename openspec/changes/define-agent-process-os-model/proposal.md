@@ -15,8 +15,10 @@ than become a product-specific backend or HTTP service.
 
 ## What Changes
 
-- Define Agent Process as a first-class Alan Kernel Process type. Kernel process
-  ontology remains small: ordinary Process and Agent Process.
+- Define an Agent Process as an ordinary `Process` recognized by the agent file
+  layout, NOT a kernel category. The kernel has a single `Process` category
+  (ADR-0024 D3); agent-ness is a file-layout/AgentFS convention discovered by
+  walking the process directory.
 - Define Root Agent Process as the always-available root of the agent process
   tree, exposed through `/agent/root`, not as root permission or a global chat
   session.
@@ -42,10 +44,11 @@ than become a product-specific backend or HTTP service.
 
 ### New Capabilities
 
-- `agent-process-os-model`: Defines Alan OS's first-class Agent Process model,
-  AgentFS, Service Manager, file-server services, Root Agent Process, Agent
-  Executables, Tools, Skills, descriptor-passed context, requests, actions,
-  machine state, and migration of existing Alan Agent runtime concepts.
+- `agent-process-os-model`: Defines Alan OS's agent model as a file-layout
+  convention over a single `Process` category (not a kernel type), plus AgentFS,
+  Service Manager, file-server services, Root Agent Process, Agent Executables,
+  Tools, Skills, namespace-bound context, requests, actions, machine state, and
+  migration of existing Alan Agent runtime concepts.
 
 ### Modified Capabilities
 

@@ -18,9 +18,12 @@ PracticePlan
   -> GrooveStream
 ```
 
-Alan OS provides Alan Kernel objects, commands, buffers, views, queries,
-permissions, local-first persistence, Host Service APIs, and agent participation.
-Groove Master owns the music-practice logic and user experience. The first design
+Alan OS provides the Alan Kernel substrate — files, namespaces, mounts,
+descriptors, access rights, and processes — plus file-server services and agent
+participation. Objects, commands, buffers, views, and queries are NOT kernel
+primitives (ADR-0024 removes them from kernel ontology); Groove Master expresses
+them as Alan App / adapter surfaces over Kernel files and processes. Groove Master
+owns the music-practice logic and user experience. The first design
 therefore defines Groove Master as a serious Alan App, while keeping the first
 implementation slice small enough to become a daily-use tool.
 
