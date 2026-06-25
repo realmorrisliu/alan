@@ -32,14 +32,35 @@ delta.
 - **AND** forking does not copy the whole tape
 
 ### Requirement: History is tamper-evident and verifiable
-Alan OS SHALL make agent history verifiable by content hash: any stored state is
-retrievable and integrity-checkable by its root hash, and altering past content
-SHALL change the hash.
+Alan OS SHALL make agent history verifiable by content hash: a root hash
+integrity-checks the state it names, and altering past content SHALL change the
+hash.
 
 #### Scenario: Audit verifies a claim
 - **WHEN** an audit needs to confirm what an agent saw or did at a point
-- **THEN** it retrieves and verifies that state by its root hash
+- **THEN** it reads that state through a permitted namespace path and verifies it
+  against the recorded root hash
 - **AND** any silent rewrite is detectable because the hash would differ
+
+### Requirement: A content hash is not a capability
+Alan OS SHALL NOT let possession of a content hash grant access to content.
+Retrieval SHALL be gated by namespace reachability and access rights (ADR-0024
+D6): a process reads only blocks reachable from roots bound into its namespace,
+subject to access checks. The hash verifies integrity; it does not authorize
+retrieval. Cross-agent dedup SHALL be internal to the store and SHALL NOT make
+one agent's private content readable by another that merely knows or guesses its
+hash.
+
+#### Scenario: A hash is presented without access
+- **WHEN** a process presents a content hash for content not reachable in its
+  namespace
+- **THEN** retrieval is denied by access checks
+- **AND** the hash alone is not a global capability that bypasses the namespace
+
+#### Scenario: Dedup does not leak across agents
+- **WHEN** two agents happen to store identical content (stored once by hash)
+- **THEN** each can read it only through its own namespace and access rights
+- **AND** dedup does not expose one agent's private content to another
 
 ### Requirement: Storage is bounded by reachability GC and retention
 Alan OS SHALL bound knowledge storage by garbage-collecting blocks unreachable

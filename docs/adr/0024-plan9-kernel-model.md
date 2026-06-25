@@ -68,11 +68,14 @@ Tools operate agents uniformly for two reasons: the file protocol is mechanicall
 uniform (walk/open/read/write/stat apply to every file), and a *published
 file-layout contract* gives semantic uniformity. An agent is a strict superset
 of the generic process file layout: every process exposes `io/`, `status`, and a
-`ctl` control file; an agent additionally exposes `requests/`, `actions/`, and
-`machine/`. Control is expressed by writing text commands to `ctl` (Plan 9
-`/net` style), so new control actions never require new files. `/agent` is a
-*view* over `/proc` (a bind/union of agent-conforming process directories, plus
-friendly aliases such as `/agent/root`), not a second process table.
+`ctl` control file; an agent additionally exposes `requests/`, `actions/`,
+`machine/`, `context/`, `children/`, and a top-level aggregate `events` stream.
+Control is expressed by writing text commands to `ctl` (Plan 9 `/net` style), so
+new control actions never require new files. `/agent` is an *overlay* over
+`/proc` (for each agent-conforming process it unions the kernel `/proc/<pid>`
+generic layout with the agent runtime's agent surfaces, plus friendly aliases
+such as `/agent/root`), not a second process table; the kernel renders no
+agent-specific files in `/proc`.
 
 ### D5. The file-server contract is wire-shaped; v1 transport is in-process
 

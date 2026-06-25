@@ -23,10 +23,12 @@ user-space file server above the substrate, not part of the kernel.
 
 ### Requirement: Current sessions project into agent process file surfaces
 The compatibility projection layer SHALL register current Alan sessions as real
-kernel Processes (so they appear in the kernel-rendered `/proc`) and serve their
-agent surfaces under `/agent`. It SHALL NOT fabricate `/proc/<pid>` entries
-itself — `/proc` is the kernel's source of truth — and until a session is
-registered as a real Process the projection SHALL keep it under `/agent` only.
+kernel Processes first, and only then surface their agent overlay under `/agent`.
+A session SHALL NOT appear under `/agent` without a backing `/proc` Process —
+otherwise `/agent` would become an independent process table. It SHALL NOT
+fabricate `/proc/<pid>` entries itself; `/proc` is the kernel's source of truth,
+and `/agent/<pid>` is the overlay of that `/proc/<pid>` with the projected agent
+surfaces.
 Session metadata SHALL project to `status`, conversation state to `io/`,
 runtime/tape state to `machine/`, yields to `requests/`, tool calls to
 `actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
