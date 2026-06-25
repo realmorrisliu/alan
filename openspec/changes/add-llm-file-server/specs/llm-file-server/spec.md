@@ -65,19 +65,26 @@ directory.
 - **THEN** it sees progress, token counts, and accumulated cost
 - **AND** the Generation is inspectable as files, not hidden in a caller's fd
 
-### Requirement: The request is one complete document; commit is implicit
-`alan-llmfs` SHALL treat a Generation request as one complete, provider-neutral
-document written to `data`. Writing the complete document SHALL commit the
-Generation; there SHALL be no separate start command. `events` SHALL be retained
-from offset 0 so reading it after generation begins loses no records. `ctl` SHALL
-be used only to abort a running Generation. The request document SHALL NOT carry
-credentials.
+### Requirement: The request is framed; commit is on clunk
+`alan-llmfs` SHALL treat a Generation request as one provider-neutral document
+that MAY be written to `data` across multiple aP writes (model requests can exceed
+one transport write). The Generation SHALL commit — and only then start — when the
+caller clunks (closes) the `data` fid; a partial or multi-chunk write SHALL NOT
+start generation. A malformed or truncated document SHALL be rejected at commit,
+not run with partial context. `events` SHALL be retained from offset 0 so reading
+it after generation begins loses no records. `ctl` SHALL be used only to abort a
+running Generation. The request document SHALL NOT carry credentials.
 
-#### Scenario: A request is submitted
-- **WHEN** a caller writes a complete request document to `data`
-- **THEN** the Generation begins without any further start signal
-- **AND** the caller reads the token stream from `events` from offset 0 without
-  losing early records
+#### Scenario: A large request is submitted in chunks
+- **WHEN** a caller writes a request document to `data` over several writes and
+  then clunks the `data` fid
+- **THEN** the Generation commits and starts only at clunk, with the full document
+- **AND** no generation ran on a partial write
+
+#### Scenario: A truncated request is rejected
+- **WHEN** the document committed at clunk is malformed or incomplete
+- **THEN** `alan-llmfs` rejects it (a dial-time error) and starts no generation
+- **AND** the model is never run with truncated context
 
 #### Scenario: A Generation is aborted
 - **WHEN** a caller writes an abort command to `ctl`

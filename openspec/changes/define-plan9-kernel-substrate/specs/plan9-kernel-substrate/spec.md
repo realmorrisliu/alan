@@ -217,7 +217,12 @@ operation. Opening `/proc/clone` SHALL allocate a new process slot
 (clone-via-open); writing an exec spec — executable path, arguments, and the
 child's namespace/descriptors — SHALL start the process, return its pid, and make
 `/proc/<pid>` appear. The child's namespace SHALL be the one the spawner
-specifies (the basis of the capability boundary, D6).
+specifies, but spawn SHALL be capability-preserving, not capability-amplifying:
+the kernel SHALL reject any exec-spec namespace entry or descriptor the spawner
+could not itself open or delegate from its own namespace and access rights. A
+spawner therefore cannot bind a withheld llmfs Connection, `/srv` handle, or any
+other resource it cannot reach into a child (the basis of the capability
+boundary, D6).
 
 #### Scenario: A client spawns a process
 - **WHEN** Alan Shell launches an executable
@@ -229,6 +234,14 @@ specifies (the basis of the capability boundary, D6).
 - **THEN** the child starts with exactly that namespace (it cannot reach servers
   not granted, per D6)
 - **AND** spawn is the point where the capability boundary is set
+
+#### Scenario: A spawner tries to amplify a child's capabilities
+- **WHEN** a restricted process writes an exec spec that binds a resource it
+  cannot itself open (such as a withheld llmfs Connection or a `/srv` handle it
+  may not mount)
+- **THEN** the kernel rejects the spawn
+- **AND** a child can never receive a capability the spawner did not hold or could
+  not delegate
 
 ### Requirement: `/srv` is the bootstrap rendezvous device, access-filtered
 Alan Kernel SHALL provide `/srv` as a synthetic device where file servers post

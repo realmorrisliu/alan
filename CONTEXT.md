@@ -390,8 +390,9 @@ _Avoid_: root automation permission, unrestricted agent access
 **Generation**:
 One LLM call — a single evaluation of the agent's transition function. A
 Generation is modeled as a connection directory under an LLM Connection: the
-caller writes one complete, neutral request document, then reads a typed token
-stream. Generations are visible as files so their progress and cost can be
+caller writes a neutral request document to `data` (possibly over several writes)
+and clunks it to commit, then reads a typed token stream from `events`.
+Generations are visible as files so their progress and cost can be
 inspected.
 _Avoid_: hidden fd-only session, provider-specific request as the canonical
 shape, a generation that cannot be observed as files

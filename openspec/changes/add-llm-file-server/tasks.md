@@ -22,8 +22,9 @@
 
 - [ ] 4.1 Implement clone-via-open: `open clone` allocates
   `/mnt/llm/connections/<connection>/<n>/` with `data`, `events`, `ctl`, `status`.
-- [ ] 4.2 Commit on complete `data` write; no start command. Drive `alan-llm`
-  streaming.
+- [ ] 4.2 Accept the request across multiple `data` writes; commit on `data`
+  clunk (no start command); reject a truncated/malformed document at commit.
+  Drive `alan-llm` streaming.
 - [ ] 4.3 Stream typed events to `events` (retained, offset-resumable); `status`
   exposes progress, tokens, cost.
 - [ ] 4.4 Implement `ctl` abort; reap finished directories per retention policy.

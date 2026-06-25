@@ -88,15 +88,27 @@ changes, so a watcher can follow the whole agent from one stream.
 - **THEN** the directory is absent or empty
 - **AND** the same tool code degrades gracefully across process kinds
 
-### Requirement: Control is expressed by writing to `ctl`
-Alan OS SHALL express control of processes and agents as text commands written
-to the `ctl` file. New control actions SHALL be added as new `ctl` commands, not
-as new files or APIs.
+### Requirement: Control is expressed by writing to a `ctl`, split by ownership
+Alan OS SHALL express control as text commands written to a `ctl` file, split by
+who owns the semantics. Generic process control (interrupt, cancel, signal) SHALL
+be the kernel-owned `/proc/<pid>/ctl`. Agent-runtime control whose meaning is the
+Agent Execution Engine's (such as `compact` and `rollback`, which operate on the
+tape/checkpoints) SHALL be written to an agent-runtime-owned `machine/ctl` in the
+`/agent/<pid>` overlay — NOT the kernel `/proc/<pid>/ctl`, so the kernel never
+interprets runtime semantics. New control actions SHALL be added as new `ctl`
+commands on the owning surface, not as new files or APIs.
 
-#### Scenario: An agent is interrupted
+#### Scenario: An agent is interrupted (generic control)
 - **WHEN** an operator interrupts an agent
-- **THEN** the operator writes an interrupt command to `/proc/<pid>/ctl`
+- **THEN** the operator writes an interrupt command to the kernel
+  `/proc/<pid>/ctl`
 - **AND** no dedicated interrupt file or out-of-band API is required
+
+#### Scenario: Tape is compacted (runtime control)
+- **WHEN** an operator compacts or rolls back an agent's tape
+- **THEN** the command is written to the agent-runtime-owned `machine/ctl` in the
+  `/agent/<pid>` overlay, not to the kernel `/proc/<pid>/ctl`
+- **AND** the kernel does not interpret tape/checkpoint semantics
 
 #### Scenario: A request is answered
 - **WHEN** a user answers an agent request

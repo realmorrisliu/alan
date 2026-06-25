@@ -79,7 +79,9 @@
   the single source of truth.
 - [ ] 7.1a Implement process creation (spawn) via clone-via-open on
   `/proc/clone`: write an exec spec (executable + args + child namespace), return
-  the new pid, render `/proc/<pid>`. spawn is aP open+write, no side API.
+  the new pid, render `/proc/<pid>`. spawn is aP open+write, no side API. Spawn is
+  capability-preserving: reject any exec-spec namespace entry/descriptor the
+  spawner could not itself open or delegate (no amplification; D6).
 - [ ] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
   posted handles carry access rights; a process sees/mounts only permitted
   handles; a withheld service is not remountable via `/srv` (D6).

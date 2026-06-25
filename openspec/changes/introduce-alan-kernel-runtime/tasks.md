@@ -71,8 +71,11 @@
 
 ## 7. Control surface
 
-- [ ] 7.1 Accept interrupt, cancel, compact, and rollback as text commands written
-  to `ctl`, mapped onto current engine operations; no per-action side files.
+- [ ] 7.1 Route generic control (interrupt, cancel) through the kernel
+  `/proc/<pid>/ctl`, and agent-runtime control (compact, rollback) through the
+  agentfs-owned `machine/ctl` in the `/agent` overlay — never the kernel ctl, so
+  `alan-kernel` interprets no runtime semantics. Map both onto current engine
+  operations; no per-action side files.
 
 ## 8. `/agent` overlay
 

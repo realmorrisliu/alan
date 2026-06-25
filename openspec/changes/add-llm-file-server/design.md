@@ -33,9 +33,12 @@ uses the aP protocol from `define-plan9-kernel-substrate`.
 - **Generation = clone-dir.** `open clone` allocates `/mnt/llm/connections/<connection>/<n>/`
   with `data` (write request), `events` (read typed stream), `ctl` (abort),
   `status` (progress/cost). Concurrency is isolated per connection directory.
-- **Implicit commit.** Writing one complete request document to `data` commits
-  the Generation; there is no `start` command. `events` is retained from offset 0,
-  so reading it after generation begins loses nothing. `ctl` only aborts.
+- **Commit on clunk.** The request document MAY span multiple `data` writes
+  (requests can exceed one transport write); the Generation commits and starts
+  only when the caller clunks the `data` fid (UNIX EOF semantics), and a
+  truncated/malformed document is rejected at commit. There is no `start`
+  command. `events` is retained from offset 0, so reading it after generation
+  begins loses nothing. `ctl` only aborts.
 - **Independent wire DTO.** A versioned request DTO and stream-event DTO decouple
   the wire format from `alan-llm` internals; `alan-llmfs` maps DTO ↔ `alan-llm`.
 - **Two-fold errors.** Dial-time (no access / rate limited / model unknown) →
