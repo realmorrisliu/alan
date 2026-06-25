@@ -3,6 +3,14 @@
 This glossary names Alan product concepts that cut across macOS shell, runtime,
 and future Alan OS work.
 
+The canonical kernel model is [ADR-0024](docs/adr/0024-plan9-kernel-model.md)
+(Plan 9 kernel) and [ADR-0025](docs/adr/0025-target-crate-architecture.md)
+(crate architecture). Where this glossary and the ADRs disagree, the ADRs win.
+Key consequences: the kernel has a single `Process` category (no `Agent Process`
+kernel type — agent-ness is a file-layout convention); `/agent` is a view over
+`/proc`; observation is a blocking read on a stream (no Subscription primitive);
+`Agent Capability`, `Context Grant`, and `Result Contract` are retired.
+
 ## Language
 
 **Alan Agent**:
@@ -36,11 +44,14 @@ output, and events through Files, and they create or write ordinary Files.
 _Avoid_: task as separate Kernel primitive, root session, background chatbot
 
 **Agent Process**:
-A first-class Alan Kernel Process type for AI-mediated work. An Agent Process
-has ordinary process identity, descriptors, lifecycle, parent process, and file
-surfaces, plus an AgentFS view for agent-specific IO, requests, actions, child
-agent processes, and machine state.
-_Avoid_: Agent Run, app-local chatbot, hidden session, API task object
+An ordinary `Process` that runs an agent, recognized by conforming to the agent
+file-layout convention (it exposes `io/`, `status`, `ctl` plus `requests/`,
+`actions/`, `machine/`, `context/`, `children/`, and `events`). It is NOT a
+separate Kernel type — the Kernel has one `Process` category, and agent-ness is
+discovered by walking the process directory, not by a Kernel flag. Lowercase
+"agent process" is preferred prose for "a process that is an agent".
+_Avoid_: Agent Process as a Kernel category, Agent Run, app-local chatbot, hidden
+session, API task object
 
 **Stream**:
 An ordered File kind for observing process output, events, audit, file changes,
@@ -138,9 +149,11 @@ snapshots through file-tree semantics.
 _Avoid_: mutation path, hidden recomputation hook, database query only
 
 **Subscription**:
-A typed watch operation surface over a file, process endpoint, or stream that
-produces observations, invalidations, or dirty-view signals.
-_Avoid_: separate event system, hidden callback, mutable view state
+Retired as a concept. Watching is a blocking read on an `events`/`log` stream
+file (`tail -f` semantics): the read blocks until new records arrive. There is no
+Subscription primitive, object, or registry.
+_Avoid_: Subscription as a primitive, separate event system, hidden callback,
+mutable view state
 
 **Agent Runtime Service**:
 A system file-server Process managed by Service Manager. It executes Agent
@@ -149,10 +162,13 @@ product-facing HTTP API.
 _Avoid_: Agent Capability Service API, app backend, Root Agent
 
 **AgentFS**:
-The `/agent` file tree served by Agent Runtime Service. It exposes running
-Agent Processes, including `/agent/root` as the stable Root Agent Process alias
-and `/agent/<pid>` for agent-specific process surfaces.
-_Avoid_: executable catalog, agent registry, chat history database
+The `/agent` file tree served by Agent Runtime Service. It is a view over
+`/proc` (a union/bind of agent-conforming process directories), not a second
+process table — `/proc/<pid>` is the source of truth. `/agent/root` is the
+stable alias to whichever pid currently embodies the Root Agent's home, and
+`/agent/<pid>` exposes the agent file-layout surfaces.
+_Avoid_: second process table, executable catalog, agent registry, chat history
+database
 
 **Agent Executable**:
 An executable file that creates an Agent Process when spawned. Agent
@@ -180,10 +196,14 @@ descriptors and may explain tools, workflows, examples, constraints, and domain
 procedures; they do not execute.
 _Avoid_: Tool, executable, permission grant, hidden prompt injection
 
-**Agent Context Descriptor**:
-A Descriptor passed to an Agent Process at spawn time, such as a target file,
-selection, Skill directory, Memory Store, policy file, or app resource.
-_Avoid_: Context Grant API, prompt dump, implicit global access
+**Agent Context**:
+The files bound into an agent's namespace (notably under `context/`, plus the
+`/bin` tools and Skills it can see) at spawn time, such as a target file,
+selection, Skill directory, Memory Store, or policy file. The model request is
+assembled as a view over these namespace files; changing context means changing
+the namespace, not calling a grant API.
+_Avoid_: Context Grant API, descriptor-passing as the canonical model, prompt
+dump, implicit global access
 
 **Credential**:
 The Kernel identity and authority context used for access checks, such as a
