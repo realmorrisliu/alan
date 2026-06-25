@@ -36,8 +36,9 @@ promotion of cross-app work into a focused workspace. It does not own execution.
 ### 2. Agent Processes are the semantic execution unit
 
 Current sessions remain compatibility authority during migration, but the target
-workspace projection is Agent Process status, IO, requests, actions, children,
-result, and machine state.
+is reading the agent file surfaces: status, IO, requests, actions, children,
+context, and machine state (results are IO output plus per-action
+`actions/<id>/result`, not a top-level `result` file).
 
 ### 3. Alan Shell remains primary
 

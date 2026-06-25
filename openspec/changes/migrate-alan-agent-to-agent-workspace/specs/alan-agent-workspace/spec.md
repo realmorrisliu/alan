@@ -38,7 +38,9 @@ per-action records above the kernel.
 ### Requirement: Agent Processes are inspectable workspace work
 Agent Processes SHALL be inspectable as Agent Workspace work items with owner,
 target descriptors, context descriptors, policy descriptors, lifecycle, child
-Agent Processes, actions, artifacts, evidence, result, and audit metadata.
+processes, actions, and per-action results read from the agent file surfaces.
+Artifacts and evidence, where shown, are app-level interpretations over those
+files (not kernel surfaces and not a top-level `result` file).
 
 #### Scenario: App-created Agent Process is promoted into Alan Agent
 - **WHEN** an app or user promotes an Agent Process into Alan Agent

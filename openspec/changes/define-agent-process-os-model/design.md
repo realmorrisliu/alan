@@ -44,9 +44,10 @@ Alan Agent remains built in, but only as an optional workspace UI.
 
 ### 1. Kernel process ontology stays small
 
-Alan Kernel should only distinguish ordinary Process and Agent Process. App,
-service, command, task, run, and subagent are roles or relationships, not
-process kinds. A child agent is simply a child Agent Process.
+Alan Kernel should distinguish a single `Process` category (ADR-0024 D3); agent,
+app, service, command, task, run, and subagent are roles or relationships, not
+process kinds. An agent is an ordinary Process recognized by the agent file
+layout; a child agent is simply a child process that is an agent.
 
 Alternative considered: add process kinds for app, service, command, agent run,
 and subagent. That recreates product taxonomy inside Kernel and weakens the

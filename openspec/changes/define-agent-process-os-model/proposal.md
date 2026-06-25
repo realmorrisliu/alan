@@ -34,7 +34,9 @@ than become a product-specific backend or HTTP service.
   Executables, Tools are executable files, Skills are manual-like packages, and
   authority is Descriptor + Access Rights + policy.
 - Replace Context Grant and Result Contract API language with descriptor
-  passing, Agent IO, result files, request files, action files, and exit status.
+  passing, Agent IO, request files, action files, per-action results, and exit
+  status (no top-level result file; results are IO output plus
+  `actions/<id>/result`).
 - Reframe Session as compatibility terminology decomposed into Agent Process
   status, IO streams, machine tape, machine events, and checkpoints.
 - Clarify that Alan Agent is built-in but optional: an Agent Workspace app over

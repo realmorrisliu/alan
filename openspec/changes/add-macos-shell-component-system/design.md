@@ -54,7 +54,7 @@ previewable, and token-governed.
 - **Host boundary:** layout, chrome, native controls, input presentation, selection
   affordances, and visual migration discipline. The host composes environment state; it
   is not the source of truth for that state.
-- **Deferred migration:** terminal-host AppKit internals, Rust workbench/runtime
+- **Deferred migration:** terminal-host AppKit internals, Rust kernel/runtime
   capability, environment apps, and the current shell runtime remain outside this
   change.
 
