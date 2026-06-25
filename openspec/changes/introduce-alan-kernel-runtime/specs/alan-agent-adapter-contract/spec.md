@@ -2,84 +2,90 @@
 
 ### Requirement: Compatibility projection isolates current protocol details
 The compatibility projection layer SHALL translate the current Agent Execution
-Engine and session protocol into Agent Process file surfaces without making Alan
-Kernel depend on `alan-protocol`, compatibility transport clients, provider
-clients, memory stores, sandbox backends, or session lifecycle details.
-
-Artifacts in this projection layer SHALL mean Agent/App interpretations over
-Kernel Files, stream Files, output pointers, or native selectors. Evidence SHALL
-mean an Agent/App interpretation over Kernel paths, stream offsets, process ids,
-descriptors, service-owned stream file offsets, app artifact paths, or native
-selectors. Alan Kernel SHALL NOT model Artifact, Evidence, produced-output
-objects, or ProvenanceRef as durable primitives.
+Engine and session protocol into agent process file surfaces (per
+`define-agent-file-layout-contract`) without making `alan-kernel` depend on
+`alan-protocol`, compatibility transport clients, provider clients, memory
+stores, sandbox backends, or session lifecycle details. The projection is a
+user-space file server above the substrate, not part of the kernel.
 
 #### Scenario: Projection dependencies are inspected
-- **WHEN** Alan Kernel crates are built or audited
-- **THEN** optional app/projection modules may depend on `alan-protocol` and
+- **WHEN** the workspace crates are built or audited
+- **THEN** the projection / adapter module may depend on `alan-protocol` and
   compatibility transport clients as internal details
 - **AND** `alan-kernel` remains free of those dependencies
 
 #### Scenario: Current event enters the projection path
 - **WHEN** an `alan_protocol::EventEnvelope` is received by a compatibility
   session consumer
-- **THEN** the projection layer maps it into Agent Process status, IO events,
-  request files, action files, machine events, optional workspace buffers/views,
-  artifacts, or Agent/App evidence before it reaches renderer hosts
+- **THEN** the projection layer maps it into the process's `status`, `io/events`,
+  `requests/`, `actions/`, and `machine/` files
+- **AND** it does so before the data reaches any shell or host client
 
-### Requirement: Current sessions project into Agent Process surfaces
+### Requirement: Current sessions project into agent process file surfaces
 The compatibility projection layer SHALL represent current Alan sessions as
-Agent Process file surfaces. Session metadata SHALL project to status,
-conversation state SHALL project to Agent IO, runtime/tape state SHALL project
-to Agent Machine, yields SHALL project to request files, tool calls SHALL
-project to action files, and checkpoints SHALL project to machine checkpoints.
+agent-conforming process directories under `/proc/<pid>` (surfaced through the
+`/agent` view). Session metadata SHALL project to `status`, conversation state to
+`io/`, runtime/tape state to `machine/`, yields to `requests/`, tool calls to
+`actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
+`Agent Process` kernel type; the process is an ordinary `Process` that conforms
+to the agent file-layout convention.
 
 #### Scenario: Existing session is attached
 - **WHEN** Alan Shell or another host attaches through the current compatibility
   session path
-- **THEN** the projection layer creates or resolves an Agent Process projection
-- **AND** it exposes status, IO, requests, actions, result, and machine files
-  without changing the current runtime behavior
+- **THEN** the projection layer creates or resolves an agent-conforming process
+  directory in `/proc`, visible through `/agent`
+- **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `result`, and
+  `machine/` files without changing current runtime behavior
 
 #### Scenario: Future file-native client attaches
-- **WHEN** a future client attaches after AgentFS parity exists
-- **THEN** it can open or watch `/agent/<pid>` files rather than calling a
-  session API
+- **WHEN** a future client attaches after file-surface parity exists
+- **THEN** it opens or watches the process's files (for example `/agent/<pid>/io`
+  or `requests/`) rather than calling a session API
 
 ### Requirement: Agent IO is the default conversation surface
 The compatibility projection layer SHALL map user input, assistant output,
 thinking summaries, yielded state, warnings, errors, and result readiness into
-Agent IO files and events.
+`io/` files and events.
 
 #### Scenario: Conversation output streams
 - **WHEN** current Alan emits text or thinking deltas
 - **THEN** the projection updates `/agent/<pid>/io/output` and
   `/agent/<pid>/io/events`
-- **AND** renderer hosts do not need to parse raw protocol events by default
+- **AND** clients read those files by offset rather than parsing raw protocol
+  events
 
-### Requirement: Runtime details map to Agent Machine
+### Requirement: Runtime details map to the machine directory
 The compatibility projection layer SHALL map tape, rollout records, compaction,
-memory flush observations, retries, guardrails, and checkpoints into Agent
-Machine files where access rights allow inspection.
+memory flush observations, retries, guardrails, and checkpoints into `machine/`
+files where access rights allow inspection. `machine/tape` SHALL be the truth;
+the model context window SHALL be a view over it (compaction is a view, not a
+hidden step).
 
 #### Scenario: Debug view inspects runtime state
-- **WHEN** a permitted host opens `/agent/<pid>/machine`
+- **WHEN** a permitted client opens `/agent/<pid>/machine`
 - **THEN** it can inspect tape, state, machine events, and checkpoints
-- **AND** those files remain runtime schema rather than Alan Kernel ontology
+- **AND** those files are owned by the runtime file server, not by kernel
+  ontology
 
 ### Requirement: Yields map to request file trees
 Current confirmation, structured input, dynamic tool, and approval yields SHALL
-project into `/agent/<pid>/requests/<request-id>` file trees.
+project into `/agent/<pid>/requests/<request-id>` file trees, answered by writing
+the response file. New `requests/` entries SHALL be observable through the
+`requests/` events stream (blocking read), not by polling.
 
 #### Scenario: Confirmation yield is received
 - **WHEN** current Alan emits a confirmation yield
 - **THEN** the projection creates a request tree with kind, prompt, options,
   status, and response files
-- **AND** resume compatibility can be implemented by writing the response file
+- **AND** resume compatibility is implemented by delivering the written response
+  file
 
 ### Requirement: Tool calls map to action file trees
 Current tool calls and other external effects SHALL project into
 `/agent/<pid>/actions/<action-id>` file trees. If a concrete tool process is
-spawned, the action SHALL link to the relevant `/proc/<tool-pid>` entry.
+spawned, the action SHALL link to its `/proc/<tool-pid>` entry rather than
+duplicating it.
 
 #### Scenario: Tool call starts and completes
 - **WHEN** current Alan emits tool call lifecycle events
@@ -87,32 +93,20 @@ spawned, the action SHALL link to the relevant `/proc/<tool-pid>` entry.
   stdout/stderr/result where applicable, risk, approval, and process link when
   known
 
-### Requirement: Alan Agent is optional workspace over the same files
-The future Alan Agent app module SHALL be an optional workspace over Agent
-Process file surfaces. It SHALL NOT own agent execution, Root Agent Process,
-Service Manager, or Agent Runtime Service.
-
-#### Scenario: User opens Alan Agent
-- **WHEN** the user opens Alan Agent
-- **THEN** it provides richer buffers and views over `/agent`, `/proc`,
-  requests, actions, memory, evidence, and cross-app work
-- **AND** the same work remains operable from Alan Shell through files and
-  process syscalls
-
 ### Requirement: Compatibility transport remains temporary
 The compatibility projection layer SHALL preserve current session creation,
 hydration, replay, reconnect, submission, resume, interrupt, compaction,
 rollback, and pending-yield behavior during migration, while documenting that
-the target model is spawn/open/watch over files and processes.
+the target model is spawn / open / watch over files and processes.
 
 #### Scenario: Existing TUI reconnects
 - **WHEN** Alan Shell reconnects through the current compatibility path
 - **THEN** it still reads persisted history or reconnect snapshots before
   consuming new events
-- **AND** it does not lose buffered yield or stream events that the existing path
+- **AND** it does not lose buffered yield or stream events the existing path
   would preserve
 
 #### Scenario: Projection path is disabled
-- **WHEN** the Agent Process projection path is disabled during migration
-- **THEN** existing compatibility behavior can continue through the legacy path
+- **WHEN** the file projection path is disabled during migration
+- **THEN** existing compatibility behavior continues through the legacy path
   until file-surface parity is proven

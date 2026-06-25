@@ -1,0 +1,41 @@
+## 1. Contract spec
+
+- [x] 1.1 Define agent-as-conforming-process (no kernel type).
+- [x] 1.2 Define the generic process layout (`io/`, `status`, `ctl`).
+- [x] 1.3 Define the agent superset (`requests/`, `actions/`, `machine/`,
+  `context/`).
+- [x] 1.4 Define `ctl`-command control.
+- [x] 1.5 Define `/agent` as a view over `/proc`.
+- [x] 1.6 Define the LLM-stream consumer model and namespace-governed effects.
+- [x] 1.7 Define namespace-assembled requests, compaction-as-view, and
+  tools-as-`/bin`.
+- [x] 1.8 Define request/action files with events streams.
+- [x] 1.9 Define durable identity as a home tree.
+- [x] 1.10 Define provider-server metering.
+
+## 2. Verification
+
+- [x] 2.1 Run `openspec validate define-agent-file-layout-contract --strict`.
+- [x] 2.2 Run `openspec validate --all --strict`.
+
+## 3. Conformance test-kit
+
+- [ ] 3.1 Provide a conformance checker that, given a process directory, verifies
+  the generic process layout (`io/input`, `io/output`, `io/events`, `status`,
+  `ctl`) and, for agents, the superset (`requests/`, `actions/`, `machine/`,
+  `context/`). This gives the convention teeth without a kernel type.
+- [ ] 3.2 Verify dynamic containers (`requests/`, `actions/`) expose an `events`
+  stream observable by blocking read (D8).
+- [ ] 3.3 Verify `/agent` resolves as a view over `/proc` and that `/agent/root`
+  follows the current root pid while durable identity stays the home path (D4/D7).
+- [ ] 3.4 Make the checker runnable by any third-party runtime against its own
+  exported tree, so conformance — not a kernel flag — is what makes a runtime's
+  agents operable.
+
+## 4. Follow-up (separate changes)
+
+- [ ] 4.1 Map current session / tape / yield / tool-call behavior onto this
+  layout in `introduce-alan-kernel-runtime` (the projection file server) and run
+  the conformance test-kit against it.
+- [ ] 4.2 Specify the LLM provider, memory, tool, and skill file servers that
+  this contract references.

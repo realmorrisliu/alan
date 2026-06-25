@@ -1,195 +1,108 @@
-## 0. Alan OS Alignment
+> **Re-scoped by ADR-0024.** This change is the migration slice: a user-space
+> projection file server that maps the current Agent Execution Engine and session
+> protocol onto agent-conforming process files (`define-agent-file-layout-contract`)
+> above the substrate (`define-plan9-kernel-substrate`). It owns only
+> `alan-agent-adapter-contract`. The prior task list (building an `Agent Process`
+> kernel type, opaque ids, a Kernel Journal, ViewModels, and semantic-view
+> snapshots) is fully replaced; that work targeted the retired ontology.
 
-- [x] 0.1 Declare this change as an Alan Kernel implementation slice
-  under `programmable-environment-product`, not the complete product or middleware
-  between the current Agent Execution Engine and Alan Shell.
-- [x] 0.2 Record which constitution criteria the first slice proves:
-  files, processes, stream files, namespaces, mounts, credentials, descriptors,
-  access rights, app/service operation descriptors, service-owned stream files,
-  native references, no-side-effect replay, and renderer-host snapshots.
-- [x] 0.3 Record deferred constitution criteria: broad first-launch local work
-  discovery, complete Alan App workflow, SwiftUI host implementation,
-  WASM extension loading, and universal resource addressing.
-- [x] 0.4 Keep the Alan Shell compatibility path as the first vertical slice
-  while documenting that the current Agent Execution Engine and current
-  service/transport implementation are implementation details, not Alan OS or
-  Alan Kernel.
-- [x] 0.5 Record the durable crate naming direction: `alan-kernel` for the
-  substrate, future `alan-agent` for the built-in Alan Agent app module,
-  future `alan-shell` for the Alan Shell interaction path,
-  `alan-runtime` -> `alan-agent-engine` if renamed, and
-  `alan-protocol` -> `alan-agent-protocol` if it remains session-specific.
-- [x] 0.6 Record this change as the first Alan OS spine slice in the
-  roadmap, with Alan Agent app projection, Alan Shell host integration, Alan for
-  macOS host migration, Groove Master, and UPDF gated on usable Kernel contracts.
-- [x] 0.7 Align with `define-agent-process-os-model`'s
-  `agent-process-os-model` by keeping Agent Process anchors in Kernel and
-  deferring AgentFS schemas, tape, request/action files, Tool manifests, Skill
-  packages, memory stores, policy evaluation, and Agent Runtime Service
-  execution above Kernel.
-- [x] 0.8 Reframe Alan Kernel around file-tree UNIX primitives: paths, files,
-  processes, stream files, namespaces, mounts, credentials, descriptors, and
-  access rights, with capability/object/task/view names treated as V1
-  app/service surfaces rather than durable Kernel ontology.
-- [x] 0.9 Reframe commands, queries, and subscriptions as typed operation
-  surfaces over paths, files, processes, stream files, descriptors, access
-  rights, and namespaces, with registries treated as V1 app/service
-  discovery/cache surfaces rather than durable Kernel ontology.
-- [x] 0.10 Reframe durable Kernel identity around namespace-qualified paths,
-  mounts, process-table entries, stream files, credentials, descriptors, access
-  rights, and native authority, with opaque ids treated as runtime references
-  or V1 compatibility ids.
-- [x] 0.11 Reframe streams as named file kinds that can be read, tailed,
-  watched, resumed from offsets, and referenced by Agent/App evidence
-  interpretations, with subscriptions treated as watch operation surfaces
-  rather than a separate event system.
-- [x] 0.12 Downgrade the former Activity Ledger / Kernel Journal concept into
-  service- and app-owned stream files for activity, audit, recovery, replay,
-  and projection rebuilds; Alan Kernel owns no universal semantic journal.
-- [x] 0.13 Move Evidence out of Alan Kernel ontology: Kernel owns paths,
-  runtime references, stream offsets, process-table entries, service-owned
-  stream file offsets, app artifact paths, and native selectors;
-  Agent/App layers interpret those pointers as evidence.
-- [x] 0.14 Move Artifact out of Alan Kernel ontology: Kernel owns ordinary
-  files, stream files, and output pointers linked to producing processes and
-  native authority; Agent/App layers interpret those outputs as artifacts.
+## Constraints (from ADR-0024)
 
-## 1. Core Crate Skeleton
+- v1 file servers run in-process over the substrate's fast path (D5); no 9P wire
+  transport in this change.
+- The namespace capability boundary is convention-enforced, not isolation-
+  enforced, in v1 (R1); do not claim hard isolation.
+- `alan-kernel` MUST NOT gain dependencies; the projection (which may use
+  `alan-runtime` / `alan-protocol`) is a separate user-space file-server crate.
 
-- [x] 1.1 Add `alan-kernel` to the Cargo workspace with no dependency on `alan-protocol`, Ratatui, Crossterm, AppKit, SwiftUI, or Tokio task handles.
-- [x] 1.2 Define typed opaque ids for V1 surfaces such as actors, objects,
-  buffers, views, commands, queries, subscriptions, tasks, compatibility
-  artifact adapter references, compatibility evidence adapter references, and
-  events.
-- [x] 1.3 Define descriptor types for V1 surfaces such as actors, objects,
-  buffers, views, commands, queries, subscriptions, tasks, compatibility
-  artifact adapter surfaces, and compatibility evidence adapter surfaces.
-- [x] 1.4 Add native-reference descriptor support so files, Git repositories, agent sessions, terminal handles, and domain-owned resources keep external authority outside Alan Kernel ids.
-- [x] 1.5 Add compile-time or focused tests proving `alan-kernel` remains independent from Alan protocol and renderer-host crates.
-- [x] 1.6 Ensure the substrate crate/package uses the durable `alan-kernel`
-  name before adding new durable app or renderer crates.
-- [ ] 1.7 Add first-class file-tree UNIX primitive descriptors for paths,
-  mounts, process-table entries, files, stream files, credentials, descriptors,
-  access rights, and namespaces.
-- [ ] 1.8 Migrate V1 surface descriptors such as objects, buffers, views,
-  tasks, commands, queries, and subscriptions so their opaque ids are runtime
-  references that resolve to namespace paths, process-table entries, stream
-  files, descriptors/access rights, or native authority where durable semantics
-  are required.
-- [ ] 1.9 Add first-class stream file descriptors with namespace path,
-  stream kind, backing process/file/native authority, offset shape,
-  read/tail/watch semantics, and durable offset/range reference metadata.
-- [ ] 1.10 Move current V1 `EvidenceId` / evidence descriptor compatibility
-  surfaces out of durable Alan Kernel API or wrap them as Alan Agent/App adapter
-  compatibility until the agent module owns evidence semantics.
-- [ ] 1.11 Move current V1 `ArtifactId` / artifact descriptor compatibility
-  surfaces out of durable Alan Kernel API or wrap them as Alan Agent/App adapter
-  compatibility over produced files until the app module owns artifact
-  semantics.
+## 1. Prerequisites (owned elsewhere)
 
-## 2. Operation Surface Discovery
+- [ ] 1.1 Substrate crate provides the file-server contract, namespace/mount,
+  byte/offset stream files, `/proc`, and `/srv` (owned by
+  `define-plan9-kernel-substrate` §5–§9).
+- [ ] 1.2 `define-agent-file-layout-contract` is accepted as the file layout this
+  projection conforms to.
 
-- [x] 2.1 Implement command descriptor and invocation types as executable
-  app/service operation surfaces with target, args schema, Credential/actor,
-  required Access Rights, optional app capability descriptor, optional agent
-  governance metadata, undo or recovery, and invocation-hint metadata.
-- [x] 2.2 Implement query descriptor and invocation types as read-only
-  inspection surfaces with result references and required Access Rights or app
-  capability metadata.
-- [x] 2.3 Implement subscription descriptors and update or invalidation messages
-  as watch surfaces for file/resource, process, stream file, object, buffer,
-  view, task, query, and command-availability dependencies.
-- [x] 2.4 Add registry traits or lightweight in-memory registries as V1
-  descriptor discovery/cache surfaces for commands, queries, and subscriptions.
-- [x] 2.5 Add tests proving mutation routes through command invocation while
-  queries and subscriptions remain read-only or observational.
-- [ ] 2.6 Ground command, query, and subscription descriptors in namespace,
-  path, file, process, stream file, descriptor, access-right, and app capability semantics so
-  registries remain
-  discovery/cache surfaces rather than source-of-truth ontology.
-- [ ] 2.7 Ground subscription descriptors in named stream files or watched
-  file/process paths, proving subscriptions are watch operation surfaces rather
-  than an independent event system.
+## 2. Projection file server skeleton
 
-## 3. Service Streams, Projection, And Task Runtime State
+- [ ] 2.1 Add a user-space projection crate that depends on `alan-runtime` and
+  `alan-protocol` internally and on the substrate's file-server contract, while
+  `alan-kernel` stays free of those deps.
+- [ ] 2.2 Start the projection as a long-running process that posts a mountable
+  handle under `/srv/agent-runtime` and serves a tree mounted at `/agent`.
+- [ ] 2.3 Add a feature flag / fallback so the legacy session path keeps working
+  when the projection is disabled or incomplete.
 
-- [x] 3.1 Define a V1 service/app event envelope with schema version, event id,
-  sequence, timestamp, Credential id, causation id, correlation id, and typed event
-  kind; `KernelEvent` naming is compatibility-only if present in early code.
-- [x] 3.2 Define task events for started, progress, output appended, yielded,
-  resumed, side-effect planned, side-effect committed, produced file created,
-  Agent/App artifact/evidence adapter attachment, completed, failed, and
-  cancelled states.
-- [ ] 3.2a Migrate task output chunks and subscription messages toward named
-  stream file records with offsets rather than treating them as standalone
-  event transport.
-- [x] 3.3 Implement in-memory service/app event stream replay with no side
-  effects; activity-ledger naming is V1 compatibility-only if present in early
-  code.
-- [x] 3.4 Implement JSONL service/app event stream append and replay behind the
-  same compatibility trait as the V1 shape for event-stream persistence.
-- [x] 3.5 Implement an in-memory projection store for current objects, buffers, views, tasks, produced-file indexes, Agent/App artifact/evidence adapter projections, command availability, and dirty-view invalidation.
-- [x] 3.6 Add replay tests proving projections rebuild from service/app event
-  stream / V1 ledger state without rerunning shell commands, agent turns, file
-  writes, network calls, terminal input, or imports.
-- [ ] 3.7 Rename or wrap `ActivityLedger` APIs as service/app event stream APIs
-  and expose the stream with offset/replay semantics instead of a separate
-  Kernel-owned journal abstraction.
-- [ ] 3.8 Keep ordinary app, process, file/resource, and host stream files
-  separate from the service/app stream files that own their records; Alan Kernel
-  must not absorb them into a universal journal.
+## 3. Process and IO surfaces
 
-## 4. Semantic View Snapshots
+- [ ] 3.1 Project each current session as an agent-conforming process directory
+  under `/proc/<pid>` (ordinary `Process`, no kernel agent type), with session id
+  kept as an internal runtime reference, never as kernel identity.
+- [ ] 3.2 Map session metadata to a `status` file.
+- [ ] 3.3 Map conversation input/output and lifecycle to `io/input`, `io/output`,
+  and `io/events` as byte/offset stream files; assistant text and thinking deltas
+  append to `io/output` and `io/events`.
 
-- [x] 4.1 Define `ViewSnapshot` with view id, buffer id, version, view kind, semantic model, actions, diagnostics, selection, and focus state.
-- [x] 4.2 Define strongly typed built-in view models for conversation, task tree, command palette, form, object list, text document read/review, diff, and log stream.
-- [x] 4.3 Define schema-versioned dynamic extension view payload support using JSON for unknown or domain-specific views.
-- [x] 4.4 Separate semantic view state from host render state in the type model and tests.
-- [x] 4.5 Add snapshot tests for conversation, form, task tree, and command palette models as the first implementation surface.
+## 4. Machine surface
 
-## 5. Alan Agent App Module
+- [ ] 4.1 Map tape to `machine/tape` as the append-only source of truth.
+- [ ] 4.2 Expose the model context window as a *view* over `machine/tape`
+  (compaction is a view, not a hidden step).
+- [ ] 4.3 Map machine state, transition events, and recovery checkpoints to
+  `machine/` files, gated by access rights.
 
-- [x] 5.1 Add `alan-agent` to the workspace as the built-in Alan Agent app
-  module/projection layer, with dependencies on `alan-kernel` and the agent
-  protocol plus compatibility projection surfaces needed for internal
-  adaptation.
-- [x] 5.2 Map Alan session metadata into an agent session object, conversation buffer, and initial conversation view descriptor.
-- [x] 5.3 Register agent commands for submit turn, resume yielded task, interrupt or cancel active work, compact context, and rollback turn history.
-- [x] 5.4 Map `alan_protocol::EventEnvelope` turn, text, thinking, tool, plan, warning, error, and yield events into Alan Kernel events and projections.
-- [x] 5.5 Map Alan child-run records or lifecycle events into Alan Kernel child task descriptors and task events.
-- [x] 5.6 Project Alan confirmation, structured input, and dynamic tool yields into yielded task state and semantic form or approval snapshots.
-- [x] 5.7 Add fixture tests using representative Alan event envelopes to verify conversation, form, task tree, artifact, and evidence projections.
-- [x] 5.8 Add Agent Process compatibility fixtures proving current Agent
-  Execution Engine behavior can project into status, IO, request/action, and
-  machine surfaces without moving provider execution, compatibility transport,
-  memory stores, or sandbox execution into Alan Kernel.
+## 5. Request surface
 
-## 6. Alan Shell Host
+- [ ] 5.1 Project confirmation, structured-input, dynamic-tool, approval, and
+  credential yields into `requests/<id>/` trees (kind, prompt, options, status,
+  response).
+- [ ] 5.2 Expose a `requests/` events stream so watchers learn of new requests by
+  blocking read, not polling.
+- [ ] 5.3 Deliver a written `requests/<id>/response` back into the current
+  engine's resume path.
 
-- [x] 6.1 Implement Alan Shell renderer/input adaptation over `alan-kernel`
-  inside the Alan Shell path, using `crates/tui` during compatibility.
-- [x] 6.2 Implement Ratatui renderers for conversation, form, task tree, and command palette semantic snapshots.
-- [x] 6.3 Translate Crossterm key, paste, resize, and mouse events into host-local layout changes, semantic input intents, view-local input, or command invocations.
-- [x] 6.4 Keep renderer-only state such as line wrapping, terminal cell cache, geometry, and frame timing out of Alan Kernel semantic state.
-- [x] 6.5 Add Ratatui snapshot or test-backend coverage for the first built-in semantic view renderers.
+## 6. Action surface
 
-## 7. Existing TUI Compatibility Integration
+- [ ] 6.1 Project tool calls and external effects into `actions/<id>/` trees
+  (status, output, result, risk, approval).
+- [ ] 6.2 Link an action to its tool process at `/proc/<tool-pid>` when a concrete
+  process exists, rather than duplicating it.
 
-- [x] 7.1 Integrate the Agent Process projection and the Alan Shell path into
-  `crates/tui` behind a compatibility-first path while preserving existing
-  service/transport wiring.
-- [x] 7.2 Preserve session creation or attach, hydration, replay cursor handling, event stream reconnect, submission, resume, interrupt, compact, rollback, and pending-yield behavior.
-- [x] 7.3 Run the semantic projection path in parallel with the existing reducer where useful and add parity tests before removing old reducer behavior.
-- [x] 7.4 Migrate supported conversation, form, task-tree, and command-palette rendering to semantic snapshots after focused tests pass.
-- [x] 7.5 Leave unsupported surfaces on the current TUI path until a semantic model and renderer are implemented.
+## 7. Control surface
 
-## 8. Verification And Review
+- [ ] 7.1 Accept interrupt, cancel, compact, and rollback as text commands written
+  to `ctl`, mapped onto current engine operations; no per-action side files.
 
-- [x] 8.1 Run focused `cargo test` coverage for `alan-kernel`, `alan-agent`,
-  Alan Shell rendering code, and affected `crates/tui` tests.
-- [x] 8.2 Run `cargo fmt --all` and the relevant clippy or workspace check target, or document any environment-blocked gate with focused passing tests.
-- [x] 8.3 Run `openspec validate introduce-alan-kernel-runtime --strict`.
-- [x] 8.4 Run `git diff --check -- openspec/changes/introduce-alan-kernel-runtime crates`.
-- [x] 8.5 Perform a PR review pass against the Alan Kernel contracts, app projection
-  boundaries, replay no-side-effects rule, and existing TUI compatibility.
-- [ ] 8.6 After implementation is merged, sync accepted delta specs into `openspec/specs/` and prepare archive-readiness notes before archiving the change.
+## 8. `/agent` view
+
+- [ ] 8.1 Present `/agent` as a union/bind view over agent-conforming `/proc`
+  directories (derived, not a second process table).
+- [ ] 8.2 Resolve `/agent/root` to whichever pid currently embodies the root
+  agent's home; durable identity stays the home path, not the pid.
+
+## 9. Existing TUI migration
+
+- [ ] 9.1 Read agent files (`io/output`, `requests/`, `actions/`, `status`) and
+  write `ctl` from `crates/tui`, behind a compatibility-first path.
+- [ ] 9.2 Preserve session create/attach, hydration, reconnect replay, submit,
+  resume, interrupt, compact, rollback, and pending-yield behavior.
+- [ ] 9.3 Run the file path in parallel with the legacy reducer and add parity
+  tests before removing legacy behavior for a surface.
+- [ ] 9.4 Leave unsupported surfaces on the legacy path until file parity holds.
+
+## 10. Dependency boundary
+
+- [ ] 10.1 Add tests proving `alan-kernel` has no dependency on `alan-runtime`,
+  `alan-protocol`, provider clients, memory stores, or sandbox backends, and that
+  those live only in the projection crate.
+
+## 11. Verification and review
+
+- [ ] 11.1 Run focused `cargo test` for the projection crate and affected
+  `crates/tui` tests.
+- [ ] 11.2 Run `just verify`.
+- [ ] 11.3 Run `openspec validate introduce-alan-kernel-runtime --strict`.
+- [ ] 11.4 PR review against ADR-0024: single `Process` category, file-layout
+  conformance, compaction-as-view, no global addressing, no second event system.
+- [ ] 11.5 After merge, sync accepted delta specs into `openspec/specs/` and
+  prepare archive-readiness notes.
