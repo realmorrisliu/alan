@@ -99,8 +99,10 @@ system-continuity, app, and workspace stores.
   authorize access
 - **THEN** they use Memory Store language rather than redefining memory kinds as
   User Memory, System Memory, or App Memory
-- **AND** Agent Runs access memory stores only through configured memory paths,
-  Access Checks, Context Grants, or app-controlled memory surfaces
+- **AND** Agent Processes access memory stores only through namespace-bound
+  paths, Descriptors, and Access Checks — a Memory Store is bound into the
+  agent's namespace — not through an Agent Run or Context Grant API (retired by
+  ADR-0024)
 
 ### Requirement: Pure-text memory layout is inspectable
 alan SHALL keep the baseline memory system file-backed, pure-text,

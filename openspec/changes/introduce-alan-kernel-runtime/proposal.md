@@ -11,7 +11,10 @@ substrate (`define-plan9-kernel-substrate`) and an agent file-layout convention
 This change is therefore re-scoped as the **migration slice**: it maps the
 current Agent Execution Engine and session protocol onto the new agent process
 file surfaces, as a user-space file server above the substrate, while the kernel
-ontology itself is owned by the substrate change.
+ontology itself is owned by the substrate change. It also **absorbs and
+supersedes `add-agent-runtime-service-filesystem`**, whose AgentFS projection it
+now owns (via `alan-agent-adapter-contract`); that change is removed to avoid two
+owners of the same projection.
 
 ## What Changes
 
