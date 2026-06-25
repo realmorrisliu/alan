@@ -4,12 +4,17 @@
 Alan OS SHALL provide `routefs`, a file server where a sender writes a typed
 message to a `send` file and rule files route it by content/type to a destination
 port. The sender SHALL NOT name the receiver; the rules SHALL decide the
-destination. A receiver SHALL consume its port as a stream (blocking read).
+destination. A receiver SHALL consume its port as a stream (blocking read). A
+message MAY span multiple aP writes; routefs SHALL frame it as one message and
+match/route only on clunk (close) of the `send` fid — never on a partial write —
+so large messages route deterministically (the same commit-on-clunk framing as
+the llmfs request).
 
 #### Scenario: A typed message is routed
 - **WHEN** a sender writes a typed message (for example "patch" or "citation") to
-  `send`
-- **THEN** the matching rule routes it to a destination port
+  `send`, possibly over several writes, then clunks the `send` fid
+- **THEN** the complete message is matched and routed to a destination port at
+  clunk (not on a partial write)
 - **AND** the sender did not name the receiving actor
 
 #### Scenario: Handoff is by type, not by actor

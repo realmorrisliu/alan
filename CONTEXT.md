@@ -133,9 +133,11 @@ _Avoid_: durable path identity, native authority, object database key
 
 **Operation Surface**:
 An umbrella term for service/app descriptors exposed through the file tree.
-Commands, queries, and subscriptions stay above Kernel while referencing paths,
-files, processes, descriptors, and namespaces.
-_Avoid_: Kernel primitive, app callback registry, code module boundary
+Commands and queries stay above Kernel while referencing paths, files, processes,
+descriptors, and namespaces. Watching is not an operation surface — it is a
+blocking read on a stream file; Subscription is retired (ADR-0024 D8).
+_Avoid_: Kernel primitive, app callback registry, code module boundary,
+Subscription as an operation surface
 
 **Command**:
 A typed executable operation surface that requests a side effect or spawns a
@@ -426,9 +428,10 @@ _Avoid_: mutable checkpoint, full-copy fork, never-delete storage, a checkpoint
 that cannot be verified by hash
 
 **Message Routing**:
-Decoupled communication via `routefs`: a sender writes a typed message to `send`;
-rule files route it by content/type to a destination port (a stream a receiver
-tails). The sender does not name the receiver. Used for agent/tool/app handoff
+Decoupled communication via `routefs`: a sender writes a typed message to `send`
+(framed, committed on clunk) and rule files route it by content/type to a
+destination port (a stream a receiver tails). The sender does not name the
+receiver. Used for agent/tool/app handoff
 and human-in-the-loop governance routing; messages are logged and rules are
 inspectable files. (Idea from Plan 9's Plumber; name is Alan's own.)
 _Avoid_: sender naming the receiver, hidden routing with no log, routing as the

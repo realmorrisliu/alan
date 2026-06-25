@@ -354,9 +354,10 @@ alan-llm (depends on alan-protocol)
 alan-runtime (Agent Execution Engine; depends on alan-protocol, alan-llm)
     ↑        ↑
 alan-tools   alan (depends on alan-protocol, alan-runtime)
-
-alan-kernel (Alan Kernel semantic UNIX substrate primitives)
 ```
+
+Target crate architecture (`alan-ap`, `alan-kernel`, `servers/*`, …) is
+[ADR-0025](docs/adr/0025-target-crate-architecture.md) and is not built yet.
 
 ---
 

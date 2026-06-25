@@ -147,8 +147,11 @@ alan/
 | `alan-runtime`         | Agent Execution Engine — tape, machine loop, compatibility session surface, tool execution, skills; future `alan-agent-engine` |
 | `alan-swebench-tooling` | SWE-bench workspace and suite materialization helpers               |
 | `alan-tools`           | Builtin executable tool implementations (`read_file`, `bash`, `grep`, etc.) |
-| `alan-kernel`          | Alan Kernel substrate primitives: namespace and mounts, paths, files, descriptors, access rights, credentials, processes, and the process table |
 | `alan`                 | Public CLI plus current legacy service/transport implementation for workspace lifecycle, HTTP/WS compatibility, ask, and chat |
+
+> The target crate architecture (`alan-ap`, `alan-kernel`, `servers/*`, …) is
+> [ADR-0025](docs/adr/0025-target-crate-architecture.md) and is **not built yet** —
+> those crates do not exist in the current workspace.
 
 ---
 

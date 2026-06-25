@@ -1,7 +1,9 @@
 ## 1. Contract spec
 
 - [x] 1.1 Define agent-as-conforming-process (no kernel type).
-- [x] 1.2 Define the generic process layout (`io/`, `status`, `ctl`).
+- [x] 1.2 Define the generic process layout: the full `/proc` substrate layout
+  (identity/parentage/credentials/namespace/exit state) plus the `io/`/`status`/
+  `ctl` IO/control subset.
 - [x] 1.3 Define the agent superset (`requests/`, `actions/`, `machine/`,
   `context/`, `children/`, and the top-level aggregate `events` stream).
 - [x] 1.4 Define `ctl`-command control.

@@ -2,7 +2,9 @@
 
 - [ ] 1.1 Add `routefs` as a user-space aP file server; post a handle at
   `/srv/route` and serve its tree (send, rules, ports, log) at `/mnt/route`.
-- [ ] 1.2 Implement the `send` write entry point for typed messages.
+- [ ] 1.2 Implement the `send` write entry point for typed messages; frame a
+  message across multiple writes and match/route only on clunk of the `send` fid
+  (commit-on-clunk), never on a partial write.
 - [ ] 1.3 Implement rule files (content/type match) with deterministic match
   order and a default dead-letter port.
 - [ ] 1.4 Implement destination ports as blocking-read streams.

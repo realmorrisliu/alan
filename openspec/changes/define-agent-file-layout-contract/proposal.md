@@ -14,8 +14,10 @@ already provide.
 
 ## What Changes
 
-- Define the generic process file layout (`io/`, `status`, `ctl`) that every
-  process exposes, and the agent superset (`requests/`, `actions/`, `machine/`,
+- Define the generic process file layout — the full `/proc/<pid>` substrate
+  layout (identity/parentage/credentials/namespace/exit state) plus the `io/`,
+  `status`, `ctl` IO/control subset — that every process exposes, and the agent
+  superset (`requests/`, `actions/`, `machine/`,
   `context/`, `children/`, and the top-level aggregate `events` stream),
   overlaid at `/agent/<pid>` while `/proc/<pid>` stays generic.
 - Define control as text commands written to `ctl`, so new control actions need

@@ -25,9 +25,11 @@ model with no new mechanism (send file, rule files, port streams).
 Implements [ADR-0026](../../../docs/adr/0026-plan9-application-ideas-for-agents.md)
 D2.
 
-- **Send / rules / ports.** A sender writes a typed message to `send`. Rule files
-  match by content/type and route to a destination port. A receiver tails its
-  port (a D8 blocking-read stream).
+- **Send / rules / ports.** A sender writes a typed message to `send` (possibly
+  over several aP writes) and clunks it to commit; routing matches the complete
+  message at clunk, not on a partial write. Rule files match by content/type and
+  route to a destination port. A receiver tails its port (a D8 blocking-read
+  stream).
 - **Decoupled.** The sender does not name a receiver; rules decide. Handoff is
   "emit type T", not "call actor X".
 - **Auditable by construction.** Every message is appended to an observable log
