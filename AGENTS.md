@@ -289,9 +289,8 @@ alan/
 │   │   └── src/
 │   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
 │   │
-│   ├── alan-kernel/           # Alan Kernel semantic UNIX substrate primitives
-│   │   └── src/
-│   │       └── lib.rs
+│   │   # NOTE: the target crate architecture (alan-ap, alan-kernel, servers/*)
+│   │   # is ADR-0025 and is NOT built yet — no alan-kernel crate in the tree.
 │   │
 │   ├── tui/                   # Rust inline terminal UI linked into alan
 │   │   └── src/

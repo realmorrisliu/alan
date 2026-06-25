@@ -76,8 +76,9 @@
 
 ## 8. `/agent` overlay
 
-- [ ] 8.1 Present `/agent/<pid>` as an overlay: union the kernel `/proc/<pid>`
-  generic files (io/status/ctl) with the projection's agent surfaces
+- [ ] 8.1 Present `/agent/<pid>` as an overlay: union the full kernel `/proc/<pid>`
+  generic layout (identity/parentage/credentials/namespace/exit state + io/status/
+  ctl) with the projection's agent surfaces
   (requests/actions/machine/context/children/events). Do not put agent files into
   `/proc`; do not expose any `/agent` entry without a backing `/proc` Process
   (not a second process table).
