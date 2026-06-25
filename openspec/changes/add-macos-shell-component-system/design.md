@@ -37,6 +37,27 @@ visual/interaction rules (materials, space slider, collapsed sidebar). The new
 token single-source, the primitive catalog, style/structure separation, the preview
 gallery + accessibility baseline, and the migration discipline.
 
+## Programmable Environment Alignment
+
+`add-macos-shell-component-system` is a **host-surface/design-system** change under
+the programmable environment direction, not an environment-core or app-domain change.
+Its responsibility is to make the macOS host surface capable of rendering future
+environment views with native SwiftUI primitives that are reusable, accessible,
+previewable, and token-governed.
+
+- **Environment role:** host surface / macOS design-system capability.
+- **Runtime mapping:** none at the environment core layer. These primitives may render
+  environment views and buffers later, but they do not define object, command, buffer,
+  view, query, ledger, or agent semantics.
+- **Native authority:** SwiftUI component files, semantic design tokens, preview
+  galleries, accessibility behavior, and the design-token guard.
+- **Host boundary:** layout, chrome, native controls, input presentation, selection
+  affordances, and visual migration discipline. The host composes environment state; it
+  is not the source of truth for that state.
+- **Deferred migration:** terminal-host AppKit internals, Rust workbench/runtime
+  capability, environment apps, and the current shell runtime remain outside this
+  change.
+
 ## Goals / Non-Goals
 
 **Goals:**
