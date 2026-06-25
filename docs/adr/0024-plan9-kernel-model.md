@@ -72,8 +72,12 @@ generic layout — identity, parentage, credentials, namespace, exit state, plus
 the `io/`, `status`, and `ctl` IO/control subset; an agent additionally exposes
 `requests/`, `actions/`,
 `machine/`, `context/`, `children/`, and a top-level aggregate `events` stream.
-Control is expressed by writing text commands to `ctl` (Plan 9 `/net` style), so
-new control actions never require new files. `/agent` is an *overlay* over
+Control is expressed by writing text commands to a `ctl`, split by ownership:
+generic process control (interrupt/cancel) to the kernel `/proc/<pid>/ctl`, and
+Agent Execution Engine control (compact/rollback over the tape/checkpoints) to the
+agentfs-owned `machine/ctl` in the overlay — so the kernel never interprets runtime
+semantics. New control actions are added as new `ctl` commands on the owning
+surface, not new files. `/agent` is an *overlay* over
 `/proc` (for each agent-conforming process it unions the kernel `/proc/<pid>`
 generic layout with the agent runtime's agent surfaces, plus friendly aliases
 such as `/agent/root`), not a second process table; the kernel renders no

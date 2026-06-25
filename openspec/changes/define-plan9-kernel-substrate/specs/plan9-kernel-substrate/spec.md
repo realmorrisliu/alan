@@ -238,12 +238,15 @@ such as interrupt/cancel route through `/proc/<pid>/ctl`).
 ### Requirement: Process creation (spawn) is an aP write via clone-via-open
 Alan Kernel SHALL expose process creation through aP, not a side API, so an
 aP-only client (such as Alan Shell) can launch processes with no non-file
-operation. Opening `/proc/clone` SHALL allocate a new process slot
-(clone-via-open); writing an exec spec — executable path, arguments, and the
-child's namespace/descriptors — and clunking the fid SHALL start the process,
-return its pid, and make `/proc/<pid>` appear. The exec spec follows the
+operation. Opening `/proc/clone` SHALL allocate a new process slot and return its
+pid at open time (clone-via-open, like `/net`'s clone returning a connection
+name), making `/proc/<pid>` appear in a pending state. The caller SHALL then write
+the exec spec — executable path, arguments, and the child's namespace/descriptors
+— into the new slot and `clunk` to commit; the exec spec follows the
 commit-on-clunk document convention (it MAY span multiple writes; the process
-starts only at clunk, never from a truncated spec). The child's namespace SHALL be
+starts only at clunk, never from a truncated spec). The pid is observable from the
+clone-open result and `/proc/<pid>/status`; `clunk` returns success or a
+commit-time error and carries no special payload. The child's namespace SHALL be
 the one the spawner specifies, but spawn SHALL be capability-preserving, not
 capability-amplifying:
 the kernel SHALL reject any exec-spec namespace entry or descriptor the spawner
@@ -254,8 +257,10 @@ boundary, D6).
 
 #### Scenario: A client spawns a process
 - **WHEN** Alan Shell launches an executable
-- **THEN** it opens `/proc/clone`, writes the exec spec, and receives the new pid
-- **AND** `/proc/<pid>` appears; no operation outside aP open/write was needed
+- **THEN** opening `/proc/clone` returns the new pid (a pending `/proc/<pid>`), and
+  it writes the exec spec into the slot and clunks to start the process
+- **AND** the pid came from the clone-open result and status is read from
+  `/proc/<pid>/status`; no operation outside aP open/write/clunk was needed
 
 #### Scenario: The spawned child's namespace is constructed
 - **WHEN** the exec spec includes the child's namespace/descriptors
