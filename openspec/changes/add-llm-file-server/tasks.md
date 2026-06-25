@@ -7,13 +7,13 @@
 
 - [ ] 2.1 Add `alan-llmfs` depending on `alan-ap` and `alan-llm`; it is a file
   server, not a backend, and `alan-kernel` does not depend on it.
-- [ ] 2.2 Post a handle under `/srv` and serve the `/srv/llm` tree.
+- [ ] 2.2 Post a handle under `/srv` (`/srv/llm`) and serve the tree at `/mnt/llm`.
 
 ## 3. Provider and Connection surfaces
 
-- [ ] 3.1 Serve `/srv/llm/<provider>` introspect-only (models, capabilities,
+- [ ] 3.1 Serve `/mnt/llm/<provider>` introspect-only (models, capabilities,
   status) from `alan-llm` adapters; not callable.
-- [ ] 3.2 Serve `/srv/llm/<connection>` callable endpoints from connection
+- [ ] 3.2 Serve `/mnt/llm/<connection>` callable endpoints from connection
   profiles (provider + model + credential); credentials resolved from the secret
   store, never agent-visible plaintext.
 - [ ] 3.3 Reflect connection-profile add/remove as endpoint appear/disappear.
@@ -21,7 +21,7 @@
 ## 4. Generation as a connection directory
 
 - [ ] 4.1 Implement clone-via-open: `open clone` allocates
-  `/srv/llm/<connection>/<n>/` with `data`, `events`, `ctl`, `status`.
+  `/mnt/llm/<connection>/<n>/` with `data`, `events`, `ctl`, `status`.
 - [ ] 4.2 Commit on complete `data` write; no start command. Drive `alan-llm`
   streaming.
 - [ ] 4.3 Stream typed events to `events` (retained, offset-resumable); `status`

@@ -399,14 +399,16 @@ shape, a generation that cannot be observed as files
 
 **LLM Provider**:
 A wire adapter (driver) for one model API — Anthropic, OpenAI Responses, etc.
-Served read-only for introspection at `/srv/llm/<provider>`. A Provider knows the
+Served read-only for introspection at `/mnt/llm/<provider>`. A Provider knows the
 protocol but holds no Credential and no default Model, so it is not callable on
 its own.
 _Avoid_: provider as a callable endpoint, provider that embeds credentials
 
 **LLM Connection**:
 A callable endpoint that binds a Provider, a Model, and a Credential together,
-served by `llmfs` at `/srv/llm/<connection>`. Generations happen here. An agent
+served by `llmfs` at `/mnt/llm/<connection>` (llmfs posts its mountable handle at
+`/srv/llm`; `/srv` holds handles only, not service state). Generations happen
+here. An agent
 gains model access only by binding a Connection into its namespace; changing the
 model means binding a different Connection. Credentials stay in the Connection /
 secret store and never enter the request document or the agent's namespace as

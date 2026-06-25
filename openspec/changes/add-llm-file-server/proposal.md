@@ -5,15 +5,16 @@ provider file server the chokepoint where cost and access live. To reach the
 north-star milestone (talking to an agent in Alan Shell), an agent process needs
 to open an LLM stream through the namespace rather than calling a provider SDK.
 This change defines `alan-llmfs`: the file server that exposes models as
-Generations under `/srv/llm`, wrapping the existing `alan-llm` adapters.
+Generations under `/mnt/llm` (handle posted at `/srv/llm`), wrapping the existing
+`alan-llm` adapters.
 
 ## What Changes
 
-- Add `alan-llmfs`, a file server (speaks aP, the `alan-ap` protocol) mounted
-  under `/srv/llm`, wrapping `alan-llm`.
-- Separate Provider (a wire driver, introspect-only at `/srv/llm/<provider>`)
+- Add `alan-llmfs`, a file server (speaks aP, the `alan-ap` protocol) that posts
+  a handle at `/srv/llm` and serves its tree at `/mnt/llm`, wrapping `alan-llm`.
+- Separate Provider (a wire driver, introspect-only at `/mnt/llm/<provider>`)
   from Connection (a callable endpoint binding Provider + Model + Credential at
-  `/srv/llm/<connection>`). Generations happen on Connections.
+  `/mnt/llm/<connection>`). Generations happen on Connections.
 - Model a Generation as a clone-via-open connection directory: the caller opens
   `clone`, writes one complete neutral request document to `data`, and reads a
   typed token stream from `events`; `ctl` aborts a running Generation; `status`
@@ -28,7 +29,7 @@ Generations under `/srv/llm`, wrapping the existing `alan-llm` adapters.
 
 ### New Capabilities
 
-- `llm-file-server`: `alan-llmfs` — the `/srv/llm` file server exposing Providers
+- `llm-file-server`: `alan-llmfs` — the `/mnt/llm` file server (handle at `/srv/llm`) exposing Providers
   (introspect) and Connections (callable), Generations as clone-dir interactions,
   the versioned request/event wire DTO, and in-server metering.
 

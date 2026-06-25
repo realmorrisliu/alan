@@ -1,16 +1,20 @@
 ## ADDED Requirements
 
-### Requirement: Agent Process is a first-class Process
-Alan Kernel SHALL model execution with only ordinary `Process` and
-`Agent Process` process categories. An Agent Process SHALL have ordinary process
-identity, parentage, credentials, descriptors, lifecycle, input/output streams,
-status, and exit state, plus an AgentFS view for agent-specific files.
+### Requirement: Agent Process is a convention over a single Process category
+Alan Kernel SHALL model execution with a single `Process` category (per ADR-0024
+and `define-plan9-kernel-substrate`); there SHALL NOT be a separate
+`Agent Process` kernel category. An "Agent Process" is an ordinary `Process`
+recognized by conforming to the agent file layout (its AgentFS surfaces under
+`/agent/<pid>`), discovered by walking the process directory rather than by a
+kernel flag. It has ordinary process identity, parentage, credentials,
+descriptors, lifecycle, input/output streams, status, and exit state.
 
 #### Scenario: Process table is reviewed
 - **WHEN** Alan Kernel process ontology is reviewed
-- **THEN** it includes Process and Agent Process
-- **AND** it does not introduce separate process kinds for app, command,
-  service, task, run, or subagent
+- **THEN** it contains a single `Process` category
+- **AND** agent-ness is a file-layout/AgentFS convention, not a kernel process
+  kind, and there are no separate kinds for app, command, service, task, run, or
+  subagent
 
 #### Scenario: Child agent is spawned
 - **WHEN** an Agent Process spawns another agent executable

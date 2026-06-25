@@ -1,11 +1,21 @@
 ## ADDED Requirements
 
-### Requirement: llmfs serves models through `/srv/llm`
+### Requirement: llmfs posts a handle in `/srv` and serves its tree under `/mnt/llm`
 Alan OS SHALL provide `alan-llmfs`, a file server that speaks aP (the `alan-ap`
-protocol) and is mounted under `/srv/llm`. It SHALL wrap the existing `alan-llm`
-adapters and SHALL NOT require an agent to call a provider SDK directly. An agent
-SHALL gain model access only by having an `llmfs` Connection bound into its
-namespace.
+protocol). It SHALL post a single mountable handle under `/srv` (`/srv/llm`) —
+`/srv` holds rendezvous handles only, never service state — and its file tree
+(providers, connections, generations) SHALL be mounted at a real namespace
+location, canonically `/mnt/llm`, with specific Connections bound into an agent's
+own namespace. It SHALL wrap the existing `alan-llm` adapters and SHALL NOT
+require an agent to call a provider SDK directly. An agent SHALL gain model access
+only by having an `llmfs` Connection bound into its namespace.
+
+#### Scenario: The handle and the tree are separate
+- **WHEN** `alan-llmfs` starts
+- **THEN** it posts a mountable handle at `/srv/llm` and serves its tree at
+  `/mnt/llm` (or wherever a client mounts the handle)
+- **AND** `/srv/llm` is a handle, not a directory of provider/connection/
+  generation state
 
 #### Scenario: An agent reaches a model
 - **WHEN** an agent needs to call a model
@@ -19,21 +29,21 @@ namespace.
 
 ### Requirement: Provider and Connection are distinct
 `alan-llmfs` SHALL expose Providers and Connections as distinct surfaces. A
-Provider SHALL be a wire driver served introspect-only at `/srv/llm/<provider>`
+Provider SHALL be a wire driver served introspect-only at `/mnt/llm/<provider>`
 (its available models, capabilities, status) and SHALL NOT be callable on its
 own. A Connection SHALL bind a Provider, a Model, and a Credential into a callable
-endpoint at `/srv/llm/<connection>`, where Generations happen. Changing the model
+endpoint at `/mnt/llm/<connection>`, where Generations happen. Changing the model
 SHALL mean binding a different Connection.
 
 #### Scenario: A provider is inspected
-- **WHEN** a caller reads `/srv/llm/<provider>`
+- **WHEN** a caller reads `/mnt/llm/<provider>`
 - **THEN** it sees the driver's models, capabilities, and status
 - **AND** it cannot start a Generation there (no Model or Credential)
 
 #### Scenario: Connections track configuration
 - **WHEN** a user adds or removes a connection profile (provider + model +
   credential)
-- **THEN** a corresponding `/srv/llm/<connection>` endpoint appears or disappears
+- **THEN** a corresponding `/mnt/llm/<connection>` endpoint appears or disappears
 - **AND** the credential is referenced by the Connection, not copied into it as
   agent-visible plaintext
 
@@ -45,13 +55,13 @@ opening a `clone` file under a Connection. The directory SHALL contain `data`
 directory.
 
 #### Scenario: A Generation is started
-- **WHEN** a caller opens `/srv/llm/<connection>/clone`
-- **THEN** `alan-llmfs` allocates `/srv/llm/<connection>/<n>/` with `data`,
+- **WHEN** a caller opens `/mnt/llm/<connection>/clone`
+- **THEN** `alan-llmfs` allocates `/mnt/llm/<connection>/<n>/` with `data`,
   `events`, `ctl`, and `status`
 - **AND** two concurrent callers receive independent directories
 
 #### Scenario: A Generation is observed
-- **WHEN** any permitted process reads `/srv/llm/<connection>/<n>/status`
+- **WHEN** any permitted process reads `/mnt/llm/<connection>/<n>/status`
 - **THEN** it sees progress, token counts, and accumulated cost
 - **AND** the Generation is inspectable as files, not hidden in a caller's fd
 

@@ -69,7 +69,7 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | --- | --- | --- |
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
 | `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
-| `/srv/llm/<provider>` (introspect), `/srv/llm/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
+| `/srv/llm` (handle); tree at `/mnt/llm/<provider>` (introspect), `/mnt/llm/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
 | `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
 | `/mnt/mem` | `alan-memfs` | (storage) |
@@ -100,7 +100,8 @@ Backends (file-unaware):
 File servers (each implements `alan-ap`):
 - `alan-agentfs` — new; serves `/agent` (the projection crate of
   `introduce-alan-kernel-runtime`).
-- `alan-llmfs` — new; serves `/srv/llm/*`; owns cost/metering/rate-limiting
+- `alan-llmfs` — new; posts a handle at `/srv/llm`, serves its tree at
+  `/mnt/llm`; owns cost/metering/rate-limiting
   (ADR-0024 D6).
 - `alan-binfs` — new; serves `/bin`, tool manifests, and man pages.
 - `alan-memfs` — new; serves `/mnt/mem`; the durable home memory tree (D7).

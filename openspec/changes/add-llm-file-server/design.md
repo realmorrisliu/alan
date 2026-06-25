@@ -10,7 +10,7 @@ namespace (ADR-0024 D1/D2/D6). This is on the north-star critical path (M2).
 
 **Goals:**
 
-- Expose models through `/srv/llm` as aP file surfaces.
+- Expose models through `/mnt/llm` (handle posted at `/srv/llm`) as aP file surfaces.
 - Make a Generation an inspectable connection directory (progress and cost are
   `cat`-able).
 - Keep the request provider-neutral and credentials out of it.
@@ -30,7 +30,7 @@ uses the aP protocol from `define-plan9-kernel-substrate`.
 - **Provider vs Connection.** Provider = wire driver (introspect-only). Connection
   = Provider + Model + Credential, the callable endpoint. Agents bind a
   Connection; changing model = binding a different Connection.
-- **Generation = clone-dir.** `open clone` allocates `/srv/llm/<connection>/<n>/`
+- **Generation = clone-dir.** `open clone` allocates `/mnt/llm/<connection>/<n>/`
   with `data` (write request), `events` (read typed stream), `ctl` (abort),
   `status` (progress/cost). Concurrency is isolated per connection directory.
 - **Implicit commit.** Writing one complete request document to `data` commits
