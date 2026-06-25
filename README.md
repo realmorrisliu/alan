@@ -129,8 +129,9 @@ alan/
 │   ├── runtime/      # Agent Execution Engine: tape, session, agent loop, skills, SWE-bench tooling
 │   ├── tools/        # Builtin executable tool implementations
 │   ├── tui/          # Current Ratatui Alan Shell implementation path
-│   ├── alan-kernel/   # Alan Kernel substrate primitives
 │   └── alan/         # CLI plus current legacy service/transport implementation
+│   # Target crate architecture (alan-ap, alan-kernel, servers/*, ...) is ADR-0025;
+│   # those crates do not exist yet.
 ├── clients/
 │   └── apple/        # Native Apple client (SwiftUI, macOS/iOS)
 └── docs/             # Architecture, contracts, maintainer notes, testing strategy

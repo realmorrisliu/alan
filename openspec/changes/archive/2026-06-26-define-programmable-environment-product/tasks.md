@@ -103,7 +103,11 @@
 
 ## 7. Archive Readiness
 
-- [ ] 7.1 After review and merge, sync
-  `programmable-environment-product` into `openspec/specs/`.
-- [ ] 7.2 Archive the completed change only after the long-lived spec has been
-  updated and validated.
+- [x] 7.1 Archived as **SUPERSEDED**, not completed-and-merged: the kernel/OS
+  model is replaced by ADR-0024/0025 and the new changes (substrate,
+  agent-file-layout, llmfs, shell). Delta specs are therefore NOT synced into
+  `openspec/specs/` — the behavior is replaced, not promoted to a long-lived
+  contract.
+- [x] 7.2 Kept under `openspec/changes/archive/` as a historical record only;
+  product scope lives in ADR-0024/0025 and the UPDF / Groove Master umbrella
+  changes. (Not discoverable as an active change or a spec by design.)

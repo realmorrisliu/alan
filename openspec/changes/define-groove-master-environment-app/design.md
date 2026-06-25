@@ -54,33 +54,6 @@ a portable domain core that can later support iOS/iPadOS capture or another host
   readiness; this proposal stays adapter-shaped so the first macOS surface can
   mount Groove Master without making the shell the product model.
 
-## Programmable Environment Alignment
-
-`define-groove-master-environment-app` is an **environment app** change. It is not a
-host-surface design-system change and not an Alan runtime-platform change. The product
-should be able to run inside Alan's programmable environment while preserving a
-portable domain core that can later support iOS/iPadOS capture or another host.
-
-- **Environment role:** environment app.
-- **Domain core:** practice phases, plan generation, practice blocks, inspiration
-  cards, loop metadata, session lifecycle, recording references, markers, reflections,
-  pocket-tracker signals, journal schema, and producer-note records.
-- **Runtime mapping:** `PracticePlan`, `GrooveSession`, `RecordingTake`, `Marker`,
-  `Clip`, `GrooveEntry`, `DrumLoop`, `Reflection`, and `ProducerNote` map to
-  environment objects; session, playback, marker, import, reflection, and plan
-  generation actions map to commands; active session, recording review, Groove Journal,
-  Groove Stream, and Loop Library map to buffers/views; recent marked moments, sessions
-  by phase, loops by style, and entries needing reflection map to queries.
-- **Native authority:** local Groove Master journal/audio/domain store. The current
-  macOS shell and future host surfaces render and command domain state; they do not own
-  it.
-- **Adapter boundary:** the Alan adapter translates domain state into environment
-  objects, commands, buffers, views, queries, local-first persistence, and producer
-  agent participation without pushing Alan shell internals into the domain core.
-- **Deferred migration:** implementation waits for the programmable environment
-  substrate; this proposal stays adapter-shaped so the first macOS surface can mount
-  Groove Master without making the shell the product model.
-
 ## Goals / Non-Goals
 
 **Goals:**
