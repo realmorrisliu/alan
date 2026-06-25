@@ -48,9 +48,10 @@
   (for example a connection directory) and returns its name/handle — an
   open-with-allocation convention, not a new operation. (Used by `alan-llmfs`
   Generations.)
-- [ ] 5.5 Define the two-fold error model: dial-time failures (no access, rate
-  limited, not found) return an operation error code; mid-interaction failures
-  surface as a terminal error record in the relevant stream.
+- [ ] 5.5 Define the three-phase error model: dial-time failures (no access, rate
+  limited, not found) return an `open` error; commit-time failures (malformed/
+  truncated request at `clunk`) return a `write`/`clunk` error and start nothing;
+  mid-interaction failures surface as a terminal error record in the stream.
 - [ ] 5.6 Implement the in-process fast-path transport that dispatches aP calls
   without serialization, so high-rate streams pay no protocol cost.
 - [ ] 5.7 Add a serialization round-trip test over the aP wire shape to prove a

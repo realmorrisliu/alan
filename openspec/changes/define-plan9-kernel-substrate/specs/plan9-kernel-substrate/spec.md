@@ -63,16 +63,19 @@ literal 9P; a 9P gateway MAY be added later.
 - **AND** a later wire transport for out-of-process or networked file servers
   reuses the same contract without changing it
 
-### Requirement: aP fids, clone-via-open, and a two-fold error model
+### Requirement: aP fids, clone-via-open, and a three-phase error model
 aP SHALL model a fid as a handle to one interaction: `walk`/`open` allocate it
 and `clunk` releases it. Each `open` SHALL yield an independent fid so concurrent
 callers do not interfere. `open` MAY have allocation side effects: opening a
 designated `clone` file SHALL allocate a new resource (such as a connection
 directory) and return its name or handle, as an open-with-allocation convention
-rather than a new operation. Errors SHALL split two ways: a dial-time failure
-(no access, rate limited, not found) SHALL return an operation error code, while
-a mid-interaction failure SHALL surface as a terminal error record in the
-relevant stream.
+rather than a new operation. A multi-write request committed on `clunk` (the
+commit-on-clunk framing used by `llmfs` `data` and `routefs` `send`) MAY be
+rejected at commit. Errors SHALL therefore split by phase: a dial-time failure
+(no access, rate limited, not found) SHALL return an `open` operation error code;
+a commit-time failure (malformed/truncated request at `clunk`) SHALL return a
+`write`/`clunk` operation error and start no interaction; and a mid-interaction
+failure SHALL surface as a terminal error record in the relevant stream.
 
 #### Scenario: A clone file is opened
 - **WHEN** a caller opens a `clone` file (for example under an `llmfs` connection)
@@ -84,6 +87,12 @@ relevant stream.
 - **WHEN** an `open` is denied (no access, rate limited, or not found)
 - **THEN** aP returns an operation error code
 - **AND** no partial interaction stream is created
+
+#### Scenario: A commit-time failure occurs
+- **WHEN** a multi-write request is malformed or truncated at `clunk`
+- **THEN** the `write`/`clunk` returns an operation error and no interaction starts
+- **AND** this is distinct from a dial-time `open` error and from a mid-interaction
+  stream record
 
 #### Scenario: A mid-interaction failure occurs
 - **WHEN** an interaction fails after it has begun streaming

@@ -36,8 +36,12 @@ Layer 5  binary           alan         (boot + Service Manager + CLI/daemon; may
 2. **File servers depend on `alan-ap` plus their own backend only** — never on
    kernel internals, never on another file server, never on a client. They
    rendezvous through `/srv`, so any one is replaceable or multi-instance.
-3. **Clients depend on `alan-ap` only.** A front-end reads files, writes `ctl`,
-   and watches streams; it never links a server or a backend directly.
+3. **Clients depend on `alan-ap` and (for renderers) external UI libraries only —
+   never an internal server/backend Alan crate.** A front-end reads files, writes
+   `ctl`, and watches streams; a renderer like `alan-terminal-ui` may use
+   Ratatui/Crossterm, but it never links an Alan server or backend crate. The
+   `dependency_boundary` test enforces "no internal server/backend Alan deps", not
+   "no deps at all".
 
 Only the `alan` binary may depend on everything, because it is the hand that
 mounts everything together at boot.
@@ -119,9 +123,12 @@ Clients (read files, write `ctl`):
 Transitional:
 - `alan-compat` — new, temporary; holds V1 surfaces still needed during
   migration; deleted once clients are file-native.
-- The current `alan-agent` crate (a V1 projection): its projection logic moves to
-  `alan-agentfs` and its V1 remnants to `alan-compat`. The name `alan-agent` is
-  reserved for the optional Agent Workspace app client (may be deferred).
+- There is no current `alan-agent` crate (the V1 projection was removed). The
+  current compatibility/runtime pieces live in `alan-runtime`, `alan-protocol`,
+  `crates/alan`, and `crates/tui`; their projection logic migrates into
+  `alan-agentfs` (per `introduce-alan-kernel-runtime`) with any V1 remnants going
+  to `alan-compat`. The name `alan-agent` is reserved for a future optional Agent
+  Workspace app client (may be deferred).
 
 Binary:
 - `alan` — keep; boots the kernel, runs Service Manager (mounts the file servers,

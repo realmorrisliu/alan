@@ -30,8 +30,9 @@ and ADR-0024 D4.
 - **aP-only client.** `alan-shell` depends on `alan-ap` and nothing else (no file
   server, no backend). It reads/writes files and writes `ctl`.
 - **Generic builtins.** list/walk, `cat` (open+read), `echo >`/write, `tail`
-  (blocking watch with offset), `spawn`. Control of any process/agent is writing
-  to its `ctl`.
+  (blocking watch with offset), `spawn`. Control is split by ownership: generic
+  control (interrupt/cancel) to the kernel `/proc/<pid>/ctl`, agent-runtime
+  control (compact/rollback) to the agentfs-owned `machine/ctl`.
 - **No agent knowledge, no sugar.** Conversation = `echo > <pid>/io/input` plus
   `tail <pid>/io/output`. The same commands operate a compiler process.
 - **Stdio first.** A line-oriented driver for M1; Ratatui rendering deferred to

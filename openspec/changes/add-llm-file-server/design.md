@@ -41,9 +41,10 @@ uses the aP protocol from `define-plan9-kernel-substrate`.
   begins loses nothing. `ctl` only aborts.
 - **Independent wire DTO.** A versioned request DTO and stream-event DTO decouple
   the wire format from `alan-llm` internals; `alan-llmfs` maps DTO ↔ `alan-llm`.
-- **Two-fold errors.** Dial-time (no access / rate limited / model unknown) →
-  `open` error code. Mid-generation (provider error) → terminal error record in
-  `events`.
+- **Three-phase errors.** Dial-time (no access / rate limited / model unknown) →
+  `open` error code. Commit-time (malformed/truncated request at `data` clunk) →
+  `write`/`clunk` error + `status` rejected, no generation. Mid-generation
+  (provider error) → terminal error record in `events`.
 
 ## Risks / Trade-offs
 

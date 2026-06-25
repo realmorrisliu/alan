@@ -1,7 +1,7 @@
 ## 1. Prerequisites
 
 - [ ] 1.1 aP protocol available (`define-plan9-kernel-substrate §5`): clone-via-
-  open, retained byte/offset streams, two-fold errors.
+  open, retained byte/offset streams, three-phase errors (dial/commit/mid).
 
 ## 2. Crate skeleton
 
