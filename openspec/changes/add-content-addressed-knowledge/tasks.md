@@ -4,7 +4,9 @@
   write-once, idempotent writes, dedup).
 - [ ] 1.2 Implement Merkle DAG assembly with root-hash checkpoints and
   block-sharing forks.
-- [ ] 1.3 Add integrity verification (retrieve + verify state by root hash).
+- [ ] 1.3 Retrieve state through an authorized, namespace-bound root (gated by
+  reachability + access rights, ADR-0024 D6), then use the root hash only for
+  integrity verification — possessing a hash is never the authority to read.
 
 ## 2. Retention and GC
 

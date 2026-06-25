@@ -20,15 +20,19 @@ inspecting the `/agent` overlay, not by any kernel flag or kernel category, whil
 - **AND** the runtime needs no kernel changes to be operable
 
 ### Requirement: Every process exposes the generic process layout
-Alan OS SHALL define a generic process layout that every process exposes: an
-`io/` directory with `input`, `output`, and `events` streams, a `status` file,
-and a `ctl` control file.
+Alan OS SHALL define a generic process layout that every process exposes: the
+full `/proc/<pid>` substrate layout (identity, parentage, credentials, namespace,
+status, and exit state per `define-plan9-kernel-substrate`) plus the common
+IO/control subset — an `io/` directory with `input`, `output`, and `events`
+streams, a `status` file, and a `ctl` control file. The agent overlay is unioned
+on top of this full layout.
 
 #### Scenario: A non-agent process is operated
 - **WHEN** a consumer opens a non-agent process directory
-- **THEN** it finds `io/`, `status`, and `ctl`
+- **THEN** it finds the substrate metadata (identity, parentage, credentials,
+  namespace, exit state) plus the `io/`, `status`, and `ctl` IO/control subset
 - **AND** `cat io/output`, reading `status`, and writing `ctl` work the same as
-  for an agent
+  for an agent; `children/` can be derived from `/proc` parentage
 
 #### Scenario: Output is complete and tail-reachable
 - **WHEN** a consumer reads `io/output`

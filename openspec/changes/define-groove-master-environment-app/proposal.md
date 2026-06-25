@@ -39,16 +39,6 @@ reflect, and save the session into a Groove Journal.
 - Decompose follow-up implementation slices instead of building the full
   product in one change.
 
-## Programmable Environment Alignment
-
-Groove Master is an **environment app** in the programmable environment model. Its
-domain core owns music-practice truth: phases, plans, practice blocks, loop metadata,
-recording references, markers, reflections, pocket-tracker signals, journal entries,
-and producer notes. Alan integration is an adapter that exposes that domain through
-environment objects, commands, buffers, views, queries, local-first persistence, and
-agent participation. The macOS surface is the first host, not the domain authority,
-and the current Alan shell must not leak into the portable Groove Master core.
-
 ## Capabilities
 
 ### New Capabilities

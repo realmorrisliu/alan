@@ -6,7 +6,7 @@ with a drum loop, record the session, and gradually build a personal archive of
 grooves. It is not a music-school app, a score-chasing trainer, or a Guitar
 Hero-like evaluation surface.
 
-The product can live on Alan OS because it
+The product can live inside Alan's future programmable environment because it
 is an object-rich creative workflow:
 
 ```text
@@ -18,47 +18,18 @@ PracticePlan
   -> GrooveStream
 ```
 
-Alan OS provides the Alan Kernel substrate — files, namespaces, mounts,
-descriptors, access rights, and processes — plus file-server services and agent
-participation. Objects, commands, buffers, views, and queries are NOT kernel
-primitives (ADR-0024 removes them from kernel ontology); Groove Master expresses
-them as Alan App / adapter surfaces over Kernel files and processes. Groove Master
-owns the music-practice logic and user experience. The first design
-therefore defines Groove Master as a serious Alan App, while keeping the first
-implementation slice small enough to become a daily-use tool.
-
-## Alan OS Alignment
-
-`define-groove-master-environment-app` is an **Alan App** change. It is not a
-host-surface design-system change, not Alan Kernel work, and not a Host Service
-API change. The product should be able to run on Alan OS while preserving
-a portable domain core that can later support iOS/iPadOS capture or another host.
-
-- **Environment role:** Alan App.
-- **Domain core:** practice phases, plan generation, practice blocks, inspiration
-  cards, loop metadata, session lifecycle, recording references, markers, reflections,
-  pocket-tracker signals, journal schema, and producer-note records.
-- **Runtime mapping:** `PracticePlan`, `GrooveSession`, `RecordingTake`, `Marker`,
-  `Clip`, `GrooveEntry`, `DrumLoop`, `Reflection`, and `ProducerNote` map to
-  Alan objects; session, playback, marker, import, reflection, and plan
-  generation actions map to commands; active session, recording review, Groove Journal,
-  Groove Stream, and Loop Library map to buffers/views; recent marked moments, sessions
-  by phase, loops by style, and entries needing reflection map to queries.
-- **Native authority:** local Groove Master journal/audio/domain store. The current
-  macOS shell and future host surfaces render and command domain state; they do not own
-  it.
-- **App adapter boundary:** the Alan adapter translates domain state into Alan
-  objects, commands, buffers, views, queries, local-first persistence, and producer
-  agent participation without pushing Alan shell internals into the domain core.
-- **Deferred migration:** implementation waits for Alan Kernel and Host Service API
-  readiness; this proposal stays adapter-shaped so the first macOS surface can
-  mount Groove Master without making the shell the product model.
+Alan provides the environment substrate: objects, commands, buffers, views,
+queries, permissions, local-first persistence, and agent participation. Groove
+Master owns the music-practice logic and user experience. The first design
+therefore defines Groove Master as a serious environment app, while keeping the
+first implementation slice small enough to become a daily-use tool.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Define Groove Master as a real bass practice Alan App on Alan OS.
+- Define Groove Master as a real bass practice app inside the future Alan
+  programmable environment.
 - Preserve the core product promise: practice plan, drum loop, recording,
   reflection, and journal.
 - Define V1 as one complete daily practice loop rather than a broad music
@@ -99,10 +70,10 @@ a portable domain core that can later support iOS/iPadOS capture or another host
 
 ### Define Groove Master As An Environment App, Not A Demo
 
-Groove Master should be designed for real daily use. Alan OS is the
-runtime model, not the reason the product exists.
+Groove Master should be designed for real daily use. Alan's programmable
+environment is the host model, not the reason the product exists.
 
-The app maps naturally onto Alan OS abstractions:
+The app maps naturally onto the environment abstractions:
 
 ```text
 Objects:   PracticePlan, GrooveSession, RecordingTake, Marker, Clip,
@@ -119,9 +90,9 @@ Queries:   recent marked moments, sessions by phase, loops by style,
 Agent:     low-presence producer
 ```
 
-Alternative considered: treat Groove Master as a proof-of-concept for Alan
-Alan OS. That reverses the product priority and risks building a demo instead
-of a practice tool.
+Alternative considered: treat Groove Master as a proof-of-concept for the
+programmable environment. That reverses the product priority and risks building
+a demo instead of a practice tool.
 
 ### Use A Complete Daily Practice Loop For V1
 
@@ -353,15 +324,15 @@ Groove Master domain core
 Audio runtime
   capture, playback, markers, export, future clean-input/multitrack support
 
-Alan app adapter
+Alan environment adapter
   objects, commands, buffers, views, queries, producer agent participation
 
 macOS surface
   first UI and ContentInstance host
 ```
 
-This keeps Groove Master portable while still making it a native Alan App. The
-first macOS implementation may run as an Alan creative app or
+This keeps Groove Master portable while still making it a native environment
+app. The first macOS implementation may run as an Alan creative app or
 ContentInstance, but the domain core should not depend on the current Alan
 macOS shell internals.
 
