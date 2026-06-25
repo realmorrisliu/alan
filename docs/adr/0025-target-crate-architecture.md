@@ -18,8 +18,8 @@ direction only: clients and file servers speak a small file protocol; the kernel
 sits at the bottom and depends on almost nothing.
 
 ```
-Layer 0  alphabets        alan-fs            alan-agent-protocol
-Layer 1  kernel           alan-kernel  (-> alan-fs only)
+Layer 0  protocol         alan-ap (aP)       [alan-agent-protocol = legacy compat alphabet]
+Layer 1  kernel           alan-kernel  (-> alan-ap only)
 Layer 2  backends         alan-agent-engine  alan-llm  alan-tools  alan-auth   (file-unaware)
 Layer 3  file servers     alan-agentfs  alan-llmfs  alan-binfs  alan-memfs  alan-pkgfs
 Layer 4  clients          alan-shell   alan-terminal-ui (renderer)
@@ -30,13 +30,13 @@ Layer 5  binary           alan         (boot + Service Manager + CLI/daemon; may
 
 ### D1. Three dependency laws (enforced by tests)
 
-1. **`alan-kernel` depends only on `alan-fs`.** It does not know agent, llm,
+1. **`alan-kernel` depends only on `alan-ap`.** It does not know agent, llm,
    provider, runtime, or memory. This makes "the kernel changes least" a
    structural fact, not a hope.
-2. **File servers depend on `alan-fs` plus their own backend only** — never on
+2. **File servers depend on `alan-ap` plus their own backend only** — never on
    kernel internals, never on another file server, never on a client. They
    rendezvous through `/srv`, so any one is replaceable or multi-instance.
-3. **Clients depend on `alan-fs` only.** A front-end reads files, writes `ctl`,
+3. **Clients depend on `alan-ap` only.** A front-end reads files, writes `ctl`,
    and watches streams; it never links a server or a backend directly.
 
 Only the `alan` binary may depend on everything, because it is the hand that
@@ -44,15 +44,24 @@ mounts everything together at boot.
 
 These become `dependency_boundary` tests that fail the build on violation.
 
-### D2. `alan-fs` is a standalone crate from the start
+### D2. The protocol is `alan-ap` (aP), a standalone crate
 
-The file-server protocol contract — the `FileServer` trait
+The file-service protocol — **aP**, Alan's 9P analog (9P → aP) — is the wire
+language every file server and client speaks: the `FileServer` trait
 (`walk/open/read/write/stat/create/remove/clunk`), `Fid`/`Qid`, `Path`,
-byte/offset `Stream`, error codes, and the in-process fast-path transport — lives
-in its own `alan-fs` crate, not as a module inside `alan-kernel`. Every file
-server and client depends on `alan-fs`; the kernel is just its first host. The
-contract MUST be wire-shaped per ADR-0024 D5 (fids, byte buffers, offsets, error
-codes; no borrows or rich return types) even while v1 runs in-process.
+byte/offset `Stream`, error codes, the client handle, and the in-process
+fast-path transport. It lives in its own `alan-ap` crate, not as a module inside
+`alan-kernel`; the kernel is just aP's first host. The contract MUST be
+wire-shaped per ADR-0024 D5 (fids, byte buffers, offsets, error codes; no borrows
+or rich return types) even while v1 runs in-process.
+
+Naming rationale (supersedes the earlier `alan-fs` name): `-fs` is reserved for
+*filesystems* (`alan-procfs`, `alan-agentfs`, `alan-llmfs`, …), so the *protocol*
+must not be called `alan-fs`. aP is the analog of Plan 9's 9P; because everything
+is a file, aP is *the* Alan protocol, while `alan-agent-protocol` (the former
+`alan-protocol`) is a demoted legacy compatibility alphabet behind `alan-agentfs`,
+not the system protocol. aP is our own minimal protocol, not literal 9P
+(ADR-0024 D5); a 9P gateway can be added later if external 9P tooling is wanted.
 
 ### D3. Namespace ownership map
 
@@ -60,18 +69,18 @@ codes; no borrows or rich return types) even while v1 runs in-process.
 | --- | --- | --- |
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
 | `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
-| `/srv/llm/<provider>` | `alan-llmfs` | `alan-llm` |
+| `/srv/llm/<provider>` (introspect), `/srv/llm/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
 | `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
 | `/mnt/mem` | `alan-memfs` | (storage) |
 
-To add a tree: create one `alan-<tree>fs` crate implementing `alan-fs` and post a
+To add a tree: create one `alan-<tree>fs` crate implementing `alan-ap` and post a
 handle under `/srv`. There is no other place new resource surfaces may live.
 
 ### D4. Crate roster and migration mapping
 
 Alphabets:
-- `alan-fs` — new; the file protocol contract (D2).
+- `alan-ap` — new; the file protocol contract (D2).
 - `alan-agent-protocol` — rename of `alan-protocol`; the agent session Event/Op
   alphabet, kept as compatibility transport behind `alan-agentfs`.
 
@@ -88,7 +97,7 @@ Backends (file-unaware):
 - `alan-tools` — keep; tool implementations, wrapped by `alan-binfs`.
 - `alan-auth` — keep; secret store / connection profiles.
 
-File servers (each implements `alan-fs`):
+File servers (each implements `alan-ap`):
 - `alan-agentfs` — new; serves `/agent` (the projection crate of
   `introduce-alan-kernel-runtime`).
 - `alan-llmfs` — new; serves `/srv/llm/*`; owns cost/metering/rate-limiting
@@ -117,19 +126,27 @@ Binary:
 
 ### D5. Naming conventions
 
+Three layers, three naming rules — the protocol, the filesystems that speak it,
+and the kernel that hosts them must stay nameable apart:
+
 1. Every crate is prefixed `alan-`.
-2. A file server is `alan-<tree>fs` (agentfs/llmfs/binfs/memfs/pkgfs). The `-fs`
-   suffix means: implements `alan-fs`, owns a namespace tree, posts to `/srv`.
-3. A file-unaware backend is a functional name (`alan-agent-engine`, `alan-llm`,
-   `alan-tools`); no `-fs`, so it may not touch the file protocol.
-4. Alphabets/contracts are `alan-fs` and `alan-agent-protocol`.
-5. Clients are role names (`alan-shell`, `alan-terminal-ui`).
+2. **The protocol** is `alan-ap` (aP). There is exactly one; nothing else carries
+   a protocol name. (`alan-agent-protocol` is a demoted legacy alphabet, not the
+   protocol.)
+3. **A filesystem** is `alan-<tree>fs` (agentfs/llmfs/binfs/memfs/pkgfs/procfs).
+   The `-fs` suffix means: implements aP (`alan-ap`), owns a namespace tree, posts
+   to `/srv`. `-fs` is reserved for filesystems and MUST NOT name the protocol.
+4. **The kernel** is `alan-kernel` (namespace + process table + mounts); it hosts
+   aP but is not aP.
+5. A file-unaware backend is a functional name (`alan-agent-engine`, `alan-llm`,
+   `alan-tools`); no `-fs`, so it may not touch the protocol.
+6. Clients are role names (`alan-shell`, `alan-terminal-ui`).
 
 ### D6. Directory layout
 
 ```
 crates/
-  fs/            alan-fs
+  ap/            alan-ap                  # the aP protocol (9P analog)
   kernel/        alan-kernel
   protocol/      alan-agent-protocol      # (current protocol, renamed)
   engine/        alan-agent-engine        # (current runtime, renamed)

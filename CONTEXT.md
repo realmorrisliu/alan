@@ -388,6 +388,33 @@ descriptors, with app-private reads and side effects mediated through explicit
 Descriptors, consent, policy, and audit paths.
 _Avoid_: root automation permission, unrestricted agent access
 
+**Generation**:
+One LLM call — a single evaluation of the agent's transition function. A
+Generation is modeled as a connection directory under an LLM Connection: the
+caller writes one complete, neutral request document, then reads a typed token
+stream. Generations are visible as files so their progress and cost can be
+inspected.
+_Avoid_: hidden fd-only session, provider-specific request as the canonical
+shape, a generation that cannot be observed as files
+
+**LLM Provider**:
+A wire adapter (driver) for one model API — Anthropic, OpenAI Responses, etc.
+Served read-only for introspection at `/srv/llm/<provider>`. A Provider knows the
+protocol but holds no Credential and no default Model, so it is not callable on
+its own.
+_Avoid_: provider as a callable endpoint, provider that embeds credentials
+
+**LLM Connection**:
+A callable endpoint that binds a Provider, a Model, and a Credential together,
+served by `llmfs` at `/srv/llm/<connection>`. Generations happen here. An agent
+gains model access only by binding a Connection into its namespace; changing the
+model means binding a different Connection. Credentials stay in the Connection /
+secret store and never enter the request document or the agent's namespace as
+plaintext. Cost, metering, and rate-limiting live here, not in a global quota
+service.
+_Avoid_: credentials in the request, a global model-quota service, ambient model
+access outside the namespace, conflating Provider with Connection
+
 **Alan Shell**:
 The primary shell for Alan OS: a Plan 9 `rc`-like and Acme-like interaction
 surface for using the Namespace, files, processes, Agent Processes, Tools,

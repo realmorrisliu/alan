@@ -40,12 +40,14 @@ kernel type.
 - **AND** its agent-ness is determined by conformance to the agent file-layout
   convention, not by a kernel flag
 
-### Requirement: The file-server contract is wire-shaped
-Alan Kernel SHALL define the file-server contract so that every operation can be
-carried unchanged across a process boundary by a dumb byte transport. Operations
-SHALL be expressed over fids, paths, byte buffers, offsets, and error codes.
-The contract SHALL NOT require in-memory pointers, borrowed references, or
-return values that are meaningful only within one address space.
+### Requirement: The file-service protocol (aP) is wire-shaped
+Alan OS SHALL define its file-service protocol — aP, the 9P analog, owned by the
+`alan-ap` crate — so that every operation can be carried unchanged across a
+process boundary by a dumb byte transport. Operations SHALL be expressed over
+fids, paths, byte buffers, offsets, and error codes. The protocol SHALL NOT
+require in-memory pointers, borrowed references, or return values that are
+meaningful only within one address space. aP is Alan's own minimal protocol, not
+literal 9P; a 9P gateway MAY be added later.
 
 #### Scenario: Contract operation is defined
 - **WHEN** a file-server operation such as walk, open, read, write, stat,
@@ -61,12 +63,42 @@ return values that are meaningful only within one address space.
 - **AND** a later wire transport for out-of-process or networked file servers
   reuses the same contract without changing it
 
+### Requirement: aP fids, clone-via-open, and a two-fold error model
+aP SHALL model a fid as a handle to one interaction: `walk`/`open` allocate it
+and `clunk` releases it. Each `open` SHALL yield an independent fid so concurrent
+callers do not interfere. `open` MAY have allocation side effects: opening a
+designated `clone` file SHALL allocate a new resource (such as a connection
+directory) and return its name or handle, as an open-with-allocation convention
+rather than a new operation. Errors SHALL split two ways: a dial-time failure
+(no access, rate limited, not found) SHALL return an operation error code, while
+a mid-interaction failure SHALL surface as a terminal error record in the
+relevant stream.
+
+#### Scenario: A clone file is opened
+- **WHEN** a caller opens a `clone` file (for example under an `llmfs` connection)
+- **THEN** aP allocates a new resource such as a connection directory and returns
+  its name or handle
+- **AND** two callers opening the same `clone` get independent resources
+
+#### Scenario: A dial-time failure occurs
+- **WHEN** an `open` is denied (no access, rate limited, or not found)
+- **THEN** aP returns an operation error code
+- **AND** no partial interaction stream is created
+
+#### Scenario: A mid-interaction failure occurs
+- **WHEN** an interaction fails after it has begun streaming
+- **THEN** the failure appears as a terminal error record in that interaction's
+  stream
+- **AND** readers observe it by reading the stream, not by a side channel
+
 ### Requirement: Streams are byte/offset file kinds
 Alan Kernel SHALL model streams as named files carrying bytes with offsets.
 Typed records, such as LLM events, SHALL be a byte-stream record convention
 (for example one JSON record per line) above the kernel, not a kernel type.
-Streams SHALL support read, tail, and resume from an offset where the backing
-source supports them.
+Streams SHALL support read, tail, and resume from an offset, and SHALL retain
+history up to an owning-server policy so a reader that opens or reconnects after
+records were produced can still read them from offset 0 (no missed or
+mis-replayed records).
 
 #### Scenario: A process emits output
 - **WHEN** a process emits text, reasoning, or lifecycle records
