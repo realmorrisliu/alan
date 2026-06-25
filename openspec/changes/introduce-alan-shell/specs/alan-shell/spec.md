@@ -13,17 +13,25 @@ crate. It SHALL hold no application state beyond the namespace.
 - **AND** the shell reaches every resource by walking and opening files
 
 ### Requirement: The shell has generic builtins, no agent knowledge
-`alan-shell` SHALL provide generic builtins: list/walk a directory, read a file
-(`cat`), write a file (`echo >`), tail a stream (blocking watch from an offset),
-and spawn a process. It SHALL NOT provide any agent-specific command, mode, or
-`attach` sugar. Control of a process or agent SHALL be writing a command to its
-`ctl` file.
+`alan-shell` SHALL provide generic builtins, each expressed only through aP
+operations: list/walk a directory, read a file (`cat`), write a file (`echo >`),
+tail a stream (blocking watch from an offset), and spawn a process. `spawn` SHALL
+be defined as the aP process-creation path — opening `/proc/clone` and writing an
+exec spec (per `define-plan9-kernel-substrate`) — not a non-file operation. The
+shell SHALL NOT provide any agent-specific command, mode, or `attach` sugar.
+Control of a process or agent SHALL be writing a command to its `ctl` file.
 
 #### Scenario: The same builtins operate any process
 - **WHEN** a user inspects a process with `alan-shell`
 - **THEN** `cat <pid>/io/output` and `tail <pid>/io/events` work the same whether
   the process is an agent or a compiler
 - **AND** there is no agent-only command path
+
+#### Scenario: Spawn uses the aP process-creation path
+- **WHEN** a user spawns an executable
+- **THEN** the shell opens `/proc/clone` and writes the exec spec (aP open/write),
+  receiving the new pid
+- **AND** it needs no operation outside aP
 
 #### Scenario: A process is controlled
 - **WHEN** a user interrupts or steers a process

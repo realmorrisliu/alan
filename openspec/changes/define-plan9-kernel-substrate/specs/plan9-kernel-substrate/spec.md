@@ -143,7 +143,7 @@ There SHALL be no global ambient addressing that bypasses the namespace.
 #### Scenario: A resource is withheld from a process
 - **WHEN** a process must be denied access to a resource such as an LLM provider
 - **THEN** the resource's file server is simply not bound into that process's
-  namespace
+  namespace, and its `/srv` handle is filtered out so it cannot be remounted
 - **AND** no separate global policy check is required to enforce the denial
 
 ### Requirement: Access rights separate awareness from authority
@@ -210,16 +210,49 @@ such as interrupt/cancel route through `/proc/<pid>/ctl`).
 - **AND** `/proc/<pid>` is the single source of truth for that process; any
   `/agent`-style view is derived from it
 
-### Requirement: `/srv` is the bootstrap rendezvous device
+### Requirement: Process creation (spawn) is an aP write via clone-via-open
+Alan Kernel SHALL expose process creation through aP, not a side API, so an
+aP-only client (such as Alan Shell) can launch processes with no non-file
+operation. Opening `/proc/clone` SHALL allocate a new process slot
+(clone-via-open); writing an exec spec — executable path, arguments, and the
+child's namespace/descriptors — SHALL start the process, return its pid, and make
+`/proc/<pid>` appear. The child's namespace SHALL be the one the spawner
+specifies (the basis of the capability boundary, D6).
+
+#### Scenario: A client spawns a process
+- **WHEN** Alan Shell launches an executable
+- **THEN** it opens `/proc/clone`, writes the exec spec, and receives the new pid
+- **AND** `/proc/<pid>` appears; no operation outside aP open/write was needed
+
+#### Scenario: The spawned child's namespace is constructed
+- **WHEN** the exec spec includes the child's namespace/descriptors
+- **THEN** the child starts with exactly that namespace (it cannot reach servers
+  not granted, per D6)
+- **AND** spawn is the point where the capability boundary is set
+
+### Requirement: `/srv` is the bootstrap rendezvous device, access-filtered
 Alan Kernel SHALL provide `/srv` as a synthetic device where file servers post
 mountable handles. `/srv` SHALL exist before any user-space file server so that
 servers have a rendezvous point to publish to and clients have a place to mount
-from.
+from. `/srv` SHALL NOT be an ambient backdoor: a posted handle SHALL carry access
+rights, and a process SHALL see and mount only the handles permitted by its
+namespace and access rights. A service withheld from a process (by not binding
+its tree) SHALL NOT be remountable by that process via `/srv` — otherwise the
+denial-by-absent-mount guarantee of the capability model would not hold. A
+restricted child MAY be given a filtered or absent `/srv`.
 
 #### Scenario: A file server publishes itself
 - **WHEN** a user-space file server starts
-- **THEN** it posts a mountable handle under `/srv`
-- **AND** another process can mount that handle into its own namespace
+- **THEN** it posts a mountable handle under `/srv` with access rights
+- **AND** another process can mount that handle only if its namespace and access
+  rights permit
+
+#### Scenario: A withheld service cannot be remounted via `/srv`
+- **WHEN** a sub-agent is denied model access by not binding the llmfs Connection
+  tree into its namespace
+- **THEN** it cannot regain that service by mounting a `/srv` handle (its `/srv`
+  view is filtered to exclude handles it may not mount)
+- **AND** the denial-by-absent-mount guarantee (D6) holds
 
 #### Scenario: Boot assembles the root namespace
 - **WHEN** Alan OS boots

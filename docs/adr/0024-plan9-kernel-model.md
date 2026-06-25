@@ -92,10 +92,14 @@ the model from collapsing into an in-process object system.)
 ### D6. The per-process namespace is the sole capability boundary
 
 Isolation is achieved by constructing a namespace, not by layering policy. A
-child's namespace is given by its spawner; the child may further restrict its
-own view but cannot acquire a channel to a file server it was not granted. There
-is **no global ambient addressing**: a resource is reachable iff it is in the
-namespace (or dialable through a server already in the namespace). Opaque ids may
+child's namespace is given by its spawner (spawn is where the boundary is set);
+the child may further restrict its own view but cannot acquire a channel to a
+file server it was not granted. There is **no global ambient addressing**: a
+resource is reachable iff it is in the namespace (or dialable through a server
+already in the namespace). `/srv` is **not** an exception: posted handles carry
+access rights and a process's `/srv` view is filtered to what it may mount, so a
+withheld service cannot be remounted via `/srv` — otherwise `/srv` would be the
+ambient backdoor that defeats denial-by-absent-mount. Opaque ids may
 exist but MUST resolve within a namespace and MUST NOT act as a global capability
 that bypasses it. Consequences: denying a sub-agent model access = not binding an
 llmfs Connection (`/mnt/llm/connections/<connection>`) into its namespace —

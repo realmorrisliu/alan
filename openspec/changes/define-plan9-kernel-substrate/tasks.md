@@ -75,10 +75,14 @@
 ## 7. Synthetic devices (crate)
 
 - [ ] 7.1 Implement `/proc` as a file server rendering the process table, with
-  per-process `io/`, `status`, and standard files (D9); `/proc/<pid>` is the
-  single source of truth.
-- [ ] 7.2 Implement `/srv` as the bootstrap rendezvous device where file servers
-  post mountable handles, present before any user-space server (D9).
+  per-process `io/`, `status`, `ctl`, and standard files (D9); `/proc/<pid>` is
+  the single source of truth.
+- [ ] 7.1a Implement process creation (spawn) via clone-via-open on
+  `/proc/clone`: write an exec spec (executable + args + child namespace), return
+  the new pid, render `/proc/<pid>`. spawn is aP open+write, no side API.
+- [ ] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
+  posted handles carry access rights; a process sees/mounts only permitted
+  handles; a withheld service is not remountable via `/srv` (D6).
 - [ ] 7.3 Bring the kernel up with only `/proc`, `/srv`, and the namespace engine,
   leaving init / Service Manager to assemble the rest of the root namespace.
 
