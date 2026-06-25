@@ -95,7 +95,8 @@ is **no global ambient addressing**: a resource is reachable iff it is in the
 namespace (or dialable through a server already in the namespace). Opaque ids may
 exist but MUST resolve within a namespace and MUST NOT act as a global capability
 that bypasses it. Consequences: denying a sub-agent model access = not binding an
-llmfs Connection (`/mnt/llm/<connection>`) into its namespace — `/srv/llm` is only
+llmfs Connection (`/mnt/llm/connections/<connection>`) into its namespace —
+`/srv/llm` is only
 the rendezvous handle, not the authority; cost/metering/rate-limiting lives in the
 provider file server (the
 chokepoint), not a global policy engine; cross-agent collaboration is an

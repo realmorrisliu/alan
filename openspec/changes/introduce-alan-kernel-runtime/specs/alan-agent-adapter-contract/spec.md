@@ -22,19 +22,23 @@ user-space file server above the substrate, not part of the kernel.
 - **AND** it does so before the data reaches any shell or host client
 
 ### Requirement: Current sessions project into agent process file surfaces
-The compatibility projection layer SHALL represent current Alan sessions as
-agent-conforming process directories under `/proc/<pid>` (surfaced through the
-`/agent` view). Session metadata SHALL project to `status`, conversation state to
-`io/`, runtime/tape state to `machine/`, yields to `requests/`, tool calls to
+The compatibility projection layer SHALL register current Alan sessions as real
+kernel Processes (so they appear in the kernel-rendered `/proc`) and serve their
+agent surfaces under `/agent`. It SHALL NOT fabricate `/proc/<pid>` entries
+itself — `/proc` is the kernel's source of truth — and until a session is
+registered as a real Process the projection SHALL keep it under `/agent` only.
+Session metadata SHALL project to `status`, conversation state to `io/`,
+runtime/tape state to `machine/`, yields to `requests/`, tool calls to
 `actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
-`Agent Process` kernel type; the process is an ordinary `Process` that conforms
-to the agent file-layout convention.
+`Agent Process` kernel type; a registered session is an ordinary `Process` that
+conforms to the agent file-layout convention.
 
 #### Scenario: Existing session is attached
 - **WHEN** Alan Shell or another host attaches through the current compatibility
   session path
-- **THEN** the projection layer creates or resolves an agent-conforming process
-  directory in `/proc`, visible through `/agent`
+- **THEN** the projection layer registers (or resolves) a real kernel Process —
+  which the kernel renders in `/proc` — and serves its agent surfaces under
+  `/agent`, without fabricating `/proc` entries itself
 - **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `machine/`,
   `context/`, and `children/` files per `define-agent-file-layout-contract`
   (results are conveyed via `io/output` and per-action `actions/<id>/result`,

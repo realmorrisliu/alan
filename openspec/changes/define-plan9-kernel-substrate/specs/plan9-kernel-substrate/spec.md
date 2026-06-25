@@ -198,12 +198,15 @@ file servers, never of the kernel.
 ### Requirement: `/proc` renders the process table as files
 Alan Kernel SHALL render the process table as files under `/proc`. Each process
 SHALL appear as `/proc/<pid>` with files for identity, parentage, credentials,
-namespace, status, exit state, and its standard IO streams.
+namespace, status, exit state, its standard IO streams (`io/`), and a `ctl`
+control file (the generic process layout every process exposes, so control writes
+such as interrupt/cancel route through `/proc/<pid>/ctl`).
 
 #### Scenario: A process is inspected
 - **WHEN** a consumer opens `/proc/<pid>`
 - **THEN** it finds files describing identity, parent, credentials, namespace,
-  status, exit state, and IO streams subject to access rights
+  status, exit state, `io/` streams, and a `ctl` control file subject to access
+  rights
 - **AND** `/proc/<pid>` is the single source of truth for that process; any
   `/agent`-style view is derived from it
 
