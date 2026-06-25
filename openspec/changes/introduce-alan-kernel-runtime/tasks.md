@@ -74,10 +74,13 @@
 - [ ] 7.1 Accept interrupt, cancel, compact, and rollback as text commands written
   to `ctl`, mapped onto current engine operations; no per-action side files.
 
-## 8. `/agent` view
+## 8. `/agent` overlay
 
-- [ ] 8.1 Present `/agent` as a union/bind view over agent-conforming `/proc`
-  directories (derived, not a second process table).
+- [ ] 8.1 Present `/agent/<pid>` as an overlay: union the kernel `/proc/<pid>`
+  generic files (io/status/ctl) with the projection's agent surfaces
+  (requests/actions/machine/context/children/events). Do not put agent files into
+  `/proc`; do not expose any `/agent` entry without a backing `/proc` Process
+  (not a second process table).
 - [ ] 8.2 Resolve `/agent/root` to whichever pid currently embodies the root
   agent's home; durable identity stays the home path, not the pid.
 
