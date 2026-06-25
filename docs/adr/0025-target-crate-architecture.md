@@ -73,7 +73,7 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
 | `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
-| `/srv/route` (handle); tree at `/mnt/route` | `routefs` | — |
+| `/srv/route` (handle); tree at `/mnt/route` | `alan-routefs` (`routefs` server) | — |
 
 To add a tree: create one `alan-<tree>fs` crate implementing `alan-ap` and post a
 handle under `/srv`. There is no other place new resource surfaces may live.
@@ -107,6 +107,8 @@ File servers (each implements `alan-ap`):
 - `alan-binfs` — new; serves `/bin`, tool manifests, and man pages.
 - `alan-memfs` — new; serves `/mnt/mem`; the durable home memory tree (D7).
 - `alan-pkgfs` — new, optional; serves `/lib/skill` and `/man/skill`.
+- `alan-routefs` — new; the `routefs` server posts a handle at `/srv/route` and
+  serves its tree at `/mnt/route` (message routing; `add-message-routing`).
 
 Clients (read files, write `ctl`):
 - `alan-shell` — new; the shell over the namespace (`ls /agent`,
@@ -161,6 +163,7 @@ crates/
     binfs/       alan-binfs
     memfs/       alan-memfs
     pkgfs/       alan-pkgfs
+    routefs/     alan-routefs
   shell/         alan-shell
   tui/           alan-terminal-ui         # alan-shell's Ratatui renderer
   compat/        alan-compat              # transitional

@@ -19,7 +19,10 @@ tail a stream (blocking watch from an offset), and spawn a process. `spawn` SHAL
 be defined as the aP process-creation path — opening `/proc/clone` and writing an
 exec spec (per `define-plan9-kernel-substrate`) — not a non-file operation. The
 shell SHALL NOT provide any agent-specific command, mode, or `attach` sugar.
-Control of a process or agent SHALL be writing a command to its `ctl` file.
+Control SHALL be writing a command to a `ctl` file by ownership: generic process
+control (interrupt, cancel) to the kernel `/proc/<pid>/ctl`, and agent-runtime
+control (such as compact, rollback) to the agent-runtime-owned `machine/ctl` in
+the `/agent/<pid>` overlay (per `define-agent-file-layout-contract`).
 
 #### Scenario: The same builtins operate any process
 - **WHEN** a user inspects a process with `alan-shell`
@@ -34,9 +37,11 @@ Control of a process or agent SHALL be writing a command to its `ctl` file.
 - **AND** it needs no operation outside aP
 
 #### Scenario: A process is controlled
-- **WHEN** a user interrupts or steers a process
-- **THEN** they write a command to its `ctl` file
-- **AND** no dedicated per-action command exists in the shell
+- **WHEN** a user interrupts a process or compacts/rolls back an agent's tape
+- **THEN** generic control goes to the kernel `/proc/<pid>/ctl` and runtime
+  control goes to the agent-runtime-owned `machine/ctl`
+- **AND** no dedicated per-action command exists in the shell, and the kernel ctl
+  never carries runtime semantics
 
 ### Requirement: Talking to an agent is composition, not a feature
 `alan-shell` SHALL let a user converse with an agent purely by composing generic

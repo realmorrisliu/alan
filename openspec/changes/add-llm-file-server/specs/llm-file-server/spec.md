@@ -83,7 +83,9 @@ running Generation. The request document SHALL NOT carry credentials.
 
 #### Scenario: A truncated request is rejected
 - **WHEN** the document committed at clunk is malformed or incomplete
-- **THEN** `alan-llmfs` rejects it (a dial-time error) and starts no generation
+- **THEN** the commit fails: the `data` clunk/write returns an error and `status`
+  shows rejected, and no generation starts (this is a commit-time error, distinct
+  from a dial-time `open` error and from a mid-generation terminal record)
 - **AND** the model is never run with truncated context
 
 #### Scenario: A Generation is aborted
@@ -105,12 +107,14 @@ example one JSON record per line) per the aP stream model.
 - **AND** an `alan-llm` internal refactor does not change the wire format unless
   the DTO version changes
 
-### Requirement: Metering lives in llmfs; errors split two ways
+### Requirement: Metering lives in llmfs; errors split by phase
 `alan-llmfs` SHALL enforce cost, metering, and rate-limiting itself, reached only
-through a bound Connection, with no global model-quota service. Errors SHALL
-split two ways: a dial-time failure (no access, rate limited, unknown model) SHALL
-return an `open` error code, and a mid-generation failure SHALL surface as a
-terminal error record in `events`.
+through a bound Connection, with no global model-quota service. Errors SHALL split
+by phase: a dial-time failure (no access, rate limited, unknown model) SHALL
+return an `open` error code; a commit-time failure (a malformed/truncated request
+document at `data` clunk) SHALL fail the clunk and set `status` rejected with no
+generation started; and a mid-generation failure SHALL surface as a terminal error
+record in `events`.
 
 #### Scenario: A Connection is over budget
 - **WHEN** a Connection has exhausted its configured budget
