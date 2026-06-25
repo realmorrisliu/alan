@@ -134,8 +134,9 @@ To break the bootstrap paradox, exactly three things are kernel-synthesized:
 clunk + fid); (2) `/proc`, the process table rendered as files, because it *is*
 the kernel's own state; (3) `/srv`, the rendezvous device where file servers post
 mountable handles, because it must exist before any user server can. Everything
-else — the agent runtime (`/agent`), the LLM provider (`/srv/llm`), memory
-(`/mnt/mem`), tools (`/bin`) — is a user-space file server the kernel knows
+else — the agent runtime (`/agent`), the LLM provider (`/mnt/llm`; handle at
+`/srv/llm`), memory (`/mnt/mem`), tools (`/bin`) — is a user-space file server the
+kernel knows
 nothing about. The root namespace is assembled by init / Service Manager at boot,
 not hardcoded. Therefore `alan-kernel` (the crate) = namespace engine + fid/
 protocol contract + process table + `/proc` + `/srv`, with no dependency on

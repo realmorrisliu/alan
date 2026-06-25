@@ -22,18 +22,20 @@ So adopting them in Alan OS means adding aP file servers plus one interaction
 layer — no new mechanism beyond ADR-0024. This validates the architecture: these
 classics are all expressible as aP (`alan-ap`) file servers.
 
-The agent-side stack mirrors Plan 9's layering:
+**We absorb the ideas, not the names.** The Alan design uses Alan's own names; the
+classic names appear in this ADR only as the *source* of each idea. The mapping:
 
 ```
-Acme-like editable buffer surface (acmefs)   how to interact     [deferred, M4+]
-Plumber typed routing (plumbfs)              how to communicate  [adopt: add-plumber-message-routing]
-aP / per-process namespace                   unify resources     [done; + network transparency]
-content-addressed immutable knowledge        persist knowledge   [adopt: add-content-addressed-knowledge]
+our design name                       agent question      idea from   status
+editable-buffer interaction surface   how to interact     Acme        deferred, M4+
+message routing (routefs)             how to communicate  Plumber     add-message-routing
+aP / per-process namespace            unify resources     9P          done; + network transparency
+content-addressed knowledge           persist knowledge   Venti       add-content-addressed-knowledge
 ```
 
 ## Decisions
 
-### D1. 9P → adopt the rest: network transparency (import/export)
+### D1. Adopt network transparency (import/export) [idea: 9P]
 
 aP already is our 9P (ADR-0024/0025). The unexploited idea is 9P's network
 transparency: importing/exporting file trees across machines. For agents this is
@@ -42,23 +44,23 @@ tool tree or model Connection into its namespace, rather than calling an RPC
 mesh. This is the wire-transport slice (ADR-0024 D5) given a concrete goal, and
 is recorded as a requirement on `define-plan9-kernel-substrate`.
 
-### D2. Plumber → adopt typed, rule-routed, decoupled communication
+### D2. Adopt typed, rule-routed, decoupled communication [idea: Plumber]
 
-Add a plumber file server (`plumbfs`): a sender writes a typed message to a
+Add a routing file server (`routefs`): a sender writes a typed message to a
 `send` file; rule files route it by content/type to a destination port (a stream
 a receiver tails). This answers how agents/tools/apps communicate without
 point-to-point coupling: an agent emits "a patch" / "a citation" / "a task to
 approve" and rules dispatch it (to a review agent, an apply-patch tool, or the
 human inbox). Handoff stops being a hardcoded "call agent X". Governance routing
-(results needing human judgment plumb to a human port) falls out naturally, and
+(results needing human judgment route to a human port) falls out naturally, and
 the rules are inspectable text files.
 
-Caveat: rule-based routing hides control flow and can hurt auditability. So plumb
+Caveat: rule-based routing hides control flow and can hurt auditability. So routed
 messages MUST be logged to observable streams, rules MUST be `cat`-able files,
-and plumbing is a *composition* mechanism, not the primary control path. Adopted
-by `add-plumber-message-routing`.
+and routing is a *composition* mechanism, not the primary control path. Adopted
+by `add-message-routing`.
 
-### D3. Venti → adopt content-addressed, immutable knowledge (with GC)
+### D3. Adopt content-addressed, immutable knowledge, with GC [idea: Venti]
 
 Make agent knowledge — `machine/tape`, memory, context — content-addressed and
 immutable, so:
@@ -77,7 +79,7 @@ immortality impractical; adopt git-style content addressing *with* reachability
 GC and retention policy. Adopted by `add-content-addressed-knowledge`; this
 reshapes the durable home/persistence model of ADR-0024 D7.
 
-### D4. Acme → adopt the idea, defer the layer
+### D4. Adopt the editable-buffer interaction idea, defer the layer [idea: Acme]
 
 Absorb two Acme ideas: (a) text is the programmable surface — any text can be
 "executed", dissolving the line between reading output and issuing commands; and
@@ -95,7 +97,7 @@ decision is the record.
 
 1. **Venti / content-addressed knowledge** — highest leverage; reshapes the D7
    home/persistence foundation, so land it early before the home model sets.
-2. **Plumber / routing** — cleanest additive file server; answers decoupled
+2. **Message routing** — cleanest additive file server; answers decoupled
    communication and human-in-the-loop governance.
 3. **9P network transparency** — the distributed-agents slice; rides the wire
    transport.
@@ -106,4 +108,4 @@ decision is the record.
 - Everything-is-a-file-server makes all four cheap to add but tempting to
   over-build. Sequence by leverage; the north star does not need any of them.
 - Content addressing without GC explodes under agent volume (mitigated in D3).
-- Plumber routing can hide agent behavior (mitigated in D2).
+- Routing can hide agent behavior (mitigated in D2).

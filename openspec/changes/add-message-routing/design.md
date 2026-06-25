@@ -1,9 +1,9 @@
 ## Context
 
-ADR-0026 D2 adopts Plumber's content/type rule routing for agents, with the
-caveat that decoupled routing must stay auditable. `plumbfs` is a user-space aP
-file server: it fits the model with no new mechanism (send file, rule files,
-port streams).
+ADR-0026 D2 adopts content/type rule routing for agents (idea from Plan 9's
+Plumber; design and naming are Alan's own), with the caveat that decoupled
+routing must stay auditable. `routefs` is a user-space aP file server: it fits the
+model with no new mechanism (send file, rule files, port streams).
 
 ## Goals / Non-Goals
 
@@ -32,19 +32,19 @@ D2.
   "emit type T", not "call actor X".
 - **Auditable by construction.** Every message is appended to an observable log
   stream; rules are plain files; nothing routes invisibly.
-- **Composition, not control.** Plumbing composes actors; it does not replace an
+- **Composition, not control.** Routing composes actors; it does not replace an
   agent's own loop or governance. Critical control stays explicit.
 
 ## Risks / Trade-offs
 
 - **Hidden control flow.** Rule routing can obscure who handled what; mitigated by
   the message log and `cat`-able rules. If a flow needs to be obvious, do not
-  plumb it.
+  route it implicitly.
 - **Rule conflicts / no match.** Define deterministic match order and a default
   (dead-letter) port so messages are never silently dropped.
 
 ## Migration Plan
 
-1. Land `plumbfs` with send/rules/ports and the message log.
-2. Use it first for human-in-the-loop governance (results plumb to a human port).
+1. Land `routefs` with send/rules/ports and the message log.
+2. Use it first for human-in-the-loop governance (results route to a human port).
 3. Then for agent→tool/agent handoff by type.

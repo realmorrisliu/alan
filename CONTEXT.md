@@ -425,13 +425,13 @@ addressed and deduplicated, bounded by reachability GC (not kept forever).
 _Avoid_: mutable checkpoint, full-copy fork, never-delete storage, a checkpoint
 that cannot be verified by hash
 
-**Plumbing**:
-Decoupled communication via `plumbfs`: a sender writes a typed message to `send`;
+**Message Routing**:
+Decoupled communication via `routefs`: a sender writes a typed message to `send`;
 rule files route it by content/type to a destination port (a stream a receiver
 tails). The sender does not name the receiver. Used for agent/tool/app handoff
 and human-in-the-loop governance routing; messages are logged and rules are
-inspectable files.
-_Avoid_: sender naming the receiver, hidden routing with no log, plumbing as the
+inspectable files. (Idea from Plan 9's Plumber; name is Alan's own.)
+_Avoid_: sender naming the receiver, hidden routing with no log, routing as the
 primary control path, silently dropped messages
 
 **Alan Shell**:

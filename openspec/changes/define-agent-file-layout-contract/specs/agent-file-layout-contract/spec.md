@@ -36,21 +36,34 @@ and a `ctl` control file.
 - **AND** clipping of the newest output is a renderer concern, never a gap in the
   stream's data
 
-### Requirement: An agent extends the process layout
-Alan OS SHALL define the agent layout as a strict superset of the generic
-process layout, adding `requests/`, `actions/`, `machine/`, `context/`,
-`children/`, and a top-level `events` stream. The `machine/` directory SHALL
+### Requirement: An agent overlays agent files on the generic process layout
+Alan OS SHALL define the agent layout as the generic process layout plus an agent
+overlay. The generic layout (`io/`, `status`, `ctl`) lives at `/proc/<pid>` and
+is kernel-rendered. The agent-specific superset — `requests/`, `actions/`,
+`machine/`, `context/`, `children/`, and a top-level `events` stream — SHALL be
+served by the agent runtime file server and presented at `/agent/<pid>` as an
+overlay (a union of the kernel's `/proc/<pid>` with the agent surfaces). The
+kernel SHALL NOT render agent-specific files in `/proc`; agent surfaces come from
+the agent runtime, unioned under `/agent/<pid>`. The `machine/` directory SHALL
 contain the tape, machine state, and checkpoints. `children/` SHALL be a view of
 the agent's child processes derived from `/proc` parentage (not a second source
 of truth). The top-level `events` stream SHALL be an aggregate, watchable by
 blocking read, over the agent's lifecycle, IO, request, action, and child
 changes, so a watcher can follow the whole agent from one stream.
 
-#### Scenario: An agent directory is inspected
-- **WHEN** a consumer opens an agent's `/proc/<pid>`
-- **THEN** it finds the generic `io/`, `status`, `ctl` plus `requests/`,
-  `actions/`, `machine/`, `context/`, `children/`, and `events`
-- **AND** reading `io/output` works whether or not the process is an agent
+#### Scenario: An agent is inspected
+- **WHEN** a consumer opens `/agent/<pid>`
+- **THEN** it finds the generic `io/`, `status`, `ctl` (from `/proc/<pid>`) plus
+  the agent overlay `requests/`, `actions/`, `machine/`, `context/`, `children/`,
+  and `events` (from the agent runtime)
+- **AND** `/proc/<pid>` alone exposes only the generic layout; the kernel renders
+  no agent-specific files
+
+#### Scenario: Generic tools still work on the bare process
+- **WHEN** a consumer reads `/proc/<pid>/io/output`
+- **THEN** it works whether or not the process is an agent
+- **AND** agent surfaces are reached through `/agent/<pid>`, not synthesized into
+  `/proc`
 
 #### Scenario: A watcher follows the whole agent
 - **WHEN** a consumer wants to follow everything an agent does
@@ -85,11 +98,14 @@ as new files or APIs.
   `requests/<id>/`
 - **AND** the agent runtime delivers it without a private resume API
 
-### Requirement: `/agent` is a view over `/proc`
-Alan OS SHALL present `/agent` as a derived view over `/proc`: a union or bind of
-agent-conforming process directories, with stable aliases such as `/agent/root`
-resolving to whichever pid currently embodies the root agent's home. `/agent`
-SHALL NOT be a second, independent process table.
+### Requirement: `/agent` is an overlay over `/proc`
+Alan OS SHALL present `/agent` as an overlay over `/proc`: for each
+agent-conforming process it unions the kernel's `/proc/<pid>` generic layout with
+the agent runtime's agent surfaces, with stable aliases such as `/agent/root`
+resolving to whichever pid currently embodies the root agent's home. `/proc`
+remains the source of truth for generic process state; the agent runtime is the
+source of truth for the agent surfaces. `/agent` SHALL NOT be a second,
+independent process table.
 
 #### Scenario: The root agent is addressed
 - **WHEN** a consumer opens `/agent/root`

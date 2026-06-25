@@ -1,6 +1,6 @@
-## 1. Plumbfs file server
+## 1. Routefs file server
 
-- [ ] 1.1 Add `plumbfs` as a user-space aP file server; post a handle under
+- [ ] 1.1 Add `routefs` as a user-space aP file server; post a handle under
   `/srv` and serve its tree (send, rules, ports, log).
 - [ ] 1.2 Implement the `send` write entry point for typed messages.
 - [ ] 1.3 Implement rule files (content/type match) with deterministic match
@@ -23,4 +23,4 @@
 - [ ] 4.1 Tests: routing by type, dead-letter on no match, message log
   completeness, port blocking-read.
 - [ ] 4.2 Run `just verify`.
-- [ ] 4.3 Run `openspec validate add-plumber-message-routing --strict`.
+- [ ] 4.3 Run `openspec validate add-message-routing --strict`.
