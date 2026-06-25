@@ -417,6 +417,23 @@ service.
 _Avoid_: credentials in the request, a global model-quota service, ambient model
 access outside the namespace, conflating Provider with Connection
 
+**Knowledge Checkpoint**:
+A root hash over an agent's content-addressed knowledge DAG (tape, memory,
+context). A checkpoint names an exact state; forking from one is cheap (shared
+unchanged blocks); history is tamper-evident. Knowledge is stored content-
+addressed and deduplicated, bounded by reachability GC (not kept forever).
+_Avoid_: mutable checkpoint, full-copy fork, never-delete storage, a checkpoint
+that cannot be verified by hash
+
+**Plumbing**:
+Decoupled communication via `plumbfs`: a sender writes a typed message to `send`;
+rule files route it by content/type to a destination port (a stream a receiver
+tails). The sender does not name the receiver. Used for agent/tool/app handoff
+and human-in-the-loop governance routing; messages are logged and rules are
+inspectable files.
+_Avoid_: sender naming the receiver, hidden routing with no log, plumbing as the
+primary control path, silently dropped messages
+
 **Alan Shell**:
 The primary shell for Alan OS: a Plan 9 `rc`-like and Acme-like interaction
 surface for using the Namespace, files, processes, Agent Processes, Tools,

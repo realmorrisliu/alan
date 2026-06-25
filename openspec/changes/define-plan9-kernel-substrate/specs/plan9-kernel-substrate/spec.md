@@ -229,6 +229,27 @@ from.
   `/bin`, `/lib`, `/man`, `/mnt`) by starting file servers and mounting their
   posted handles
 
+### Requirement: aP supports network transparency (import/export)
+The aP protocol SHALL be designed so the same operations work across a network:
+a process SHALL be able to import a remote file tree into its namespace and a
+server SHALL be able to export its tree to another host, with no change to the
+protocol or to clients. This is the basis for distributed agents — importing a
+remote tool tree or model Connection into a namespace rather than calling an RPC
+mesh. The wire transport that realizes it is a later slice (ADR-0024 D5); v1 is
+in-process, but the contract MUST not preclude it.
+
+#### Scenario: A remote tree is imported
+- **WHEN** the wire transport exists and a process imports a remote host's tree
+- **THEN** it mounts into the local namespace and is used with the same
+  walk/open/read/write/clunk operations as a local tree
+- **AND** clients do not distinguish local from imported trees
+
+#### Scenario: The contract is checked for network readiness
+- **WHEN** the aP contract is reviewed
+- **THEN** every operation is expressible over a byte transport (no in-process-
+  only assumptions), so import/export can be added without changing it
+- **AND** in-process v1 remains the fast path
+
 ### Requirement: The kernel crate is dependency-isolated
 The `alan-kernel` crate SHALL depend on no agent, LLM provider, tape, memory,
 sandbox, runtime, protocol, renderer, or transport implementation. Those

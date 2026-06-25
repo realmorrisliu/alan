@@ -105,3 +105,5 @@
 - [ ] 10.1 `define-agent-file-layout-contract` lands above this substrate.
 - [ ] 10.2 `introduce-alan-kernel-runtime` builds the projection file server that
   depends on this crate.
+- [ ] 10.3 Later slice: aP wire transport with network transparency
+  (import/export remote trees) for distributed agents (ADR-0026 D1).
