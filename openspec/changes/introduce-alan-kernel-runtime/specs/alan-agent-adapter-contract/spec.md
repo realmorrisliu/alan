@@ -40,7 +40,8 @@ conforms to the agent file-layout convention.
   which the kernel renders in `/proc` — and serves its agent surfaces under
   `/agent`, without fabricating `/proc` entries itself
 - **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `machine/`,
-  `context/`, and `children/` files per `define-agent-file-layout-contract`
+  `context/`, `children/`, and the top-level aggregate `events` stream per
+  `define-agent-file-layout-contract`
   (results are conveyed via `io/output` and per-action `actions/<id>/result`,
   not a top-level `result` file) without changing current runtime behavior
 

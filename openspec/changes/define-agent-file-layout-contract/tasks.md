@@ -31,8 +31,9 @@
 
 - [ ] 3.1 Provide a conformance checker that, given a process directory, verifies
   the generic process layout (`io/input`, `io/output`, `io/events`, `status`,
-  `ctl`) and, for agents, the superset (`requests/`, `actions/`, `machine/`,
-  `context/`). This gives the convention teeth without a kernel type.
+  `ctl`) and, for agents, the full superset (`requests/`, `actions/`, `machine/`,
+  `context/`, `children/`, and the top-level aggregate `events` stream). This
+  gives the convention teeth without a kernel type.
 - [ ] 3.2 Verify dynamic containers (`requests/`, `actions/`) expose an `events`
   stream observable by blocking read (D8).
 - [ ] 3.3 Verify `/agent` resolves as a view over `/proc` and that `/agent/root`

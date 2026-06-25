@@ -35,10 +35,12 @@
 
 ## 3. File, Process, Agent, Tool, And Skill Contracts
 
-- [x] 3.1 Define Alan Kernel around namespace, mounts, files, descriptors,
-  access rights, credentials, a single `Process` category (agent-ness is a
-  file-layout convention; ADR-0024 D3), `/proc`, `/agent`, `/srv`, `/bin`,
-  `/lib`, `/man`, and `/mnt`.
+- [x] 3.1 Define Alan Kernel around its primitives only — namespace engine,
+  mounts, files, descriptors, access rights, credentials, a single `Process`
+  category (agent-ness is a file-layout convention; ADR-0024 D3), the process
+  table, `/proc`, and `/srv`. `/agent`, `/bin`, `/lib`, `/man`, and `/mnt` are
+  standard-namespace trees assembled by file-server services above the kernel
+  (ADR-0024 D9), not part of `alan-kernel`.
 - [x] 3.1a Define standard namespace layering so Alan-specific packages and
   mounted service trees live under `/lib` or `/mnt`, not new top-level roots by
   default.
