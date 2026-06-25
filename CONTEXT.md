@@ -202,8 +202,7 @@ The files bound into an agent's namespace (notably under `context/`, plus the
 selection, Skill directory, Memory Store, or policy file. The model request is
 assembled as a view over these namespace files; changing context means changing
 the namespace, not calling a grant API.
-_Avoid_: Context Grant API, descriptor-passing as the canonical model, prompt
-dump, implicit global access
+_Avoid_: Context Grant API, prompt dump, implicit global access
 
 **Credential**:
 The Kernel identity and authority context used for access checks, such as a
