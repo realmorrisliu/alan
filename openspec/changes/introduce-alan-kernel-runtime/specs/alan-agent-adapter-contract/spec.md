@@ -35,8 +35,10 @@ to the agent file-layout convention.
   session path
 - **THEN** the projection layer creates or resolves an agent-conforming process
   directory in `/proc`, visible through `/agent`
-- **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `result`, and
-  `machine/` files without changing current runtime behavior
+- **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `machine/`,
+  `context/`, and `children/` files per `define-agent-file-layout-contract`
+  (results are conveyed via `io/output` and per-action `actions/<id>/result`,
+  not a top-level `result` file) without changing current runtime behavior
 
 #### Scenario: Future file-native client attaches
 - **WHEN** a future client attaches after file-surface parity exists

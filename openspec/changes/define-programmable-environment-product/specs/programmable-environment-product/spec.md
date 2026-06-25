@@ -65,7 +65,8 @@ a future spec explicitly justifies the exception.
 
 ### Requirement: Alan owns the OS runtime environment
 Alan SHALL own the OS runtime environment, including namespace, mounts, files,
-descriptors, access rights, credentials, ordinary Processes, Agent Processes,
+descriptors, access rights, credentials, a single `Process` category (agents are
+processes recognized by the agent file layout, not a separate kernel kind),
 file-server services, Service Manager, AgentFS, Tools, Skills, Memory Stores,
 policy descriptors, app registration, host integration conventions,
 compatibility projections, evidence, and audit.

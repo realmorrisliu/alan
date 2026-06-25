@@ -1,41 +1,29 @@
-## 1. Workspace Model
+> **Re-scoped by ADR-0024/0025; tasks reset.** Alan Agent is the optional
+> workspace-app *client* that reads agent files (`status`, `io/`, `requests/`,
+> `actions/`, `machine/`, `context/`, `children/`, `events`) and writes `ctl` —
+> not a "projection" of objects/buffers/views/evidence/artifacts (that V1
+> ontology is retired, and its code was removed in 70c4c02e). The boxes below are
+> unchecked: no implementation exists in the tree, and the file-client model has
+> not been built. The tasks are rewritten to the file-client model.
 
-- [x] 1.1 Define Agent Workspace objects for compatibility sessions, Agent
-  Process projections, root-agent-raised work, memory entries, evidence,
-  artifacts, actions, requests, and plans.
-- [x] 1.2 Define conversation, process list, request/action review, evidence,
-  memory review, approval form, and command palette buffers/views needed for the
-  first workspace slice.
-- [x] 1.3 Define commands for submit input, answer request, approve/deny action,
-  interrupt, compact, rollback, inspect evidence, promote Root Agent work, and
-  open memory review.
+## 1. Workspace client over agent files
 
-## 2. Projection
+- [ ] 1.1 Render an agent's conversation by reading `/agent/<pid>/io/output` and
+  tailing `events`; submit input by writing `io/input`.
+- [ ] 1.2 List and inspect agents by walking `/agent` (a view over `/proc`).
+- [ ] 1.3 Review and answer requests by reading `requests/<id>/` and writing the
+  response file; review actions by reading `actions/<id>/`.
+- [ ] 1.4 Control agents (interrupt, compact, rollback) by writing `ctl`.
 
-- [x] 2.1 Map current session metadata into Agent Process workspace objects and
-  native references.
-- [x] 2.2 Map current `alan_protocol::EventEnvelope` values into workspace IO,
-  request, action, evidence, and audit projections.
-- [x] 2.3 Map child runs and delegated skills into child Agent Process
-  projections.
-- [x] 2.4 Map memory recall, promotion, and flush observations into memory
-  review projections without changing memory ownership semantics.
-- [x] 2.5 Map rollout artifacts, effects, checkpoints, and evidence into
-  inspectable workspace evidence views.
+## 2. Boundaries
 
-## 3. Alan Shell Host Integration
+- [ ] 2.1 Depend only on aP (`alan-ap`) like any client; hold no private session
+  or projection state (ADR-0025 client layer).
+- [ ] 2.2 Read memory/evidence as files (Memory Stores, action records); do not
+  reintroduce object/buffer/view/evidence/artifact kernel surfaces.
 
-- [x] 3.1 Render the first Agent Process conversation and task projections in
-  Alan Shell behind a compatibility-first path.
-- [x] 3.2 Preserve current compatibility creation/attach, hydration, reconnect,
-  submission, resume, interrupt, compact, rollback, and pending-yield behavior.
-- [x] 3.3 Add parity fixtures between current `crates/tui` reducer output and
-  Agent Process workspace projections.
+## 3. Verification
 
-## 4. Verification
-
-- [x] 4.1 Run focused Alan Agent workspace projection tests.
-- [x] 4.2 Run affected Alan Shell tests.
-- [x] 4.3 Run formatting and relevant workspace checks.
-- [x] 4.4 Run `openspec validate migrate-alan-agent-to-agent-workspace --strict`.
-- [x] 4.5 Run `openspec validate --all --strict`.
+- [ ] 3.1 Tests for the workspace client against an in-memory aP agent surface.
+- [ ] 3.2 Run `just verify`.
+- [ ] 3.3 Run `openspec validate migrate-alan-agent-to-agent-workspace --strict`.
