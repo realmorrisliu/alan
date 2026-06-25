@@ -64,7 +64,7 @@ Alan OS (programmable personal computing environment)
   |
   +-- Alan Kernel
   |     namespace, mounts, paths, files, descriptors, access rights,
-  |     credentials, ordinary Processes, Agent Processes, process table,
+  |     credentials, a single Process category (agent-ness = file layout),
   |     standard namespace roots: `/proc`, `/agent`, `/srv`, `/bin`,
   |     `/lib`, `/man`, `/mnt`
   |

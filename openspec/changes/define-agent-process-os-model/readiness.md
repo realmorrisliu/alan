@@ -8,7 +8,9 @@ and `agent-process-os-model`.
 
 ## Locked Decisions
 
-- Alan Kernel process ontology is ordinary Process plus Agent Process.
+- Alan Kernel process ontology is a single `Process` category; agent-ness is
+  file-layout/AgentFS conformance, not a separate kernel process kind (ADR-0024
+  D3).
 - Root Agent Process is the root of the agent process tree, not Service Manager
   and not root permission.
 - Service Manager replaces daemon as the canonical lifecycle concept.

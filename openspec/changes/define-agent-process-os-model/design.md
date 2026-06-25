@@ -8,7 +8,8 @@ language: Agent Capability Service, Agent Runs, Context Grants, and Result
 Contracts.
 
 The new model makes agents native without creating a parallel abstraction
-stack. Alan Kernel recognizes ordinary Processes and Agent Processes. Agent
+stack. Alan Kernel recognizes a single `Process` category; an agent is a Process
+recognized by the agent file layout (ADR-0024 D3). Agent
 Runtime Service is a file-server service that executes Agent Processes and
 serves AgentFS at `/agent`. Alan Shell is the primary shell over this namespace.
 Alan Agent remains built in, but only as an optional workspace UI.

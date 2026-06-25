@@ -25,8 +25,9 @@ owners of the same projection.
   capability is reduced to a superseded pointer; renderer hosts are clients that
   read `/proc` and `/agent` files and write `ctl`.
 - Keep and realign the compatibility projection (`alan-agent-adapter-contract`):
-  map current sessions → agent-conforming process directories under `/proc`
-  (surfaced via `/agent`), conversation → `io/`, tape → `machine/`, yields →
+  register current sessions as real kernel Processes (kernel-rendered in `/proc`)
+  and serve their agent surfaces under `/agent`, conversation → `io/`, tape →
+  `machine/`, yields →
   `requests/`, tool calls → `actions/`, recovery → `machine/` checkpoints.
 - Keep the current `crates/tui` compatibility transport working throughout, with
   its target being direct file reading rather than a private application model.

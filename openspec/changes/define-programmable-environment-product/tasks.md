@@ -36,8 +36,9 @@
 ## 3. File, Process, Agent, Tool, And Skill Contracts
 
 - [x] 3.1 Define Alan Kernel around namespace, mounts, files, descriptors,
-  access rights, credentials, ordinary Processes, Agent Processes, `/proc`,
-  `/agent`, `/srv`, `/bin`, `/lib`, `/man`, and `/mnt`.
+  access rights, credentials, a single `Process` category (agent-ness is a
+  file-layout convention; ADR-0024 D3), `/proc`, `/agent`, `/srv`, `/bin`,
+  `/lib`, `/man`, and `/mnt`.
 - [x] 3.1a Define standard namespace layering so Alan-specific packages and
   mounted service trees live under `/lib` or `/mnt`, not new top-level roots by
   default.

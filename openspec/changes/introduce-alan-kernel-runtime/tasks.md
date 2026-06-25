@@ -35,9 +35,10 @@
 
 ## 3. Process and IO surfaces
 
-- [ ] 3.1 Project each current session as an agent-conforming process directory
-  under `/proc/<pid>` (ordinary `Process`, no kernel agent type), with session id
-  kept as an internal runtime reference, never as kernel identity.
+- [ ] 3.1 Register each current session as a real kernel `Process` (so the kernel
+  renders it in `/proc`; no kernel agent type) and serve its agent surface under
+  `/agent`; do not fabricate `/proc/<pid>` entries from the projection. Keep the
+  session id as an internal runtime reference, never as kernel identity.
 - [ ] 3.2 Map session metadata to a `status` file.
 - [ ] 3.3 Map conversation input/output and lifecycle to `io/input`, `io/output`,
   and `io/events` as byte/offset stream files; assistant text and thinking deltas
