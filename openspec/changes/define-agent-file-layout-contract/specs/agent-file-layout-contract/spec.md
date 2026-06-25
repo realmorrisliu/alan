@@ -44,8 +44,10 @@ on top of this full layout.
 
 ### Requirement: An agent overlays agent files on the generic process layout
 Alan OS SHALL define the agent layout as the generic process layout plus an agent
-overlay. The generic layout (`io/`, `status`, `ctl`) lives at `/proc/<pid>` and
-is kernel-rendered. The agent-specific superset — `requests/`, `actions/`,
+overlay. The generic layout — the full `/proc/<pid>` substrate layout (identity,
+parentage, credentials, namespace, exit state) plus the `io/`/`status`/`ctl`
+IO/control subset — is kernel-rendered. The agent-specific superset — `requests/`,
+`actions/`,
 `machine/`, `context/`, `children/`, and a top-level `events` stream — SHALL be
 served by the agent runtime file server and presented at `/agent/<pid>` as an
 overlay (a union of the kernel's `/proc/<pid>` with the agent surfaces). The

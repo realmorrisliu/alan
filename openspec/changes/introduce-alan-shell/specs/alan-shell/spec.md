@@ -32,9 +32,10 @@ the `/agent/<pid>` overlay (per `define-agent-file-layout-contract`).
 
 #### Scenario: Spawn uses the aP process-creation path
 - **WHEN** a user spawns an executable
-- **THEN** the shell opens `/proc/clone` and writes the exec spec (aP open/write),
-  receiving the new pid
-- **AND** it needs no operation outside aP
+- **THEN** the shell opens `/proc/clone` (receiving the new pid at open), writes
+  the exec spec (one or more writes), and clunks to commit/start — open → write(s)
+  → clunk, per `define-plan9-kernel-substrate`
+- **AND** it needs no operation outside aP, and the process starts only at clunk
 
 #### Scenario: A process is controlled
 - **WHEN** a user interrupts a process or compacts/rolls back an agent's tape

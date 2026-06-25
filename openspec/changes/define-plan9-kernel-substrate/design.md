@@ -63,6 +63,8 @@ primitives that D1/D2/D4/D8 build on above the substrate.
 3. Cut `introduce-alan-kernel-runtime`'s `alan-kernel-contract` spec down to a
    superseded pointer so there is a single kernel owner.
 4. Land `define-agent-file-layout-contract` above this substrate.
-5. Reshape the `alan-kernel` crate toward this contract in a later
-   implementation change; the crate's current V1 types move to compat/app crates
-   or are deleted.
+5. Create the `alan-kernel` crate for this contract in a later implementation
+   change (there is no current `alan-kernel` crate — the V1 one was removed); any
+   compatibility code that must move comes from the actual current owners
+   (`alan-runtime`, `alan-protocol`, `crates/alan`, `crates/tui`) into the
+   projection or `alan-compat`, not the kernel.
