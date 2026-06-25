@@ -60,9 +60,10 @@ than become a product-specific backend or HTTP service.
   AgentFS, Service Manager, Tool, Skill, Descriptor, and Access Rights language
   instead of Agent Capability Service, Agent Run, Context Grant, Result
   Contract, or HTTP/WS session transport as target architecture.
-- Affected architecture: `alan-kernel` should define ordinary Process and Agent
-  Process identity plus file/descriptor/access primitives, while Agent Runtime
-  Service serves `/agent` and owns Turing-machine execution.
+- Affected architecture: `alan-kernel` should define a single `Process` identity
+  plus file/descriptor/access primitives; agent-ness is AgentFS/file-layout
+  conformance above the kernel (ADR-0024 D3), while Agent Runtime Service serves
+  `/agent` and owns Turing-machine execution.
 - Affected current implementation: the current HTTP/WS compatibility server and
   session APIs become legacy compatibility transport/implementation details to
   be retired from product concepts.

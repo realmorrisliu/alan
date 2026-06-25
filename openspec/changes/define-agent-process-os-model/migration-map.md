@@ -27,11 +27,12 @@ Process target model.
 
 ## Follow-Up Spec Updates
 
-- `introduce-alan-kernel-runtime`: define Process / Agent Process, `/proc`,
-  `/srv`, `/agent` anchors, and file-server service boundaries.
-- `add-agent-process-kernel-types`: frame around Agent Process kernel
-  types and service mount anchors.
-- `add-agent-runtime-service-filesystem`: frame around Agent Runtime
-  Service, AgentFS, and compatibility transport.
-- `migrate-alan-agent-to-agent-workspace`: keep Alan Agent built in but optional;
-  Alan Shell remains the primary OS interaction surface.
+- `define-plan9-kernel-substrate`: define a single `Process` category, the aP
+  protocol, `/proc`, `/srv`, and namespace anchors (ADR-0024 D3). Supersedes the
+  removed `add-agent-process-kernel-types`.
+- `define-agent-file-layout-contract`: own the agent file-layout convention
+  (agent-ness over ordinary Process), `/agent` as a view over `/proc`.
+- `introduce-alan-kernel-runtime`: own the compatibility projection (engine →
+  agent files). Absorbs the removed `add-agent-runtime-service-filesystem`.
+- `migrate-alan-agent-to-agent-workspace`: keep Alan Agent built in but optional,
+  as a file-client over agent files; Alan Shell remains the primary OS surface.

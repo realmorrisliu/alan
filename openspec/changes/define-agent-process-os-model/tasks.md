@@ -35,8 +35,9 @@
 
 - [x] 4.1 Define the first Agent Executable / Tool / Skill taxonomy for
   implementation.
-- [x] 4.2 Reframe the Kernel follow-up around Agent Process identity,
-  descriptors, file trees, process table entries, namespace mounts, `/proc`,
+- [x] 4.2 Reframe the Kernel follow-up around a single `Process` identity (agent-
+  ness is a file-layout convention; ADR-0024 D3), descriptors, file trees,
+  process table entries, namespace mounts, `/proc`,
   `/srv`, and AgentFS anchors.
 - [x] 4.3 Reframe the former service-adapter follow-up as Agent Runtime Service
   and compatibility transport work over the current Agent Execution Engine.

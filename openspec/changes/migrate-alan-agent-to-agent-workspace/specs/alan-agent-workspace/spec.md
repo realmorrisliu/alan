@@ -19,16 +19,20 @@ spawn, inspect, steer, or complete Agent Processes.
 - **THEN** Alan Shell can still operate Agent Processes through files and
   syscalls
 
-### Requirement: Current sessions project into Agent Process workspace semantics
-Current compatibility sessions SHALL project into Agent Process workspace
-objects, conversation buffers, request/action views, evidence views, and audit
-records while remaining compatibility authority during migration.
+### Requirement: Alan Agent reads current sessions as agent files
+Alan Agent SHALL present current compatibility sessions by reading the agent file
+surfaces (`status`, `io/`, `requests/`, `actions/`, `machine/`, `context/`,
+`children/`, `events`) as a client. It SHALL NOT reintroduce the retired
+object/buffer/view/evidence projection ontology; conversation is `io/`, requests
+and actions are their file trees, and evidence is interpreted from files and
+per-action records above the kernel.
 
 #### Scenario: Existing session is attached
-- **WHEN** Alan Shell attaches to an existing compatibility session
-- **THEN** the workspace projection creates or resolves an Agent Process
-  projection with status, IO, requests, actions, result, children, and machine
-  state where available
+- **WHEN** Alan Agent attaches to an existing compatibility session
+- **THEN** it reads the agent-conforming process surface (`status`, `io/`,
+  `requests/`, `actions/`, `machine/`, `context/`, `children/`, `events`); there
+  is no top-level `result` file (results are `io/output` plus per-action
+  `actions/<id>/result`)
 - **AND** existing hydration and reconnect behavior remains compatible
 
 ### Requirement: Agent Processes are inspectable workspace work

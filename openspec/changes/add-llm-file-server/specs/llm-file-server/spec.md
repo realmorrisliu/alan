@@ -29,21 +29,21 @@ only by having an `llmfs` Connection bound into its namespace.
 
 ### Requirement: Provider and Connection are distinct
 `alan-llmfs` SHALL expose Providers and Connections as distinct surfaces. A
-Provider SHALL be a wire driver served introspect-only at `/mnt/llm/<provider>`
+Provider SHALL be a wire driver served introspect-only at `/mnt/llm/providers/<provider>`
 (its available models, capabilities, status) and SHALL NOT be callable on its
 own. A Connection SHALL bind a Provider, a Model, and a Credential into a callable
-endpoint at `/mnt/llm/<connection>`, where Generations happen. Changing the model
+endpoint at `/mnt/llm/connections/<connection>`, where Generations happen. Changing the model
 SHALL mean binding a different Connection.
 
 #### Scenario: A provider is inspected
-- **WHEN** a caller reads `/mnt/llm/<provider>`
+- **WHEN** a caller reads `/mnt/llm/providers/<provider>`
 - **THEN** it sees the driver's models, capabilities, and status
 - **AND** it cannot start a Generation there (no Model or Credential)
 
 #### Scenario: Connections track configuration
 - **WHEN** a user adds or removes a connection profile (provider + model +
   credential)
-- **THEN** a corresponding `/mnt/llm/<connection>` endpoint appears or disappears
+- **THEN** a corresponding `/mnt/llm/connections/<connection>` endpoint appears or disappears
 - **AND** the credential is referenced by the Connection, not copied into it as
   agent-visible plaintext
 
@@ -55,13 +55,13 @@ opening a `clone` file under a Connection. The directory SHALL contain `data`
 directory.
 
 #### Scenario: A Generation is started
-- **WHEN** a caller opens `/mnt/llm/<connection>/clone`
-- **THEN** `alan-llmfs` allocates `/mnt/llm/<connection>/<n>/` with `data`,
+- **WHEN** a caller opens `/mnt/llm/connections/<connection>/clone`
+- **THEN** `alan-llmfs` allocates `/mnt/llm/connections/<connection>/<n>/` with `data`,
   `events`, `ctl`, and `status`
 - **AND** two concurrent callers receive independent directories
 
 #### Scenario: A Generation is observed
-- **WHEN** any permitted process reads `/mnt/llm/<connection>/<n>/status`
+- **WHEN** any permitted process reads `/mnt/llm/connections/<connection>/<n>/status`
 - **THEN** it sees progress, token counts, and accumulated cost
 - **AND** the Generation is inspectable as files, not hidden in a caller's fd
 

@@ -30,7 +30,7 @@ uses the aP protocol from `define-plan9-kernel-substrate`.
 - **Provider vs Connection.** Provider = wire driver (introspect-only). Connection
   = Provider + Model + Credential, the callable endpoint. Agents bind a
   Connection; changing model = binding a different Connection.
-- **Generation = clone-dir.** `open clone` allocates `/mnt/llm/<connection>/<n>/`
+- **Generation = clone-dir.** `open clone` allocates `/mnt/llm/connections/<connection>/<n>/`
   with `data` (write request), `events` (read typed stream), `ctl` (abort),
   `status` (progress/cost). Concurrency is isolated per connection directory.
 - **Implicit commit.** Writing one complete request document to `data` commits

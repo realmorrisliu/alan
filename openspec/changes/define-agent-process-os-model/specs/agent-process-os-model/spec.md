@@ -82,8 +82,9 @@ agent-specific files for each Agent Process.
 #### Scenario: Agent Process is inspected
 - **WHEN** a process opens `/agent/<pid>`
 - **THEN** it can discover standard files for status, control, children,
-  context, policy, result, requests, actions, IO, and machine state according to
-  access rights
+  context, requests, actions, IO, and machine state according to access rights
+  (results are conveyed via IO output and per-action `actions/<id>/result`, not a
+  top-level `result` file)
 - **AND** the same Agent Process also appears in `/proc/<pid>`
 
 #### Scenario: Root Agent is inspected
