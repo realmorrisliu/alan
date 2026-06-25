@@ -20,7 +20,8 @@ than defining their own private runtime model.
 - Define Alan as the repo-level programmable personal computing environment and
   Alan OS as its operating-system boundary.
 - Define the core product model around namespace, mounts, files, descriptors,
-  access rights, ordinary Processes, Agent Processes, file-server services,
+  access rights, a single `Process` category (agents are processes recognized by
+  the agent file layout, not a separate kernel kind), file-server services,
   Service Manager, the standard namespace, AgentFS, Tools, Skills, Memory
   Stores, and app/host integration conventions.
 - Establish "everything is file" as the default design rule for Alan OS: richer

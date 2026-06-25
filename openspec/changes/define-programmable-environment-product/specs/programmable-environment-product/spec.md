@@ -150,13 +150,15 @@ treated as compatibility implementation language, not the target architecture.
 - **AND** clients interact with the mounted file tree rather than depending on
   daemon-specific lifecycle semantics
 
-### Requirement: Agent Process is the standard OS execution form for agents
-Alan OS SHALL define Agent Process as the standard execution form for agent
-work. Alan Apps and Alan Shell SHALL create agent work by spawning Agent
-Executables with descriptors. Alan Kernel SHALL own only Process and Agent
-Process identity, files, descriptors, access rights, credentials, namespace,
-mounts, `/proc`, `/srv`, and service mount anchors. Agent Runtime Service SHALL
-execute Agent Processes and serve AgentFS outside Alan Kernel.
+### Requirement: An agent is the standard OS execution form, as an ordinary Process
+Alan OS SHALL define an agent as the standard execution form for agent work,
+realized as an ordinary `Process` recognized by the agent file layout — not a
+separate kernel category (ADR-0024 D3). Alan Apps and Alan Shell SHALL create
+agent work by spawning Agent Executables with descriptors. Alan Kernel SHALL own
+only a single `Process` category plus files, descriptors, access rights,
+credentials, namespace, mounts, `/proc`, `/srv`, and service mount anchors; agent-
+ness is a file-layout/AgentFS convention. Agent Runtime Service SHALL execute
+agents and serve AgentFS outside Alan Kernel.
 
 #### Scenario: App requests AI-mediated help
 - **WHEN** an Alan App such as UPDF or Groove Master needs reading assistance,

@@ -33,8 +33,8 @@ host interpretations over files and processes.
   UI, HTTP/WS server, CLI server, or agent chat UI.
 - Establish file/process/descriptor/namespace composition as the core product
   principle.
-- Make Agent Process a first-class OS execution form integrated with Process
-  and file abstractions.
+- Make an agent the standard OS execution form as an ordinary Process recognized
+  by the agent file layout (not a separate kernel type; ADR-0024 D3).
 - Define Agent Runtime Service as a Plan 9-style file-server service serving
   AgentFS, not an app-facing HTTP API.
 - Separate Agent Executable, Tool, Skill, Memory Store, policy descriptor, and
@@ -206,13 +206,15 @@ Alternative considered: keep "alan daemon" as the central OS term. That would
 preserve current code vocabulary but keep Alan anchored to HTTP/session server
 semantics instead of OS lifecycle semantics.
 
-### 5. Agent Process is the OS form for agents
+### 5. An agent is an ordinary Process recognized by file layout
 
-Alan Kernel should know ordinary Process and Agent Process. Agent Process is a
-Process with agent-visible identity and enough Kernel anchoring for `/proc`,
-descriptors, access rights, namespace, and service mounts. Agent execution
-details such as model calls, tapes, skills, tools, policy, memory, actions, and
-requests belong to Agent Runtime Service and AgentFS.
+Alan Kernel should know a single `Process` category (ADR-0024 D3); there is no
+separate `Agent Process` kernel type. An "Agent Process" is an ordinary Process
+recognized by conforming to the agent file layout (its AgentFS surfaces under
+`/agent/<pid>`), discovered by walking the process directory. The Kernel anchors
+only `/proc`, descriptors, access rights, namespace, and service mounts. Agent
+execution details such as model calls, tapes, skills, tools, policy, memory,
+actions, and requests belong to Agent Runtime Service and AgentFS.
 
 Alternative considered: keep Agent Capability, Agent Run, and subagent as core
 process concepts. That duplicated UNIX process terminology and made the model
