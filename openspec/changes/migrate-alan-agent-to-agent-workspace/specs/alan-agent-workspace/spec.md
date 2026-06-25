@@ -1,58 +1,65 @@
 ## ADDED Requirements
 
-### Requirement: Alan Agent is the Agent Workspace
-Alan Agent SHALL be the built-in Alan App and user-visible Agent Workspace for
-inspecting, steering, and organizing compatibility sessions, bounded Agent Runs,
-supervisor-raised tasks, memory, evidence, artifacts, plans, and cross-app
-agent work.
+### Requirement: Alan Agent is built-in but optional
+Alan Agent SHALL be the built-in optional Agent Workspace for inspecting,
+steering, and organizing Agent Processes, requests, actions, memory, evidence,
+artifacts, plans, and cross-app agent work. Alan Agent SHALL NOT be required to
+spawn, inspect, steer, or complete Agent Processes.
 
 #### Scenario: User opens Alan Agent
 - **WHEN** the user opens Alan Agent
 - **THEN** they can inspect active and historical agent work through workspace
-  objects, buffers, views, tasks, forms, evidence, and commands
-- **AND** Alan Agent is not treated as the System Agent Supervisor itself
+  views over `/agent`, `/proc`, requests, actions, memory, evidence, and
+  commands
+- **AND** Alan Agent is not treated as Root Agent Process, Agent Runtime Service,
+  or Service Manager
 
-### Requirement: Current sessions project into workspace semantics
-Current daemon-backed Alan Agent sessions SHALL project into Agent Workspace
-objects, conversation buffers, task trees, approval forms, evidence views, and
-audit records while remaining compatibility authority during migration.
+#### Scenario: User does not open Alan Agent
+- **WHEN** Alan Agent is not running
+- **THEN** Alan Shell can still operate Agent Processes through files and
+  syscalls
+
+### Requirement: Current sessions project into Agent Process workspace semantics
+Current compatibility sessions SHALL project into Agent Process workspace
+objects, conversation buffers, request/action views, evidence views, and audit
+records while remaining compatibility authority during migration.
 
 #### Scenario: Existing session is attached
-- **WHEN** Alan TUI attaches to an existing daemon-backed session
-- **THEN** the workspace projection creates or resolves a compatibility session
-  object, conversation buffer, active task state, pending yields, evidence, and
-  available commands
+- **WHEN** Alan Shell attaches to an existing compatibility session
+- **THEN** the workspace projection creates or resolves an Agent Process
+  projection with status, IO, requests, actions, result, children, and machine
+  state where available
 - **AND** existing hydration and reconnect behavior remains compatible
 
-### Requirement: Agent Runs are inspectable workspace work
-Bounded Agent Runs SHALL be inspectable as Agent Workspace work items with
-owner app, target object or task, Context Grant summary, Result Contract
-summary, lifecycle, child tasks, artifacts, evidence, and audit metadata.
+### Requirement: Agent Processes are inspectable workspace work
+Agent Processes SHALL be inspectable as Agent Workspace work items with owner,
+target descriptors, context descriptors, policy descriptors, lifecycle, child
+Agent Processes, actions, artifacts, evidence, result, and audit metadata.
 
-#### Scenario: Agent Capability run is promoted into Alan Agent
-- **WHEN** an app or user promotes an Agent Capability run into Alan Agent
-- **THEN** Alan Agent shows the run as an Agent Workspace item
-- **AND** the originating app remains the run owner unless explicitly
-  transferred by a governed command
+#### Scenario: App-created Agent Process is promoted into Alan Agent
+- **WHEN** an app or user promotes an Agent Process into Alan Agent
+- **THEN** Alan Agent shows the process as an Agent Workspace item
+- **AND** the originating app or parent process remains the owner unless
+  explicitly transferred through governed action
 
-### Requirement: Supervisor-raised tasks are not global chat
-System Agent Supervisor work SHALL appear in Alan Agent as supervisor-raised
-tasks or suggestions, not as an unbounded resident root conversation.
+### Requirement: Root Agent-raised work is not global chat
+Root Agent Process work SHALL appear in Alan Agent as root-agent-raised
+suggestions, requests, actions, or tasks, not as an unbounded resident root
+conversation.
 
-#### Scenario: Supervisor raises work
-- **WHEN** the System Agent Supervisor identifies useful cross-app work
-- **THEN** Alan Agent can show a bounded task with context, proposed next
-  action, permission state, and audit trail
+#### Scenario: Root Agent raises work
+- **WHEN** Root Agent Process identifies useful cross-app work
+- **THEN** Alan Agent can show bounded work with context descriptors, proposed
+  next action, permission state, and audit trail
 - **AND** the user can inspect, dismiss, delegate, or promote it without opening
   a global root session
 
-### Requirement: Alan TUI is the first Agent Workspace host
-Alan TUI SHALL be the first compatibility host for Agent Workspace projections,
-while preserving existing daemon-backed session behavior.
+### Requirement: Alan Shell is the first compatibility host
+Alan Shell SHALL remain the first compatibility host for Agent Process
+projections, while preserving existing compatibility session behavior.
 
 #### Scenario: Semantic workspace path is incomplete
-- **WHEN** an Agent Workspace projection or renderer is incomplete
-- **THEN** Alan TUI continues to use the current compatibility path for that
+- **WHEN** an Agent Process projection or renderer is incomplete
+- **THEN** Alan Shell continues to use the current compatibility path for that
   surface
 - **AND** replacement happens only after parity tests cover the semantic path
-

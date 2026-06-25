@@ -1,44 +1,47 @@
 ## Why
 
-Alan Agent should become the built-in Agent Workspace inside Alan OS: the
-place users inspect, steer, and organize agent sessions, Agent Runs,
-supervisor-raised tasks, memory, evidence, and cross-app work. Today it is still
-shaped around daemon sessions, protocol events, and TUI transcript projection.
-The migration should preserve that working product while projecting it into the
-new Alan OS model.
+Alan Agent should remain built in, but it should not be required for agent work.
+In the Plan 9-style Alan OS model, Alan Shell and apps can spawn Agent
+Executables, inspect `/agent`, answer requests, and watch Agent Process events
+directly through files and syscalls. Alan Agent's value is a richer optional
+workspace over those same surfaces.
+
+The migration should preserve the working current session experience while
+projecting it toward Agent Process files instead of making Alan Agent the
+runtime backend.
 
 ## What Changes
 
-- Define Alan Agent as a built-in Alan App / Agent Workspace over Agent Runs,
-  Agent Capability Service, memory layers, evidence, and task projections.
-- Preserve current daemon-backed session behavior as a compatibility authority
-  while semantic Agent Workspace projection is introduced.
-- Map existing conversations, turns, tool calls, approvals, child runs,
-  rollout evidence, memory events, and plans into Agent Workspace objects,
-  buffers, views, commands, tasks, forms, evidence, and audit surfaces.
-- Use Alan TUI as the first host to render Agent Workspace projections, with
-  Alan for macOS following the same host contract later.
+- Define Alan Agent as a built-in but optional Agent Workspace over Agent
+  Processes, requests, actions, IO, machine state, memory, evidence, and
+  cross-app work.
+- Preserve current compatibility session behavior while Agent Process projection
+  is introduced.
+- Map current conversations, turns, tool calls, approvals, child agents, rollout
+  evidence, memory events, and plans into `/agent/<pid>` workspace projections.
+- Keep Alan Shell as the primary OS interaction surface; Alan Agent provides a
+  richer workspace, not the only path.
+- Keep Alan for macOS aligned with the same file/process surfaces.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `alan-agent-workspace`: Defines the built-in Alan Agent App as the
-  user-visible Agent Workspace for inspecting and steering agent work on Alan
-  OS.
+- `alan-agent-workspace`: Defines Alan Agent as the built-in optional Agent
+  Workspace for inspecting and steering Agent Processes on Alan OS.
 
 ### Modified Capabilities
 
-- `alan-agent-adapter-contract`: Alan Agent projection becomes the first
-  concrete Agent Workspace path.
-- `rust-inline-tui`: Alan TUI becomes the first compatibility host for Agent
-  Workspace projections.
+- `alan-agent-adapter-contract`: Compatibility projection maps current sessions
+  into Agent Process files.
+- `rust-inline-tui`: Alan Shell remains the first compatibility path for Agent
+  Process projections.
 
 ## Impact
 
-- Affected crates: future `alan-agent` app module, `crates/tui`, daemon client
-  and session projection code, and semantic Kernel snapshot consumption.
+- Affected crates: future `alan-agent` app module, `crates/tui`, compatibility
+  session projection code, and semantic Kernel snapshot consumption.
 - Affected behavior: existing Alan Agent session UX should remain compatible
-  while semantic projection is introduced.
-- Affected future hosts: Alan for macOS can consume the same Agent Workspace
-  semantic projections later.
+  while Agent Process projection is introduced.
+- Affected future hosts: Alan for macOS can consume the same Agent Process and
+  workspace projections later.

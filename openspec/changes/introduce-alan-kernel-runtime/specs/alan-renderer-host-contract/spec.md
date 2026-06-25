@@ -1,28 +1,31 @@
 ## ADDED Requirements
 
 ### Requirement: Renderer hosts do not own Alan Kernel runtime
-Alan renderer hosts SHALL render semantic Alan Kernel snapshots and translate
-host input, but SHALL NOT own command registries, query registries, task
-supervision, projection authority, or activity ledger authority.
+Alan renderer hosts SHALL render app/service semantic snapshots grounded in Alan
+Kernel files, processes, and stream files, and translate host input. They SHALL NOT
+own operation descriptor registries, task supervision, projection authority, or
+service stream-file authority.
 
 #### Scenario: Ratatui host is inspected
 - **WHEN** the Ratatui renderer host is implemented
 - **THEN** it owns terminal frame rendering, terminal input capture, layout, and
   renderer caches
-- **AND** it obtains semantic state through Alan Kernel snapshots, commands,
-  queries, and subscriptions rather than a Ratatui-private application model
+- **AND** it obtains semantic state through app/service snapshots and operation
+  surfaces grounded in Alan Kernel files, processes, and stream files rather than a
+  Ratatui-private application model
 
 #### Scenario: SwiftUI host is added later
-- **WHEN** a SwiftUI host renders the same Alan Kernel view
-- **THEN** it can consume the same semantic snapshot and command/query surfaces
-  without depending on Ratatui or Crossterm types
+- **WHEN** a SwiftUI host renders the same app/service semantic view
+- **THEN** it can consume the same app/service semantic snapshot and operation
+  surfaces without depending on Ratatui or Crossterm types
 
 ### Requirement: Hosts consume semantic snapshots
 Renderer hosts SHALL pull semantic view snapshots after invalidation or update
 signals instead of consuming renderer-specific render patches from the core.
 
 #### Scenario: View changes
-- **WHEN** a task, buffer, object, command, or query update invalidates a view
+- **WHEN** a process/task, buffer, object, or operation-surface update invalidates a
+  view
 - **THEN** the host can pull a versioned semantic view snapshot
 - **AND** the host chooses its own diffing, caching, layout, and rendering
   strategy
@@ -84,23 +87,25 @@ view-local input, or command invocations before crossing the runtime boundary.
 
 ### Requirement: View-local state is separated from host render state
 Renderer hosts SHALL keep renderer-only cache and layout state separate from
-semantic view state managed by the Alan Kernel.
+app/service semantic view state that references Alan Kernel files, processes,
+stream files, credentials, descriptors, access rights, and produced files.
 
 #### Scenario: Selection matters semantically
 - **WHEN** selection, focused field, filter text, scroll anchor, expanded
   semantic node, or active view mode is needed for restore, agent inspection,
   command routing, or another renderer
-- **THEN** it is stored as Alan Kernel semantic view state
+- **THEN** it is stored as app/service semantic view state grounded in Kernel
+  anchors
 
 #### Scenario: Layout cache is renderer-specific
 - **WHEN** measured line wraps, terminal cell cache, pixel geometry, hover
   state, animation frame, or renderer-specific scroll detail is needed
 - **THEN** it remains host render state and is not written as semantic
-  Alan Kernel state
+  app/service state
 
-### Requirement: Host layout remains separate from semantic Alan Kernel state
-Renderer hosts SHALL own physical layout while the Alan Kernel owns semantic open
-buffers, views, active view, focus relationships, and task state.
+### Requirement: Host layout remains separate from semantic app state
+Renderer hosts SHALL own physical layout while apps/services own semantic open
+buffers, views, active view, focus relationships, and task projections.
 
 #### Scenario: Host splits a pane
 - **WHEN** a host splits, resizes, moves, or collapses panes, tabs, windows, or
@@ -115,12 +120,12 @@ buffers, views, active view, focus relationships, and task state.
   host's physical placement
 
 ### Requirement: Ratatui integration preserves terminal behavior
-The Ratatui renderer host SHALL preserve the current daemon-backed TUI
+The Ratatui renderer host SHALL preserve the current compatibility Alan Shell
 behavior while semantic rendering is introduced.
 
 #### Scenario: Semantic path is introduced
 - **WHEN** the Ratatui TUI starts consuming Alan Kernel semantic snapshots
-- **THEN** daemon session creation, hydration, reconnect replay, submissions,
+- **THEN** compatibility session creation, hydration, reconnect replay, submissions,
   resume operations, interrupts, compaction, rollback, frame coalescing, and
   terminal scrollback behavior remain compatible with the accepted Rust inline
   TUI contract

@@ -1,299 +1,339 @@
 ## Context
 
 This change defines the product constitution for the alan repo. The long-term
-product model is a programmable personal computing environment: local-first,
-UNIX-respecting, object-oriented, command-driven, extensible, and agent-native.
+product model is Alan: a programmable personal computing environment that is
+local-first, UNIX-respecting, Plan 9-inspired, extensible, and agent-native.
+Alan OS is the operating-system boundary inside that product.
 
-This is larger than adding a new product beside Alan. Alan agent, Alan for
-macOS, future environment apps such as Groove Master, host surfaces, runtime
-substrates, and adapters should all be able to describe their role in this
-environment. The constitution is therefore a repo-level organizing model, not a
-current implementation boundary.
+This is not a new product beside Alan. Alan Agent, Alan Shell, Alan for macOS,
+future Alan Apps such as Groove Master, host surfaces, runtime substrates, and
+adapters should all be able to describe how they run on Alan OS. The
+constitution is therefore a repo-level organizing model, not a current
+implementation boundary.
 
-The current Alan product already has useful ideas around agents, terminal-first
-work, permissions, session state, shell workspaces, content instances, and
-OpenSpec-driven planning. Those are real assets, but they are not allowed to
-define the whole environment by accident. The programmable environment should
-not be forced into the current macOS shell, daemon, Rust TUI, or terminal-only
-surface. Conversely, existing Alan work should not be treated as unrelated to
-the environment direction. It should be classified and aligned deliberately.
+The current Alan product already has useful assets: agent execution, terminal
+workflows, permission checks, session state, shell workspaces, model/provider
+integration, skills, memory, and OpenSpec-driven planning. Those are source
+material. They should not force Alan OS to inherit today's HTTP server, daemon
+shape, session API, TUI boundary, or app-specific runtime model.
 
-The key product boundary is that data ownership and activity organization are
-separate. Data may remain in files, directories, Git repositories, external
-services, databases, or OS resources. The environment organizes activity around
-runtime objects, commands, buffers, views, queries, humans, agents, extensions,
-and host surfaces.
+The key product shift is to make the substrate smaller and more UNIX-like:
+everything important should be addressable as files, descriptors, processes,
+namespaces, mounts, and file-server services. Richer concepts such as objects,
+buffers, views, queries, evidence, artifacts, tasks, plans, and semantic
+snapshots are valuable, but they live above Kernel as app, agent, service, or
+host interpretations over files and processes.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Define the repo-level product identity before implementation expands.
-- Treat the programmable environment as the long-term organizing model for Alan
-  agent, Alan for macOS, environment apps, hosts, adapters, and future products.
-- Preserve the product boundary from being collapsed into the current macOS
-  shell, TUI, daemon, or agent session protocol.
-- Establish local-first, filesystem-first, UNIX-like composition as a core
+- Define Alan and Alan OS as the repo-level product constitution.
+- Preserve Alan OS from being collapsed into the current macOS shell, terminal
+  UI, HTTP/WS server, CLI server, or agent chat UI.
+- Establish file/process/descriptor/namespace composition as the core product
   principle.
-- Define object, command, buffer, view, and query as the core runtime
-  abstractions.
-- Make human and agent first-class actors in the same runtime.
-- Require ordinary UI for out-of-the-box use and modal grammar for power use.
-- Make Rust core plus WASM Component Model extensibility part of the product
-  identity.
-- Define how existing and future OpenSpec changes declare their environment
-  role and migration boundary.
-- Define incubation criteria without freezing the first interface or MVP.
+- Make Agent Process a first-class OS execution form integrated with Process
+  and file abstractions.
+- Define Agent Runtime Service as a Plan 9-style file-server service serving
+  AgentFS, not an app-facing HTTP API.
+- Separate Agent Executable, Tool, Skill, Memory Store, policy descriptor, and
+  Alan Agent workspace into clear layers.
+- Define how future OpenSpec changes declare their Alan OS role and migration
+  boundary.
+- Define roadmap order without freezing the complete implementation.
 
 **Non-Goals:**
 
-- Specify a concrete implementation architecture, crate layout, UI, or storage
-  engine for the entire environment.
-- Replace current Alan runtime, daemon, Rust TUI, terminal, or macOS shell
-  behavior in this change.
-- Treat the current Alan shell as the mandatory implementation boundary for the
-  environment.
-- Require all data to be imported into a private object store.
+- Implement Alan Kernel, Service Manager, Agent Runtime Service, AgentFS, or a
+  real 9P stack in this change.
+- Replace the current Agent Execution Engine, HTTP/WS compatibility transport,
+  CLI, terminal, or macOS behavior in this change.
+- Define objects, tasks, evidence, artifacts, or semantic views as Kernel
+  primitives.
 - Define a universal URI/resource protocol.
 - Rewrite every existing OpenSpec in this change.
-- Choose the first complete visual interface between editor-like environment,
-  object workspace, agent workspace, app launcher, or another form.
+- Choose the first complete visual interface.
 
 ## Product Family Model
 
-Future specs should classify themselves against this map:
+Future specs should classify themselves against this hierarchy:
 
 ```text
-Programmable Environment Constitution
+Alan OS (programmable personal computing environment)
   |
-  +-- Environment core
-  |     objects, commands, buffers, views, queries, ledgers,
-  |     permissions, extension capabilities
+  +-- Alan Kernel
+  |     namespace, mounts, paths, files, descriptors, access rights,
+  |     credentials, ordinary Processes, Agent Processes, process table,
+  |     standard namespace roots: `/proc`, `/agent`, `/srv`, `/bin`,
+  |     `/lib`, `/man`, `/mnt`
   |
-  +-- Agent runtime / actors
-  |     Alan agent sessions, tools, child runs, plans, memory,
-  |     task execution, governed side effects
+  +-- Service Manager
+  |     starts, stops, restarts, reaps, and supervises boot units and
+  |     system file-server services; replaces the former daemon concept
   |
-  +-- Host surfaces
-  |     Alan for macOS, Rust TUI, future iOS/iPadOS/web hosts;
-  |     physical layout, native chrome, input, rendering, windowing
+  +-- File-server services
+  |     Agent Runtime Service, credential/profile service, memory service,
+  |     app services, host integration services; services post handles in
+  |     `/srv` and are mounted or bound into namespaces, usually under `/mnt`
   |
-  +-- Environment apps
-  |     Groove Master, UPDF-like workflows, future domain products;
-  |     app-owned domain models plus environment adapters
+  +-- Agent Runtime Service / AgentFS
+  |     executes Agent Processes, maintains Root Agent Process, serves
+  |     `/agent`, projects requests/actions/io/machine files
   |
-  +-- Adapters
-  |     filesystem, Git, terminal, mail, calendar, databases,
-  |     remote services, model/provider systems
+  +-- Alan Apps and packages
+  |     built-in app: Alan Agent
+  |     domain apps: Groove Master, UPDF-like workflows, future products
+  |     app-owned domain models mapped into Alan files/processes
   |
-  +-- Legacy / compatibility surfaces
-        current implementation paths that must stay stable while
-        they are adapted, retired, or reclassified
+  +-- Hosts / frame surfaces
+  |     Alan Shell, Alan for macOS, future iOS/iPadOS/web hosts;
+  |     physical layout, native chrome, input translation, rendering,
+  |     windowing, and host-specific interaction
+  |
+  +-- Native and domain adapters
+  |     existing Agent Execution Engine, filesystems, Git, terminal,
+  |     model/provider systems, app-owned stores, remote services
+  |
+  +-- Compatibility paths
+        current HTTP/WS session routes, CLI server behavior, daemon-shaped
+        code, and client adapters that stay stable while migration happens
 ```
 
 This model lets a spec be concrete without pretending to be the whole product.
 For example:
 
-- `introduce-workbench-runtime` is a candidate environment-core/runtime
-  substrate incubation slice.
-- Alan agent work is agent runtime/actor work and should project into objects,
-  commands, buffers, views, queries, tasks, artifacts, and evidence rather than
-  remaining only a chat/session UI.
-- Alan for macOS is a native host surface. Its Spaces, Tabs, PaneSlots,
-  ContentInstances, command menus, and design system are host responsibilities
-  that mount and render environment objects/buffers/views.
+- `introduce-alan-kernel-runtime` is a Kernel incubation slice, not middleware
+  between the current Agent Execution Engine and Alan Shell.
+- `define-agent-process-os-model` defines the standard Agent Process model that
+  agent-enabled apps use by spawning Agent Executables with descriptors.
+- Alan Agent is a built-in optional Agent Workspace app. It inspects and steers
+  Agent Processes through AgentFS and host surfaces; it is not Root Agent
+  Process, Agent Runtime Service, Service Manager, or the only way to run
+  agents.
+- Alan Shell is the primary Alan OS interaction surface. It should evolve from
+  today's compatibility client toward a shell over namespaces, files,
+  descriptors, processes, and mounts.
+- Alan for macOS is a host/frame surface. It owns native windows, chrome,
+  input, layout, and rendering, not Kernel truth.
 - `add-macos-shell-component-system` is a macOS host surface/design-system
-  capability. It can make environment views coherent in the macOS host, but it
-  is not environment core.
-- Groove Master is an environment app. Its domain core owns musical practice
-  behavior while an Alan adapter maps sessions, loops, journals, and producer
-  agent behavior into environment abstractions.
+  capability. It can make Alan views coherent in the macOS host, but it is not
+  Alan Kernel.
+- Groove Master is an Alan App. Its domain core owns musical practice behavior
+  while an Alan adapter maps sessions, loops, journals, and agent assistance
+  into Alan OS files/processes.
+
+## Roadmap Sequence
+
+The durable roadmap is:
+
+1. **Alan OS spine:** finish the minimal Kernel, Service Manager contract,
+   file-server service model, process/file/descriptor/access path, `/srv`,
+   `/proc`, app registration, and compatibility projection needed to host real
+   apps. This does not mean building every future OS feature first.
+2. **Alan Agent on Agent Processes:** migrate the existing agent product so the
+   current Agent Execution Engine backs Agent Runtime Service, Agent work is
+   represented as Agent Processes, and Alan Agent becomes an optional workspace
+   over `/agent`.
+3. **Alan Shell and Alan for macOS as hosts:** migrate existing UI surfaces so
+   they mount, watch, render, and write Alan OS file/process surfaces rather
+   than owning app or Kernel truth.
+4. **Groove Master as the first domain Alan App:** bring a non-agent product
+   onto Alan OS with an app-owned domain core and Alan app adapter.
+5. **UPDF as a complex content Alan App:** validate document files, multi-target
+   buffers/views, comments, import/export, preview, and long-running publishing
+   tasks after the App/Host contracts are exercised.
+
+This roadmap avoids waiting for a perfect Alan OS. The first milestone is an OS
+spine strong enough to support one real app. Each following migration should
+tighten shared files/process/service contracts rather than bypassing them with
+private host or compatibility paths.
 
 ## Decisions
 
 ### 1. Product constitution first
 
-The first OpenSpec should define what the product family is, not how to
-implement it. The idea is broad enough that an implementation-oriented first
-change would collapse it into whichever subsystem is easiest to build first.
+The first artifact should define what Alan is, not how to implement the whole
+runtime. Alan is broad enough that an implementation-oriented first change would
+collapse it into whichever subsystem is easiest to build first.
 
-Alternative considered: write an architecture RFC for object graph, command
-registry, buffer/view, query, WASM, and agent actors. That is useful later, but
-too early for the first artifact because it would prematurely freeze technical
-interfaces.
+Alternative considered: write a detailed architecture RFC for object graph,
+command registry, buffer/view, query, WASM, and agent actors. Those pieces are
+useful later, but too early as the constitutional baseline because they risk
+introducing richer ontology before the file/process substrate is stable.
 
-### 2. Repo-level organizing model, not a side product
+### 2. Alan OS is file/process first
 
-The programmable environment should become the repo's long-term product model.
-That does not mean every current Alan subsystem is immediately rewritten. It
-means every substantial future spec should know whether it is environment core,
-agent runtime, host surface, environment app, adapter, or legacy/compatibility
-work.
+Alan OS should be legible in UNIX terms: files, descriptors, processes,
+namespaces, mounts, credentials, access rights, and file-server services. When
+Alan needs richer product concepts, they should be projected through ordinary
+files or service-owned file trees first.
 
-Alternative considered: describe the programmable environment as an independent
-new product line next to Alan. That protected the idea from being swallowed by
-the current shell, but it was too weak: the intended direction is broader than a
-side product. It should organize Alan itself.
+Alternative considered: make Object, Task, Evidence, Artifact, Semantic View,
+and Agent Run Kernel primitives. That made early diagrams expressive, but it
+was not sufficiently UNIX-like and would force app/agent concepts into Kernel.
 
-### 3. Current Alan is source material, not the product boundary
+### 3. Plan 9-style services
 
-Current Alan agent, daemon, macOS shell, Rust TUI, terminal runtime, and
-OpenSpec workflow are valid starting points. They should be mined for durable
-concepts and kept stable while migration happens. They should not force the
-environment to inherit their current boundaries, naming, or UI shape.
+System services should be file-server Processes. A service posts a handle under
+`/srv`; clients mount or bind the service tree into their namespace and use
+open/read/write/stat/watch-style operations. This keeps service interaction
+inside the same file/process model instead of creating a separate product API
+layer.
 
-For instance, a macOS `ContentInstance` is a host/content mounting concept. It
-may later mount an environment buffer or view, but it is not the universal
-environment object model. Similarly, an Alan agent session is an agent runtime
-authority that can project into environment tasks, buffers, and views; it is not
-the whole product model.
+### 3a. Standard namespace stays layered
 
-### 4. Specs need environment alignment metadata
+Alan OS should keep top-level roots small: `/proc`, `/agent`, `/srv`, `/bin`,
+`/lib`, `/man`, and `/mnt`. `/proc`, `/agent`, and `/srv` are live
+Kernel/service views. `/bin`, `/lib`, and `/man` are command, package, and
+documentation roots. `/mnt` is where service, app, memory, policy, and data
+trees are mounted. Alan-specific trees such as Skills, Tool manifests, Memory
+Stores, and policy packages should not become default top-level roots.
 
-Future specs, and selected active specs as they are touched, should include a
-short alignment statement:
+Alternative considered: define Host Service APIs as the canonical boundary.
+That sounded clean but became too service-framework-shaped. In Alan OS, the
+canonical boundary is the mounted file tree plus descriptors and access rights.
 
-```text
-Environment role: core | agent-runtime | host-surface | environment-app |
-  adapter | legacy-compat
-Runtime mapping: objects / commands / buffers / views / queries / actors
-Native authority: which file, service, runtime, domain store, or host owns truth
-Host boundary: what is renderer/window/layout/input-specific
-Deferred migration: what stays compatibility-only for now
-```
+### 4. Service Manager replaces daemon conceptually
 
-This prevents two common failures: host-specific specs accidentally defining the
-whole product, and product/app specs ignoring real host and runtime constraints.
+The long-lived lifecycle manager is Service Manager. It starts boot units,
+supervises file-server services, restarts them, reaps processes, and exposes a
+control surface. The current daemon-shaped code may remain as compatibility
+implementation while the architecture migrates, but it should not be the target
+concept.
 
-### 5. Local-first and filesystem-first
+Alternative considered: keep "alan daemon" as the central OS term. That would
+preserve current code vocabulary but keep Alan anchored to HTTP/session server
+semantics instead of OS lifecycle semantics.
 
-The environment should respect UNIX philosophy: simple artifacts, inspectable
-state, ordinary files and directories where possible, composable commands, and
-clear capability boundaries. The runtime may add object identity, metadata,
-relationships, history, views, queries, and permissions, but it should not start
-by hiding user work behind a proprietary object store or complex URI layer.
+### 5. Agent Process is the OS form for agents
 
-Alternative considered: define a unified resource addressing model from the
-start. That would be powerful, but it is too platform-shaped for the
-constitution and would obscure the simpler local-first boundary.
+Alan Kernel should know ordinary Process and Agent Process. Agent Process is a
+Process with agent-visible identity and enough Kernel anchoring for `/proc`,
+descriptors, access rights, namespace, and service mounts. Agent execution
+details such as model calls, tapes, skills, tools, policy, memory, actions, and
+requests belong to Agent Runtime Service and AgentFS.
 
-### 6. Activity happens in the environment; data can stay where it is
+Alternative considered: keep Agent Capability, Agent Run, and subagent as core
+process concepts. That duplicated UNIX process terminology and made the model
+harder to reason about.
 
-The long-term goal is for users to do more of their daily work inside the
-environment. That does not require the environment to own all data. Files,
-projects, tasks, terminal sessions, notes, Git state, mail, calendar items,
-recordings, and remote records can be represented as objects while their source
-of truth remains elsewhere.
+### 6. Agent Runtime Service owns AgentFS
 
-Alternative considered: make the environment's private workspace the primary
-storage model. That may become useful for some object types, but it should not
-be the first product principle.
+Agent Runtime Service executes Agent Processes and serves `/agent`. Root Agent
+Process is the root of the agent-process tree and appears at `/agent/root`.
+It is not OS PID 1, not Service Manager, not Alan Agent, and not a global chat
+session. Child agent work is modeled as child Agent Processes.
 
-### 7. Ordinary UI plus modal power layer
+### 7. Apps request agent work by spawning Agent Executables
 
-Out-of-the-box use needs ordinary UI: users should be able to browse objects,
-open buffers, switch views, run commands, and ask agents without first learning
-a grammar. Modal interaction remains part of the product identity as a power
-layer. Ordinary UI, command palette, automation, modal grammar, and agents all
-route through the same command model.
+An app such as Groove Master or UPDF requests agent help by opening bounded
+context, memory, skill, and policy descriptors and spawning an Agent Executable.
+Shell syntax may make this ergonomic, but the system model is still spawn/open
+over files and descriptors.
 
-Alternative considered: make modal interaction the mandatory primary interface.
-That would protect the Vim-like model but conflict with the out-of-the-box
-principle.
+Alternative considered: expose an Agent Capability Service API. That made
+agent work look like RPC and encouraged prompt/result contracts to become a
+parallel product protocol.
 
-### 8. Agents are actors, not a chat plugin
+### 8. Tools are commands; Skills are manual-like packages
 
-Agents should participate through the same runtime abstractions as humans. They
-can query, inspect, create buffers, propose changes, and execute commands, but
-they do not bypass runtime permissions, command mediation, or audit surfaces.
+Tools should be executable command files in `/bin` or bound into `/bin`. A Tool
+has `--help`, `/man/1/<tool>`, and `/lib/exec/<tool>/manifest`. Skills are
+knowledge/instruction packages installed under `/lib/skill/<name>` and surfaced
+via `/man/skill/<name>`. Skills are passed to Agent Processes by descriptor;
+argv or environment names are shell sugar.
 
-Alternative considered: make agents an overlay on the human UI. That would be
-easier to add to an existing interface, but it would miss the product premise:
-human and agent operate in one environment.
+Alternative considered: model Tool and Skill as Agent Capability subtypes. That
+blurred external action, executable command, and instruction package.
 
-### 9. Environment apps are real products
+### 9. Alan Agent is optional workspace, not the agent system
 
-Domain products such as Groove Master should be treated as real apps inside the
-environment, not demos whose primary job is to prove Alan. Their domain cores
-own product logic. The environment adapter maps their objects, commands,
-buffers, views, queries, and agent behavior into the shared runtime.
+Alan Agent should be built in because it is the richest default workspace for
+agent processes, but it should not be required to run agents. Alan Shell and
+Alan Apps can spawn Agent Processes and inspect AgentFS directly. Alan Agent
+adds rich organization, history, steering, comparison, and review views.
 
-Alternative considered: build demo apps primarily to exercise platform
-features. That produces shallow examples and lets platform needs dominate the
-user-facing product.
+### 10. Current implementation is compatibility material
 
-### 10. WASM extensibility is part of the identity
+The current `alan-runtime` crate is the Agent Execution Engine. It can back
+Agent Runtime Service, and it may later be renamed to `alan-agent-engine`. The
+current HTTP/WS server, daemon-shaped modules, and CLI session paths are
+compatibility transport and legacy service implementation. They remain valuable
+while clients migrate, but they are not Alan OS architecture.
 
-The product should inherit the programmability spirit of Emacs without adopting
-Lisp as the embedded substrate. Rust core plus WASM Component Model and WIT
-interfaces should be treated as the extension direction, with explicit
-capability grants.
+### 11. Local-first does not mean file-only
 
-Alternative considered: leave extension technology to later RFCs. That would
-keep the constitution more abstract, but extensibility without Lisp is a core
-differentiator in the original idea.
+Alan should prefer ordinary files, directories, manifests, sidecars, caches,
+imports, exports, mounts, and projections. External systems may still be source
+of truth. Alan can represent their state through mounted service files or app
+files without importing everything into a private object store.
+
+### 12. WASM extensibility stays above descriptors
+
+Rust core plus WASM Component Model and WIT interfaces remain the extension
+direction. Extensions should receive explicit descriptors and access rights
+rather than implicit global access.
 
 ## Risks / Trade-offs
 
 - [Risk] A repo-level constitution can stay too abstract to guide work. ->
-  Include alignment metadata and incubation criteria that future specs must use.
+  Require role and file/process mapping metadata in follow-up specs.
+- [Risk] "Everything is file" can become slogan-only. -> Require service, app,
+  host, and agent specs to name their file trees, descriptors, and ownership
+  boundaries.
 - [Risk] Existing Alan specs could be invalidated too broadly. -> Classify and
-  migrate specs incrementally; do not rewrite current behavior in this change.
-- [Risk] Host surfaces may accidentally define environment core. -> Require
-  host specs to name host-owned concerns such as layout, rendering, windowing,
-  input, and native chrome.
-- [Risk] Product apps can become platform demos. -> Require environment apps to
-  state their user-facing product boundary before their Alan adapter.
-- [Risk] Filesystem-first can be mistaken for "only files". -> State that
-  external systems may be projected as objects, while filesystem remains the
-  default substrate and inspection boundary.
-- [Risk] Modal grammar can create onboarding friction. -> Require ordinary UI
-  to be sufficient for first-use workflows.
-- [Risk] WASM as identity can overconstrain the first implementation. -> Keep
-  the constitution at the principle level; detailed WIT interfaces belong in
-  later architecture changes.
-- [Risk] Agent-native can be misread as an AI chat app. -> Require agents to
-  act through object, command, buffer, view, query, permission, and audit
-  surfaces.
+  migrate specs incrementally; preserve current behavior in this change.
+- [Risk] Hosts may accidentally define Kernel. -> Require host specs to name
+  host-owned concerns such as rendering, layout, windowing, input, and native
+  chrome.
+- [Risk] Alan Agent could again become the product boundary. -> Keep Alan Agent
+  as optional workspace over Agent Processes; keep Agent Runtime Service and
+  Root Agent Process separate.
+- [Risk] Product apps can become OS demos. -> Require Alan Apps to state their
+  user-facing product boundary before their Alan adapter.
+- [Risk] Compatibility transport may linger. -> Keep daemon/HTTP language
+  explicitly labeled compatibility or current implementation when it appears.
 
 ## Incubation Path
 
 The next product work should validate product assumptions rather than build a
-complete environment. A future incubation or MVP change should prove:
+complete Alan OS. A future incubation or MVP change should prove:
 
-1. A first launch can reveal and organize real local work from the filesystem or
-   an existing project/workspace.
-2. One real personal workflow can move through file/project/task/terminal or
-   app-domain objects, buffers, views, commands, queries, and agent help.
-3. Ordinary UI and modal grammar execute the same command surface.
-4. Agent actions are mediated by runtime abstractions and leave inspectable
-   results.
-5. Extension boundaries are capability-shaped from the start, even if the first
-   prototype only exposes a small subset.
-6. Host surfaces can render the workflow without owning the product runtime.
-7. Existing Alan subsystems used by the slice are classified as core, agent,
-   host, app, adapter, or compatibility boundaries.
+1. A first launch can reveal and organize real local work from files or an
+   existing workspace.
+2. One real workflow can move through files, process surfaces, mounted service
+   trees, commands, host views, and agent help.
+3. Alan Shell and ordinary UI can operate over the same file/process surfaces.
+4. Agent work is represented as Agent Processes and leaves inspectable AgentFS
+   files.
+5. Tools and Skills are installed and discovered through command/manual/package
+   files.
+6. Extension boundaries are descriptor-shaped from the start.
+7. Existing Alan subsystems used by the slice are classified as Kernel,
+   service, app, host, adapter, or compatibility boundaries.
 
-Candidate sequencing:
+Canonical sequencing:
 
 1. Accept this constitution as the long-lived spec baseline.
-2. Add alignment notes to active specs that are likely to shape the
-   environment, starting with `introduce-workbench-runtime`,
-   `add-macos-shell-component-system`, `define-groove-master-environment-app`,
-   and future UPDF-style product specs.
-3. Implement the workbench runtime as a small environment-core substrate slice,
-   not as the full product.
-4. Prove one end-to-end workflow through a real host and a real product or
-   workspace surface.
+2. Build the Alan OS spine through `introduce-alan-kernel-runtime` and related
+   Kernel/service specs.
+3. Implement Agent Runtime Service and AgentFS over the existing Agent
+   Execution Engine as a compatibility-backed file-server service.
+4. Migrate Alan Agent as the optional built-in Agent Workspace over Agent
+   Processes.
+5. Migrate Alan Shell and Alan for macOS as hosts that consume mounted
+   file/process/service surfaces rather than owning app or Kernel truth.
+6. Migrate Groove Master as the first domain Alan App.
+7. Migrate UPDF as a complex content Alan App after App/Host contracts are
+   stable enough for document files, multi-target views, review comments, and
+   publishing tasks.
 
 ## Open Questions
 
-- What is the product name?
-- Which existing active specs should be aligned before the constitution is
-  archived, and which should wait until touched?
-- What is the first concrete interface: editor-like environment, object
-  workspace, agent workspace, app workspace, or another form?
-- Which local-first object types are mandatory for the first prototype?
-- Which commands prove the shared command model without overbuilding the
-  registry?
+- Which exact service filesystem should be implemented first after AgentFS?
+- How much of Plan 9's 9P protocol should Alan adopt directly versus adapting
+  its file-server discipline to local Rust traits first?
+- Which Alan Shell commands should prove namespace, process, and AgentFS
+  operations first?
 - Which WASM extension hook should be validated first?

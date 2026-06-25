@@ -1,62 +1,62 @@
 ## Context
 
-Alan Agent is not the System Agent Supervisor and not the whole Alan OS. It is
-the user-visible workspace for agent work. That means it should show and steer
-bounded Agent Runs, long-lived compatibility sessions, memory, evidence,
-supervisor-raised tasks, and cross-app agent work without forcing every app to
-route through the Alan Agent UI.
+Alan Agent is not Root Agent Process, Agent Runtime Service, Service Manager, or
+the required entrypoint for agent work. It is a built-in optional workspace over
+Agent Processes. Alan Shell must remain able to operate the system directly
+through `/agent`, `/proc`, `/lib/skill`, `/man`, `/mnt/mem`, `/mnt/policy`,
+requests, actions, and spawn/open/watch syscalls.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Define the Alan Agent app module as the Agent Workspace.
+- Define Alan Agent as built-in but optional.
 - Preserve current session behavior during migration.
-- Project current session, event, tool, yield, child-run, memory, rollout, and
-  plan data into semantic objects, buffers, views, tasks, forms, evidence, and
-  audit.
-- Let Alan TUI render the first Agent Workspace semantic projections.
-- Keep future Alan for macOS host integration aligned with the same contract.
+- Project current session, event, tool, yield, child-agent, memory, rollout, and
+  plan data into Agent Process workspace views.
+- Let Alan Shell remain the first and primary compatibility host.
+- Keep future Alan for macOS host integration aligned with the same file/process
+  contract.
 
 **Non-Goals:**
 
-- Implement System Agent Supervisor resident behavior.
-- Force domain apps to open Alan Agent UI for ordinary Agent Capability calls.
-- Replace current daemon session APIs in the first slice.
+- Implement Root Agent Process resident behavior.
+- Make Alan Agent required for app AI or user agent work.
+- Replace current compatibility session paths in the first slice.
 - Build a complete macOS host migration.
 
 ## Decisions
 
-### 1. Alan Agent owns the workspace experience
+### 1. Alan Agent is optional workspace UI
 
-Alan Agent owns conversation organization, session/workspace navigation,
-steering, inspection, memory review, evidence browsing, and promotion of
-cross-app work into a full workspace.
+Alan Agent owns a richer workspace experience: process browsing, steering,
+inspection, memory review, evidence browsing, request/action review, and
+promotion of cross-app work into a focused workspace. It does not own execution.
 
-### 2. Agent Runs are the semantic execution unit
+### 2. Agent Processes are the semantic execution unit
 
-Current sessions remain compatibility authority, but Agent Workspace projection
-should show bounded Agent Runs and their task/evidence relationships.
+Current sessions remain compatibility authority during migration, but the target
+workspace projection is Agent Process status, IO, requests, actions, children,
+result, and machine state.
 
-### 3. TUI moves first
+### 3. Alan Shell remains primary
 
-Alan TUI is already a thin daemon-backed client and is the least risky first
-host for Agent Workspace projections. Alan for macOS should later consume the
-same snapshots rather than invent a different app model.
+Alan Shell is the primary Alan OS interaction surface. It can list `/agent`,
+inspect `/agent/root/status`, tail events, spawn agent executables, answer
+requests, and operate Tools and Skills without opening Alan Agent.
 
-### 4. Supervisor tasks appear as workspace items
+### 4. Root Agent work appears as workspace items
 
-The System Agent Supervisor should not appear as a global chat session. When it
-raises work, Alan Agent can show supervisor-raised tasks that the user can
-inspect, dismiss, delegate, or promote into an Agent Workspace flow.
+Root Agent Process should not appear as a global chat session. When it raises
+work, Alan Agent can show root-agent-raised suggestions or tasks backed by
+AgentFS files and descriptors.
 
 ## Risks / Trade-offs
 
-- [Risk] Compatibility session UX and Agent Run projection diverge. -> Run the
-  semantic path in parallel and add parity fixtures before replacing reducers.
-- [Risk] Alan Agent becomes required for app AI. -> Keep app Agent Capability
-  calls direct; Alan Agent is for inspection and steering.
-- [Risk] Workspace tries to ship supervisor runtime too early. -> Represent
-  supervisor-raised tasks as projections first; resident supervisor behavior is
-  separate work.
-
+- [Risk] Compatibility session UX and Agent Process projection diverge. -> Run
+  projection in parallel and add parity fixtures before replacing reducers.
+- [Risk] Alan Agent becomes required for app AI. -> Keep Alan Shell and app
+  spawn/open/watch paths canonical.
+- [Risk] Workspace tries to ship Root Agent runtime too early. -> Represent
+  root-agent-raised work as projections first; resident Root Agent Process
+  behavior is separate work.

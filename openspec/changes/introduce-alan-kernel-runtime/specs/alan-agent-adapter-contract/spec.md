@@ -1,164 +1,118 @@
 ## ADDED Requirements
 
-### Requirement: Alan Agent app module isolates agent protocol details
-The Alan Agent app module SHALL model Alan Agent as a built-in Alan App and
-agent actor while translating the current Agent Execution Engine and current
-daemon-backed Host Service Implementation session protocol details into Alan App
-semantics without making Alan Kernel depend on `alan-protocol` or
-daemon client types.
+### Requirement: Compatibility projection isolates current protocol details
+The compatibility projection layer SHALL translate the current Agent Execution
+Engine and session protocol into Agent Process file surfaces without making Alan
+Kernel depend on `alan-protocol`, compatibility transport clients, provider
+clients, memory stores, sandbox backends, or session lifecycle details.
 
-#### Scenario: App module dependencies are inspected
+Artifacts in this projection layer SHALL mean Agent/App interpretations over
+Kernel Files, stream Files, output pointers, or native selectors. Evidence SHALL
+mean an Agent/App interpretation over Kernel paths, stream offsets, process ids,
+descriptors, service-owned stream file offsets, app artifact paths, or native
+selectors. Alan Kernel SHALL NOT model Artifact, Evidence, produced-output
+objects, or ProvenanceRef as durable primitives.
+
+#### Scenario: Projection dependencies are inspected
 - **WHEN** Alan Kernel crates are built or audited
-- **THEN** the future `alan-agent` app module may depend on `alan-protocol` and
-  daemon client types as internal implementation details
-- **AND** `alan-kernel` remains free of
-  those dependencies
+- **THEN** optional app/projection modules may depend on `alan-protocol` and
+  compatibility transport clients as internal details
+- **AND** `alan-kernel` remains free of those dependencies
 
-#### Scenario: Alan event enters the app projection path
-- **WHEN** an `alan_protocol::EventEnvelope` is received by an Alan session
-  consumer
-- **THEN** the Alan Agent app module maps it into Alan Agent app objects,
-  buffers, views, command state, task events, conversation updates, form state,
-  artifacts, or evidence before it reaches renderer hosts
+#### Scenario: Current event enters the projection path
+- **WHEN** an `alan_protocol::EventEnvelope` is received by a compatibility
+  session consumer
+- **THEN** the projection layer maps it into Agent Process status, IO events,
+  request files, action files, machine events, optional workspace buffers/views,
+  artifacts, or Agent/App evidence before it reaches renderer hosts
 
-### Requirement: Alan Agent app module can host Agent Capability compatibility
-The Alan Agent app module SHALL be the first compatibility adapter candidate for
-Agent Capability Service over the current Agent Execution Engine and
-daemon-backed session APIs. This adapter SHALL translate Context Grants and
-Result Contracts into current execution inputs and outputs without making Alan
-Kernel depend on `alan-protocol`, provider clients, daemon clients, memory
-stores, sandbox backends, or session lifecycle details.
+### Requirement: Current sessions project into Agent Process surfaces
+The compatibility projection layer SHALL represent current Alan sessions as
+Agent Process file surfaces. Session metadata SHALL project to status,
+conversation state SHALL project to Agent IO, runtime/tape state SHALL project
+to Agent Machine, yields SHALL project to request files, tool calls SHALL
+project to action files, and checkpoints SHALL project to machine checkpoints.
 
-#### Scenario: App requests an Agent Capability through compatibility path
-- **WHEN** a domain app requests agent work before a durable Agent Capability
-  Service implementation exists
-- **THEN** the compatibility adapter can start or attach to current Alan Agent
-  execution using the bounded Context Grant and Result Contract
-- **AND** the resulting Agent Run, task lifecycle, yielded checkpoints,
-  artifacts, evidence, and audit metadata are projected into Alan OS
-  semantics
+#### Scenario: Existing session is attached
+- **WHEN** Alan Shell or another host attaches through the current compatibility
+  session path
+- **THEN** the projection layer creates or resolves an Agent Process projection
+- **AND** it exposes status, IO, requests, actions, result, and machine files
+  without changing the current runtime behavior
 
-#### Scenario: Agent Capability work is inspected
-- **WHEN** the user wants to inspect, steer, or promote that work into a full
-  workspace
-- **THEN** Alan Agent can present it as part of the Agent Workspace
-- **AND** the requesting app did not need to create or focus an Alan Agent
-  conversation as the primary app feature
+#### Scenario: Future file-native client attaches
+- **WHEN** a future client attaches after AgentFS parity exists
+- **THEN** it can open or watch `/agent/<pid>` files rather than calling a
+  session API
 
-### Requirement: Alan Agent sessions project as app objects and buffers
-The Alan Agent app module SHALL represent an Alan Agent session as an
-inspectable Alan App object with conversation and task-oriented buffers.
+### Requirement: Agent IO is the default conversation surface
+The compatibility projection layer SHALL map user input, assistant output,
+thinking summaries, yielded state, warnings, errors, and result readiness into
+Agent IO files and events.
 
-#### Scenario: Session is attached
-- **WHEN** the TUI or another host creates or attaches to an Alan session through
-  Host Service APIs
-- **THEN** the app module creates or resolves an agent session object
-- **AND** it exposes at least one conversation buffer and view for that session
+#### Scenario: Conversation output streams
+- **WHEN** current Alan emits text or thinking deltas
+- **THEN** the projection updates `/agent/<pid>/io/output` and
+  `/agent/<pid>/io/events`
+- **AND** renderer hosts do not need to parse raw protocol events by default
 
-#### Scenario: Session metadata is available
-- **WHEN** profile, provider, model, durability, workspace, or session metadata
-  is returned by Host Service APIs
-- **THEN** the app module records it as object or buffer metadata without making
-  it the Alan Kernel identity format
+### Requirement: Runtime details map to Agent Machine
+The compatibility projection layer SHALL map tape, rollout records, compaction,
+memory flush observations, retries, guardrails, and checkpoints into Agent
+Machine files where access rights allow inspection.
 
-### Requirement: Alan Agent operations project as commands
-The Alan Agent app module SHALL expose supported Alan Agent session operations as
-Alan Kernel command descriptors and invocations.
+#### Scenario: Debug view inspects runtime state
+- **WHEN** a permitted host opens `/agent/<pid>/machine`
+- **THEN** it can inspect tape, state, machine events, and checkpoints
+- **AND** those files remain runtime schema rather than Alan Kernel ontology
 
-#### Scenario: User submits an agent turn
-- **WHEN** a human or agent submits text or structured input to an Alan session
-- **THEN** the app module represents the operation as an Alan Kernel command
-  invocation
-- **AND** successful dispatch through Host Service APIs starts or resumes an
-  Alan Kernel task
-
-#### Scenario: User interrupts active agent work
-- **WHEN** the user requests interruption of active agent work
-- **THEN** the app module invokes a cancel or interrupt command against the active
-  task
-- **AND** Host Service API submission remains an app-module implementation detail
-
-#### Scenario: Session control command is invoked
-- **WHEN** compact, rollback, resume, or another supported Alan session control
-  operation is requested
-- **THEN** the app module exposes it through command descriptors with target,
-  argument, actor, and audit metadata
-
-### Requirement: Alan Agent execution events map to task lifecycle
-The Alan Agent app module SHALL map Alan turns, tool calls, yields, child runs,
-and stream progress into Alan Kernel task descriptors and task events.
-
-#### Scenario: Turn starts and streams
-- **WHEN** Alan emits turn and text or thinking stream events
-- **THEN** the app module maps the turn to an Alan Kernel task
-- **AND** streamed text or thinking updates the conversation projection without
-  requiring renderer hosts to parse Alan event variants
-
-#### Scenario: Tool call starts and completes
-- **WHEN** Alan emits tool call lifecycle events
-- **THEN** the app module maps the tool call to a child task of the active turn
-- **AND** completion updates task status, artifacts, evidence, and conversation
-  summaries as applicable
-
-#### Scenario: Child run is observed
-- **WHEN** Alan child-run records or child lifecycle events are available
-- **THEN** the app module maps them to Alan Kernel child tasks with parent links,
-  status, progress, terminal outcome, and evidence references
-
-### Requirement: Alan Agent yields project as task pauses and forms
-The Alan Agent app module SHALL map Alan yields into task yielded states and
-semantic form or approval views.
+### Requirement: Yields map to request file trees
+Current confirmation, structured input, dynamic tool, and approval yields SHALL
+project into `/agent/<pid>/requests/<request-id>` file trees.
 
 #### Scenario: Confirmation yield is received
-- **WHEN** Alan emits a confirmation yield
-- **THEN** the app module maps it to an Alan Kernel task yielded state
-- **AND** it projects a form or approval view that can resume the task through a
-  command invocation
+- **WHEN** current Alan emits a confirmation yield
+- **THEN** the projection creates a request tree with kind, prompt, options,
+  status, and response files
+- **AND** resume compatibility can be implemented by writing the response file
 
-#### Scenario: Structured input yield is received
-- **WHEN** Alan emits a structured input yield with questions or schema-like
-  payload
-- **THEN** the app module maps it to a semantic form view model
-- **AND** form submission is represented as a resume command against the yielded
-  task
+### Requirement: Tool calls map to action file trees
+Current tool calls and other external effects SHALL project into
+`/agent/<pid>/actions/<action-id>` file trees. If a concrete tool process is
+spawned, the action SHALL link to the relevant `/proc/<tool-pid>` entry.
 
-#### Scenario: Dynamic tool yield is received
-- **WHEN** Alan emits a dynamic tool yield
-- **THEN** the app module preserves the yielded task checkpoint and payload
-- **AND** execution or rejection of the client-side tool result remains mediated
-  by an Alan Kernel command path
+#### Scenario: Tool call starts and completes
+- **WHEN** current Alan emits tool call lifecycle events
+- **THEN** the projection creates or updates an action file tree with status,
+  stdout/stderr/result where applicable, risk, approval, and process link when
+  known
 
-### Requirement: Conversation views preserve Alan Agent app semantics
-The Alan Agent app module SHALL project Alan Agent conversation state into typed
-conversation view models rather than plain logs.
+### Requirement: Alan Agent is optional workspace over the same files
+The future Alan Agent app module SHALL be an optional workspace over Agent
+Process file surfaces. It SHALL NOT own agent execution, Root Agent Process,
+Service Manager, or Agent Runtime Service.
 
-#### Scenario: Conversation snapshot is requested
-- **WHEN** a renderer host requests the active Alan conversation view
-- **THEN** the app-module projection includes typed blocks for user text,
-  assistant text, thinking, tool summaries, plans, yields, errors, artifacts,
-  and linked tasks when available
+#### Scenario: User opens Alan Agent
+- **WHEN** the user opens Alan Agent
+- **THEN** it provides richer buffers and views over `/agent`, `/proc`,
+  requests, actions, memory, evidence, and cross-app work
+- **AND** the same work remains operable from Alan Shell through files and
+  process syscalls
 
-#### Scenario: Persisted history is hydrated
-- **WHEN** an Alan session is hydrated from daemon-backed history and
-  reconnect state
-- **THEN** the app module reconstructs conversation and pending-input projections
-  through Host Service API results without requiring the host renderer to know
-  daemon hydration details
-
-### Requirement: Alan Agent app module preserves compatibility with Host Service APIs
-The Alan Agent app module SHALL preserve existing daemon-backed session creation,
+### Requirement: Compatibility transport remains temporary
+The compatibility projection layer SHALL preserve current session creation,
 hydration, replay, reconnect, submission, resume, interrupt, compaction,
-rollback, and pending-yield behavior during the first integration.
+rollback, and pending-yield behavior during migration, while documenting that
+the target model is spawn/open/watch over files and processes.
 
 #### Scenario: Existing TUI reconnects
-- **WHEN** Alan TUI reconnects to an existing Alan daemon session through
-  the Alan Agent app module path
+- **WHEN** Alan Shell reconnects through the current compatibility path
 - **THEN** it still reads persisted history or reconnect snapshots before
   consuming new events
-- **AND** it does not lose buffered yield or stream events that the existing TUI
-  path would preserve
+- **AND** it does not lose buffered yield or stream events that the existing path
+  would preserve
 
-#### Scenario: App module path is disabled or removed
-- **WHEN** the Alan Agent app module integration is disabled during migration
-- **THEN** existing daemon-backed TUI behavior can continue through the legacy
-  path until semantic parity is proven
+#### Scenario: Projection path is disabled
+- **WHEN** the Agent Process projection path is disabled during migration
+- **THEN** existing compatibility behavior can continue through the legacy path
+  until file-surface parity is proven
