@@ -10,8 +10,6 @@ members = [
     "crates/shell-core-ffi",
     "crates/tools",
     "crates/tui",
-    "crates/alan-kernel",
-    "crates/alan-agent",
     "crates/alan",
 ]
 
@@ -118,5 +116,3 @@ alan-shell-core = { path = "crates/shell-core" }
 alan-shell-core-ffi = { path = "crates/shell-core-ffi" }
 alan-tools = { path = "crates/tools" }
 alan-terminal-ui = { path = "crates/tui" }
-alan-kernel = { path = "crates/alan-kernel" }
-alan-agent = { path = "crates/alan-agent" }

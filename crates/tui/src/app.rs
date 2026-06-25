@@ -1,15 +1,11 @@
 use alan_protocol::ContentPart;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 
-use alan_kernel::ViewModel;
-
 use crate::completion::{self, CompletionCandidate, CompletionSources, CompletionState};
 use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::daemon_client::CreateSession;
 use crate::form::FormState;
 use crate::history::{RenderOpts, SessionReducer};
-use crate::workspace_input::{AgentWorkspaceInputAdapter, WorkspaceHostIntent};
-use crate::workspace_render;
 
 /// Maximum visible composer height before it scrolls internally.
 const MAX_COMPOSER_LINES: u16 = 10;
@@ -49,12 +45,6 @@ pub enum AppAction {
     Compact,
     Rollback(u32),
     Quit,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum TranscriptRenderSource {
-    CompatibilityReducer,
-    AgentWorkspaceProjection,
 }
 
 /// A pending-input signal recovered from a reconnect snapshot, enough to let the
@@ -169,25 +159,19 @@ impl SessionHydration {
 pub struct TuiApp {
     pub session: CreateSession,
     pub reducer: SessionReducer,
-    pub agent_workspace: alan_agent::AgentWorkspaceProjector,
     pub composer: Composer,
     pub should_quit: bool,
     pub completion: Option<CompletionState>,
     pub form: Option<FormState>,
     completion_sources: CompletionSources,
     last_sequence: Option<u64>,
-    transcript_render_source: TranscriptRenderSource,
-    semantic_transcript_pruned_blocks: usize,
 }
 
 impl TuiApp {
     pub fn new(session: CreateSession) -> Self {
-        let agent_workspace =
-            alan_agent::AgentWorkspaceProjector::new(agent_workspace_metadata(&session));
         Self {
             session,
             reducer: SessionReducer::default(),
-            agent_workspace,
             composer: Composer::default(),
             should_quit: false,
             completion: None,
@@ -197,8 +181,6 @@ impl TuiApp {
                 ..CompletionSources::default()
             },
             last_sequence: None,
-            transcript_render_source: TranscriptRenderSource::AgentWorkspaceProjection,
-            semantic_transcript_pruned_blocks: 0,
         }
     }
 
@@ -234,7 +216,6 @@ impl TuiApp {
             AppEvent::Terminal(_) => None,
             AppEvent::Daemon(envelope) => {
                 self.record_sequence_gap(&envelope);
-                self.agent_workspace.apply_envelope(&envelope);
                 self.reducer.apply_envelope(*envelope);
                 self.sync_form();
                 None
@@ -272,11 +253,6 @@ impl TuiApp {
     /// reattached session shows the prior conversation instead of an empty pane.
     fn restore_history(&mut self, history: Vec<HydratedMessage>) {
         for message in history {
-            let agent_message = alan_agent::AgentWorkspaceHydratedMessage {
-                role: message.role.clone(),
-                content: message.content.clone(),
-                tool_name: message.tool_name.clone(),
-            };
             let cell = match message.role.as_str() {
                 "user" if !message.content.is_empty() => {
                     crate::history::HistoryCell::User(message.content)
@@ -293,7 +269,6 @@ impl TuiApp {
                 // Skip system/context and empty messages.
                 _ => continue,
             };
-            self.agent_workspace.apply_hydrated_message(agent_message);
             self.reducer.cells.push(cell);
         }
     }
@@ -353,28 +328,6 @@ impl TuiApp {
         self.render_history_lines(self.render_opts(width))
     }
 
-    pub fn agent_workspace_snapshots(&self) -> alan_agent::AgentWorkspaceSnapshots {
-        self.agent_workspace.snapshots()
-    }
-
-    pub fn set_transcript_render_source(&mut self, source: TranscriptRenderSource) {
-        if self.transcript_render_source != source {
-            self.semantic_transcript_pruned_blocks = 0;
-        }
-        self.transcript_render_source = source;
-    }
-
-    pub fn translate_terminal_event_for_agent_workspace(
-        &self,
-        event: &TerminalEvent,
-    ) -> WorkspaceHostIntent {
-        AgentWorkspaceInputAdapter::new(
-            self.agent_workspace.ids().user_actor,
-            &self.agent_workspace.model(),
-        )
-        .translate(event)
-    }
-
     /// Number of lines the bottom live region occupies for the given composer width.
     pub fn live_region_height(&self, width: usize) -> u16 {
         let mut height = 0;
@@ -429,10 +382,6 @@ impl TuiApp {
             return Vec::new();
         }
         let drain_count = lines.len() - max_lines;
-        if self.transcript_render_source == TranscriptRenderSource::AgentWorkspaceProjection {
-            let pruned_count = self.prune_semantic_rendered_prefix(opts, drain_count);
-            return lines.into_iter().take(pruned_count).collect();
-        }
         let pruned_count = self.prune_rendered_prefix(opts, drain_count);
         lines.into_iter().take(pruned_count).collect()
     }
@@ -445,7 +394,6 @@ impl TuiApp {
             .is_some_and(|pending| pending.request_id == request_id)
         {
             self.reducer.pending_yield = None;
-            self.agent_workspace.clear_pending_yield();
         }
     }
 
@@ -697,7 +645,6 @@ impl TuiApp {
         self.reducer
             .cells
             .push(crate::history::HistoryCell::User(text.clone()));
-        self.agent_workspace.apply_user_submission(text.clone());
         Some(AppAction::SubmitTurn(text))
     }
 
@@ -715,8 +662,6 @@ impl TuiApp {
             "rollback" => Some(Some(AppAction::Rollback(1))),
             "clear" => {
                 self.reducer.cells.clear();
-                self.semantic_transcript_pruned_blocks = 0;
-                self.agent_workspace.clear_transcript();
                 Some(None)
             }
             "help" => {
@@ -734,27 +679,6 @@ impl TuiApp {
     }
 
     fn render_history_lines(&self, opts: RenderOpts) -> Vec<String> {
-        match self.transcript_render_source {
-            TranscriptRenderSource::CompatibilityReducer => self.render_reducer_history_lines(opts),
-            TranscriptRenderSource::AgentWorkspaceProjection => {
-                workspace_render::render_agent_workspace_snapshot_lines_from(
-                    &self.agent_workspace.snapshots(),
-                    opts,
-                    self.semantic_transcript_pruned_blocks,
-                )
-                .into_iter()
-                .map(|line| {
-                    line.spans
-                        .into_iter()
-                        .map(|span| span.content.into_owned())
-                        .collect::<String>()
-                })
-                .collect()
-            }
-        }
-    }
-
-    fn render_reducer_history_lines(&self, opts: RenderOpts) -> Vec<String> {
         self.reducer
             .cells
             .iter()
@@ -790,44 +714,6 @@ impl TuiApp {
 
         pruned
     }
-
-    fn prune_semantic_rendered_prefix(&mut self, opts: RenderOpts, lines_to_prune: usize) -> usize {
-        let snapshots = self.agent_workspace.snapshots();
-        let ViewModel::Conversation(conversation) = snapshots.conversation.model else {
-            return 0;
-        };
-        let mut remaining = lines_to_prune;
-        let mut blocks_to_skip = 0;
-        let mut pruned = 0;
-
-        for block in conversation
-            .blocks
-            .iter()
-            .skip(self.semantic_transcript_pruned_blocks)
-        {
-            let block_lines = workspace_render::render_conversation_block_lines(block, opts).len();
-            if block_lines > remaining {
-                break;
-            }
-            remaining -= block_lines;
-            pruned += block_lines;
-            blocks_to_skip += 1;
-        }
-
-        self.semantic_transcript_pruned_blocks += blocks_to_skip;
-        pruned
-    }
-}
-
-fn agent_workspace_metadata(session: &CreateSession) -> alan_agent::AgentWorkspaceSessionMetadata {
-    alan_agent::AgentWorkspaceSessionMetadata {
-        session_id: session.session_id.clone(),
-        workspace_dir: None,
-        agent_name: None,
-        profile_id: session.profile_id.clone(),
-        provider: session.provider.clone(),
-        resolved_model: session.resolved_model.clone(),
-    }
 }
 
 #[cfg(test)]
@@ -856,11 +742,6 @@ mod tests {
         ))));
         assert_eq!(action, Some(AppAction::SubmitTurn("hello".into())));
         assert!(matches!(app.reducer.cells[0], HistoryCell::User(_)));
-        assert!(
-            app.rendered_history_lines(80)
-                .iter()
-                .any(|line| line == "you> hello")
-        );
     }
 
     #[test]
@@ -951,126 +832,6 @@ mod tests {
     }
 
     #[test]
-    fn daemon_events_update_reducer_and_agent_workspace_projection_in_parallel() {
-        let mut app = app();
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            1,
-            alan_protocol::Event::TurnStarted {},
-        ))));
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            2,
-            alan_protocol::Event::TextDelta {
-                chunk: "hello from alan".into(),
-                is_final: false,
-            },
-        ))));
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            3,
-            alan_protocol::Event::Yield {
-                request_id: "approval-1".into(),
-                kind: alan_protocol::YieldKind::Confirmation,
-                payload: serde_json::json!({
-                    "message": "Approve?",
-                    "options": ["approve", "reject"],
-                    "default_option": "reject"
-                }),
-            },
-        ))));
-
-        assert!(
-            app.reducer.cells.iter().any(
-                |cell| matches!(cell, HistoryCell::Assistant(text) if text == "hello from alan")
-            )
-        );
-        assert!(
-            app.reducer
-                .pending_yield
-                .as_ref()
-                .is_some_and(|pending| pending.request_id == "approval-1")
-        );
-
-        let snapshots = app.agent_workspace_snapshots();
-        let conversation =
-            serde_json::to_value(&snapshots.conversation).expect("serialize conversation snapshot");
-        assert_eq!(conversation["model"]["type"], "conversation");
-        assert!(
-            conversation["model"]["blocks"]
-                .as_array()
-                .expect("blocks")
-                .iter()
-                .any(|block| block["text"] == "hello from alan")
-        );
-
-        let form = serde_json::to_value(&snapshots.approval_form)
-            .expect("serialize approval form snapshot");
-        assert_eq!(form["model"]["type"], "form");
-        assert_eq!(form["model"]["title"], "Yield approval-1");
-        assert_eq!(form["model"]["fields"][0]["value"], "reject");
-
-        let task_tree =
-            serde_json::to_value(&snapshots.task_tree).expect("serialize task tree snapshot");
-        assert_eq!(
-            task_tree["model"]["roots"][0]["status"],
-            serde_json::json!("yielded")
-        );
-    }
-
-    #[test]
-    fn agent_workspace_projection_can_render_tui_transcript() {
-        let mut app = app();
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            1,
-            alan_protocol::Event::TurnStarted {},
-        ))));
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            2,
-            alan_protocol::Event::TextDelta {
-                chunk: "rendered through workspace".into(),
-                is_final: false,
-            },
-        ))));
-        app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
-            3,
-            alan_protocol::Event::Yield {
-                request_id: "approval-1".into(),
-                kind: alan_protocol::YieldKind::Confirmation,
-                payload: serde_json::json!({"message": "Approve?"}),
-            },
-        ))));
-
-        app.set_transcript_render_source(TranscriptRenderSource::AgentWorkspaceProjection);
-        let lines = app.rendered_history_lines(80);
-
-        assert!(
-            lines
-                .iter()
-                .any(|line| line == "alan> rendered through workspace")
-        );
-        assert!(lines.iter().any(|line| line.contains("[yielded]")));
-        assert!(
-            app.reducer
-                .cells
-                .iter()
-                .any(|cell| matches!(cell, HistoryCell::Assistant(_))),
-            "compatibility transcript remains available"
-        );
-    }
-
-    #[test]
-    fn terminal_event_can_translate_through_agent_workspace_input_adapter() {
-        let app = app();
-        let intent = app.translate_terminal_event_for_agent_workspace(&TerminalEvent::Key(
-            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        ));
-
-        assert!(matches!(
-            intent,
-            WorkspaceHostIntent::CommandInvocation(invocation)
-                if invocation.arguments["source"] == "terminal.escape"
-        ));
-    }
-
-    #[test]
     fn esc_dismisses_completion_when_idle() {
         let mut app = app();
         press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
@@ -1143,14 +904,6 @@ mod tests {
         assert!(matches!(&cells[0], HistoryCell::User(t) if t == "hi"));
         assert!(matches!(&cells[1], HistoryCell::Assistant(t) if t == "hello"));
         assert!(matches!(&cells[2], HistoryCell::Tool { title, .. } if title == "read_file"));
-        let semantic_lines = app.rendered_history_lines(80);
-        assert!(semantic_lines.iter().any(|line| line == "you> hi"));
-        assert!(semantic_lines.iter().any(|line| line == "alan> hello"));
-        assert!(
-            semantic_lines
-                .iter()
-                .any(|line| line == "tool> read_file: ok")
-        );
     }
 
     #[test]
@@ -1370,24 +1123,13 @@ mod tests {
             Some(AppAction::Resume { ref request_id, .. }) if request_id == "r-1"
         ));
         assert!(app.reducer.pending_yield.is_some());
-        let before_clear = app.agent_workspace_snapshots();
-        let ViewModel::Form(form) = before_clear.approval_form.model else {
-            panic!("approval form snapshot");
-        };
-        assert!(!form.fields.is_empty());
         app.clear_pending_yield("r-1");
         assert!(app.reducer.pending_yield.is_none());
-        let after_clear = app.agent_workspace_snapshots();
-        let ViewModel::Form(form) = after_clear.approval_form.model else {
-            panic!("approval form snapshot");
-        };
-        assert!(form.fields.is_empty());
     }
 
     #[test]
     fn scrollback_drains_by_rendered_lines() {
         let mut app = app();
-        app.set_transcript_render_source(TranscriptRenderSource::CompatibilityReducer);
         app.reducer
             .cells
             .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
@@ -1402,7 +1144,6 @@ mod tests {
     #[test]
     fn scrollback_prunes_committed_cells() {
         let mut app = app();
-        app.set_transcript_render_source(TranscriptRenderSource::CompatibilityReducer);
         for idx in 0..20 {
             app.reducer
                 .cells
@@ -1420,7 +1161,6 @@ mod tests {
     #[test]
     fn pruned_render_tail_wraps_at_resized_width() {
         let mut app = app();
-        app.set_transcript_render_source(TranscriptRenderSource::CompatibilityReducer);
         app.reducer
             .cells
             .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
@@ -1435,7 +1175,6 @@ mod tests {
     #[test]
     fn partial_scrollback_prune_preserves_streaming_text_cell() {
         let mut app = app();
-        app.set_transcript_render_source(TranscriptRenderSource::CompatibilityReducer);
         app.reducer
             .cells
             .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
@@ -1455,30 +1194,6 @@ mod tests {
             app.reducer.cells.first(),
             Some(HistoryCell::Assistant(text)) if text.ends_with("tail")
         ));
-    }
-
-    #[test]
-    fn semantic_scrollback_prunes_host_rendered_conversation_prefix() {
-        let mut app = app();
-        for idx in 0..20 {
-            app.agent_workspace
-                .apply_user_submission(format!("semantic message {idx}"));
-        }
-
-        let before = app.rendered_history_lines(80).len();
-        let drained = app.drain_committed_scrollback(80, 8);
-
-        assert!(!drained.is_empty());
-        assert!(app.rendered_history_lines(80).len() < before);
-        let snapshots = app.agent_workspace_snapshots();
-        let ViewModel::Conversation(conversation) = snapshots.conversation.model else {
-            panic!("conversation snapshot");
-        };
-        assert_eq!(
-            conversation.blocks.len(),
-            20,
-            "semantic projection remains authoritative; host only skips rendered prefix"
-        );
     }
 
     fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {

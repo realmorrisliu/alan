@@ -30,7 +30,6 @@ name = "alan"
 version = "0.1.0"
 dependencies = [
  "alan-auth",
- "alan-kernel",
  "alan-llm",
  "alan-protocol",
  "alan-runtime",
@@ -64,16 +63,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alan-agent"
-version = "0.1.0"
-dependencies = [
- "alan-kernel",
- "alan-protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "alan-auth"
 version = "0.1.0"
 dependencies = [
@@ -92,15 +81,6 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
-]
-
-[[package]]
-name = "alan-kernel"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -214,8 +194,6 @@ dependencies = [
 name = "alan-terminal-ui"
 version = "0.1.0"
 dependencies = [
- "alan-agent",
- "alan-kernel",
  "alan-protocol",
  "anyhow",
  "async-trait",

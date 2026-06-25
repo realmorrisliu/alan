@@ -2,7 +2,6 @@
 //!
 //! This crate provides both the CLI binary and daemon server functionality.
 
-pub mod agent_capability_service;
 pub mod cli;
 pub mod daemon;
 pub mod host_config;

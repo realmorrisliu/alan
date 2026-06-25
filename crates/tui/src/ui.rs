@@ -237,17 +237,6 @@ mod tests {
         assert!(buffer.contains("claude-opus"));
     }
 
-    #[test]
-    fn renders_semantic_agent_workspace_transcript_by_default() {
-        let mut app = app();
-        app.agent_workspace
-            .apply_user_submission("semantic default transcript");
-
-        let buffer = render(&app);
-
-        assert!(buffer.contains("semantic default transcript"));
-    }
-
     fn envelope(event: alan_protocol::Event) -> alan_protocol::EventEnvelope {
         alan_protocol::EventEnvelope {
             event_id: "e-1".into(),
