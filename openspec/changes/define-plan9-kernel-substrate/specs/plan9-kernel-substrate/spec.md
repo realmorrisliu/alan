@@ -114,6 +114,23 @@ There SHALL be no global ambient addressing that bypasses the namespace.
   namespace
 - **AND** no separate global policy check is required to enforce the denial
 
+### Requirement: Access rights separate awareness from authority
+Alan Kernel SHALL use access rights as the dimension that separates awareness
+from authority, because a namespace tends to couple visibility with reachability.
+A tree bound read-only SHALL grant awareness (walk, read, watch) without granting
+mutation; a tree bound read-write SHALL grant authority. A process SHALL NOT
+escalate a read-only mount to read-write from within its own namespace.
+
+#### Scenario: A tree is bound for awareness only
+- **WHEN** a spawner binds a tree into a child's namespace read-only
+- **THEN** the child can walk, read, and watch that tree
+- **AND** it cannot mutate the tree or re-bind it read-write
+
+#### Scenario: Authority is granted explicitly
+- **WHEN** a process must mutate a resource
+- **THEN** that resource is bound read-write into its namespace
+- **AND** broad read-only visibility never implies write authority
+
 ### Requirement: The namespace is assembled by mount, bind, and union
 Alan Kernel SHALL assemble a namespace from mount, bind, and union operations
 over file servers. Union directories SHALL allow several sources to contribute

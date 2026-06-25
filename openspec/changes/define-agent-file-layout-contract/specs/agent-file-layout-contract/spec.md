@@ -28,16 +28,41 @@ and a `ctl` control file.
 - **AND** `cat io/output`, reading `status`, and writing `ctl` work the same as
   for an agent
 
+#### Scenario: Output is complete and tail-reachable
+- **WHEN** a consumer reads `io/output`
+- **THEN** the stream is append-only with monotonic offsets and exposes its full
+  produced content (subject to retention), so a reader can always resume to the
+  newest bytes
+- **AND** clipping of the newest output is a renderer concern, never a gap in the
+  stream's data
+
 ### Requirement: An agent extends the process layout
 Alan OS SHALL define the agent layout as a strict superset of the generic
-process layout, adding `requests/`, `actions/`, `machine/`, and `context/`. The
-`machine/` directory SHALL contain the tape, machine state, and checkpoints.
+process layout, adding `requests/`, `actions/`, `machine/`, `context/`,
+`children/`, and a top-level `events` stream. The `machine/` directory SHALL
+contain the tape, machine state, and checkpoints. `children/` SHALL be a view of
+the agent's child processes derived from `/proc` parentage (not a second source
+of truth). The top-level `events` stream SHALL be an aggregate, watchable by
+blocking read, over the agent's lifecycle, IO, request, action, and child
+changes, so a watcher can follow the whole agent from one stream.
 
 #### Scenario: An agent directory is inspected
 - **WHEN** a consumer opens an agent's `/proc/<pid>`
 - **THEN** it finds the generic `io/`, `status`, `ctl` plus `requests/`,
-  `actions/`, `machine/`, and `context/`
+  `actions/`, `machine/`, `context/`, `children/`, and `events`
 - **AND** reading `io/output` works whether or not the process is an agent
+
+#### Scenario: A watcher follows the whole agent
+- **WHEN** a consumer wants to follow everything an agent does
+- **THEN** it tails the top-level `events` stream and learns of new output,
+  requests, actions, status changes, and spawned children
+- **AND** the per-container streams (`io/events`, `requests/` events,
+  `actions/` events) remain available for finer-grained watching
+
+#### Scenario: Child agents are listed
+- **WHEN** a consumer lists `children/` on an agent
+- **THEN** it sees the agent's child processes resolved from `/proc` parentage
+- **AND** `children/` does not duplicate process state owned by `/proc`
 
 #### Scenario: A non-agent is read for agent files
 - **WHEN** a consumer lists `requests/` on a non-agent process
@@ -133,6 +158,55 @@ container SHALL expose an events stream that consumers watch by blocking read.
 - **THEN** the tool process appears in `/proc`, and `actions/<id>/` records its
   status, process reference, output, result, and approval state
 - **AND** the action references the tool process rather than duplicating it
+
+### Requirement: Request and action status integrity
+Alan OS SHALL keep request and action status truthful. A response written to a
+request whose status is already terminal (answered, closed, or cancelled) SHALL
+be rejected. An action's recorded terminal status SHALL accurately reflect the
+underlying effect: a failed effect SHALL be recorded as failed, not partial, and
+an incomplete result SHALL be recorded as partial, not satisfied.
+
+#### Scenario: A response targets a closed request
+- **WHEN** a client writes `requests/<id>/response` for a request that is already
+  answered, closed, or cancelled
+- **THEN** the write is rejected with an error and does not re-open or re-run the
+  request
+- **AND** the originating process is not resumed for an already-settled request
+  (the invariant the legacy "resume non-yielded run" bug violated)
+
+#### Scenario: A failed effect is recorded
+- **WHEN** an effect fails while also producing incomplete or unsupported result
+  fields
+- **THEN** `actions/<id>/status` records the effect as failed
+- **AND** it is not downgraded to partial because of the result fields
+
+#### Scenario: An incomplete result is recorded
+- **WHEN** an effect satisfies only some requested result fields
+- **THEN** the action records a partial result rather than satisfied
+- **AND** downstream completion logic cannot treat it as fully satisfied
+
+### Requirement: Root Agent has broad awareness but narrow authority
+Alan OS SHALL keep awareness and authority separate for the Root Agent. Because a
+namespace tends to couple visibility with reachability, the separating dimension
+SHALL be access rights: awareness is granted by binding trees read-only, and
+authority is granted by binding trees read-write. The Root Agent's default
+namespace SHALL be broad read-only (system indexes, notifications, process and
+service status, public app indexes, continuity memory) and narrow read-write, and
+it SHALL gain authority over private content only through explicitly granted
+read-write mounts.
+
+#### Scenario: Root Agent observes useful work
+- **WHEN** the Root Agent sees, through its broad read-only mounts, an event that
+  suggests useful work
+- **THEN** it may raise a request, propose an action, or spawn a child with an
+  explicitly constructed namespace
+- **AND** it cannot mutate private content it can only see read-only
+
+#### Scenario: Root Agent is granted authority
+- **WHEN** the Root Agent must act on a resource
+- **THEN** authority is granted by binding that resource read-write into its (or a
+  child's) namespace
+- **AND** broad read-only awareness never implies write authority
 
 ### Requirement: Durable agent identity is a home tree
 Alan OS SHALL make an agent's durable identity a home file tree (config, memory,

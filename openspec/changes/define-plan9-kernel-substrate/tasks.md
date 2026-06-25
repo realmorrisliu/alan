@@ -10,6 +10,8 @@
 - [x] 2.3 Specify the wire-shaped file-server contract and in-process v1 path.
 - [x] 2.4 Specify byte/offset streams and blocking-read observation.
 - [x] 2.5 Specify namespace-as-capability and the no-global-addressing rule.
+- [x] 2.5a Specify access rights as the dimension separating awareness (read-only
+  mounts) from authority (read-write mounts) (PR #572 review gap).
 - [x] 2.6 Specify mount/bind/union assembly and per-process namespace.
 - [x] 2.7 Specify kernel ephemerality and file-server persistence.
 - [x] 2.8 Specify `/proc` and `/srv` synthetic devices and bootstrap.

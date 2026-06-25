@@ -12,6 +12,15 @@
 - [x] 1.8 Define request/action files with events streams.
 - [x] 1.9 Define durable identity as a home tree.
 - [x] 1.10 Define provider-server metering.
+- [x] 1.11 Add `children/` and a top-level aggregate `events` stream to the agent
+  layout (PR #572 review gap).
+- [x] 1.12 Define request/action status integrity invariants: reject responses to
+  terminal requests; record failed-not-partial and partial-not-satisfied
+  (carries the invariants behind the legacy capability-service bugs).
+- [x] 1.13 Define Root Agent broad-awareness / narrow-authority via read-only vs
+  read-write mounts (PR #572 review gap).
+- [x] 1.14 Add an `io/output` completeness invariant (append-only, offset-
+  resumable, tail-reachable) so newest output is never a data gap.
 
 ## 2. Verification
 
