@@ -46,13 +46,16 @@ control SHALL NOT be expressed only through routing rules.
 - **AND** the approval itself is still an explicit action (a request/response
   per the agent file-layout contract), not an implicit routing side effect
 
-### Requirement: Routefs is a user-space file server over aP
+### Requirement: Routefs has a canonical namespace path
 Alan OS SHALL implement `routefs` as a user-space file server over the aP
-protocol, posting a handle under `/srv` and serving its tree (send, rules, ports,
-log) at a mounted location. It SHALL NOT be kernel state.
+protocol with one canonical namespace path (ADR-0025 D3): it posts a handle at
+`/srv/route` and serves its tree (`send`, rules, ports, log) at `/mnt/route`. It
+SHALL NOT be kernel state, and the ownership map SHALL record `/mnt/route` as its
+owned tree.
 
 #### Scenario: Routefs is mounted
 - **WHEN** `routefs` starts
-- **THEN** it posts a handle under `/srv` and serves `send`, rule files, ports,
-  and the message log as files
+- **THEN** it posts a handle at `/srv/route` and serves `send`, rule files,
+  ports, and the message log under `/mnt/route`
+- **AND** clients use that canonical path rather than choosing their own location
 - **AND** ports are blocking-read streams per the kernel stream model

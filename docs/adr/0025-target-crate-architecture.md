@@ -72,7 +72,8 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | `/srv/llm` (handle); tree at `/mnt/llm/providers/<provider>` (introspect), `/mnt/llm/connections/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
 | `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
-| `/mnt/mem` | `alan-memfs` | (storage) |
+| `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
+| `/srv/route` (handle); tree at `/mnt/route` | `routefs` | — |
 
 To add a tree: create one `alan-<tree>fs` crate implementing `alan-ap` and post a
 handle under `/srv`. There is no other place new resource surfaces may live.

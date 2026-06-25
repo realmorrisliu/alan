@@ -1,7 +1,7 @@
 ## 1. Routefs file server
 
-- [ ] 1.1 Add `routefs` as a user-space aP file server; post a handle under
-  `/srv` and serve its tree (send, rules, ports, log).
+- [ ] 1.1 Add `routefs` as a user-space aP file server; post a handle at
+  `/srv/route` and serve its tree (send, rules, ports, log) at `/mnt/route`.
 - [ ] 1.2 Implement the `send` write entry point for typed messages.
 - [ ] 1.3 Implement rule files (content/type match) with deterministic match
   order and a default dead-letter port.

@@ -34,8 +34,11 @@ D3; refines [ADR-0024](../../../docs/adr/0024-plan9-kernel-model.md) D2/D7.
 - **State is a Merkle DAG; a checkpoint is a root hash.** `machine/tape` and a
   memory version are DAGs of blocks; a checkpoint/snapshot is the root hash. A
   fork shares all unchanged blocks and only writes the delta.
-- **Identity is verifiable.** Any state is retrievable and verifiable by its root
-  hash; rewriting history changes the hash, so audit is tamper-evident.
+- **Identity is verifiable, but a hash is not a capability.** A root hash
+  integrity-checks the state it names; rewriting history changes the hash, so
+  audit is tamper-evident. Retrieval is gated by namespace reachability and access
+  rights (ADR-0024 D6) — the hash does not authorize access; reads go through an
+  authorized, namespace-bound root.
 - **GC by reachability, with retention.** Unreachable blocks (no live root, past
   retention) are collected. Retention/GC policy is the storing server's, not the
   kernel's (ADR-0024 D7: persistence belongs to file servers).
