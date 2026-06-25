@@ -1,15 +1,17 @@
 ## ADDED Requirements
 
 ### Requirement: An agent is a conforming process, not a kernel type
-Alan OS SHALL treat an agent as a `Process` whose directory conforms to the
-agent file-layout convention. Agent-ness SHALL be discoverable by walking the
-process directory, not by any kernel flag or kernel category.
+Alan OS SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
+to the agent file-layout convention. Agent-ness SHALL be discoverable by
+inspecting the `/agent` overlay, not by any kernel flag or kernel category, while
+`/proc/<pid>` stays generic.
 
 #### Scenario: A process is tested for agent-ness
 - **WHEN** a tool needs to know whether a process is an agent
-- **THEN** it walks `/proc/<pid>` and checks for the agent layout (such as
-  `machine/` and `requests/`)
-- **AND** no kernel agent type is consulted
+- **THEN** it inspects `/agent/<pid>` for the agent overlay (such as `machine/`
+  and `requests/`), while `/proc/<pid>` exposes only the generic layout
+- **AND** no kernel agent type is consulted, and no agent files are sought in
+  `/proc`
 
 #### Scenario: A third-party runtime exposes agents
 - **WHEN** a third-party runtime file server exports process directories that

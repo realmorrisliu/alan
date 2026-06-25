@@ -16,11 +16,13 @@ already provide.
 
 - Define the generic process file layout (`io/`, `status`, `ctl`) that every
   process exposes, and the agent superset (`requests/`, `actions/`, `machine/`,
-  `context/`).
+  `context/`, `children/`, and the top-level aggregate `events` stream),
+  overlaid at `/agent/<pid>` while `/proc/<pid>` stays generic.
 - Define control as text commands written to `ctl`, so new control actions need
   no new files.
-- Define `/agent` as a view over `/proc` (a union/bind of agent-conforming
-  process directories plus stable aliases such as `/agent/root`).
+- Define `/agent` as an overlay over `/proc` (for each agent-conforming process,
+  union the kernel `/proc/<pid>` generic files with the runtime's agent surfaces,
+  plus stable aliases such as `/agent/root`).
 - Define the LLM as a typed stream the process consumes, with effects governed
   by the process's namespace, not by the provider.
 - Define the request as a view assembled from namespace files, tape compaction
