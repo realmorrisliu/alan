@@ -24,7 +24,9 @@ delta.
 #### Scenario: A checkpoint is taken
 - **WHEN** an agent reaches a point worth saving
 - **THEN** the checkpoint is the root hash of its current knowledge DAG
-- **AND** restoring it later retrieves exactly that state by hash
+- **AND** restoring it later reads that state through an authorized namespace-bound
+  root (reachability + access rights, D6) and verifies it against the hash — the
+  hash is not itself the read authority
 
 #### Scenario: An agent is forked
 - **WHEN** an agent is forked from a checkpoint

@@ -113,8 +113,11 @@ commands on the owning surface, not as new files or APIs.
 #### Scenario: A request is answered
 - **WHEN** a user answers an agent request
 - **THEN** the answer is written to the request's response file under
-  `requests/<id>/`
-- **AND** the agent runtime delivers it without a private resume API
+  `requests/<id>/` and committed on clunk (the aP commit-on-clunk document
+  convention), so a large structured-input/credential answer is delivered whole,
+  never truncated
+- **AND** the agent runtime delivers it on commit without a private resume API,
+  and never resumes on a partial write
 
 ### Requirement: `/agent` is an overlay over `/proc`
 Alan OS SHALL present `/agent` as an overlay over `/proc`: for each

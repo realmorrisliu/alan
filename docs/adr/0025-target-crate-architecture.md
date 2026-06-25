@@ -72,7 +72,7 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | Namespace path | Served by | Backend |
 | --- | --- | --- |
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
-| `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
+| `/srv/agent-runtime` (handle); tree at `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
 | `/srv/llm` (handle); tree at `/mnt/llm/providers/<provider>` (introspect), `/mnt/llm/connections/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
 | `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |

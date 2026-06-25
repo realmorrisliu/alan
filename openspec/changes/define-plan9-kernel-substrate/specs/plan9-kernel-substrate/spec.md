@@ -100,6 +100,22 @@ failure SHALL surface as a terminal error record in the relevant stream.
   stream
 - **AND** readers observe it by reading the stream, not by a side channel
 
+### Requirement: Document write entry points commit on clunk
+aP SHALL define one framing convention for any write entry point that consumes a
+complete document: the document MAY span multiple `write`s and the entry point
+SHALL commit only on `clunk` of the writing fid — never on a partial write — and
+SHALL reject a malformed/truncated document at commit (a commit-time error, per
+the three-phase model). This single convention SHALL govern every such surface —
+`llmfs` `data`, `routefs` `send`, the `/proc/clone` exec spec, and an agent's
+`requests/<id>/response` — which reference it rather than redefining framing.
+
+#### Scenario: A multi-write document is committed
+- **WHEN** a caller writes a document to any such entry point across several
+  writes and then clunks the fid
+- **THEN** the surface acts on the complete document at clunk, never on a partial
+  write
+- **AND** a truncated/malformed document is rejected at commit, not acted on
+
 ### Requirement: Streams are byte/offset file kinds
 Alan Kernel SHALL model streams as named files carrying bytes with offsets.
 Typed records, such as LLM events, SHALL be a byte-stream record convention
@@ -224,9 +240,12 @@ Alan Kernel SHALL expose process creation through aP, not a side API, so an
 aP-only client (such as Alan Shell) can launch processes with no non-file
 operation. Opening `/proc/clone` SHALL allocate a new process slot
 (clone-via-open); writing an exec spec — executable path, arguments, and the
-child's namespace/descriptors — SHALL start the process, return its pid, and make
-`/proc/<pid>` appear. The child's namespace SHALL be the one the spawner
-specifies, but spawn SHALL be capability-preserving, not capability-amplifying:
+child's namespace/descriptors — and clunking the fid SHALL start the process,
+return its pid, and make `/proc/<pid>` appear. The exec spec follows the
+commit-on-clunk document convention (it MAY span multiple writes; the process
+starts only at clunk, never from a truncated spec). The child's namespace SHALL be
+the one the spawner specifies, but spawn SHALL be capability-preserving, not
+capability-amplifying:
 the kernel SHALL reject any exec-spec namespace entry or descriptor the spawner
 could not itself open or delegate from its own namespace and access rights. A
 spawner therefore cannot bind a withheld llmfs Connection, `/srv` handle, or any
