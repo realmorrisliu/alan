@@ -10,8 +10,9 @@ user-space file server above the substrate, not part of the kernel.
 
 #### Scenario: Projection dependencies are inspected
 - **WHEN** the workspace crates are built or audited
-- **THEN** the projection / adapter module may depend on `alan-protocol` and
-  compatibility transport clients as internal details
+- **THEN** the projection file server (future `alan-agentfs`) depends on aP plus
+  its backend (`alan-agent-engine`/`alan-protocol` compatibility code) only — never
+  on a client crate (TUI/HTTP), per ADR-0025 D1/D4
 - **AND** `alan-kernel` remains free of those dependencies
 
 #### Scenario: Current event enters the projection path

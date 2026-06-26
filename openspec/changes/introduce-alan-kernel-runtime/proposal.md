@@ -54,10 +54,12 @@ owners of the same projection.
 
 ## Impact
 
-- `alan-kernel` (the crate) keeps only the substrate (namespace engine, fid /
-  file-server contract, process table, `/proc`, `/srv`); current V1 types in the
-  crate move to compat/app crates or are deleted in a follow-up implementation
-  change.
+- `alan-kernel` (the crate) is created for the substrate only (namespace engine,
+  fid / file-server contract, process table, `/proc`, `/srv`); there is no current
+  `alan-kernel` crate to clean up (the V1 one was removed). Any compatibility code
+  that must move comes from the actual current owners (`alan-runtime`,
+  `alan-protocol`, `crates/alan`, `crates/tui`) into the projection or
+  `alan-compat`, not the kernel.
 - `crates/tui` remains on the current compatibility transport and migrates toward
   reading agent files and writing `ctl`.
 - The current Agent Execution Engine, session/transport implementation, and
