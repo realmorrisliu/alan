@@ -201,6 +201,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-llmfs-client"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "alan-llm",
+ "alan-llmfs",
+ "anyhow",
+ "async-trait",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "alan-shell"
 version = "0.1.0"
 dependencies = [

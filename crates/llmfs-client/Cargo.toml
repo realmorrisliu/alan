@@ -1,0 +1,19 @@
+[package]
+name = "alan-llmfs-client"
+description = "FileLlmProvider — an alan-llm LlmProvider that reads its generations from llmfs files over aP, so the agent engine reads its LLM as a file (ADR-0024) with no loop changes."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+alan-llm.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
+
+[dev-dependencies]
+alan-llmfs = { path = "../llmfs" }
+alan-llm = { workspace = true, features = ["mock"] }

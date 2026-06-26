@@ -8,6 +8,7 @@ members = [
     "crates/agent-protocol",
     "crates/llm",
     "crates/llmfs",
+    "crates/llmfs-client",
     "crates/agent-engine",
     "crates/agent-engine/skills/swebench/tooling",
     "crates/shell",
