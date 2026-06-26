@@ -75,13 +75,16 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
 | `/srv/agent-runtime` (handle); tree at `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
 | `/srv/llm` (handle); tree at `/mnt/llm/providers/<provider>` (introspect), `/mnt/llm/connections/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
-| `/bin`, `/lib/exec/<tool>`, `/man/1` | `alan-binfs` | `alan-tools` |
+| `/bin` (union), `/lib/exec/<tool>`, `/man/1` | `alan-binfs` (tool executables) + `alan-agentfs` (Agent Executables) | `alan-tools`; `alan-agent-engine` |
 | `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
 | `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
 | `/srv/route` (handle); tree at `/mnt/route` | `alan-routefs` (`routefs` server) | — |
 
 To add a tree: create one `alan-<tree>fs` crate implementing `alan-ap` and post a
 handle under `/srv`. There is no other place new resource surfaces may live.
+Exception: a union directory (such as `/bin`) may have several contributors (each
+still an owned tree), so one-tree-one-crate applies per contributed subtree, not
+to the union mount point.
 
 ### D4. Crate roster and migration mapping
 
@@ -111,7 +114,11 @@ File servers (each implements `alan-ap`):
 - `alan-llmfs` — new; posts a handle at `/srv/llm`, serves its tree at
   `/mnt/llm`; owns cost/metering/rate-limiting
   (ADR-0024 D6).
-- `alan-binfs` — new; serves `/bin`, tool manifests, and man pages.
+- `alan-binfs` — new; contributes tool executables to `/bin` (a union dir) plus
+  tool manifests and man pages. Agent Executables (e.g. `review`/`delegate`) are a
+  separate kind contributed to the `/bin` union by the agent runtime
+  (`alan-agentfs`, backed by `alan-agent-engine`); spawning one creates an agent
+  process, so `/bin` has an owner for both tools and agent executables.
 - `alan-memfs` — new; serves `/mnt/mem`; the durable home memory tree (D7).
 - `alan-pkgfs` — new, optional; serves `/lib/skill` and `/man/skill`.
 - `alan-routefs` — new; the `routefs` server posts a handle at `/srv/route` and
