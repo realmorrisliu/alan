@@ -75,9 +75,9 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
 | `/srv/agent-runtime` (handle); tree at `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
 | `/srv/llm` (handle); tree at `/mnt/llm/providers/<provider>` (introspect), `/mnt/llm/connections/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
-| `/bin` (union), `/lib/exec/<tool>`, `/man/1` | `alan-binfs` (tool executables) + `alan-agentfs` (Agent Executables) | `alan-tools`; `alan-agent-engine` |
-| `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
-| `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
+| `/srv/bin` (handle); `/bin` (union), `/lib/exec/<tool>`, `/man/1` | `alan-binfs` (tool executables) + `alan-agentfs` (Agent Executables) | `alan-tools`; `alan-agent-engine` |
+| `/srv/pkg` (handle); `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
+| `/srv/mem` (handle); tree at `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
 | `/srv/route` (handle); tree at `/mnt/route` | `alan-routefs` (`routefs` server) | — |
 
 To add a tree: create one `alan-<tree>fs` crate implementing `alan-ap` and post a

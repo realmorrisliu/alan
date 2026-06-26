@@ -18,8 +18,9 @@ user-space file server above the substrate, not part of the kernel.
 #### Scenario: Current event enters the projection path
 - **WHEN** an `alan_protocol::EventEnvelope` is received by a compatibility
   session consumer
-- **THEN** the projection layer maps it into the process's `status`, `io/events`,
-  `requests/`, `actions/`, and `machine/` files
+- **THEN** the projection layer maps it into the agent-owned surfaces
+  (`machine/status`, `io/events`, `requests/`, `actions/`, `machine/`), leaving the
+  generic top-level `status` as the kernel's process status
 - **AND** it does so before the data reaches any shell or host client
 
 ### Requirement: Current sessions project into agent process file surfaces
@@ -32,9 +33,10 @@ without a backing `/proc` Process — otherwise `/agent` would become an indepen
 process table. It SHALL NOT fabricate `/proc/<pid>` entries itself; `/proc` is the
 kernel's source of truth, and `/agent/<pid>` is the overlay of that `/proc/<pid>`
 with the projected agent surfaces.
-Session metadata SHALL project to `status`, conversation state to `io/`,
-runtime/tape state to `machine/`, yields to `requests/`, tool calls to
-`actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
+Session metadata SHALL project to an agent-owned surface (`machine/status`) —
+not the generic top-level `status`, which stays the kernel's process status —
+conversation state to `io/`, runtime/tape state to `machine/`, yields to
+`requests/`, tool calls to `actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
 `Agent Process` kernel type; a session's backing process is an ordinary `Process`
 that conforms to the agent file-layout convention.
 

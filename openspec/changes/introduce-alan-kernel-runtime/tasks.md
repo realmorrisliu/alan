@@ -42,7 +42,8 @@
   serve its agent surface under `/agent`; do not fabricate `/proc/<pid>` entries
   from the projection. Keep the session id as an internal runtime reference, never
   as kernel identity.
-- [ ] 3.2 Map session metadata to a `status` file.
+- [ ] 3.2 Map session metadata to the agent-owned `machine/status` (leave the
+  generic top-level `status` as the kernel's process status).
 - [ ] 3.3 Map conversation input/output and lifecycle to `io/input`, `io/output`,
   and `io/events` as byte/offset stream files; assistant text and thinking deltas
   append to `io/output` and `io/events`.
