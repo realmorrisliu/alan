@@ -75,7 +75,7 @@ not the system protocol. aP is our own minimal protocol, not literal 9P
 | `/proc`, `/srv` | `alan-kernel` (synthetic) | — |
 | `/srv/agent-runtime` (handle); tree at `/agent` | `alan-agentfs` | `alan-agent-engine`, `alan-agent-protocol` |
 | `/srv/llm` (handle); tree at `/mnt/llm/providers/<provider>` (introspect), `/mnt/llm/connections/<connection>` (callable) | `alan-llmfs` | `alan-llm` |
-| `/srv/bin` (handle); `/bin` (union), `/lib/exec/<tool>`, `/man/1` | `alan-binfs` (tool executables) + `alan-agentfs` (Agent Executables) | `alan-tools`; `alan-agent-engine` |
+| `/srv/bin` (binfs handle) + `/srv/agent-bin` (agentfs handle); Service Manager unions both at `/bin`. Plus `/lib/exec/<tool>`, `/man/1` | `alan-binfs` (tool executables) + `alan-agentfs` (Agent Executables) | `alan-tools`; `alan-agent-engine` |
 | `/srv/pkg` (handle); `/lib/skill`, `/man/skill` | `alan-pkgfs` | — |
 | `/srv/mem` (handle); tree at `/mnt/mem` | `alan-memfs` | content-addressed knowledge store |
 | `/srv/route` (handle); tree at `/mnt/route` | `alan-routefs` (`routefs` server) | — |
@@ -114,11 +114,14 @@ File servers (each implements `alan-ap`):
 - `alan-llmfs` — new; posts a handle at `/srv/llm`, serves its tree at
   `/mnt/llm`; owns cost/metering/rate-limiting
   (ADR-0024 D6).
-- `alan-binfs` — new; contributes tool executables to `/bin` (a union dir) plus
-  tool manifests and man pages. Agent Executables (e.g. `review`/`delegate`) are a
-  separate kind contributed to the `/bin` union by the agent runtime
-  (`alan-agentfs`, backed by `alan-agent-engine`); spawning one creates an agent
-  process, so `/bin` has an owner for both tools and agent executables.
+- `alan-binfs` — new; serves tool executables (plus tool manifests and man pages)
+  and posts its own handle `/srv/bin`. Agent Executables (e.g. `review`/`delegate`)
+  are a separate kind served by the agent runtime (`alan-agentfs`, backed by
+  `alan-agent-engine`) which posts its own handle `/srv/agent-bin`. Each
+  contributor owns a distinct posted handle (D1/D5); Service Manager composes the
+  `/bin` union by mounting both, so neither crate links the other and the
+  agent-executable contribution is never left unmounted. Spawning a `/bin` entry
+  runs a tool or, for an Agent Executable, creates an agent process.
 - `alan-memfs` — new; serves `/mnt/mem`; the durable home memory tree (D7).
 - `alan-pkgfs` — new, optional; serves `/lib/skill` and `/man/skill`.
 - `alan-routefs` — new; the `routefs` server posts a handle at `/srv/route` and
