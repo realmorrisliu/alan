@@ -240,13 +240,15 @@ Alan Kernel SHALL expose process creation through aP, not a side API, so an
 aP-only client (such as Alan Shell) can launch processes with no non-file
 operation. Opening `/proc/clone` SHALL allocate a new process slot and return its
 pid at open time (clone-via-open, like `/net`'s clone returning a connection
-name), making `/proc/<pid>` appear in a pending state. The caller SHALL then write
-the exec spec — executable path, arguments, and the child's namespace/descriptors
-— into the new slot and `clunk` to commit; the exec spec follows the
-commit-on-clunk document convention (it MAY span multiple writes; the process
-starts only at clunk, never from a truncated spec). The pid is observable from the
-clone-open result and `/proc/<pid>/status`; `clunk` returns success or a
-commit-time error and carries no special payload. The child's namespace SHALL be
+name). The pending slot SHALL be private to the clone fid — visible to the
+spawner via the open result but NOT yet listed in the public `/proc` — until
+commit. The caller SHALL then write the exec spec — executable path, arguments,
+and the child's namespace/descriptors — into the new slot and `clunk` to commit;
+the exec spec follows the commit-on-clunk document convention (it MAY span
+multiple writes; the process starts only at clunk, never from a truncated spec).
+On a successful `clunk` the process starts and `/proc/<pid>` becomes visible in
+the public `/proc`; `clunk` returns success or a commit-time error and carries no
+special payload. The child's namespace SHALL be
 the one the spawner specifies, but spawn SHALL be capability-preserving, not
 capability-amplifying:
 the kernel SHALL reject any exec-spec namespace entry or descriptor the spawner
@@ -254,14 +256,16 @@ could not itself open or delegate from its own namespace and access rights. A
 spawner therefore cannot bind a withheld llmfs Connection, `/srv` handle, or any
 other resource it cannot reach into a child (the basis of the capability
 boundary, D6). If the commit fails (malformed exec spec or capability rejection),
-the kernel SHALL reclaim the pending `/proc/<pid>` slot — it does not leak and a
-watcher never observes a process that never started; the failing `clunk` returns
+the kernel SHALL discard the fid-private pending slot — which was never listed in
+public `/proc`, so it neither leaks nor is observed by a `/proc` watcher; the
+failing `clunk` returns
 the commit-time error.
 
 #### Scenario: A client spawns a process
 - **WHEN** Alan Shell launches an executable
-- **THEN** opening `/proc/clone` returns the new pid (a pending `/proc/<pid>`), and
-  it writes the exec spec into the slot and clunks to start the process
+- **THEN** opening `/proc/clone` returns the new pid (a fid-private pending slot,
+  not yet in public `/proc`); it writes the exec spec into the slot and clunks to
+  start the process, at which point `/proc/<pid>` becomes publicly visible
 - **AND** the pid came from the clone-open result and status is read from
   `/proc/<pid>/status`; no operation outside aP open/write/clunk was needed
 
@@ -280,12 +284,12 @@ the commit-time error.
   not delegate
 
 #### Scenario: A spawn fails at commit
-- **WHEN** the exec spec is malformed or capability-rejected at `clunk`, after
-  `/proc/<pid>` was allocated at clone-open
+- **WHEN** the exec spec is malformed or capability-rejected at `clunk`, after the
+  fid-private pending slot was allocated at clone-open
 - **THEN** the failing `clunk` returns the commit-time error and the kernel
-  reclaims the pending `/proc/<pid>` slot
-- **AND** no pending slot leaks and no watcher observes a process that never
-  started
+  discards the fid-private pending slot
+- **AND** because the slot was never listed in public `/proc`, it neither leaks
+  nor is observed by a `/proc` watcher
 
 ### Requirement: `/srv` is the bootstrap rendezvous device, access-filtered
 Alan Kernel SHALL provide `/srv` as a synthetic device where file servers post
