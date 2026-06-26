@@ -187,6 +187,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-llmfs"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "alan-llm",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "alan-shell"
 version = "0.1.0"
 dependencies = [
