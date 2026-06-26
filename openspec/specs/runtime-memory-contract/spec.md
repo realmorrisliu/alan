@@ -42,9 +42,9 @@ artifacts.
 - **THEN** the truncation is coherent and points to the source rollout,
   evidence, or session context when available
 
-### Requirement: Memory vocabulary and layers are stable
+### Requirement: Memory vocabulary and kinds are stable
 alan SHALL model runtime memory as distinct working, episodic, semantic, and
-procedural layers rather than as one ever-growing memory file.
+procedural kinds rather than as one ever-growing memory file.
 
 Stable terms:
 
@@ -69,7 +69,7 @@ Stable terms:
 - **Write plan**: a structured model-produced proposal that runtime validates
   before any durable memory write.
 
-Layer responsibilities:
+Kind responsibilities:
 
 1. L0 working memory preserves current goal, active subgoals, confirmed
    constraints, unresolved questions, pending verifications, recent findings,
@@ -88,10 +88,32 @@ Layer responsibilities:
 - **AND** stable identity/preferences are not mixed with chronological project
   status or behavior instructions
 
+### Requirement: Memory kind is separate from memory authority
+alan SHALL treat working, episodic, semantic, and procedural memory as
+agent-cognitive memory kinds rather than ownership buckets. Ownership and access
+authority SHALL be modeled separately by Memory Stores such as personal,
+system-continuity, app, and workspace stores.
+
+#### Scenario: Memory store is described
+- **WHEN** runtime code, docs, or specs describe where memory is owned or who may
+  authorize access
+- **THEN** they use Memory Store language rather than redefining memory kinds as
+  User Memory, System Memory, or App Memory
+- **AND** Agent Processes access memory stores only through namespace-bound
+  paths, Descriptors, and Access Checks — a Memory Store is bound into the
+  agent's namespace — not through an Agent Run or Context Grant API (retired by
+  ADR-0024)
+
 ### Requirement: Pure-text memory layout is inspectable
 alan SHALL keep the baseline memory system file-backed, pure-text,
 workspace-scoped, and inspectable without vector databases, SQLite indexes, or
 hidden provider memory.
+
+This baseline layout is the current workspace-scoped compatibility Memory Store.
+It may contain files such as `USER.md` for stable user-facing facts, but that
+does not make every such file the future global Personal Memory Store. Future
+Alan OS memory work must split store authority explicitly instead of inferring
+authority from these compatibility filenames.
 
 Target layout:
 
@@ -370,7 +392,7 @@ before or after compaction, or on explicit user request.
 #### Scenario: Session finalizes
 - **WHEN** a session reaches finalization
 - **THEN** alan preserves current working state into session summary, handoff,
-  daily note, and optional inbox entries according to the memory layer
+  daily note, and optional inbox entries according to the memory-kind
   contracts
 
 ### Requirement: Memory and compaction remain adjacent but distinct

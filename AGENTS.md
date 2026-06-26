@@ -6,46 +6,111 @@
 
 ---
 
+## Component Names
+
+Use these names consistently in docs, specs, code comments, UI copy, and review
+comments:
+
+| Name | Meaning |
+| ---- | ------- |
+| **Alan** | The product: a programmable personal computing environment. Do not use "programmable environment" as a separate product name. |
+| **Alan OS** | The operating-system boundary for Alan: Alan Kernel, file-server system services, Service Manager, Root Agent Process, Agent Runtime Service, hosts, and app integration conventions. It is not the CLI, HTTP/WS compatibility transport, TUI, macOS app, or agent engine. |
+| **Alan Kernel** / `alan-kernel` | The file-tree substrate inside Alan: namespace and mounts, paths, files, descriptors, access rights, credentials, process table, and a single `Process` category. Agent-ness is a file-layout convention, not a Kernel type. Streams are file kinds; process output, requests, actions, and events are files. |
+| **Standard Namespace** | The canonical Alan OS root layout: `/proc`, `/agent`, `/srv`, `/bin`, `/lib`, `/man`, and `/mnt`. Alan-specific packages and mounted service trees live under `/lib` or `/mnt`, not as new top-level roots by default. |
+| **Service Manager** | The Alan OS system Process that starts, stops, restarts, and supervises system services and boot units. It replaces the former daemon as the canonical lifecycle concept. |
+| **File-Server Service** | A long-running Process that exports a file tree which other processes mount or bind into their namespace. Alan OS services are file servers, not HTTP APIs. |
+| **Service Handle Registry** / `/srv` | The Plan 9-style rendezvous tree where running file servers post mountable handles. `/srv` is not the service state tree. |
+| **Agent Runtime Service** | The file-server service that executes Agent Processes and serves AgentFS at `/agent`. It is an internal system service, not an app-facing API. |
+| **Process** | A bounded execution with PID, parent, descriptors, credentials, lifecycle, input/output streams, status, and exit state. |
+| **Agent Process** | An ordinary Process that runs an agent, recognized by conforming to the agent file-layout — not a separate Kernel type. It lives in `/proc/<pid>` (the source of truth) and is surfaced through the `/agent/<pid>` view. |
+| **Root Agent Process** | The always-available Agent Process at the root of the agent process tree, exposed through `/agent/root`. It coordinates child Agent Processes; it is not root permission, the Service Manager, a root chat session, or the Alan Agent UI. |
+| **Agent Executable** | An executable that creates an Agent Process when spawned. Agent executables are command files bound into `/bin`, not RPC/API methods. |
+| **Tool** | A reusable executable installed into the Alan OS command namespace. Tools provide actions; permissions come from descriptors, access rights, and policy. |
+| **Skill** | A manual-like knowledge package installed into the Alan OS namespace and passed to Agent Processes by descriptor. Skills provide understanding; they do not execute. |
+| **Memory Stores** | Personal, system-continuity, app, and workspace file trees that own memory authority. Agent memory kinds such as working, episodic, semantic, and procedural describe how memory is used, not who owns it. |
+| **Alan Agent** | A built-in but optional Agent Workspace app for inspecting, steering, and organizing Agent Processes. It is not required to run agents and is not the Root Agent Process or Agent Runtime Service. |
+| **Agent Execution Engine** / `alan-runtime` | Current implementation of the agent Turing-machine loop: tape, model calls, tool compatibility, skills, policy, memory, and persistence. It backs Agent Runtime Service work; it is not Alan Kernel. Future crate name: `alan-agent-engine`. |
+| **Alan for macOS** | Native Apple host for Alan: renderer, input shell, windowing, and OS integration surface. |
+| **Alan Shell** / future `alan-shell` | The primary shell for Alan OS: a Plan 9 `rc`-like and Acme-like interaction surface for files, processes, Agent Processes, Tools, Skills, Memory Stores, and services. The current implementation path is Ratatui in `crates/tui`. |
+| **Alan Agent App Module** / future `alan-agent` | Optional workspace module that reads agent files (status, io, requests, actions, machine) as a client and renders from those files, not from core-owned view snapshots. |
+| **Alan Apps** | Apps such as Alan Agent and Groove Master that run on Alan OS with app-owned domain cores and Alan adapters. |
+
+---
+
+## Architecture Progression Principle
+
+When implementing OpenSpec changes, move the codebase toward the accepted Alan
+OS target shape, not just the smallest local patch.
+
+- Prefer directory structure, crate boundaries, module names, and public APIs
+  that match the target architecture already recorded in OpenSpec and this
+  guide.
+- When touching old compatibility code, add or extract the next durable layer
+  if it clarifies ownership and reduces future migration risk. For example,
+  keep Alan Kernel semantics in `alan-kernel`, Agent Runtime Service and
+  AgentFS-oriented execution behind `alan-agent-engine` / `alan-runtime`, Alan
+  Shell interaction code in `alan-shell` or `crates/tui` during migration,
+  optional Alan Agent workspace code in `alan-agent`, and native host
+  integration in Alan for macOS.
+- Keep each step scoped to the change being implemented: do not perform broad
+  unrelated rewrites, but do leave the touched area with clearer ownership,
+  smaller modules, and more readable layering than before.
+- Prefer explicit adapter/projection boundaries over leaking HTTP transport,
+  TUI, macOS, provider, sandbox, or memory-store details into Alan Kernel or app
+  domain models.
+- If a first implementation slice starts as a compatibility bridge, make the
+  bridge's temporary nature visible in names, docs, and tests so the next slice
+  can replace it without rediscovering the intended architecture.
+
+---
+
 ## Core Concept: AI Turing Machine
 
-alan treats each agent as a **Turing machine** where the LLM is the transition function:
+alan treats each Agent Process as a **Turing machine** where the LLM is the transition function:
 
 | TM Concept              | alan Implementation                                        |
 | ----------------------- | ---------------------------------------------------------- |
 | **Tape**                | `Tape` — messages, context items, and conversation summary |
 | **Transition Function** | LLM generation — maps (state, input) → (action, new state) |
-| **State**               | `Session` — holds tape, tools, skills, and runtime config  |
-| **Alphabet**            | Messages (user/assistant/tool) and tool calls              |
-| **Side Effects**        | Tool execution — the way the machine acts on the world     |
+| **State**               | Agent Machine state exposed under `/agent/<pid>/machine`   |
+| **Alphabet**            | Agent IO, machine events, and Tool process results          |
+| **Side Effects**        | Spawning Tools and writing Files through descriptors        |
 | **Halt**                | No more tool calls, final text response emitted            |
 
-`alan-runtime` is the generic machine; it knows nothing about hosting, deployment, or domain-specific behavior. All domain concerns live in outer crates.
+`alan-runtime` currently implements the Agent Execution Engine that will back
+Agent Runtime Service work. It is the generic Turing-machine loop for Agent
+Processes, not Alan OS or Alan Kernel. Alan Kernel semantics are namespace and
+mounts, paths, files, descriptors, access rights, credentials, a single
+`Process` category, and the process table; agent-ness is a file-layout
+convention, not a Kernel type. Agent-specific IO, requests, actions, machine
+tape, and checkpoints are AgentFS files served above Kernel.
+Alan Agent is only an optional Agent Workspace app.
 
 ### Hosting And Execution Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AgentRoot                                                  │
-│  On-disk Definition — "what can be launched"                │
-│  • agent.toml, persona/, skills/, policy.yaml               │
+│  Agent Executable                                           │
+│  Launchable file bound into /bin                            │
+│  • executable image + descriptors passed at spawn           │
 ├─────────────────────────────────────────────────────────────┤
-│  Workspace                                                  │
-│  Persistent Context — "where this agent lives"              │
-│  • Identity, memory, sessions, workspace state              │
+│  Agent Process                                              │
+│  Running Process in /proc and /agent/<pid>                  │
+│  • descriptors, credentials, lifecycle, IO, requests        │
 ├─────────────────────────────────────────────────────────────┤
-│  AgentInstance                                              │
-│  Running Process — "which agent is active now"              │
-│  • Resolved overlays + runtime supervision                  │
+│  Agent Machine                                              │
+│  Turing-machine view served by AgentFS                      │
+│  • tape, state, machine events, checkpoints                 │
 ├─────────────────────────────────────────────────────────────┤
-│  Session                                                    │
-│  Bounded Execution — "what I'm doing now"                   │
-│  • Tape (messages), rollout (event log)                     │
+│  Agent Workspace                                            │
+│  Optional app/view over Agent Processes                     │
+│  • inspect, steer, organize, promote work                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-`HostConfig` holds machine-local daemon/client settings. Runtime-internal
-types such as `AgentConfig` are derived from resolved agent roots rather than
-serving as the primary user-facing hosting model.
+Current `Session` and HTTP/WS surfaces are compatibility transport details.
+Target Alan OS creation is `spawn` of Agent Executables; target attachment is
+opening or watching `/proc` and `/agent` files.
 
 ---
 
@@ -146,7 +211,7 @@ alan/
 │   │       ├── openrouter.rs       # OpenRouter SDK-backed chat adapter
 │   │       └── anthropic_messages.rs
 │   │
-│   ├── runtime/               # Core runtime (the "machine")
+│   ├── runtime/               # Agent Execution Engine (current alan-runtime)
 │   │   ├── prompts/           # Embedded prompt templates
 │   │   │   ├── runtime_base.md
 │   │   │   ├── system.md
@@ -224,6 +289,9 @@ alan/
 │   │   └── src/
 │   │       └── lib.rs         # Tool profiles: core(4), read-only(4), all(7)
 │   │
+│   │   # NOTE: the target crate architecture (alan-ap, alan-kernel, servers/*)
+│   │   # is ADR-0025 and is NOT built yet — no alan-kernel crate in the tree.
+│   │
 │   ├── tui/                   # Rust inline terminal UI linked into alan
 │   │   └── src/
 │   │       ├── lib.rs         # TUI run loop entrypoint
@@ -238,7 +306,7 @@ alan/
 │   │   │   └── main.rs
 │   │   └── tests/
 │   │
-│   └── alan/                  # CLI & daemon (alan binary)
+│   └── alan/                  # CLI & daemon (current host-service implementation/gateway)
 │       └── src/
 │           ├── main.rs        # CLI entry point (clap)
 │           ├── lib.rs         # Library exports
@@ -283,10 +351,13 @@ alan-protocol (base — no internal deps)
     ↑
 alan-llm (depends on alan-protocol)
     ↑
-alan-runtime (depends on alan-protocol, alan-llm)
+alan-runtime (Agent Execution Engine; depends on alan-protocol, alan-llm)
     ↑        ↑
 alan-tools   alan (depends on alan-protocol, alan-runtime)
 ```
+
+Target crate architecture (`alan-ap`, `alan-kernel`, `servers/*`, …) is
+[ADR-0025](docs/adr/0025-target-crate-architecture.md) and is not built yet.
 
 ---
 
