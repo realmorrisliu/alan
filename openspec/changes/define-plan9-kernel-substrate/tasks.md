@@ -91,13 +91,16 @@
 - [ ] 7.3 Bring the kernel up with only `/proc`, `/srv`, and the namespace engine,
   leaving init / Service Manager to assemble the rest of the root namespace.
 
-## 8. Crate cleanup (relocate the retired ontology)
+## 8. Keep the retired ontology out of the new crate
 
-- [ ] 8.1 Remove the retired modules from `alan-kernel`: `agent_capability`,
-  `descriptors` (Object/Buffer/View/Command/Query/Subscription/Task/Artifact/
-  Evidence), `views`, `ledger`, `registry`, `invocation`, and the V1 `ids`.
-- [ ] 8.2 Relocate any V1 surfaces still needed during migration into a
-  compat/app crate (for example `alan-compat`), never back into `alan-kernel`.
+- [ ] 8.1 Build `alan-kernel` as a new crate containing only the substrate (no
+  retired V1 modules such as `agent_capability`, `descriptors`,
+  Object/Buffer/View/Command/Query/Subscription/Task/Artifact/Evidence, `views`,
+  `ledger`, `registry`, `invocation`, or V1 `ids`). There is no current
+  `alan-kernel` crate to clean — the V1 one was removed.
+- [ ] 8.2 Relocate any V1 surfaces still needed during migration from the actual
+  current owners (`alan-runtime`, `alan-protocol`, `crates/alan`, `crates/tui`)
+  into a compat/app crate (for example `alan-compat`), never into `alan-kernel`.
 - [ ] 8.3 Extend `tests/dependency_boundary.rs` to fail if `alan-kernel` gains a
   dependency on `alan-runtime`, `alan-protocol`, provider clients, memory stores,
   sandbox backends, renderers, or async task handles — and to fail if the retired

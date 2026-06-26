@@ -253,7 +253,10 @@ the kernel SHALL reject any exec-spec namespace entry or descriptor the spawner
 could not itself open or delegate from its own namespace and access rights. A
 spawner therefore cannot bind a withheld llmfs Connection, `/srv` handle, or any
 other resource it cannot reach into a child (the basis of the capability
-boundary, D6).
+boundary, D6). If the commit fails (malformed exec spec or capability rejection),
+the kernel SHALL reclaim the pending `/proc/<pid>` slot — it does not leak and a
+watcher never observes a process that never started; the failing `clunk` returns
+the commit-time error.
 
 #### Scenario: A client spawns a process
 - **WHEN** Alan Shell launches an executable
@@ -275,6 +278,14 @@ boundary, D6).
 - **THEN** the kernel rejects the spawn
 - **AND** a child can never receive a capability the spawner did not hold or could
   not delegate
+
+#### Scenario: A spawn fails at commit
+- **WHEN** the exec spec is malformed or capability-rejected at `clunk`, after
+  `/proc/<pid>` was allocated at clone-open
+- **THEN** the failing `clunk` returns the commit-time error and the kernel
+  reclaims the pending `/proc/<pid>` slot
+- **AND** no pending slot leaks and no watcher observes a process that never
+  started
 
 ### Requirement: `/srv` is the bootstrap rendezvous device, access-filtered
 Alan Kernel SHALL provide `/srv` as a synthetic device where file servers post
