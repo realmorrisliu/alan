@@ -345,14 +345,16 @@ in-process, but the contract MUST not preclude it.
 - **AND** in-process v1 remains the fast path
 
 ### Requirement: The kernel crate is dependency-isolated
-The `alan-kernel` crate SHALL depend on no agent, LLM provider, tape, memory,
-sandbox, runtime, protocol, renderer, or transport implementation. Those
-concerns SHALL live in user-space file-server crates and adapters above the
-kernel.
+The `alan-kernel` crate SHALL depend only on `alan-ap` (the aP protocol contract;
+ADR-0025 D1) and SHALL depend on no agent, LLM provider, tape, memory, sandbox,
+runtime, legacy/session protocol (such as `alan-protocol`), renderer, or
+transport/provider implementation. Those concerns SHALL live in user-space
+file-server crates and adapters above the kernel.
 
 #### Scenario: Kernel crate dependencies are audited
 - **WHEN** `alan-kernel` dependencies are reviewed
-- **THEN** they exclude `alan-runtime`, `alan-protocol`, provider clients,
-  memory stores, sandbox backends, renderer libraries, and async task handles
+- **THEN** they include `alan-ap` and exclude `alan-runtime`, `alan-protocol`,
+  provider clients, memory stores, sandbox backends, renderer libraries, and async
+  task handles
 - **AND** the agent runtime, LLM providers, memory, and tools appear to the
   kernel only as user-space file servers

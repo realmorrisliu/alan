@@ -17,8 +17,9 @@ respectively. This change owns only the compatibility projection.
 
 - Map current sessions, conversation, tape, yields, tool calls, and checkpoints
   onto `/proc`/`/agent` files per the agent file-layout contract.
-- Keep `alan-kernel` free of protocol/provider/runtime dependencies; the
-  projection is a user-space file server.
+- Keep `alan-kernel` free of legacy-protocol (`alan-protocol`)/provider/runtime
+  dependencies (it depends only on `alan-ap`); the projection is a user-space file
+  server.
 - Keep current `crates/tui` behavior working throughout migration.
 
 **Non-Goals:**
