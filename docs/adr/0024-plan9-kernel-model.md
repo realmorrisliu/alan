@@ -48,8 +48,9 @@ The logical request to the model is a view over namespace files — the machine
 tape, context files, and the `/bin` tools visible in the namespace. The provider
 file server translates that provider-agnostic structure into OpenAI / Anthropic /
 OpenRouter wire formats. Consequences: changing context = changing the namespace;
-changing provider = rebinding the mount; an agent's available tools = the `/bin`
-contents visible in its namespace. Tape compaction is a *view/projection* over
+changing provider = rebinding the mount; an agent's model-callable tools = the
+visible `/bin` Tool entries (those with a manifest; Agent Executables in the
+`/bin` union are spawn targets, not tools). Tape compaction is a *view/projection* over
 `machine/tape` (`machine/tape` is truth; the context-window view is what gets
 sent), not a special runtime step.
 

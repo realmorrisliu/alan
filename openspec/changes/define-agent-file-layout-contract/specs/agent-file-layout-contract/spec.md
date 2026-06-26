@@ -158,10 +158,13 @@ only when the consuming process spawns them under its own namespace and policy.
 
 ### Requirement: The request is assembled from the namespace
 Alan OS SHALL assemble the logical model request as a view over namespace files —
-`machine/tape`, `context/`, and the `/bin` tools visible in the namespace. Tape
-compaction SHALL be a view over `machine/tape` (tape is truth; the context-window
-view is what is sent), not a hidden runtime step. An agent's available tools
-SHALL be exactly the `/bin` entries visible in its namespace.
+`machine/tape`, `context/`, and the visible `/bin` Tools. Tape compaction SHALL be
+a view over `machine/tape` (tape is truth; the context-window view is what is
+sent), not a hidden runtime step. An agent's model-callable tools SHALL be exactly
+the visible `/bin` entries that are Tools (those carrying a tool manifest under
+`/lib/exec/<tool>`); Agent Executables in the `/bin` union (e.g. `review`,
+`delegate`) are spawn targets, not model-callable Tools, and SHALL NOT appear in
+the request's tool list.
 
 #### Scenario: Context is changed
 - **WHEN** a file is bound into or removed from an agent's `context/` or `/bin`
@@ -175,8 +178,9 @@ SHALL be exactly the `/bin` entries visible in its namespace.
 
 #### Scenario: The model's tool list is computed
 - **WHEN** the request's available tools are computed
-- **THEN** they are the `/bin` entries visible in the agent's namespace with
-  their manifests
+- **THEN** they are the visible `/bin` Tool entries (those with a manifest under
+  `/lib/exec/<tool>`), excluding Agent Executables, which are spawn targets not
+  model-callable tools
 - **AND** there is no separate tool registry granting tools outside the namespace
 
 ### Requirement: Requests and actions are files with events

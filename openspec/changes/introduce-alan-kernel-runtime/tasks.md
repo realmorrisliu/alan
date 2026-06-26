@@ -12,7 +12,8 @@
   transport in this change.
 - The namespace capability boundary is convention-enforced, not isolation-
   enforced, in v1 (R1); do not claim hard isolation.
-- `alan-kernel` MUST NOT gain dependencies; the projection (which may use
+- `alan-kernel` depends only on `alan-ap` (ADR-0025 D1) and MUST NOT gain
+  legacy/runtime/provider/client dependencies; the projection (which may use
   `alan-runtime` / `alan-protocol`) is a separate user-space file-server crate.
 
 ## 1. Prerequisites (owned elsewhere)
