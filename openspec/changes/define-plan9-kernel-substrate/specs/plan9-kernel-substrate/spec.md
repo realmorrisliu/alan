@@ -106,8 +106,10 @@ complete document: the document MAY span multiple `write`s and the entry point
 SHALL commit only on `clunk` of the writing fid — never on a partial write — and
 SHALL reject a malformed/truncated document at commit (a commit-time error, per
 the three-phase model). This single convention SHALL govern every such surface —
-`llmfs` `data`, `routefs` `send`, the `/proc/clone` exec spec, and an agent's
-`requests/<id>/response` — which reference it rather than redefining framing.
+`llmfs` `data`, `routefs` `send`, the `/proc/clone` exec spec, an agent's
+`requests/<id>/response`, and an agent's `io/input` message (each user message is
+one framed unit, so a turn never starts on truncated input) — which reference it
+rather than redefining framing.
 
 #### Scenario: A multi-write document is committed
 - **WHEN** a caller writes a document to any such entry point across several

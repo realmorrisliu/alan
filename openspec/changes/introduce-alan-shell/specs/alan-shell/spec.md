@@ -51,9 +51,11 @@ builtins: writing input to `/agent/<pid>/io/input` and tailing
 logic.
 
 #### Scenario: A user talks to an agent
-- **WHEN** a user writes a message to `/agent/<pid>/io/input` and tails
+- **WHEN** a user writes a message to `/agent/<pid>/io/input` (one message is one
+  framed unit, committed on clunk per the aP commit-on-clunk convention) and tails
   `/agent/<pid>/io/output`
-- **THEN** the agent's streamed response prints in the shell
+- **THEN** the agent's streamed response prints in the shell, and a turn starts
+  only on the complete message — never on a partial/truncated write
 - **AND** this uses the same builtins that operate any process's IO
 
 ### Requirement: The shell tails streams concurrently with input

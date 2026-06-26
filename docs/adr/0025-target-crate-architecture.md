@@ -146,9 +146,12 @@ and the kernel that hosts them must stay nameable apart:
 2. **The protocol** is `alan-ap` (aP). There is exactly one; nothing else carries
    a protocol name. (`alan-agent-protocol` is a demoted legacy alphabet, not the
    protocol.)
-3. **A filesystem** is `alan-<tree>fs` (agentfs/llmfs/binfs/memfs/pkgfs/procfs).
-   The `-fs` suffix means: implements aP (`alan-ap`), owns a namespace tree, posts
-   to `/srv`. `-fs` is reserved for filesystems and MUST NOT name the protocol.
+3. **A user-space filesystem** is `alan-<tree>fs` (agentfs/llmfs/binfs/memfs/
+   pkgfs/routefs). The `-fs` suffix means: implements aP (`alan-ap`), owns a
+   namespace tree, posts to `/srv`. `-fs` is reserved for filesystems and MUST NOT
+   name the protocol. The kernel-synthetic surfaces `/proc` and `/srv` are NOT
+   user-space `-fs` servers — they are rendered by `alan-kernel` and are not
+   published through `/srv`.
 4. **The kernel** is `alan-kernel` (namespace + process table + mounts); it hosts
    aP but is not aP.
 5. A file-unaware backend is a functional name (`alan-agent-engine`, `alan-llm`,
