@@ -151,10 +151,10 @@ else — the agent runtime (`/agent`), the LLM provider (`/mnt/llm`; handle at
 `/srv/llm`), memory (`/mnt/mem`), tools (`/bin`) — is a user-space file server the
 kernel knows
 nothing about. The root namespace is assembled by init / Service Manager at boot,
-not hardcoded. Therefore `alan-kernel` (the crate) = namespace engine + fid/
-protocol contract + process table + `/proc` + `/srv`, with no dependency on
-agent, llm, provider, tape, memory, or runtime — the crate that should change
-least.
+not hardcoded. Therefore `alan-kernel` (the crate) = namespace engine + process
+table + `/proc` + `/srv`, depending on `alan-ap` (the aP file-server contract,
+ADR-0025 D2) and otherwise with no dependency on agent, llm, provider, tape,
+memory, or runtime — the crate that should change least.
 
 ## Relationship to existing ADRs
 

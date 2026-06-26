@@ -15,8 +15,9 @@ needs to own almost nothing agent-specific.
 
 ## What Changes
 
-- Define `alan-kernel` as exactly: the namespace engine, the fid/file-server
-  contract, the process table, and the `/proc` and `/srv` synthetic devices.
+- Define `alan-kernel` as exactly: the namespace engine, the process table, and
+  the `/proc` and `/srv` synthetic devices, depending on `alan-ap` (the fid /
+  file-server contract; ADR-0025 D2), not owning it.
 - Model one process category (`Process`); remove `Agent Process` as a Kernel
   type. Agent-ness becomes a file-layout convention owned by
   `define-agent-file-layout-contract`, not a Kernel category.
@@ -50,7 +51,8 @@ the retired ontology.
 ## Impact
 
 - Affected architecture: `alan-kernel` (the crate) keeps only namespace engine +
-  fid/protocol contract + process table + `/proc` + `/srv`, with no dependency
+  process table + `/proc` + `/srv` (depending on `alan-ap` for the contract), with
+  no dependency
   on agent, llm, provider, tape, memory, or runtime code. It becomes the crate
   that changes least.
 - Affected planning: the agent runtime, LLM providers, memory, and tools are all

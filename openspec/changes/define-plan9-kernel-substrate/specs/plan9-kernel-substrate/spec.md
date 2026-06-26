@@ -1,10 +1,13 @@
 ## ADDED Requirements
 
 ### Requirement: Kernel owns only namespace, process table, and synthetic devices
-Alan Kernel SHALL consist of exactly the namespace engine, the file-server
-contract, the process table, and the synthetic devices `/proc` and `/srv`. Alan
-Kernel SHALL NOT model agents, LLM providers, tape, memory, tools, skills,
-policy, or any higher-level product concept.
+Alan Kernel SHALL consist of exactly the namespace engine, the process table, and
+the synthetic devices `/proc` and `/srv`. The aP file-server contract
+(`FileServer` trait, fid, byte/offset stream types) SHALL live in the standalone
+`alan-ap` crate (ADR-0025 D2); Alan Kernel SHALL depend on `alan-ap` and host it,
+not own or duplicate the contract. Alan Kernel SHALL NOT model agents, LLM
+providers, tape, memory, tools, skills, policy, or any higher-level product
+concept.
 
 #### Scenario: Kernel surface is reviewed
 - **WHEN** the Alan Kernel surface is reviewed

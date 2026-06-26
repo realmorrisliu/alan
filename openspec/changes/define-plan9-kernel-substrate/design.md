@@ -16,8 +16,8 @@ consumer model, tools as `/bin` projection) is owned by the sibling change
 
 **Goals:**
 
-- Define the kernel as namespace engine + fid/file-server contract + process
-  table + `/proc` + `/srv`, and nothing else.
+- Define the kernel as namespace engine + process table + `/proc` + `/srv`
+  (depending on `alan-ap` for the fid/file-server contract), and nothing else.
 - Define one process category and the namespace-as-capability boundary.
 - Define streams as byte/offset file kinds and observation as blocking read.
 - Keep the file-server contract wire-shaped so a later transport slice can move
