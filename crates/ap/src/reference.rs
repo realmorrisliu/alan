@@ -1,0 +1,249 @@
+//! A reference in-memory [`FileServer`] used to exercise the aP conventions and
+//! as a worked template for real servers (and alan-shell's M1 echo milestone).
+//!
+//! It is intentionally small but conformant on the points that are easy to get
+//! wrong: the fid lifecycle (§5.2), clone-via-open allocating independent
+//! resources (§5.4), and commit-on-clunk document writes whose malformed
+//! commit is a commit-time [`ErrorCode::BadRequest`] (§5.5). It is not the
+//! kernel's `/proc`/`/srv` and stores no durable state.
+
+use std::collections::{BTreeMap, HashMap};
+
+use async_trait::async_trait;
+use tokio::sync::Mutex;
+
+use crate::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
+
+type NodeId = usize;
+
+enum Node {
+    Dir(BTreeMap<String, NodeId>),
+    Bytes(Vec<u8>),
+    /// A clone file: each `open` allocates a fresh connection directory.
+    Clone {
+        next: u64,
+    },
+    /// A commit-on-clunk document file that must hold valid JSON at commit.
+    Doc,
+}
+
+struct FidState {
+    node: NodeId,
+    mode: Option<OpenMode>,
+    /// Buffered document for a commit-on-clunk write, committed at `clunk`.
+    write_buf: Vec<u8>,
+    /// For an opened clone fid: the resource name allocated at `open`, returned
+    /// when the caller `read`s the clone fid.
+    clone_name: Option<String>,
+}
+
+impl FidState {
+    fn at(node: NodeId) -> Self {
+        Self {
+            node,
+            mode: None,
+            write_buf: Vec::new(),
+            clone_name: None,
+        }
+    }
+}
+
+struct State {
+    nodes: Vec<Node>,
+    fids: HashMap<Fid, FidState>,
+}
+
+impl State {
+    fn push(&mut self, node: Node) -> NodeId {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    fn qid(&self, node: NodeId) -> Qid {
+        let kind = match self.nodes[node] {
+            Node::Dir(_) => FileKind::Dir,
+            Node::Bytes(_) => FileKind::File,
+            Node::Clone { .. } => FileKind::Clone,
+            Node::Doc => FileKind::File,
+        };
+        Qid {
+            kind,
+            version: 0,
+            path: node as u64,
+        }
+    }
+
+    fn dir_entry(&self, dir: NodeId, name: &str) -> Result<NodeId, ErrorCode> {
+        match &self.nodes[dir] {
+            Node::Dir(entries) => entries.get(name).copied().ok_or(ErrorCode::NotFound),
+            _ => Err(ErrorCode::NotDirectory),
+        }
+    }
+
+    fn fid(&self, fid: Fid) -> Result<&FidState, ErrorCode> {
+        self.fids.get(&fid).ok_or(ErrorCode::NotFound)
+    }
+}
+
+/// A small in-memory aP file server: a root directory containing `greeting`
+/// (bytes), `clone` (clone-via-open), and `submit` (commit-on-clunk JSON doc).
+pub struct MemFs {
+    state: Mutex<State>,
+}
+
+impl Default for MemFs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemFs {
+    pub fn new() -> Self {
+        // Root is node 0 so `Fid::ROOT` can be pre-bound to it.
+        let nodes = vec![Node::Dir(BTreeMap::new())];
+        let mut state = State {
+            nodes,
+            fids: HashMap::new(),
+        };
+
+        let greeting = state.push(Node::Bytes(b"hi".to_vec()));
+        let clone = state.push(Node::Clone { next: 0 });
+        let submit = state.push(Node::Doc);
+        if let Node::Dir(entries) = &mut state.nodes[0] {
+            entries.insert("greeting".into(), greeting);
+            entries.insert("clone".into(), clone);
+            entries.insert("submit".into(), submit);
+        }
+        state.fids.insert(Fid::ROOT, FidState::at(0));
+
+        Self {
+            state: Mutex::new(state),
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for MemFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let mut state = self.state.lock().await;
+        let mut node = state.fid(fid)?.node;
+        for name in names {
+            node = state.dir_entry(node, name)?;
+        }
+        state.fids.insert(newfid, FidState::at(node));
+        Ok(state.qid(node))
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        let mut state = self.state.lock().await;
+        let node = state.fid(fid)?.node;
+
+        // Clone-via-open: allocate a fresh connection directory under root and
+        // remember its name for this fid's subsequent read.
+        let clone_name = if let Node::Clone { next } = &mut state.nodes[node] {
+            let n = *next;
+            *next += 1;
+            let name = format!("conn-{n}");
+            let id_file = state.push(Node::Bytes(name.clone().into_bytes()));
+            let mut entries = BTreeMap::new();
+            entries.insert("id".to_string(), id_file);
+            let conn_dir = state.push(Node::Dir(entries));
+            if let Node::Dir(root) = &mut state.nodes[0] {
+                root.insert(name.clone(), conn_dir);
+            }
+            Some(name)
+        } else {
+            None
+        };
+
+        let qid = state.qid(node);
+        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+        f.mode = Some(mode);
+        f.clone_name = clone_name;
+        Ok(qid)
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let state = self.state.lock().await;
+        let f = state.fid(fid)?;
+        // An opened clone fid reads back the allocated resource name.
+        let bytes = if let Some(name) = &f.clone_name {
+            name.clone().into_bytes()
+        } else {
+            match &state.nodes[f.node] {
+                Node::Bytes(b) => b.clone(),
+                Node::Dir(entries) => entries
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into_bytes(),
+                _ => return Err(ErrorCode::Unsupported),
+            }
+        };
+        let start = (offset as usize).min(bytes.len());
+        let end = bytes.len().min(start + count as usize);
+        Ok(bytes[start..end].to_vec())
+    }
+
+    async fn write(&self, fid: Fid, _offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        let mut state = self.state.lock().await;
+        let node = state.fid(fid)?.node;
+        match state.nodes[node] {
+            // Commit-on-clunk: buffer the document; it is acted on only at clunk.
+            Node::Doc => {
+                let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                f.write_buf.extend_from_slice(data);
+                Ok(data.len() as u32)
+            }
+            _ => Err(ErrorCode::Unsupported),
+        }
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let state = self.state.lock().await;
+        let f = state.fid(fid)?;
+        let qid = state.qid(f.node);
+        let length = match &state.nodes[f.node] {
+            Node::Bytes(b) => b.len() as u64,
+            _ => 0,
+        };
+        Ok(Stat {
+            name: String::new(),
+            qid,
+            length,
+            writable: matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)),
+        })
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if fid == Fid::ROOT {
+            return Ok(());
+        }
+        let mut state = self.state.lock().await;
+        let f = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
+        // Commit-on-clunk validation: a Doc opened for write must hold a valid
+        // document at commit, else a commit-time error (§5.5).
+        if matches!(state.nodes[f.node], Node::Doc)
+            && matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite))
+        {
+            serde_json::from_slice::<serde_json::Value>(&f.write_buf)
+                .map_err(|_| ErrorCode::BadRequest)?;
+        }
+        Ok(())
+    }
+}
