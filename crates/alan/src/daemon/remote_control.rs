@@ -435,8 +435,8 @@ fn endpoint_for_request(
         .or_else(|| api_contract::match_endpoint(method, path))
 }
 
-pub fn required_scope_for_op(op: &alan_protocol::Op) -> SessionScope {
-    use alan_protocol::Op;
+pub fn required_scope_for_op(op: &alan_agent_protocol::Op) -> SessionScope {
+    use alan_agent_protocol::Op;
     match op {
         Op::Resume { .. } => SessionScope::Resume,
         Op::CompactWithOptions { .. } | Op::Rollback { .. } => SessionScope::Admin,
@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn required_scope_for_op_maps_privileged_ops() {
-        use alan_protocol::Op;
+        use alan_agent_protocol::Op;
 
         assert_eq!(required_scope_for_op(&Op::Interrupt), SessionScope::Write);
         assert_eq!(
@@ -662,7 +662,7 @@ mod tests {
         );
         assert_eq!(
             required_scope_for_op(&Op::SetClientCapabilities {
-                capabilities: alan_protocol::ClientCapabilities::default(),
+                capabilities: alan_agent_protocol::ClientCapabilities::default(),
             }),
             SessionScope::Write
         );

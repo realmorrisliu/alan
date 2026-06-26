@@ -5,16 +5,16 @@ use alan::daemon::{
     },
     state::{AppState, SessionEntry, SessionEventLog},
 };
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use alan_protocol::{
+use alan_agent_engine::{
+    Config, LlmClient, RolloutItem, RolloutRecorder, RuntimeEventEnvelope, Session, StreamingMode,
+    WorkspaceRuntimeConfig, runtime::spawn_with_llm_client,
+};
+use alan_agent_protocol::{
     CompactionAttemptSnapshot, CompactionPressureLevel, CompactionResult, ContentPart, Event,
     EventEnvelope, GovernanceConfig, GovernanceProfile, MemoryFlushAttemptSnapshot,
     MemoryFlushResult, MemoryFlushSkipReason, Op,
 };
-use alan_runtime::{
-    Config, LlmClient, RolloutItem, RolloutRecorder, RuntimeEventEnvelope, Session, StreamingMode,
-    WorkspaceRuntimeConfig, runtime::spawn_with_llm_client,
-};
+use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use axum::{
     Json,
     body::Bytes,
@@ -179,7 +179,7 @@ fn memory_flush_json_response() -> String {
         "key_decisions": ["Compaction must preserve retry/degraded visibility"],
         "constraints": ["Do not lose identifiers or file paths"],
         "next_steps": ["Land the follow-up PR after verifying the harness"],
-        "important_refs": ["crates/runtime/src/runtime/compaction.rs"]
+        "important_refs": ["crates/agent-engine/src/runtime/compaction.rs"]
     })
     .to_string()
 }
@@ -214,17 +214,17 @@ fn base_config() -> Config {
 fn prepare_workspace(temp: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
     let workspace_root = temp.path().join("workspace");
     let alan_dir = workspace_root.join(".alan");
-    let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+    let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
         &alan_dir,
-        alan_runtime::InstallChannel::Stable,
+        alan_agent_engine::InstallChannel::Stable,
     );
-    let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+    let memory_dir = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
         &alan_dir,
-        alan_runtime::InstallChannel::Stable,
+        alan_agent_engine::InstallChannel::Stable,
     );
     std::fs::create_dir_all(alan_dir.join("skills")).unwrap();
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+    alan_agent_engine::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
     std::fs::create_dir_all(alan_dir.join("persona")).unwrap();
     (workspace_root, alan_dir, sessions_dir)
 }
@@ -323,7 +323,7 @@ where
 struct CompactionHarness {
     _temp: TempDir,
     state: AppState,
-    controller: alan_runtime::RuntimeController,
+    controller: alan_agent_engine::RuntimeController,
     bridge_task: tokio::task::JoinHandle<()>,
     runtime_events_rx: broadcast::Receiver<RuntimeEventEnvelope>,
     session_id: String,
@@ -347,9 +347,9 @@ impl CompactionHarness {
     ) -> Self {
         let temp = TempDir::new().unwrap();
         let (workspace_root, alan_dir, sessions_dir) = prepare_workspace(&temp);
-        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        let memory_dir = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
             &alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
         let app_state =
             AppState::with_alan_home(base_config(), temp.path().join("daemon-home").join(".alan"))
@@ -361,7 +361,7 @@ impl CompactionHarness {
             workspace_id: alan::generate_workspace_id(&workspace_root),
             workspace_root_dir: Some(workspace_root.clone()),
             workspace_alan_dir: Some(alan_dir.clone()),
-            agent_home_paths: Some(alan_runtime::AlanHomePaths::from_alan_home_dir(
+            agent_home_paths: Some(alan_agent_engine::AlanHomePaths::from_alan_home_dir(
                 &temp.path().join("daemon-home").join(".alan"),
             )),
             resume_rollout_path,
@@ -418,13 +418,13 @@ impl CompactionHarness {
             None,
             None,
             MODEL.to_string(),
-            Some(alan_protocol::ReasoningEffort::Medium),
+            Some(alan_agent_protocol::ReasoningEffort::Medium),
             GovernanceConfig {
                 profile: GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             StreamingMode::Off,
-            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
             startup.durability,
             controller.handle.submission_tx.clone(),
             events_tx,
@@ -703,7 +703,7 @@ fn nonempty_history_seed(session: &mut Session) {
     );
     session.add_user_message("Keep the remaining blockers and file paths.");
     session.add_assistant_message(
-        "Remaining blockers are in crates/runtime/src/session.rs.",
+        "Remaining blockers are in crates/agent-engine/src/session.rs.",
         None,
     );
 }
@@ -791,7 +791,7 @@ async fn compaction_manual_success_surfaces_match() {
         32,
         Some(seed_rollout),
         vec![success_step(
-            "Summary: blockers tracked in crates/runtime/src/session.rs.",
+            "Summary: blockers tracked in crates/agent-engine/src/session.rs.",
         )],
         |config| {
             config
@@ -896,7 +896,7 @@ async fn compaction_auto_pre_turn_soft_flush_success_surfaces_match() {
     let note_path = absolute_memory_note_path(&harness.memory_dir, flush_attempt);
     let note = tokio::fs::read_to_string(&note_path).await.unwrap();
     assert!(note.contains(flush_attempt.attempt_id.as_str()));
-    assert!(note.contains("crates/runtime/src/runtime/compaction.rs"));
+    assert!(note.contains("crates/agent-engine/src/runtime/compaction.rs"));
     assert_eq!(
         surfaces
             .compaction

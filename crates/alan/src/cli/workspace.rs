@@ -31,8 +31,8 @@ fn workspace_alan_dir(path: &Path) -> PathBuf {
     }
 }
 
-fn current_install_channel() -> alan_runtime::InstallChannel {
-    alan_runtime::InstallChannel::detect_current()
+fn current_install_channel() -> alan_agent_engine::InstallChannel {
+    alan_agent_engine::InstallChannel::detect_current()
 }
 
 fn count_rollout_jsonl_files(sessions_dir: &Path) -> usize {
@@ -165,7 +165,7 @@ pub fn workspace_info(workspace: &str) -> Result<()> {
         println!("  Status:     ✅ initialized");
 
         // Check for sessions
-        let sessions_dir = alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(
+        let sessions_dir = alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(
             &alan_dir,
             current_install_channel(),
         );

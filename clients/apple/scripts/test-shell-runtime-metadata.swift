@@ -3781,7 +3781,7 @@ private enum ShellRuntimeMetadataTests {
                 lastCommandExitCode: nil
             ),
             viewport: nil,
-            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            cwd: "/Users/morris/Developer/alan/crates/agent-engine",
             attention: .idle
         )
 
@@ -3824,7 +3824,7 @@ private enum ShellRuntimeMetadataTests {
                 lastCommandExitCode: nil
             ),
             viewport: nil,
-            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            cwd: "/Users/morris/Developer/alan/crates/agent-engine",
             attention: .notable
         )
         let startingPane = pane(
@@ -3838,7 +3838,7 @@ private enum ShellRuntimeMetadataTests {
                 lastCommandExitCode: nil
             ),
             viewport: nil,
-            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            cwd: "/Users/morris/Developer/alan/crates/agent-engine",
             attention: .idle
         )
 
@@ -3904,7 +3904,7 @@ private enum ShellRuntimeMetadataTests {
                 visibleExcerpt: nil,
                 lastActivityAt: nil
             ),
-            cwd: "/Users/morris/Developer/alan/crates/runtime",
+            cwd: "/Users/morris/Developer/alan/crates/agent-engine",
             attention: .notable,
             activity: staleFailure
         )

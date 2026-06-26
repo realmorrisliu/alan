@@ -7,12 +7,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alan_protocol::{
-    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
-};
-use alan_runtime::{
+use alan_agent_engine::{
     RolloutItem, RolloutRecorder, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
+};
+use alan_agent_protocol::{
+    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
 };
 use axum::{
     Json,
@@ -173,17 +173,17 @@ pub struct CreateSessionResponse {
     pub submit_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     pub execution_backend: String,
-    pub streaming_mode: alan_runtime::StreamingMode,
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -208,13 +208,13 @@ pub struct CreateSessionRequest {
     /// Optional explicit connection profile id.
     pub profile_id: Option<String>,
     /// Optional session-scoped reasoning effort override.
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     /// Optional governance override
-    pub governance: Option<alan_protocol::GovernanceConfig>,
+    pub governance: Option<alan_agent_protocol::GovernanceConfig>,
     /// Optional streaming behavior override
-    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub streaming_mode: Option<alan_agent_engine::StreamingMode>,
     /// Optional partial-stream recovery override
-    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
 }
 
 /// Create a new session
@@ -328,17 +328,17 @@ pub struct SessionInfo {
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     pub execution_backend: String,
-    pub streaming_mode: alan_runtime::StreamingMode,
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -349,17 +349,17 @@ pub struct SessionListItem {
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     pub execution_backend: String,
-    pub streaming_mode: alan_runtime::StreamingMode,
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -370,18 +370,18 @@ pub struct SessionListResponse {
 
 #[derive(Serialize)]
 pub struct ChildRunListResponse {
-    pub child_runs: Vec<alan_runtime::runtime::ChildRunRecord>,
+    pub child_runs: Vec<alan_agent_engine::runtime::ChildRunRecord>,
 }
 
 #[derive(Serialize)]
 pub struct ChildRunResponse {
-    pub child_run: alan_runtime::runtime::ChildRunRecord,
+    pub child_run: alan_agent_engine::runtime::ChildRunRecord,
 }
 
 #[derive(Deserialize, Default)]
 pub struct TerminateChildRunRequest {
     pub reason: Option<String>,
-    pub mode: Option<alan_runtime::runtime::ChildRunTerminationMode>,
+    pub mode: Option<alan_agent_engine::runtime::ChildRunTerminationMode>,
     pub actor: Option<String>,
 }
 
@@ -392,17 +392,17 @@ pub struct SessionReadResponse {
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     pub execution_backend: String,
-    pub streaming_mode: alan_runtime::StreamingMode,
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
     pub rollout_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -485,10 +485,10 @@ pub struct ForkSessionRequest {
     pub workspace_dir: Option<PathBuf>,
     pub agent_name: Option<String>,
     pub profile_id: Option<String>,
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
-    pub governance: Option<alan_protocol::GovernanceConfig>,
-    pub streaming_mode: Option<alan_runtime::StreamingMode>,
-    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    pub governance: Option<alan_agent_protocol::GovernanceConfig>,
+    pub streaming_mode: Option<alan_agent_engine::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
 }
 
 #[derive(Serialize)]
@@ -500,16 +500,16 @@ pub struct ForkSessionResponse {
     pub submit_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    pub governance: alan_protocol::GovernanceConfig,
-    pub streaming_mode: alan_runtime::StreamingMode,
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub governance: alan_agent_protocol::GovernanceConfig,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     pub durability: SessionDurabilityInfo,
 }
 
@@ -892,7 +892,7 @@ pub async fn terminate_child_run(
         .unwrap_or_else(|| "operator".to_string());
     let mode = payload
         .mode
-        .unwrap_or(alan_runtime::runtime::ChildRunTerminationMode::Graceful);
+        .unwrap_or(alan_agent_engine::runtime::ChildRunTerminationMode::Graceful);
 
     match state
         .runtime_manager
@@ -900,12 +900,12 @@ pub async fn terminate_child_run(
         .await
     {
         Ok(child_run) => Ok(Json(ChildRunResponse { child_run })),
-        Err(alan_runtime::runtime::ChildRunRegistryError::AlreadyTerminal(child_run)) => {
+        Err(alan_agent_engine::runtime::ChildRunRegistryError::AlreadyTerminal(child_run)) => {
             Ok(Json(ChildRunResponse {
                 child_run: *child_run,
             }))
         }
-        Err(alan_runtime::runtime::ChildRunRegistryError::NotFound) => Err((
+        Err(alan_agent_engine::runtime::ChildRunRegistryError::NotFound) => Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Child run not found" })),
         )),
@@ -1559,7 +1559,7 @@ pub async fn delete_session(
 /// Request body for submitting an operation
 #[derive(Deserialize)]
 pub struct SubmitRequest {
-    pub op: alan_protocol::Op,
+    pub op: alan_agent_protocol::Op,
 }
 
 /// Response for operation submission
@@ -1693,7 +1693,7 @@ pub async fn compact_session(
         Path(session_id),
         None,
         Json(SubmitRequest {
-            op: alan_protocol::Op::CompactWithOptions { focus },
+            op: alan_agent_protocol::Op::CompactWithOptions { focus },
         }),
     )
     .await?;
@@ -1717,7 +1717,7 @@ pub async fn rollback_session(
         Path(session_id),
         None,
         Json(SubmitRequest {
-            op: alan_protocol::Op::Rollback {
+            op: alan_agent_protocol::Op::Rollback {
                 turns: request.turns,
             },
         }),
@@ -1730,7 +1730,7 @@ pub async fn rollback_session(
             durable: false,
             scope: "in_memory",
         },
-        warning: alan_runtime::ROLLBACK_NON_DURABLE_WARNING.to_string(),
+        warning: alan_agent_engine::ROLLBACK_NON_DURABLE_WARNING.to_string(),
     }))
 }
 
@@ -2177,15 +2177,15 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
             RolloutItem::Message(msg) => {
                 if let Some(message) = msg.message {
                     let (role, content, tool_name) = match &message {
-                        alan_runtime::tape::Message::User { .. } => {
+                        alan_agent_engine::tape::Message::User { .. } => {
                             ("user".to_string(), message.text_content(), None)
                         }
-                        alan_runtime::tape::Message::Assistant { .. } => (
+                        alan_agent_engine::tape::Message::Assistant { .. } => (
                             "assistant".to_string(),
                             message.non_thinking_text_content(),
                             None,
                         ),
-                        alan_runtime::tape::Message::Tool { responses } => (
+                        alan_agent_engine::tape::Message::Tool { responses } => (
                             "tool".to_string(),
                             message.text_content(),
                             responses
@@ -2193,8 +2193,8 @@ fn rollout_items_to_history_messages(items: Vec<RolloutItem>) -> Vec<SessionHist
                                 .map(|response| response.id.trim().to_string())
                                 .filter(|id| !id.is_empty()),
                         ),
-                        alan_runtime::tape::Message::System { .. }
-                        | alan_runtime::tape::Message::Context { .. } => return None,
+                        alan_agent_engine::tape::Message::System { .. }
+                        | alan_agent_engine::tape::Message::Context { .. } => return None,
                     };
 
                     if content.trim().is_empty() {
@@ -2235,10 +2235,10 @@ struct JsonLikeFork {
     workspace_dir: Option<PathBuf>,
     agent_name: Option<String>,
     profile_id: Option<String>,
-    reasoning_effort: Option<alan_protocol::ReasoningEffort>,
-    governance: Option<alan_protocol::GovernanceConfig>,
-    streaming_mode: Option<alan_runtime::StreamingMode>,
-    partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    governance: Option<alan_agent_protocol::GovernanceConfig>,
+    streaming_mode: Option<alan_agent_engine::StreamingMode>,
+    partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
 }
 
 impl JsonLikeFork {
@@ -2266,7 +2266,7 @@ impl JsonLikeFork {
 }
 
 fn normalized_agent_name(agent_name: Option<String>) -> Option<String> {
-    alan_runtime::normalize_agent_name(agent_name.as_deref()).map(str::to_owned)
+    alan_agent_engine::normalize_agent_name(agent_name.as_deref()).map(str::to_owned)
 }
 
 fn normalized_skill_catalog_workspace_identifier(
@@ -2313,7 +2313,7 @@ fn validated_skill_override_agent_name(
     let Some(agent_name) = agent_name else {
         return Ok(None);
     };
-    let normalized = alan_runtime::normalize_agent_name(Some(agent_name.as_str()))
+    let normalized = alan_agent_engine::normalize_agent_name(Some(agent_name.as_str()))
         .map(str::to_owned)
         .ok_or_else(|| {
             (
@@ -2331,14 +2331,14 @@ mod tests {
 
     use super::super::state::{SessionEntry, SessionEventLog};
     use super::*;
-    use alan_protocol::{Event, Op};
-    use alan_runtime::{
+    use alan_agent_engine::{
         Config, MessageRecord,
         runtime::{
             ChildRunRecord, ChildRunStatus, RuntimeEventEnvelope, SessionDurabilityState,
             WorkspaceRuntimeConfig, global_child_run_registry,
         },
     };
+    use alan_agent_protocol::{Event, Op};
     use axum::{
         Router,
         body::{Body, to_bytes},
@@ -2389,7 +2389,7 @@ mod tests {
 
     fn test_state_with_runtime_source_and_config(
         max_concurrent_runtimes: usize,
-        core_config_source: alan_runtime::ConfigSourceKind,
+        core_config_source: alan_agent_engine::ConfigSourceKind,
         config: Config,
     ) -> AppState {
         test_state_with_runtime_source_and_config_and_registry(
@@ -2405,7 +2405,7 @@ mod tests {
 
     fn test_state_with_runtime_source_and_config_and_registry(
         max_concurrent_runtimes: usize,
-        core_config_source: alan_runtime::ConfigSourceKind,
+        core_config_source: alan_agent_engine::ConfigSourceKind,
         config: Config,
         registry: crate::registry::WorkspaceRegistry,
     ) -> AppState {
@@ -2421,7 +2421,7 @@ mod tests {
         let mut runtime_config_template = WorkspaceRuntimeConfig::from(config.clone());
         runtime_config_template.core_config_source = core_config_source;
         runtime_config_template.agent_home_paths =
-            Some(alan_runtime::AlanHomePaths::from_home_dir(&base_dir));
+            Some(alan_agent_engine::AlanHomePaths::from_home_dir(&base_dir));
         let runtime_manager = crate::daemon::runtime_manager::RuntimeManager::new(
             crate::daemon::runtime_manager::RuntimeManagerConfig {
                 max_concurrent_runtimes,
@@ -2468,7 +2468,7 @@ mod tests {
         };
         test_state_with_runtime_source_and_config_and_registry(
             10,
-            alan_runtime::ConfigSourceKind::Default,
+            alan_agent_engine::ConfigSourceKind::Default,
             test_runtime_config(),
             registry,
         )
@@ -2480,7 +2480,7 @@ mod tests {
     ) -> AppState {
         test_state_with_runtime_source_and_config(
             max_concurrent_runtimes,
-            alan_runtime::ConfigSourceKind::Default,
+            alan_agent_engine::ConfigSourceKind::Default,
             config,
         )
     }
@@ -2493,14 +2493,14 @@ mod tests {
 
     fn write_history_rollout(path: &std::path::Path, session_id: &str, content: &str) {
         let items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: session_id.to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "assistant".to_string(),
                 content: Some(content.to_string()),
                 tool_name: None,
@@ -2560,13 +2560,13 @@ Body
             None,
             None,
             "gpt-5.4".to_string(),
-            Some(alan_protocol::ReasoningEffort::Medium),
-            alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            Some(alan_agent_protocol::ReasoningEffort::Medium),
+            alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
-            alan_runtime::StreamingMode::Auto,
-            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            alan_agent_engine::StreamingMode::Auto,
+            alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
             SessionDurabilityState {
                 durable: true,
                 required: false,
@@ -2617,13 +2617,13 @@ Body
         let workspace_path = base_dir.join("workspace");
         let alan_dir = workspace_path.join(".alan");
         std::fs::create_dir_all(alan_dir.join("agents/default/skills")).unwrap();
-        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
             &alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
-        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        let memory_dir = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
             &alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::create_dir_all(&memory_dir).unwrap();
@@ -2924,7 +2924,7 @@ Body
     async fn create_session_returns_500_when_runtime_cannot_start() {
         let state = test_state_with_runtime_source_and_config(
             10,
-            alan_runtime::ConfigSourceKind::EnvOverride,
+            alan_agent_engine::ConfigSourceKind::EnvOverride,
             Config::default(),
         );
         let (status, _body) = create_session(State(state), HeaderMap::new(), Bytes::new())
@@ -3004,7 +3004,7 @@ Body
 
         assert_eq!(
             resp.reasoning_effort,
-            Some(alan_protocol::ReasoningEffort::High)
+            Some(alan_agent_protocol::ReasoningEffort::High)
         );
     }
 
@@ -3057,7 +3057,7 @@ Body
 
         assert_eq!(
             resp.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert!(!resp.durability.durable);
         assert!(!resp.durability.required);
@@ -3081,7 +3081,7 @@ Body
             .unwrap();
         assert_eq!(
             read_resp.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert!(!read_resp.durability.durable);
         assert!(!read_resp.durability.required);
@@ -3310,14 +3310,14 @@ Body
         let newer = temp.path().join("newer.jsonl");
 
         let old_items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-history".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("expected-from-stored".to_string()),
                 tool_name: None,
@@ -3326,14 +3326,14 @@ Body
             }),
         ];
         let new_items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "runtime-new".to_string(),
                 started_at: "2026-02-23T00:01:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("wrong-latest".to_string()),
                 tool_name: None,
@@ -3391,14 +3391,14 @@ Body
         std::fs::create_dir_all(&legacy_sessions_dir).unwrap();
         let rollout = legacy_sessions_dir.join("legacy-read.jsonl");
         let items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-legacy-history".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("loaded-from-stable-legacy".to_string()),
                 tool_name: None,
@@ -3630,11 +3630,11 @@ Body
         let state = test_state();
         let (entry1, _rx1) = session_entry(std::path::Path::new("/tmp/ws-a"));
         let (mut entry2, _rx2) = session_entry(std::path::Path::new("/tmp/ws-b"));
-        entry2.governance = alan_protocol::GovernanceConfig {
-            profile: alan_protocol::GovernanceProfile::Autonomous,
+        entry2.governance = alan_agent_protocol::GovernanceConfig {
+            profile: alan_agent_protocol::GovernanceProfile::Autonomous,
             policy_path: None,
         };
-        entry2.streaming_mode = alan_runtime::StreamingMode::Off;
+        entry2.streaming_mode = alan_agent_engine::StreamingMode::Off;
         {
             let mut sessions = state.sessions.write().await;
             sessions.insert("sess-b".to_string(), entry2);
@@ -3648,33 +3648,33 @@ Body
         assert!(resp.sessions.iter().all(|s| s.active));
         assert_eq!(
             resp.sessions[0].governance.profile,
-            alan_protocol::GovernanceProfile::Autonomous
+            alan_agent_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.sessions[0].streaming_mode,
-            alan_runtime::StreamingMode::Auto
+            alan_agent_engine::StreamingMode::Auto
         );
         assert!(resp.sessions[0].durability.durable);
         assert!(!resp.sessions[0].durability.required);
         assert_eq!(resp.sessions[0].governance.policy_path, None);
         assert_eq!(
             resp.sessions[0].execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert_eq!(
             resp.sessions[1].governance.profile,
-            alan_protocol::GovernanceProfile::Autonomous
+            alan_agent_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.sessions[1].streaming_mode,
-            alan_runtime::StreamingMode::Off
+            alan_agent_engine::StreamingMode::Off
         );
         assert!(resp.sessions[1].durability.durable);
         assert!(!resp.sessions[1].durability.required);
         assert_eq!(resp.sessions[1].governance.policy_path, None);
         assert_eq!(
             resp.sessions[1].execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
     }
 
@@ -3690,24 +3690,24 @@ Body
         let temp = tempfile::TempDir::new().unwrap();
         let rollout = temp.path().join("read.jsonl");
         let items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-read".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::CompactionAttempt(
-                alan_protocol::CompactionAttemptSnapshot {
+            alan_agent_engine::RolloutItem::CompactionAttempt(
+                alan_agent_protocol::CompactionAttemptSnapshot {
                     attempt_id: "attempt-read".to_string(),
                     submission_id: Some("sub-read".to_string()),
-                    request: alan_protocol::CompactionRequestMetadata {
-                        mode: alan_protocol::CompactionMode::Manual,
-                        trigger: alan_protocol::CompactionTrigger::Manual,
-                        reason: alan_protocol::CompactionReason::ExplicitRequest,
+                    request: alan_agent_protocol::CompactionRequestMetadata {
+                        mode: alan_agent_protocol::CompactionMode::Manual,
+                        trigger: alan_agent_protocol::CompactionTrigger::Manual,
+                        reason: alan_agent_protocol::CompactionReason::ExplicitRequest,
                         focus: Some("preserve tasks".to_string()),
                     },
-                    result: alan_protocol::CompactionResult::Success,
+                    result: alan_agent_protocol::CompactionResult::Success,
                     pressure_level: None,
                     memory_flush_attempt_id: None,
                     input_messages: Some(8),
@@ -3724,12 +3724,12 @@ Body
                     timestamp: "2026-02-23T00:00:00Z".to_string(),
                 },
             ),
-            alan_runtime::RolloutItem::MemoryFlushAttempt(
-                alan_protocol::MemoryFlushAttemptSnapshot {
+            alan_agent_engine::RolloutItem::MemoryFlushAttempt(
+                alan_agent_protocol::MemoryFlushAttemptSnapshot {
                     attempt_id: "flush-read".to_string(),
-                    compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
-                    pressure_level: alan_protocol::CompactionPressureLevel::Soft,
-                    result: alan_protocol::MemoryFlushResult::Success,
+                    compaction_mode: alan_agent_protocol::CompactionMode::AutoPreTurn,
+                    pressure_level: alan_agent_protocol::CompactionPressureLevel::Soft,
+                    result: alan_agent_protocol::MemoryFlushResult::Success,
                     skip_reason: None,
                     source_messages: Some(8),
                     output_path: Some(".alan/memory/daily/2026-02-23.md".to_string()),
@@ -3738,7 +3738,7 @@ Body
                     timestamp: "2026-02-23T00:00:00Z".to_string(),
                 },
             ),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
                 tool_name: None,
@@ -3785,13 +3785,13 @@ Body
         assert_eq!(resp.workspace_id, expected_workspace_id);
         assert_eq!(
             resp.governance.profile,
-            alan_protocol::GovernanceProfile::Autonomous
+            alan_agent_protocol::GovernanceProfile::Autonomous
         );
         assert_eq!(
             resp.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
-        assert_eq!(resp.streaming_mode, alan_runtime::StreamingMode::Auto);
+        assert_eq!(resp.streaming_mode, alan_agent_engine::StreamingMode::Auto);
         assert!(resp.durability.durable);
         assert!(!resp.durability.required);
         assert_eq!(
@@ -3830,14 +3830,14 @@ Body
         let rollout_name = OsString::from_vec(b"read-\xFF.jsonl".to_vec());
         let rollout_path = temp.path().join(rollout_name);
         let items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-read-non-utf8".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "assistant".to_string(),
                 content: Some("loaded-from-non-utf8-rollout".to_string()),
                 tool_name: None,
@@ -3885,14 +3885,14 @@ Body
 
         let rollout_path = sessions_dir.join("recovered.jsonl");
         let items = [
-            alan_runtime::RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            alan_agent_engine::RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-recovered".to_string(),
                 started_at: "2026-02-23T00:00:00Z".to_string(),
                 cwd: ".".to_string(),
                 model: "test-model".to_string(),
                 reasoning_effort: None,
             }),
-            alan_runtime::RolloutItem::Message(alan_runtime::MessageRecord {
+            alan_agent_engine::RolloutItem::Message(alan_agent_engine::MessageRecord {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
                 tool_name: None,
@@ -3918,15 +3918,15 @@ Body
                 session_id: "sess-recovered".to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: Some(rollout_path),
                 durability_required: Some(true),
@@ -3989,23 +3989,23 @@ Body
                 "sess-reconnect",
                 runtime_event(Event::Yield {
                     request_id: "req-mobile".to_string(),
-                    kind: alan_protocol::YieldKind::Confirmation,
+                    kind: alan_agent_protocol::YieldKind::Confirmation,
                     payload: serde_json::json!({"reason": "approve"}),
                 }),
             );
             let _ = log.append_runtime_event(
                 "sess-reconnect",
                 runtime_event(Event::CompactionObserved {
-                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                    attempt: alan_agent_protocol::CompactionAttemptSnapshot {
                         attempt_id: "attempt-reconnect".to_string(),
                         submission_id: Some("sub-test".to_string()),
-                        request: alan_protocol::CompactionRequestMetadata {
-                            mode: alan_protocol::CompactionMode::Manual,
-                            trigger: alan_protocol::CompactionTrigger::Manual,
-                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                        request: alan_agent_protocol::CompactionRequestMetadata {
+                            mode: alan_agent_protocol::CompactionMode::Manual,
+                            trigger: alan_agent_protocol::CompactionTrigger::Manual,
+                            reason: alan_agent_protocol::CompactionReason::ExplicitRequest,
                             focus: Some("preserve context".to_string()),
                         },
-                        result: alan_protocol::CompactionResult::Retry,
+                        result: alan_agent_protocol::CompactionResult::Retry,
                         pressure_level: None,
                         memory_flush_attempt_id: None,
                         input_messages: Some(10),
@@ -4061,7 +4061,7 @@ Body
         );
         assert_eq!(
             snapshot.execution.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert_eq!(
             snapshot.execution.next_action,
@@ -4113,7 +4113,7 @@ Body
         assert_eq!(snapshot.execution.next_action, None);
         assert_eq!(
             snapshot.execution.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert!(!snapshot.execution.resume_required);
         assert!(snapshot.notifications.signals.is_empty());
@@ -4134,16 +4134,16 @@ Body
             let _ = log.append_runtime_event(
                 "sess-reconnect-replay-compaction",
                 runtime_event(Event::CompactionObserved {
-                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                    attempt: alan_agent_protocol::CompactionAttemptSnapshot {
                         attempt_id: "attempt-replay".to_string(),
                         submission_id: Some("sub-replay".to_string()),
-                        request: alan_protocol::CompactionRequestMetadata {
-                            mode: alan_protocol::CompactionMode::Manual,
-                            trigger: alan_protocol::CompactionTrigger::Manual,
-                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                        request: alan_agent_protocol::CompactionRequestMetadata {
+                            mode: alan_agent_protocol::CompactionMode::Manual,
+                            trigger: alan_agent_protocol::CompactionTrigger::Manual,
+                            reason: alan_agent_protocol::CompactionReason::ExplicitRequest,
                             focus: Some("preserve replay".to_string()),
                         },
-                        result: alan_protocol::CompactionResult::Success,
+                        result: alan_agent_protocol::CompactionResult::Success,
                         pressure_level: None,
                         memory_flush_attempt_id: None,
                         input_messages: Some(6),
@@ -4235,16 +4235,16 @@ Body
             let _ = log.append_runtime_event(
                 "sess-reconnect-evicted-compaction",
                 runtime_event(Event::CompactionObserved {
-                    attempt: alan_protocol::CompactionAttemptSnapshot {
+                    attempt: alan_agent_protocol::CompactionAttemptSnapshot {
                         attempt_id: "attempt-evicted".to_string(),
                         submission_id: Some("sub-compaction".to_string()),
-                        request: alan_protocol::CompactionRequestMetadata {
-                            mode: alan_protocol::CompactionMode::Manual,
-                            trigger: alan_protocol::CompactionTrigger::Manual,
-                            reason: alan_protocol::CompactionReason::ExplicitRequest,
+                        request: alan_agent_protocol::CompactionRequestMetadata {
+                            mode: alan_agent_protocol::CompactionMode::Manual,
+                            trigger: alan_agent_protocol::CompactionTrigger::Manual,
+                            reason: alan_agent_protocol::CompactionReason::ExplicitRequest,
                             focus: Some("persist reconnect state".to_string()),
                         },
-                        result: alan_protocol::CompactionResult::Success,
+                        result: alan_agent_protocol::CompactionResult::Success,
                         pressure_level: None,
                         memory_flush_attempt_id: None,
                         input_messages: Some(9),
@@ -4326,11 +4326,11 @@ Body
             let _ = log.append_runtime_event(
                 "sess-reconnect-evicted-flush",
                 runtime_event(Event::MemoryFlushObserved {
-                    attempt: alan_protocol::MemoryFlushAttemptSnapshot {
+                    attempt: alan_agent_protocol::MemoryFlushAttemptSnapshot {
                         attempt_id: "flush-evicted".to_string(),
-                        compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
-                        pressure_level: alan_protocol::CompactionPressureLevel::Soft,
-                        result: alan_protocol::MemoryFlushResult::Success,
+                        compaction_mode: alan_agent_protocol::CompactionMode::AutoPreTurn,
+                        pressure_level: alan_agent_protocol::CompactionPressureLevel::Soft,
+                        result: alan_agent_protocol::MemoryFlushResult::Success,
                         skip_reason: None,
                         source_messages: Some(7),
                         output_path: Some(".alan/memory/daily/2026-03-17.md".to_string()),
@@ -4478,13 +4478,16 @@ Body
         assert!(info.0.active);
         assert_eq!(
             info.0.execution_backend,
-            alan_runtime::tools::active_backend_name()
+            alan_agent_engine::tools::active_backend_name()
         );
         assert_eq!(
             info.0.governance.profile,
-            alan_protocol::GovernanceProfile::Autonomous
+            alan_agent_protocol::GovernanceProfile::Autonomous
         );
-        assert_eq!(info.0.streaming_mode, alan_runtime::StreamingMode::Auto);
+        assert_eq!(
+            info.0.streaming_mode,
+            alan_agent_engine::StreamingMode::Auto
+        );
         assert!(info.0.durability.durable);
         assert!(!info.0.durability.required);
 
@@ -4494,8 +4497,8 @@ Body
             None,
             Json(SubmitRequest {
                 op: Op::Input {
-                    parts: vec![alan_protocol::ContentPart::text("hello")],
-                    mode: alan_protocol::InputMode::Steer,
+                    parts: vec![alan_agent_protocol::ContentPart::text("hello")],
+                    mode: alan_agent_protocol::InputMode::Steer,
                 },
             }),
         )
@@ -4510,8 +4513,8 @@ Body
                 .unwrap();
         match submission.op {
             Op::Input { parts, mode } => {
-                assert_eq!(alan_protocol::parts_to_text(&parts), "hello");
-                assert_eq!(mode, alan_protocol::InputMode::Steer);
+                assert_eq!(alan_agent_protocol::parts_to_text(&parts), "hello");
+                assert_eq!(mode, alan_agent_protocol::InputMode::Steer);
             }
             other => panic!("Unexpected op: {:?}", other),
         }
@@ -4728,7 +4731,7 @@ Body
         let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-source.jsonl");
         std::fs::write(
             &rollout_path,
-            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-fork-source".to_string(),
                 started_at: "2026-03-16T00:00:00Z".to_string(),
                 cwd: temp.path().display().to_string(),
@@ -4821,18 +4824,18 @@ Body
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
         let (mut entry, _submission_rx) = session_entry(temp.path());
-        entry.reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        entry.reasoning_effort = Some(alan_agent_protocol::ReasoningEffort::High);
         let sessions_dir = temp.path().join(".alan").join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-override.jsonl");
         std::fs::write(
             &rollout_path,
-            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-fork-override".to_string(),
                 started_at: "2026-03-16T00:00:00Z".to_string(),
                 cwd: temp.path().display().to_string(),
                 model: "gpt-5.4".to_string(),
-                reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
+                reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
             }))
             .unwrap()
                 + "\n",
@@ -4861,7 +4864,7 @@ Body
 
         assert_eq!(
             resp.reasoning_effort,
-            Some(alan_protocol::ReasoningEffort::Low)
+            Some(alan_agent_protocol::ReasoningEffort::Low)
         );
     }
 
@@ -4898,18 +4901,18 @@ Body
         let state = test_state();
         let temp = tempfile::TempDir::new().unwrap();
         let (mut entry, _submission_rx) = session_entry(temp.path());
-        entry.reasoning_effort = Some(alan_protocol::ReasoningEffort::High);
+        entry.reasoning_effort = Some(alan_agent_protocol::ReasoningEffort::High);
         let sessions_dir = temp.path().join(".alan").join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         let rollout_path = sessions_dir.join("rollout-20260316-sess-fork-no-override.jsonl");
         std::fs::write(
             &rollout_path,
-            serde_json::to_string(&RolloutItem::SessionMeta(alan_runtime::SessionMeta {
+            serde_json::to_string(&RolloutItem::SessionMeta(alan_agent_engine::SessionMeta {
                 session_id: "sess-fork-no-override".to_string(),
                 started_at: "2026-03-16T00:00:00Z".to_string(),
                 cwd: temp.path().display().to_string(),
                 model: "gpt-5.4".to_string(),
-                reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
+                reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
             }))
             .unwrap()
                 + "\n",
@@ -4933,7 +4936,7 @@ Body
 
         assert_eq!(
             resp.reasoning_effort,
-            Some(alan_protocol::ReasoningEffort::High)
+            Some(alan_agent_protocol::ReasoningEffort::High)
         );
     }
 
@@ -4968,7 +4971,10 @@ Body
         assert!(resp.accepted);
         assert!(!resp.durability.durable);
         assert_eq!(resp.durability.scope, "in_memory");
-        assert_eq!(resp.warning, alan_runtime::ROLLBACK_NON_DURABLE_WARNING);
+        assert_eq!(
+            resp.warning,
+            alan_agent_engine::ROLLBACK_NON_DURABLE_WARNING
+        );
 
         let submission = submission_rx.recv().await.unwrap();
         match submission.op {
@@ -5192,10 +5198,10 @@ Body
             role: "assistant".to_string(),
             content: None,
             tool_name: None,
-            message: Some(alan_runtime::tape::Message::Assistant {
+            message: Some(alan_agent_engine::tape::Message::Assistant {
                 parts: vec![
-                    alan_runtime::tape::ContentPart::thinking("internal"),
-                    alan_runtime::tape::ContentPart::text("visible"),
+                    alan_agent_engine::tape::ContentPart::thinking("internal"),
+                    alan_agent_engine::tape::ContentPart::text("visible"),
                 ],
                 tool_requests: vec![],
             }),
@@ -5273,32 +5279,35 @@ Body
             workspace_dir: Some(PathBuf::from("/tmp/ws")),
             agent_name: Some("coder".to_string()),
             profile_id: None,
-            reasoning_effort: Some(alan_protocol::ReasoningEffort::High),
-            governance: Some(alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
+            governance: Some(alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             }),
-            streaming_mode: Some(alan_runtime::StreamingMode::On),
-            partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
+            streaming_mode: Some(alan_agent_engine::StreamingMode::On),
+            partial_stream_recovery_mode: Some(alan_agent_engine::PartialStreamRecoveryMode::Off),
         }));
 
         assert_eq!(parsed.workspace_dir, Some(PathBuf::from("/tmp/ws")));
         assert_eq!(parsed.agent_name.as_deref(), Some("coder"));
         assert_eq!(
             parsed.reasoning_effort,
-            Some(alan_protocol::ReasoningEffort::High)
+            Some(alan_agent_protocol::ReasoningEffort::High)
         );
         assert_eq!(
             parsed.governance,
-            Some(alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            Some(alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
             })
         );
-        assert_eq!(parsed.streaming_mode, Some(alan_runtime::StreamingMode::On));
+        assert_eq!(
+            parsed.streaming_mode,
+            Some(alan_agent_engine::StreamingMode::On)
+        );
         assert_eq!(
             parsed.partial_stream_recovery_mode,
-            Some(alan_runtime::PartialStreamRecoveryMode::Off)
+            Some(alan_agent_engine::PartialStreamRecoveryMode::Off)
         );
     }
 
@@ -5316,8 +5325,11 @@ Body
         let parsed: SubmitRequest = serde_json::from_value(payload).unwrap();
         match parsed.op {
             Op::Input { parts, mode } => {
-                assert_eq!(mode, alan_protocol::InputMode::Steer);
-                assert_eq!(alan_protocol::parts_to_text(&parts), "legacy steer payload");
+                assert_eq!(mode, alan_agent_protocol::InputMode::Steer);
+                assert_eq!(
+                    alan_agent_protocol::parts_to_text(&parts),
+                    "legacy steer payload"
+                );
             }
             other => panic!("unexpected op: {other:?}"),
         }

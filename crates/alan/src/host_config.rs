@@ -1,4 +1,4 @@
-use alan_runtime::{AlanHomePaths, InstallChannel};
+use alan_agent_engine::{AlanHomePaths, InstallChannel};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -169,7 +169,7 @@ fn normalize_env_override(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{HostConfig, normalize_env_override};
-    use alan_runtime::InstallChannel;
+    use alan_agent_engine::InstallChannel;
     use anyhow::anyhow;
     use tempfile::TempDir;
 

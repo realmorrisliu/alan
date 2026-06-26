@@ -1,4 +1,4 @@
-use alan_protocol::{ContentPart, EventEnvelope, Op, Submission};
+use alan_agent_protocol::{ContentPart, EventEnvelope, Op, Submission};
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use reqwest::StatusCode;
@@ -289,7 +289,7 @@ impl DaemonClient {
             hydration.latest_event_id = buffer
                 .iter()
                 .rev()
-                .find(|env| matches!(&env.event, alan_protocol::Event::TurnCompleted { .. }))
+                .find(|env| matches!(&env.event, alan_agent_protocol::Event::TurnCompleted { .. }))
                 .map(|env| env.event_id.clone());
 
             // If the pending Yield is in the buffer, the drain replays it in order
@@ -300,7 +300,7 @@ impl DaemonClient {
                 && buffer.iter().any(|env| {
                     matches!(
                         &env.event,
-                        alan_protocol::Event::Yield { request_id, .. }
+                        alan_agent_protocol::Event::Yield { request_id, .. }
                             if *request_id == pending.request_id
                     )
                 })

@@ -1,4 +1,4 @@
-use alan_runtime::skills::{SkillActivationReason, SkillScope, extract_mentions, load_skill};
+use alan_agent_engine::skills::{SkillActivationReason, SkillScope, extract_mentions, load_skill};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -345,7 +345,7 @@ fn run_trigger_case(
     id: &str,
     input: &str,
     expected: bool,
-    metadata: &alan_runtime::skills::SkillMetadata,
+    metadata: &alan_agent_engine::skills::SkillMetadata,
     case_dir: &Path,
 ) -> Result<SkillEvalCaseRunSummary> {
     let activation_reason = explicit_activation_reason(metadata, input);
@@ -366,7 +366,7 @@ fn run_trigger_case(
 }
 
 fn explicit_activation_reason(
-    metadata: &alan_runtime::skills::SkillMetadata,
+    metadata: &alan_agent_engine::skills::SkillMetadata,
     input: &str,
 ) -> Option<SkillActivationReason> {
     let mentions = extract_mentions(input);

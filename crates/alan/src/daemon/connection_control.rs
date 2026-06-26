@@ -1,6 +1,6 @@
 use super::auth_control::AuthControlState;
 use crate::registry::normalize_workspace_root_path;
-use alan_runtime::{
+use alan_agent_engine::{
     AlanHomePaths, Config, ConnectionCredential, ConnectionProfile, ConnectionsFile,
     CredentialKind, LlmProvider, ProviderDescriptor, SecretStore, default_credential_backend,
     normalize_profile_settings, provider_catalog, sanitize_identifier, validate_profile_settings,
@@ -974,7 +974,7 @@ impl ConnectionControlState {
                 .status()
                 .await
                 .map_err(anyhow::Error::from)?;
-            if status.kind != alan_protocol::AuthStatusKind::LoggedIn {
+            if status.kind != alan_agent_protocol::AuthStatusKind::LoggedIn {
                 anyhow::bail!("ChatGPT profile `{profile_id}` is not logged in");
             }
         }
@@ -1090,13 +1090,13 @@ impl ConnectionControlState {
                     .await
                     .map_err(anyhow::Error::from)?;
                 let status = match snapshot.kind {
-                    alan_protocol::AuthStatusKind::LoggedOut => {
+                    alan_agent_protocol::AuthStatusKind::LoggedOut => {
                         ConnectionCredentialStatusKind::Missing
                     }
-                    alan_protocol::AuthStatusKind::LoggedIn => {
+                    alan_agent_protocol::AuthStatusKind::LoggedIn => {
                         ConnectionCredentialStatusKind::Available
                     }
-                    alan_protocol::AuthStatusKind::Pending => {
+                    alan_agent_protocol::AuthStatusKind::Pending => {
                         ConnectionCredentialStatusKind::Pending
                     }
                 };
@@ -1174,9 +1174,9 @@ impl ConnectionControlState {
         });
     }
 
-    async fn handle_auth_event(&self, event: alan_protocol::AuthEventEnvelope) {
+    async fn handle_auth_event(&self, event: alan_agent_protocol::AuthEventEnvelope) {
         match event.event {
-            alan_protocol::AuthEvent::LoginSucceeded {
+            alan_agent_protocol::AuthEvent::LoginSucceeded {
                 login_id,
                 account_id,
                 email,
@@ -1211,7 +1211,7 @@ impl ConnectionControlState {
                     }
                 }
             }
-            alan_protocol::AuthEvent::LoginFailed {
+            alan_agent_protocol::AuthEvent::LoginFailed {
                 login_id,
                 message,
                 recoverable,
@@ -1307,7 +1307,7 @@ fn validated_profile_id(profile_id: &str) -> anyhow::Result<String> {
 }
 
 fn validate_agent_config_path(path: &Path) -> anyhow::Result<()> {
-    let layout = alan_runtime::AgentRootLayout::new();
+    let layout = alan_agent_engine::AgentRootLayout::new();
     if !layout.is_default_agent_config_path_shape(path) {
         anyhow::bail!(
             "invalid agent config path {}; expected .../{}",

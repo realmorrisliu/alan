@@ -36,7 +36,7 @@ pub struct SessionBinding {
     pub created_at: String,
     /// Governance configuration
     #[serde(default)]
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     /// Selected named agent, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
@@ -45,19 +45,19 @@ pub struct SessionBinding {
     pub profile_id: Option<String>,
     /// Bound provider id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     /// Bound resolved model.
     #[serde(default)]
     pub resolved_model: String,
     /// Effective reasoning effort bound to this session, if resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     /// Per-session streaming mode override (None = runtime default/config).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub streaming_mode: Option<alan_runtime::StreamingMode>,
+    pub streaming_mode: Option<alan_agent_engine::StreamingMode>,
     /// Per-session partial stream recovery override (None = runtime default/config).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
     /// Rollout file path (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<PathBuf>,
@@ -125,8 +125,10 @@ impl SessionStore {
 
     /// Default storage directory
     fn default_storage_dir() -> Result<PathBuf> {
-        alan_runtime::AlanHomePaths::detect()
-            .map(|paths| alan_runtime::workspace_sessions_dir_from_alan_dir(&paths.alan_home_dir))
+        alan_agent_engine::AlanHomePaths::detect()
+            .map(|paths| {
+                alan_agent_engine::workspace_sessions_dir_from_alan_dir(&paths.alan_home_dir)
+            })
             .context("Cannot determine home directory")
     }
 
@@ -309,7 +311,7 @@ impl SessionStore {
         &self,
         session_id: &str,
         rollout_path: Option<PathBuf>,
-        durability: alan_runtime::runtime::SessionDurabilityState,
+        durability: alan_agent_engine::runtime::SessionDurabilityState,
     ) -> Result<()> {
         if let Some(mut binding) = self.load(session_id) {
             binding.rollout_path = rollout_path;
@@ -811,8 +813,8 @@ mod tests {
             session_id: "test-session".to_string(),
             workspace_path: PathBuf::from("/tmp/test-workspace"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            governance: alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
             agent_name: None,
@@ -846,7 +848,7 @@ mod tests {
             session_id: "exists-session".to_string(),
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -872,14 +874,14 @@ mod tests {
             session_id: "streaming-mode-session".to_string(),
             workspace_path: PathBuf::from("/tmp/test-streaming"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
             resolved_model: String::new(),
             reasoning_effort: None,
-            streaming_mode: Some(alan_runtime::StreamingMode::Off),
-            partial_stream_recovery_mode: Some(alan_runtime::PartialStreamRecoveryMode::Off),
+            streaming_mode: Some(alan_agent_engine::StreamingMode::Off),
+            partial_stream_recovery_mode: Some(alan_agent_engine::PartialStreamRecoveryMode::Off),
             rollout_path: None,
             durability_required: Some(false),
             durable: None,
@@ -889,7 +891,7 @@ mod tests {
         let loaded = store.load("streaming-mode-session").unwrap();
         assert_eq!(
             loaded.streaming_mode,
-            Some(alan_runtime::StreamingMode::Off)
+            Some(alan_agent_engine::StreamingMode::Off)
         );
     }
 
@@ -902,7 +904,7 @@ mod tests {
             session_id: "to-remove".to_string(),
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -932,7 +934,7 @@ mod tests {
             session_id: "../escape".to_string(),
             workspace_path: PathBuf::from("/tmp/test"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -962,7 +964,7 @@ mod tests {
                 session_id: format!("session-{}", i),
                 workspace_path: PathBuf::from(format!("/tmp/ws-{}", i)),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
@@ -991,7 +993,7 @@ mod tests {
             session_id: "ws-test".to_string(),
             workspace_path: workspace_path.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1019,7 +1021,7 @@ mod tests {
             session_id: "rollout-test".to_string(),
             workspace_path: PathBuf::from("/tmp/ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1052,7 +1054,7 @@ mod tests {
             session_id: "durability-test".to_string(),
             workspace_path: PathBuf::from("/tmp/ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1070,7 +1072,7 @@ mod tests {
             .update_runtime_state(
                 "durability-test",
                 Some(PathBuf::from("/tmp/runtime.jsonl")),
-                alan_runtime::runtime::SessionDurabilityState {
+                alan_agent_engine::runtime::SessionDurabilityState {
                     durable: false,
                     required: true,
                 },
@@ -1107,7 +1109,7 @@ mod tests {
                 session_id: "persistent".to_string(),
                 workspace_path: PathBuf::from("/tmp/persistent-ws"),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
@@ -1140,7 +1142,7 @@ mod tests {
             session_id: "legacy-binding".to_string(),
             workspace_path: PathBuf::from("/tmp/legacy-ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1170,7 +1172,7 @@ mod tests {
             session_id: session_id.to_string(),
             workspace_path: PathBuf::from("/tmp/atomic-ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1201,7 +1203,7 @@ mod tests {
             session_id: "valid-session".to_string(),
             workspace_path: PathBuf::from("/tmp/valid-ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1245,7 +1247,7 @@ mod tests {
             session_id: "other-session".to_string(),
             workspace_path: PathBuf::from("/tmp/other-ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,
@@ -1290,7 +1292,7 @@ mod tests {
             session_id: "outside-session".to_string(),
             workspace_path: PathBuf::from("/tmp/outside-ws"),
             created_at: chrono::Utc::now().to_rfc3339(),
-            governance: alan_protocol::GovernanceConfig::default(),
+            governance: alan_agent_protocol::GovernanceConfig::default(),
             agent_name: None,
             profile_id: None,
             provider: None,

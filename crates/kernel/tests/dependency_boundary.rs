@@ -56,9 +56,7 @@ fn kernel_does_not_declare_runtime_provider_or_renderer_crates() {
     // Crates whose presence would mean the kernel learned about agents, the
     // legacy protocol, providers, or a renderer.
     let forbidden = [
-        "alan-runtime",
         "alan-agent-engine",
-        "alan-protocol",
         "alan-agent-protocol",
         "alan-llm",
         "alan-tools",
@@ -78,8 +76,6 @@ fn kernel_does_not_declare_runtime_provider_or_renderer_crates() {
 fn kernel_source_does_not_reference_the_runtime_or_legacy_protocol() {
     // A leak would show up as a `use` of these crates or the retired ontology.
     let forbidden_tokens = [
-        "alan_runtime",
-        "alan_protocol",
         "alan_agent_engine",
         "alan_agent_protocol",
         "agent_capability",

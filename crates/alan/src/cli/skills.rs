@@ -4,11 +4,11 @@ use crate::cli::skill_authoring::{
 };
 use crate::registry::normalize_workspace_root_path;
 use crate::skill_catalog::resolve_skill_catalog_context;
-use alan_runtime::skills::{
+use alan_agent_engine::skills::{
     ResolvedSkillExecution, SkillExecutionUnresolvedReason, SkillHostCapabilities, SkillMetadata,
     SkillsRegistry, format_skill_availability_issues, list_skills, skill_availability_issues,
 };
-use alan_runtime::{
+use alan_agent_engine::{
     AgentRootKind, LoadedConfig, ResolvedAgentDefinition, WorkspaceRuntimeConfig,
     workspace_alan_dir,
 };
@@ -133,7 +133,7 @@ fn resolve_registry_with_loaded_config(
     workspace: Option<PathBuf>,
     agent_name: Option<&str>,
     loaded: LoadedConfig,
-    home_paths: Option<alan_runtime::AlanHomePaths>,
+    home_paths: Option<alan_agent_engine::AlanHomePaths>,
 ) -> Result<(
     ResolvedAgentDefinition,
     SkillsRegistry,
@@ -274,11 +274,11 @@ fn root_kind_label(kind: &AgentRootKind) -> &'static str {
     }
 }
 
-fn scope_label(scope: alan_runtime::skills::SkillScope) -> &'static str {
+fn scope_label(scope: alan_agent_engine::skills::SkillScope) -> &'static str {
     match scope {
-        alan_runtime::skills::SkillScope::Repo => "repo",
-        alan_runtime::skills::SkillScope::User => "user",
-        alan_runtime::skills::SkillScope::Builtin => "builtin",
+        alan_agent_engine::skills::SkillScope::Repo => "repo",
+        alan_agent_engine::skills::SkillScope::User => "user",
+        alan_agent_engine::skills::SkillScope::Builtin => "builtin",
     }
 }
 
@@ -322,7 +322,9 @@ fn render_skill_execution_tag(execution: &ResolvedSkillExecution) -> Option<Stri
     }
 }
 
-fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> Option<String> {
+fn render_package_exports(
+    package: &alan_agent_engine::skills::CapabilityPackage,
+) -> Option<String> {
     if package.exports.is_empty() {
         return None;
     }
@@ -358,7 +360,7 @@ fn render_package_exports(package: &alan_runtime::skills::CapabilityPackage) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_runtime::{AlanHomePaths, Config};
+    use alan_agent_engine::{AlanHomePaths, Config};
     use std::fs;
     use tempfile::TempDir;
 
@@ -400,7 +402,7 @@ Body
             LoadedConfig {
                 config: Config::default(),
                 path: None,
-                source: alan_runtime::ConfigSourceKind::Default,
+                source: alan_agent_engine::ConfigSourceKind::Default,
             },
             Some(home_paths),
         )
@@ -457,7 +459,7 @@ Body
             LoadedConfig {
                 config: Config::default(),
                 path: None,
-                source: alan_runtime::ConfigSourceKind::Default,
+                source: alan_agent_engine::ConfigSourceKind::Default,
             },
             Some(home_paths),
         )
@@ -509,7 +511,7 @@ Body
             LoadedConfig {
                 config: Config::default(),
                 path: None,
-                source: alan_runtime::ConfigSourceKind::Default,
+                source: alan_agent_engine::ConfigSourceKind::Default,
             },
             Some(home_paths),
         )

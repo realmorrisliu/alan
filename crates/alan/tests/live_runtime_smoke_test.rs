@@ -1,8 +1,8 @@
-use alan_protocol::{ContentPart, Event, Op, Submission};
-use alan_runtime::runtime::spawn_with_tool_registry;
-use alan_runtime::{
+use alan_agent_engine::runtime::spawn_with_tool_registry;
+use alan_agent_engine::{
     AlanHomePaths, Config, RuntimeEventEnvelope, ToolRegistry, WorkspaceRuntimeConfig,
 };
+use alan_agent_protocol::{ContentPart, Event, Op, Submission};
 use anyhow::{Context, Result, ensure};
 use std::env;
 use std::path::PathBuf;
@@ -257,10 +257,11 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
     first_runtime_config.default_cwd_override = Some(workspace_root.clone());
     first_runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
     first_runtime_config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path.clone()));
-    first_runtime_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
-        policy_path: None,
-    };
+    first_runtime_config.agent_config.runtime_config.governance =
+        alan_agent_protocol::GovernanceConfig {
+            profile: alan_agent_protocol::GovernanceProfile::Autonomous,
+            policy_path: None,
+        };
 
     let first_tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
     let mut first_controller = spawn_with_tool_registry(first_runtime_config, first_tools)

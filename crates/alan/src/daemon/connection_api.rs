@@ -1,4 +1,4 @@
-use alan_protocol::AuthStatusSnapshot;
+use alan_agent_protocol::AuthStatusSnapshot;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

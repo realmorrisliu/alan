@@ -42,12 +42,15 @@ fn resolve_target_path(path: Option<PathBuf>) -> Result<PathBuf> {
 /// Initialize the workspace directory structure.
 /// Returns true if the .alan directory was newly created.
 pub fn create_alan_directory(alan_dir: &Path) -> Result<bool> {
-    create_alan_directory_for_channel(alan_dir, alan_runtime::InstallChannel::detect_current())
+    create_alan_directory_for_channel(
+        alan_dir,
+        alan_agent_engine::InstallChannel::detect_current(),
+    )
 }
 
 fn create_alan_directory_for_channel(
     alan_dir: &Path,
-    channel: alan_runtime::InstallChannel,
+    channel: alan_agent_engine::InstallChannel,
 ) -> Result<bool> {
     let created = !alan_dir.exists();
     let alan_dir = ensure_workspace_alan_dir(alan_dir)?;
@@ -55,7 +58,7 @@ fn create_alan_directory_for_channel(
         .parent()
         .context("Workspace .alan directory must have a parent workspace root")?;
 
-    let layout = alan_runtime::AgentRootLayout::new();
+    let layout = alan_agent_engine::AgentRootLayout::new();
     let default_root = layout.workspace_default_root_from_alan_dir(&alan_dir);
     let _agents_dir = ensure_workspace_layout_dir(
         workspace_root,
@@ -65,18 +68,18 @@ fn create_alan_directory_for_channel(
     let _skills_dir = ensure_workspace_layout_dir(workspace_root, &default_root.skills_dir)?;
     let _sessions_dir = ensure_workspace_layout_dir(
         workspace_root,
-        &alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel),
+        &alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel),
     )?;
     let memory_dir = ensure_workspace_layout_dir(
         workspace_root,
-        &alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel),
+        &alan_agent_engine::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel),
     )?;
     let persona_dir = ensure_workspace_layout_dir(workspace_root, &default_root.persona_dir)?;
     let public_agents_dir = ensure_fixed_child_dir(workspace_root, ".agents")?;
     let _public_skills_dir = ensure_fixed_child_dir(&public_agents_dir, "skills")?;
 
-    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
-    alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
+    alan_agent_engine::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
+    alan_agent_engine::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
     Ok(created)
 }
@@ -147,7 +150,7 @@ fn init_workspace_with_registry_path(
     silent: bool,
     registry_path: Option<&Path>,
 ) -> Result<()> {
-    let alan_dir = alan_runtime::workspace_alan_dir(target_path);
+    let alan_dir = alan_agent_engine::workspace_alan_dir(target_path);
 
     // Create .alan directory structure if it doesn't already exist
     let _created = create_alan_directory(&alan_dir)?;
@@ -407,7 +410,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let alan_dir = tmp.path().join(".alan");
 
-        create_alan_directory_for_channel(&alan_dir, alan_runtime::InstallChannel::Dev).unwrap();
+        create_alan_directory_for_channel(&alan_dir, alan_agent_engine::InstallChannel::Dev)
+            .unwrap();
 
         assert!(alan_dir.join("runtime/dev/sessions").exists());
         assert!(alan_dir.join("runtime/dev/memory/MEMORY.md").exists());
@@ -421,7 +425,8 @@ mod tests {
         let alan_dir = tmp.path().join(".alan");
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
 
-        create_alan_directory_for_channel(&alan_dir, alan_runtime::InstallChannel::Stable).unwrap();
+        create_alan_directory_for_channel(&alan_dir, alan_agent_engine::InstallChannel::Stable)
+            .unwrap();
 
         assert!(alan_dir.join("memory/MEMORY.md").exists());
         assert!(!alan_dir.join("runtime/stable/memory/MEMORY.md").exists());

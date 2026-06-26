@@ -1,4 +1,4 @@
-use alan_runtime::{INSTALL_CHANNEL_ENV, InstallChannel};
+use alan_agent_engine::{INSTALL_CHANNEL_ENV, InstallChannel};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

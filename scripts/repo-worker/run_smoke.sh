@@ -36,7 +36,7 @@ case "$mode" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-package_root="$repo_root/crates/runtime/skills/repo-coding"
+package_root="$repo_root/crates/agent-engine/skills/repo-coding"
 child_root="$package_root/agents/repo-worker"
 artifact_root="$repo_root/target/repo-worker/smoke/latest"
 workspace_dir="$artifact_root/workspace"
@@ -76,7 +76,7 @@ required_files=(
 missing=0
 for rel in "${required_files[@]}"; do
     if [[ ! -f "$package_root/$rel" ]]; then
-        echo "Missing repo-worker package artifact: crates/runtime/skills/repo-coding/$rel" >&2
+        echo "Missing repo-worker package artifact: crates/agent-engine/skills/repo-coding/$rel" >&2
         missing=1
     fi
 done

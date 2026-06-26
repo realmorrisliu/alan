@@ -2,7 +2,7 @@
 //!
 //! For full runtime integration tests with mock LLM, see `smoke_test.rs`.
 
-use alan_protocol::Event;
+use alan_agent_protocol::Event;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Verify event timestamps are monotonically ordered.
@@ -33,8 +33,11 @@ fn test_event_timestamp_ordering() {
     }
 }
 
-fn create_test_event_at_time(event: Event, timestamp_ms: u64) -> alan_protocol::EventEnvelope {
-    alan_protocol::EventEnvelope {
+fn create_test_event_at_time(
+    event: Event,
+    timestamp_ms: u64,
+) -> alan_agent_protocol::EventEnvelope {
+    alan_agent_protocol::EventEnvelope {
         event_id: format!("evt_{}", uuid::Uuid::new_v4()),
         sequence: 1,
         session_id: "test".to_string(),

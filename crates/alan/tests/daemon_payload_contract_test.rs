@@ -8,9 +8,9 @@ use alan::daemon::routes::{
     ChildRunListResponse, ChildRunResponse, CreateSessionResponse, ForkSessionResponse,
     SessionDurabilityInfo, SessionListItem, SessionListResponse, SessionReadResponse,
 };
-use alan_protocol::GovernanceConfig;
-use alan_runtime::runtime::ChildRunRecord;
-use alan_runtime::{CredentialKind, LlmProvider, PartialStreamRecoveryMode, StreamingMode};
+use alan_agent_engine::runtime::ChildRunRecord;
+use alan_agent_engine::{CredentialKind, LlmProvider, PartialStreamRecoveryMode, StreamingMode};
+use alan_agent_protocol::GovernanceConfig;
 use chrono::Utc;
 use std::collections::BTreeMap;
 
@@ -91,7 +91,7 @@ fn sample_create_session_response() -> CreateSessionResponse {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
-        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
+        reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
     }
 }
@@ -110,7 +110,7 @@ fn sample_fork_session_response() -> ForkSessionResponse {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
-        reasoning_effort: Some(alan_protocol::ReasoningEffort::Low),
+        reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Low),
         durability: sample_durability(),
     }
 }
@@ -128,7 +128,7 @@ fn sample_session_list_item() -> SessionListItem {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
-        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
+        reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
     }
 }
@@ -146,7 +146,7 @@ fn sample_session_read_response() -> SessionReadResponse {
         profile_id: Some("chatgpt-main".to_string()),
         provider: Some(LlmProvider::Chatgpt),
         resolved_model: "gpt-5.3-codex".to_string(),
-        reasoning_effort: Some(alan_protocol::ReasoningEffort::Medium),
+        reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
         durability: sample_durability(),
         rollout_path: Some("/tmp/workspace/.alan/runtime/stable/sessions/sess-1.jsonl".to_string()),
         latest_compaction_attempt: None,

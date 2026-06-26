@@ -4,9 +4,9 @@
 //! all known workspaces across the filesystem. Each workspace is identified
 //! by its canonical path, with a short hash ID and user-friendly alias.
 
-use alan_runtime::AlanHomePaths;
+use alan_agent_engine::AlanHomePaths;
 #[cfg(test)]
-use alan_runtime::InstallChannel;
+use alan_agent_engine::InstallChannel;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

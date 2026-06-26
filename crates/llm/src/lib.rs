@@ -38,7 +38,7 @@
 //! }
 //! ```
 
-pub use alan_protocol::{ReasoningControls, ReasoningEffort};
+pub use alan_agent_protocol::{ReasoningControls, ReasoningEffort};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

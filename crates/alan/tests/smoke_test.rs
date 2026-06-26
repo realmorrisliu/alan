@@ -3,12 +3,12 @@
 //! These tests use MockLlmProvider to exercise the runtime without real LLM calls.
 //! Run with `cargo test -p alan --test smoke_test -- --nocapture` to see full event logs.
 
-use alan_llm::{GenerationResponse, MessageRole, MockLlmProvider, TokenUsage, ToolCall};
-use alan_protocol::{ContentPart, Event, Op, Submission};
-use alan_runtime::runtime::spawn_with_llm_client_and_tools;
-use alan_runtime::{
+use alan_agent_engine::runtime::spawn_with_llm_client_and_tools;
+use alan_agent_engine::{
     AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, spawn_with_llm_client,
 };
+use alan_agent_protocol::{ContentPart, Event, Op, Submission};
+use alan_llm::{GenerationResponse, MessageRole, MockLlmProvider, TokenUsage, ToolCall};
 use std::fs;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -223,8 +223,8 @@ async fn smoke_tool_call_flow() {
     let llm_client = LlmClient::new(mock);
     let mut config = WorkspaceRuntimeConfig::default();
     // Skip tool approval prompts in tests
-    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
+    config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     let tools = alan_tools::create_tool_registry_with_core_tools(temp.path().to_path_buf());
@@ -355,8 +355,8 @@ async fn smoke_cross_workspace_reading_surfaces_workspace_delegation_path() {
         agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
         ..WorkspaceRuntimeConfig::default()
     };
-    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
+    config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     let tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
@@ -418,7 +418,7 @@ async fn smoke_cross_workspace_reading_surfaces_workspace_delegation_path() {
             !matches!(
                 event,
                 Event::Yield {
-                    kind: alan_protocol::YieldKind::Confirmation,
+                    kind: alan_agent_protocol::YieldKind::Confirmation,
                     ..
                 }
             )
@@ -516,8 +516,8 @@ async fn smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_
         agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
         ..WorkspaceRuntimeConfig::default()
     };
-    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
+    config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     let tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
@@ -577,7 +577,7 @@ async fn smoke_colloquial_cross_repo_request_still_exposes_workspace_delegation_
             !matches!(
                 event,
                 Event::Yield {
-                    kind: alan_protocol::YieldKind::Confirmation,
+                    kind: alan_agent_protocol::YieldKind::Confirmation,
                     ..
                 }
             )
@@ -771,8 +771,8 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
         agent_home_paths: Some(AlanHomePaths::from_home_dir(temp_home.path())),
         ..WorkspaceRuntimeConfig::default()
     };
-    first_config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
+    first_config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     let first_tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
@@ -907,12 +907,12 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
     let temp_workspace = TempDir::new().expect("temp workspace");
     let workspace_root = temp_workspace.path().join("workspace");
     let workspace_alan_dir = workspace_root.join(".alan");
-    let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+    let memory_dir = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
         &workspace_alan_dir,
-        alan_runtime::InstallChannel::Stable,
+        alan_agent_engine::InstallChannel::Stable,
     );
     fs::create_dir_all(&workspace_alan_dir).expect("create workspace .alan");
-    alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)
+    alan_agent_engine::prompts::ensure_workspace_memory_layout_at(&memory_dir)
         .expect("initialize workspace memory layout");
 
     let marker = "ALAN_SMOKE_RUNTIME_MEMORY_RECALL";
@@ -1068,9 +1068,9 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         .expect("shutdown first runtime");
 
     let latest_handoff = fs::read_to_string(
-        alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .join("handoffs/LATEST.md"),
     )

@@ -3,7 +3,7 @@
 //! These tests validate event sequences produced by the runtime under
 //! different scenarios and ensure clients can handle and display them.
 
-use alan_protocol::Event;
+use alan_agent_protocol::Event;
 
 /// Scenario: normal text response
 #[test]

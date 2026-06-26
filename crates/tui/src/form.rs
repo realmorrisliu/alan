@@ -1,7 +1,7 @@
 //! Interactive multi-field form for `StructuredInput` yields, so multi-question
 //! requests are answered field-by-field instead of by hand-typed JSON.
 
-use alan_protocol::{StructuredInputKind, StructuredInputQuestion};
+use alan_agent_protocol::{StructuredInputKind, StructuredInputQuestion};
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

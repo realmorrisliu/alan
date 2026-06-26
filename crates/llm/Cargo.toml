@@ -10,7 +10,7 @@ mock = []
 
 [dependencies]
 alan-auth.workspace = true
-alan-protocol.workspace = true
+alan-agent-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true

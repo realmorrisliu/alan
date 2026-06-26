@@ -22,8 +22,8 @@ just lint         # clippy with -D warnings
 just serve        # run the daemon (cargo run -p alan -- daemon start)
 just smoke        # CI-safe mock smoke test, no LLM needed
 
-cargo test -p alan-runtime                # single crate
-cargo test -p alan-runtime test_name     # single test
+cargo test -p alan-agent-engine                # single crate
+cargo test -p alan-agent-engine test_name     # single test
 cargo test -p alan-llm --features mock   # with MockLlmProvider
 
 # macOS shell (Swift) — script-driven, no plain xcodebuild test target
@@ -41,9 +41,11 @@ Alan models agents as an **AI Turing Machine**: LLM generation is the transition
 
 Dependency order, bottom-up:
 
-- `protocol` — the "alphabet": `Event`/`EventEnvelope` (output) and `Op`/`Submission` (input). All transports speak this.
+- `ap` (`alan-ap`) — the file-service protocol (the 9P analog): `FileServer` trait, fids, byte/offset streams, wire `Request`/`Response`, in-process transport. Layer 0; no other Alan crate depends below it.
+- `kernel` (`alan-kernel`) — the Plan 9 substrate: namespace engine, process table, `/proc`, `/srv`. Depends only on `alan-ap`.
+- `agent-protocol` (`alan-agent-protocol`, formerly `protocol`/`alan-protocol`) — the agent-session "alphabet": `Event`/`EventEnvelope` (output) and `Op`/`Submission` (input). The legacy compatibility transport behind the agent runtime.
 - `llm` — `LlmProvider` trait + adapters (Anthropic, OpenAI Responses/Chat, ChatGPT managed, Gemini, OpenRouter). `MockLlmProvider` behind the `mock` feature.
-- `runtime` — the machine: agent loop, turn execution, tool orchestration, policy engine, compaction, memory, skill system, prompt assembly. Provider-agnostic and hosting-agnostic; domain concerns stay in outer crates.
+- `agent-engine` (`alan-agent-engine`, formerly `runtime`/`alan-runtime`) — the machine: agent loop, turn execution, tool orchestration, policy engine, compaction, memory, skill system, prompt assembly. Provider-agnostic and hosting-agnostic; domain concerns stay in outer crates.
 - `tools` — built-in tool implementations (read/write/edit/bash/grep/glob/list_dir) in layered profiles.
 - `tui` — Ratatui inline terminal UI talking to the daemon.
 - `alan` — the binary: clap CLI + Axum daemon (REST + WebSocket + NDJSON event streams). Route ownership contract: `crates/alan/src/daemon/api_contract.rs`.

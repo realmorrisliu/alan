@@ -172,7 +172,7 @@ fn activity_line(app: &TuiApp, label: &str) -> Line<'static> {
 fn hint_line(app: &TuiApp) -> Line<'static> {
     let hint = match &app.reducer.pending_yield {
         Some(pending)
-            if matches!(pending.kind, alan_protocol::YieldKind::Confirmation)
+            if matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation)
                 && !pending.options.is_empty() =>
         {
             let choices = pending
@@ -231,14 +231,14 @@ mod tests {
     fn renders_activity_line_during_turn() {
         let mut app = app();
         app.reducer
-            .apply_envelope(envelope(alan_protocol::Event::TurnStarted {}));
+            .apply_envelope(envelope(alan_agent_protocol::Event::TurnStarted {}));
         let buffer = render(&app);
         assert!(buffer.contains("esc to interrupt"));
         assert!(buffer.contains("claude-opus"));
     }
 
-    fn envelope(event: alan_protocol::Event) -> alan_protocol::EventEnvelope {
-        alan_protocol::EventEnvelope {
+    fn envelope(event: alan_agent_protocol::Event) -> alan_agent_protocol::EventEnvelope {
+        alan_agent_protocol::EventEnvelope {
             event_id: "e-1".into(),
             sequence: 1,
             session_id: "s-1".into(),

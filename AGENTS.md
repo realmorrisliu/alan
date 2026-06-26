@@ -29,7 +29,7 @@ comments:
 | **Skill** | A manual-like knowledge package installed into the Alan OS namespace and passed to Agent Processes by descriptor. Skills provide understanding; they do not execute. |
 | **Memory Stores** | Personal, system-continuity, app, and workspace file trees that own memory authority. Agent memory kinds such as working, episodic, semantic, and procedural describe how memory is used, not who owns it. |
 | **Alan Agent** | A built-in but optional Agent Workspace app for inspecting, steering, and organizing Agent Processes. It is not required to run agents and is not the Root Agent Process or Agent Runtime Service. |
-| **Agent Execution Engine** / `alan-runtime` | Current implementation of the agent Turing-machine loop: tape, model calls, tool compatibility, skills, policy, memory, and persistence. It backs Agent Runtime Service work; it is not Alan Kernel. Future crate name: `alan-agent-engine`. |
+| **Agent Execution Engine** / `alan-agent-engine` | Current implementation of the agent Turing-machine loop: tape, model calls, tool compatibility, skills, policy, memory, and persistence. It backs Agent Runtime Service work; it is not Alan Kernel. (Renamed from `alan-runtime`; lives in `crates/agent-engine`.) |
 | **Alan for macOS** | Native Apple host for Alan: renderer, input shell, windowing, and OS integration surface. |
 | **Alan Shell** / future `alan-shell` | The primary shell for Alan OS: a Plan 9 `rc`-like and Acme-like interaction surface for files, processes, Agent Processes, Tools, Skills, Memory Stores, and services. The current implementation path is Ratatui in `crates/tui`. |
 | **Alan Agent App Module** / future `alan-agent` | Optional workspace module that reads agent files (status, io, requests, actions, machine) as a client and renders from those files, not from core-owned view snapshots. |
@@ -48,7 +48,7 @@ OS target shape, not just the smallest local patch.
 - When touching old compatibility code, add or extract the next durable layer
   if it clarifies ownership and reduces future migration risk. For example,
   keep Alan Kernel semantics in `alan-kernel`, Agent Runtime Service and
-  AgentFS-oriented execution behind `alan-agent-engine` / `alan-runtime`, Alan
+  AgentFS-oriented execution behind `alan-agent-engine`, Alan
   Shell interaction code in `alan-shell` or `crates/tui` during migration,
   optional Alan Agent workspace code in `alan-agent`, and native host
   integration in Alan for macOS.
@@ -77,7 +77,7 @@ alan treats each Agent Process as a **Turing machine** where the LLM is the tran
 | **Side Effects**        | Spawning Tools and writing Files through descriptors        |
 | **Halt**                | No more tool calls, final text response emitted            |
 
-`alan-runtime` currently implements the Agent Execution Engine that will back
+`alan-agent-engine` currently implements the Agent Execution Engine that will back
 Agent Runtime Service work. It is the generic Turing-machine loop for Agent
 Processes, not Alan OS or Alan Kernel. Alan Kernel semantics are namespace and
 mounts, paths, files, descriptors, access rights, credentials, a single
@@ -211,7 +211,7 @@ alan/
 │   │       ├── openrouter.rs       # OpenRouter SDK-backed chat adapter
 │   │       └── anthropic_messages.rs
 │   │
-│   ├── runtime/               # Agent Execution Engine (current alan-runtime)
+│   ├── runtime/               # Agent Execution Engine (current alan-agent-engine)
 │   │   ├── prompts/           # Embedded prompt templates
 │   │   │   ├── runtime_base.md
 │   │   │   ├── system.md
@@ -347,13 +347,13 @@ alan/
 ### Crate Dependency Graph
 
 ```
-alan-protocol (base — no internal deps)
+alan-agent-protocol (base — no internal deps)
     ↑
-alan-llm (depends on alan-protocol)
+alan-llm (depends on alan-agent-protocol)
     ↑
-alan-runtime (Agent Execution Engine; depends on alan-protocol, alan-llm)
+alan-agent-engine (Agent Execution Engine; depends on alan-agent-protocol, alan-llm)
     ↑        ↑
-alan-tools   alan (depends on alan-protocol, alan-runtime)
+alan-tools   alan (depends on alan-agent-protocol, alan-agent-engine)
 ```
 
 Target crate architecture (`alan-ap`, `alan-kernel`, `servers/*`, …) is
@@ -388,7 +388,7 @@ just coverage-html      # HTML coverage report
 ```bash
 cargo build --release
 cargo test --workspace
-cargo test -p alan-runtime
+cargo test -p alan-agent-engine
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo run --bin alan
@@ -446,9 +446,9 @@ a `MockLlmProvider` behind the `mock` feature.
 cargo test --workspace
 
 # Run tests for specific crate
-cargo test -p alan-runtime
+cargo test -p alan-agent-engine
 cargo test -p alan-tools
-cargo test -p alan-protocol
+cargo test -p alan-agent-protocol
 cargo test -p alan-llm
 
 # Run with mock feature
@@ -960,7 +960,7 @@ See `docs/agents/domain.md`.
    update model metadata, and document capability degradation
 4. **Adding new tools**: Implement `Tool` trait in `crates/tools/src/`, register via `create_core_tools()`
 5. **Adding skills**: Create a directory-backed skill package under
-   `crates/runtime/skills/<skill-id>/` for first-party built-ins, use
+   `crates/agent-engine/skills/<skill-id>/` for first-party built-ins, use
    `alan skills init` for scaffolding ordinary packages, or add packages under
    an agent-root `skills/` directory / the zero-conversion public install
    directories under `.agents/skills/`. For the stable contract material, use

@@ -2,11 +2,11 @@ use crate::daemon::auth_control::AuthControlState;
 use crate::daemon::connection_control::{
     ConnectionControlState, ConnectionCurrentState, ConnectionPinScope, ConnectionPinState,
 };
-use alan_auth::ChatgptAuthConfig;
-use alan_runtime::{
+use alan_agent_engine::{
     AlanHomePaths, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
     sanitize_identifier,
 };
+use alan_auth::ChatgptAuthConfig;
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -410,7 +410,7 @@ pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
                     profile.provider.as_str()
                 );
             }
-            let store = alan_runtime::SecretStore::detect()?;
+            let store = alan_agent_engine::SecretStore::detect()?;
             let credential_id = profile
                 .credential_id
                 .as_deref()

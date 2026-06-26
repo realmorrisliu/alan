@@ -1,10 +1,10 @@
-use alan_runtime::skills::{
+use alan_agent_engine::skills::{
     CapabilityPackage, CapabilityPackageResources, CompatibleSkillMetadata, ResolvedSkillExecution,
     SkillHostCapabilities, SkillMetadata, SkillRemediation, SkillsRegistry,
     build_skill_host_capabilities, skill_availability_issues, skill_remediation,
     validate_canonical_skill_id,
 };
-use alan_runtime::{
+use alan_agent_engine::{
     AgentRootKind, Config, ResolvedAgentDefinition, ToolRegistry, WorkspaceRuntimeConfig,
 };
 use alan_tools::{create_core_tools, register_builtin_tool_catalog};
@@ -49,7 +49,7 @@ pub struct SkillCatalogSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillCatalogPackageSnapshot {
     pub id: String,
-    pub scope: alan_runtime::skills::SkillScope,
+    pub scope: alan_agent_engine::skills::SkillScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<PathBuf>,
     pub exports: SkillCatalogPackageExportsSnapshot,
@@ -66,7 +66,7 @@ pub struct SkillCatalogPackageExportsSnapshot {
 pub struct SkillCatalogChildAgentExportSnapshot {
     pub name: String,
     pub root_dir: PathBuf,
-    pub handle: alan_protocol::SpawnTarget,
+    pub handle: alan_agent_protocol::SpawnTarget,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -95,7 +95,7 @@ pub struct SkillCatalogSkillSnapshot {
     pub package_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_root: Option<PathBuf>,
-    pub scope: alan_runtime::skills::SkillScope,
+    pub scope: alan_agent_engine::skills::SkillScope,
     pub enabled: bool,
     pub allow_implicit_invocation: bool,
     #[serde(default)]
@@ -485,8 +485,8 @@ fn type_name_for_toml_value(value: &toml::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_runtime::skills::SkillScope;
-    use alan_runtime::{AgentRootPaths, AlanHomePaths, Config, ResolvedAgentRoots};
+    use alan_agent_engine::skills::SkillScope;
+    use alan_agent_engine::{AgentRootPaths, AlanHomePaths, Config, ResolvedAgentRoots};
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -559,7 +559,7 @@ interface:
             ResolvedSkillExecution::Delegate {
                 target: "repo-review".to_string(),
                 source:
-                    alan_runtime::skills::SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
+                    alan_agent_engine::skills::SkillExecutionResolutionSource::SameNameSkillAndChildAgent,
             }
         );
         assert_eq!(
@@ -606,7 +606,10 @@ interface:
             .iter()
             .find(|package| package.id == "builtin:alan-skill-creator")
             .unwrap();
-        assert_eq!(package.scope, alan_runtime::skills::SkillScope::Builtin);
+        assert_eq!(
+            package.scope,
+            alan_agent_engine::skills::SkillScope::Builtin
+        );
         assert!(
             package
                 .root_dir
@@ -637,7 +640,7 @@ interface:
             skill.execution,
             ResolvedSkillExecution::Delegate {
                 target: "skill-creator".to_string(),
-                source: alan_runtime::skills::SkillExecutionResolutionSource::ExplicitMetadata,
+                source: alan_agent_engine::skills::SkillExecutionResolutionSource::ExplicitMetadata,
             }
         );
     }
@@ -662,7 +665,10 @@ interface:
             .iter()
             .find(|package| package.id == "builtin:alan-swebench")
             .unwrap();
-        assert_eq!(package.scope, alan_runtime::skills::SkillScope::Builtin);
+        assert_eq!(
+            package.scope,
+            alan_agent_engine::skills::SkillScope::Builtin
+        );
         assert!(
             package
                 .root_dir
@@ -712,7 +718,7 @@ Body
         runtime_config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp.path()));
 
         let mut context = resolve_skill_catalog_context(&runtime_config).unwrap();
-        context.resolved.skill_overrides = vec![alan_runtime::skills::SkillOverride {
+        context.resolved.skill_overrides = vec![alan_agent_engine::skills::SkillOverride {
             skill_id: "hidden-helper".to_string(),
             enabled: Some(true),
             allow_implicit_invocation: Some(false),
@@ -886,12 +892,12 @@ enabled = true
             agent_name: None,
             config_overlay_paths: Vec::new(),
             persona_dirs: Vec::new(),
-            capability_view: alan_runtime::skills::ResolvedCapabilityView::from_package_dirs(vec![
-                alan_runtime::skills::ScopedPackageDir {
+            capability_view: alan_agent_engine::skills::ResolvedCapabilityView::from_package_dirs(
+                vec![alan_agent_engine::skills::ScopedPackageDir {
                     path: workspace_root.join(".alan/agents/default/skills"),
                     scope: SkillScope::Repo,
-                },
-            ]),
+                }],
+            ),
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
@@ -921,7 +927,7 @@ enabled = true
             agent_name: None,
             config_overlay_paths: Vec::new(),
             persona_dirs: Vec::new(),
-            capability_view: alan_runtime::skills::ResolvedCapabilityView::default(),
+            capability_view: alan_agent_engine::skills::ResolvedCapabilityView::default(),
             skill_overrides: Vec::new(),
             default_policy_path: None,
             writable_root_dir: None,
