@@ -189,6 +189,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-shell"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "alan-kernel",
+ "async-trait",
+ "tokio",
+]
+
+[[package]]
 name = "alan-shell-core"
 version = "0.1.0"
 dependencies = [
