@@ -112,6 +112,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-agentfs"
+version = "0.1.0"
+dependencies = [
+ "alan-agent-protocol",
+ "alan-ap",
+ "async-trait",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "alan-ap"
 version = "0.1.0"
 dependencies = [
