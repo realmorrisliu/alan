@@ -60,8 +60,9 @@ wire-shaped per ADR-0024 D5 (fids, byte buffers, offsets, error codes; no borrow
 or rich return types) even while v1 runs in-process.
 
 Naming rationale (supersedes the earlier `alan-fs` name): `-fs` is reserved for
-*filesystems* (`alan-procfs`, `alan-agentfs`, `alan-llmfs`, …), so the *protocol*
-must not be called `alan-fs`. aP is the analog of Plan 9's 9P; because everything
+user-space *filesystems* (`alan-agentfs`, `alan-llmfs`, …), so the *protocol*
+must not be called `alan-fs`. (The kernel-synthetic `/proc` and `/srv` are
+rendered by `alan-kernel`, not a user-space `-fs` crate.) aP is the analog of Plan 9's 9P; because everything
 is a file, aP is *the* Alan protocol, while `alan-agent-protocol` (the former
 `alan-protocol`) is a demoted legacy compatibility alphabet behind `alan-agentfs`,
 not the system protocol. aP is our own minimal protocol, not literal 9P

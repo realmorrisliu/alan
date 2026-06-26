@@ -23,25 +23,27 @@ user-space file server above the substrate, not part of the kernel.
 - **AND** it does so before the data reaches any shell or host client
 
 ### Requirement: Current sessions project into agent process file surfaces
-The compatibility projection layer SHALL register current Alan sessions as real
-kernel Processes first, and only then surface their agent overlay under `/agent`.
-A session SHALL NOT appear under `/agent` without a backing `/proc` Process —
-otherwise `/agent` would become an independent process table. It SHALL NOT
-fabricate `/proc/<pid>` entries itself; `/proc` is the kernel's source of truth,
-and `/agent/<pid>` is the overlay of that `/proc/<pid>` with the projected agent
-surfaces.
+The compatibility projection layer SHALL create the backing process for a current
+Alan session through the ordinary aP spawn path (`open /proc/clone` → write exec
+spec → `clunk`, e.g. spawning the agent executable or an exec wrapper around the
+existing engine) — there is no separate registration API — and only then surface
+its agent overlay under `/agent`. A session SHALL NOT appear under `/agent`
+without a backing `/proc` Process — otherwise `/agent` would become an independent
+process table. It SHALL NOT fabricate `/proc/<pid>` entries itself; `/proc` is the
+kernel's source of truth, and `/agent/<pid>` is the overlay of that `/proc/<pid>`
+with the projected agent surfaces.
 Session metadata SHALL project to `status`, conversation state to `io/`,
 runtime/tape state to `machine/`, yields to `requests/`, tool calls to
 `actions/`, and recovery to `machine/` checkpoints. There SHALL be no separate
-`Agent Process` kernel type; a registered session is an ordinary `Process` that
-conforms to the agent file-layout convention.
+`Agent Process` kernel type; a session's backing process is an ordinary `Process`
+that conforms to the agent file-layout convention.
 
 #### Scenario: Existing session is attached
 - **WHEN** Alan Shell or another host attaches through the current compatibility
   session path
-- **THEN** the projection layer registers (or resolves) a real kernel Process —
-  which the kernel renders in `/proc` — and serves its agent surfaces under
-  `/agent`, without fabricating `/proc` entries itself
+- **THEN** the projection layer creates (or resolves) the backing process through
+  `/proc/clone` — which the kernel renders in `/proc` — and serves its agent
+  surfaces under `/agent`, without a registration API or fabricated `/proc` entries
 - **AND** it exposes `status`, `io/`, `requests/`, `actions/`, `machine/`,
   `context/`, `children/`, and the top-level aggregate `events` stream per
   `define-agent-file-layout-contract`

@@ -35,10 +35,12 @@
 
 ## 3. Process and IO surfaces
 
-- [ ] 3.1 Register each current session as a real kernel `Process` (so the kernel
-  renders it in `/proc`; no kernel agent type) and serve its agent surface under
-  `/agent`; do not fabricate `/proc/<pid>` entries from the projection. Keep the
-  session id as an internal runtime reference, never as kernel identity.
+- [ ] 3.1 Create each session's backing process via the aP spawn path
+  (`/proc/clone` → exec spec → clunk; e.g. an exec wrapper around the engine), so
+  the kernel renders it in `/proc` (no kernel agent type, no registration API) and
+  serve its agent surface under `/agent`; do not fabricate `/proc/<pid>` entries
+  from the projection. Keep the session id as an internal runtime reference, never
+  as kernel identity.
 - [ ] 3.2 Map session metadata to a `status` file.
 - [ ] 3.3 Map conversation input/output and lifecycle to `io/input`, `io/output`,
   and `io/events` as byte/offset stream files; assistant text and thinking deltas
