@@ -1,0 +1,14 @@
+[package]
+name = "alan-kernel"
+description = "Alan Kernel — the Plan 9 substrate: namespace engine, process table, and the synthetic /proc and /srv devices. Depends only on alan-ap."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }

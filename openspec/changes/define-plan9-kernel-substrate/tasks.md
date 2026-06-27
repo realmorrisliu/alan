@@ -60,22 +60,22 @@
 
 ## 6. Namespace engine and process table (crate)
 
-- [ ] 6.1 Implement the per-process namespace: a mount table with `mount`,
+- [x] 6.1 Implement the per-process namespace: a mount table with `mount`,
   `bind`, `unmount`, union directories, and `walk` resolution.
-- [ ] 6.2 Implement namespace inheritance: a child receives a namespace
+- [x] 6.2 Implement namespace inheritance: a child receives a namespace
   constructed by its spawner and may only restrict its own view (D6).
-- [ ] 6.3 Enforce no global ambient addressing: resolution is only through the
+- [x] 6.3 Enforce no global ambient addressing: resolution is only through the
   namespace; opaque ids resolve within a namespace and are never a global
   capability (D6).
-- [ ] 6.4 Implement the process table with one `Process` category — identity,
+- [x] 6.4 Implement the process table with one `Process` category — identity,
   parentage, credentials, namespace, lifecycle, status, exit state — and no
   `Agent Process` type (D3).
-- [ ] 6.5 Keep the process table, namespaces, and fids as ephemeral runtime state
+- [x] 6.5 Keep the process table, namespaces, and fids as ephemeral runtime state
   that starts empty on restart (D7).
 
 ## 7. Synthetic devices (crate)
 
-- [ ] 7.1 Implement `/proc` as a file server rendering the process table, with
+- [x] 7.1 Implement `/proc` as a file server rendering the process table, with
   per-process `io/`, `status`, `ctl`, and standard files (D9); `/proc/<pid>` is
   the single source of truth.
 - [ ] 7.1a Implement process creation (spawn) via clone-via-open on
@@ -88,7 +88,7 @@
   open+write+clunk, no side API. Spawn is capability-preserving: reject any
   exec-spec namespace entry/descriptor the spawner could not itself open or
   delegate (no amplification; D6).
-- [ ] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
+- [x] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
   posted handles carry access rights; a process sees/mounts only permitted
   handles; a withheld service is not remountable via `/srv` (D6).
 - [ ] 7.3 Bring the kernel up with only `/proc`, `/srv`, and the namespace engine,
@@ -96,7 +96,7 @@
 
 ## 8. Keep the retired ontology out of the new crate
 
-- [ ] 8.1 Build `alan-kernel` as a new crate containing only the substrate (no
+- [x] 8.1 Build `alan-kernel` as a new crate containing only the substrate (no
   retired V1 modules such as `agent_capability`, `descriptors`,
   Object/Buffer/View/Command/Query/Subscription/Task/Artifact/Evidence, `views`,
   `ledger`, `registry`, `invocation`, or V1 `ids`). There is no current
@@ -104,14 +104,14 @@
 - [ ] 8.2 Relocate any V1 surfaces still needed during migration from the actual
   current owners (`alan-runtime`, `alan-protocol`, `crates/alan`, `crates/tui`)
   into a compat/app crate (for example `alan-compat`), never into `alan-kernel`.
-- [ ] 8.3 Extend `tests/dependency_boundary.rs` to fail if `alan-kernel` gains a
+- [x] 8.3 Extend `tests/dependency_boundary.rs` to fail if `alan-kernel` gains a
   dependency on `alan-runtime`, `alan-protocol`, provider clients, memory stores,
   sandbox backends, renderers, or async task handles — and to fail if the retired
   module names reappear (automated D9/D3 discipline).
 
 ## 9. Verification
 
-- [ ] 9.1 Run focused `cargo test -p alan-kernel`.
+- [x] 9.1 Run focused `cargo test -p alan-kernel`.
 - [ ] 9.2 Run `just verify`.
 - [ ] 9.3 Re-run `openspec validate --all --strict`.
 
