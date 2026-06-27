@@ -203,24 +203,9 @@ async fn write_without_write_intent_is_rejected() {
     .await
     .unwrap();
 
-    // No open at all: a write is denied.
-    assert_eq!(
-        t.call(Request::Write {
-            fid: Fid(70),
-            offset: 0,
-            data: b"{}".to_vec()
-        })
-        .await,
-        Err(ErrorCode::NoAccess)
-    );
-
-    // Opened read-only: still denied (cannot escalate to write).
-    t.call(Request::Open {
-        fid: Fid(70),
-        mode: OpenMode::Read,
-    })
-    .await
-    .unwrap();
+    // No open at all: a write is denied (write intent never established).
+    // (Opening the document read-only is itself rejected at open now — see
+    // `open_rejects_modes_a_node_cannot_service`.)
     assert_eq!(
         t.call(Request::Write {
             fid: Fid(70),
@@ -375,6 +360,71 @@ async fn root_fid_can_be_opened_again_after_clunk() {
     })
     .await
     .expect("root still anchors walks");
+}
+
+// §5.5 — a mode the node cannot service fails at open (dial-time), not later as a
+// misclassified success (PR #573 review).
+#[tokio::test]
+async fn open_rejects_modes_a_node_cannot_service() {
+    let t = transport();
+
+    // A read-only node opened for write fails at open.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(110),
+        names: vec!["greeting".into()],
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Open {
+            fid: Fid(110),
+            mode: OpenMode::Write
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // The write-only document opened for read fails at open.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(111),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Open {
+            fid: Fid(111),
+            mode: OpenMode::Read
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+}
+
+// §5.2 — read requires read authority from a successful read-open; bytes are not
+// served before the per-fid access intent is set (PR #573 review).
+#[tokio::test]
+async fn read_requires_read_intent() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(120),
+        names: vec!["greeting".into()],
+    })
+    .await
+    .unwrap();
+    // Reading without any open leaks no data.
+    assert_eq!(
+        t.call(Request::Read {
+            fid: Fid(120),
+            offset: 0,
+            count: 64
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
 }
 
 // §5.5 — commit-time failure: a document write commits on clunk and a malformed

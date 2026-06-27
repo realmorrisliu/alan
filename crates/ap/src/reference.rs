@@ -152,6 +152,13 @@ impl FileServer for MemFs {
         }
         let node = existing.node;
 
+        // Dial-time access check (§5.5): reject a mode the node cannot service —
+        // a write to a read-only node or a read of the write-only document fails
+        // at open, not later as a misclassified "successful" interaction.
+        if !serviceable(&state.nodes[node], mode) {
+            return Err(ErrorCode::NoAccess);
+        }
+
         // Clone-via-open: allocate a fresh connection directory under root and
         // remember its name for this fid's subsequent read.
         let clone_name = if let Node::Clone { next } = &mut state.nodes[node] {
@@ -180,6 +187,12 @@ impl FileServer for MemFs {
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
         let state = self.state.lock().await;
         let f = state.fid(fid)?;
+        // Reading needs read authority established by a successful read-open;
+        // mirror the write path so bytes are never served before the per-fid
+        // access intent is set (§5.2 / three-phase model).
+        if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
+            return Err(ErrorCode::NoAccess);
+        }
         // An opened clone fid reads back the allocated resource name.
         let bytes = if let Some(name) = &f.clone_name {
             name.clone().into_bytes()
@@ -285,5 +298,16 @@ impl FileServer for MemFs {
                 .map_err(|_| ErrorCode::BadRequest)?;
         }
         Ok(())
+    }
+}
+
+/// Whether `node` can service an open in `mode`. Read-only nodes (bytes,
+/// directories, the clone file) serve only `Read`; the write-only document
+/// serves only `Write`. Anything else is a dial-time access error, not a
+/// success that fails later.
+fn serviceable(node: &Node, mode: OpenMode) -> bool {
+    match node {
+        Node::Doc => matches!(mode, OpenMode::Write),
+        Node::Bytes(_) | Node::Dir(_) | Node::Clone { .. } => matches!(mode, OpenMode::Read),
     }
 }
