@@ -156,9 +156,13 @@ impl ProcessTable {
         self.pending.remove(&slot);
     }
 
-    /// Record a process's termination.
+    /// Record a process's termination. Terminal state is recorded once: a later
+    /// cancel/termination notification for an already-exited process is ignored,
+    /// so the real exit code is not clobbered.
     pub fn exit(&mut self, pid: Pid, code: i32) {
-        if let Some(proc) = self.processes.get_mut(&pid) {
+        if let Some(proc) = self.processes.get_mut(&pid)
+            && proc.status != Status::Exited
+        {
             proc.status = Status::Exited;
             proc.exit_code = Some(code);
         }

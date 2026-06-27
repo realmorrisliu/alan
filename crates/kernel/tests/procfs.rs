@@ -12,6 +12,20 @@ fn proc() -> ProcFs {
     ProcFs::new()
 }
 
+/// Spawn a process via clone-via-open using a distinct fid base; returns its pid.
+async fn spawn(fs: &ProcFs, clone_fid: Fid) -> String {
+    fs.walk(Fid::ROOT, clone_fid, &["clone".to_string()])
+        .await
+        .unwrap();
+    fs.open(clone_fid, OpenMode::ReadWrite).await.unwrap();
+    let pid = String::from_utf8(fs.read(clone_fid, 0, 64).await.unwrap()).unwrap();
+    fs.write(clone_fid, 0, br#"{"executable":"/bin/agent","args":[]}"#)
+        .await
+        .unwrap();
+    fs.clunk(clone_fid).await.unwrap();
+    pid
+}
+
 async fn read_at(fs: &ProcFs, names: &[&str], fid: Fid) -> Result<Vec<u8>, ErrorCode> {
     let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
     fs.walk(Fid::ROOT, fid, &names).await?;
@@ -84,4 +98,126 @@ async fn a_malformed_exec_spec_is_rejected_at_clunk_and_leaks_nothing() {
         !listing.lines().any(|l| l == pid_name),
         "rejected spawn leaks nothing"
     );
+}
+
+// /proc/<pid>/io/output is wired to the process output stream, not Unsupported:
+// reading an empty live output blocks (stream semantics) rather than erroring
+// (PR #574 review).
+#[tokio::test]
+async fn proc_output_serves_the_stream() {
+    use std::time::Duration;
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    fs.walk(Fid::ROOT, Fid(11), &[pid, "io".into(), "output".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(11), OpenMode::Read).await.unwrap();
+    // Empty output stream → the read blocks; it must NOT return Unsupported.
+    let r = tokio::time::timeout(Duration::from_millis(30), fs.read(Fid(11), 0, 64)).await;
+    assert!(
+        r.is_err(),
+        "reading io/output should block on the stream, not error"
+    );
+}
+
+// Spawning requires write intent: opening /proc/clone read-only is rejected, and
+// a ctl write needs write authority (PR #574 review).
+#[tokio::test]
+async fn write_surfaces_require_write_intent() {
+    let fs = proc();
+
+    // Read-only open of clone cannot allocate a (would-be leaked) pending slot.
+    fs.walk(Fid::ROOT, Fid(10), &["clone".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(10), OpenMode::Read).await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // ctl opened read-only cannot cancel the process.
+    let pid = spawn(&fs, Fid(20)).await;
+    fs.walk(Fid::ROOT, Fid(21), &[pid.clone(), "ctl".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(21), OpenMode::Read).await.unwrap();
+    assert_eq!(
+        fs.write(Fid(21), 0, b"cancel").await,
+        Err(ErrorCode::NoAccess)
+    );
+    // Still running — the read-only cancel did not take effect.
+    fs.walk(Fid::ROOT, Fid(22), &[pid, "status".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(22), OpenMode::Read).await.unwrap();
+    assert_eq!(
+        String::from_utf8(fs.read(Fid(22), 0, 64).await.unwrap())
+            .unwrap()
+            .trim(),
+        "running"
+    );
+}
+
+// walk rejects reused/reserved newfids; open rejects reopening a live fid — so a
+// retry cannot clobber a pending clone slot (PR #574 review).
+#[tokio::test]
+async fn fid_reuse_and_reopen_are_rejected() {
+    let fs = proc();
+    fs.walk(Fid::ROOT, Fid(10), &["clone".to_string()])
+        .await
+        .unwrap();
+    // Reusing a live fid is rejected, not a silent clobber.
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(10), &["clone".to_string()]).await,
+        Err(ErrorCode::BadRequest)
+    );
+    // Reopening a live fid before clunk is rejected.
+    fs.open(Fid(10), OpenMode::ReadWrite).await.unwrap();
+    assert_eq!(
+        fs.open(Fid(10), OpenMode::ReadWrite).await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+// The clone exec-spec write honors byte offsets, so out-of-order chunks build the
+// addressed document (PR #574 review).
+#[tokio::test]
+async fn clone_exec_spec_write_honors_offset() {
+    let fs = proc();
+    fs.walk(Fid::ROOT, Fid(10), &["clone".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(10), OpenMode::ReadWrite).await.unwrap();
+    let pid = String::from_utf8(fs.read(Fid(10), 0, 64).await.unwrap()).unwrap();
+    // Write the tail first (at offset 14), then the head (offset 0).
+    fs.write(Fid(10), 14, br#""/bin/agent","args":[]}"#)
+        .await
+        .unwrap();
+    fs.write(Fid(10), 0, br#"{"executable":"#).await.unwrap();
+    assert_eq!(fs.clunk(Fid(10)).await, Ok(()));
+    // Committed cleanly → the process is public.
+    let listing = String::from_utf8(read_at(&fs, &[], Fid(11)).await.unwrap()).unwrap();
+    assert!(
+        listing.lines().any(|l| l == pid),
+        "offset-assembled spec spawned the process"
+    );
+}
+
+// /proc/<pid>/namespace renders the process's mounted capability set
+// (PR #574 review).
+#[tokio::test]
+async fn proc_exposes_the_process_namespace() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    // The file exists and is listed in the process directory.
+    let dir = String::from_utf8(read_at(&fs, &[&pid], Fid(11)).await.unwrap()).unwrap();
+    assert!(
+        dir.lines().any(|l| l == "namespace"),
+        "namespace is listed: {dir:?}"
+    );
+    // And it reads (empty for a system-spawned process with an empty namespace).
+    read_at(&fs, &[&pid, "namespace"], Fid(12))
+        .await
+        .expect("namespace is readable");
 }

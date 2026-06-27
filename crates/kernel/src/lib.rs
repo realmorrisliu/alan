@@ -20,4 +20,4 @@ mod srvfs;
 pub use namespace::{Access, Namespace, Resolved, Unreachable};
 pub use process::{Credentials, ExecSpec, Pid, Process, ProcessTable, Status};
 pub use procfs::ProcFs;
-pub use srvfs::{SrvFs, SrvView};
+pub use srvfs::SrvFs;

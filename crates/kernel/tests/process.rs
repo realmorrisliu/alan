@@ -82,4 +82,13 @@ fn exit_records_terminal_status_and_code() {
     let proc = table.get(pid).unwrap();
     assert_eq!(proc.status, Status::Exited);
     assert_eq!(proc.exit_code, Some(0));
+
+    // A later cancel/termination must not clobber the recorded terminal status.
+    table.exit(pid, 130);
+    let proc = table.get(pid).unwrap();
+    assert_eq!(
+        proc.exit_code,
+        Some(0),
+        "terminal exit code is recorded once"
+    );
 }

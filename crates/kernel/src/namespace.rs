@@ -12,7 +12,7 @@
 //! and may only *restrict* its own view; changes never affect another
 //! namespace. Mount state is ephemeral kernel runtime state (D7).
 
-use alan_ap::{InProcessTransport, OpenMode};
+use alan_ap::{ErrorCode, InProcessTransport, OpenMode, Request, Response};
 
 /// Whether a mount grants only awareness or also authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,35 @@ pub struct Resolved {
     pub tree: InProcessTransport,
     pub rel: Vec<String>,
     pub access: Access,
+}
+
+impl Resolved {
+    /// Carry one operation to the resolved tree, enforcing the mount's access
+    /// rights: a read-only mount rejects any mutating request (open-for-write,
+    /// write, create, remove) with [`ErrorCode::NoAccess`], so awareness never
+    /// implies authority (D6). Read/walk/stat/clunk and read-opens pass through.
+    /// Callers operate through this rather than the raw `tree` so the access
+    /// boundary is enforced, not advisory.
+    pub async fn call(&self, request: Request) -> Result<Response, ErrorCode> {
+        if self.access == Access::ReadOnly && is_mutating(&request) {
+            return Err(ErrorCode::NoAccess);
+        }
+        self.tree.call(request).await
+    }
+}
+
+/// Whether a request would mutate the tree (and so requires write authority).
+fn is_mutating(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::Write { .. }
+            | Request::Create { .. }
+            | Request::Remove { .. }
+            | Request::Open {
+                mode: OpenMode::Write | OpenMode::ReadWrite,
+                ..
+            }
+    )
 }
 
 /// A resolution failure. The kernel keeps a single, namespace-scoped failure
@@ -166,6 +195,55 @@ impl Namespace {
             rel: components[mount.prefix.len()..].to_vec(),
             access: mount.access,
         })
+    }
+
+    /// A human/inspectable summary of this namespace's mounts as
+    /// `(absolute path, access)` pairs, in mount order. Used to render
+    /// `/proc/<pid>/namespace` so a process's capability set is visible there.
+    pub fn describe(&self) -> Vec<(String, Access)> {
+        self.mounts
+            .iter()
+            .map(|m| {
+                let path = if m.prefix.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{}", m.prefix.join("/"))
+                };
+                (path, m.access)
+            })
+            .collect()
+    }
+
+    /// Every mount that could serve `path`, ordered by preference: longest
+    /// matching prefix first, and among equal prefixes the most recent mount
+    /// first. A union directory (several trees at one prefix) yields several
+    /// candidates; the caller walks each in order until one resolves, so a file
+    /// present only in an earlier contributor (e.g. binfs under a `/bin` union
+    /// also fed by agent-bin) stays reachable instead of being shadowed by a
+    /// last-wins collapse.
+    pub fn resolve_candidates(&self, path: &str) -> Vec<Resolved> {
+        let components = split_path(path);
+        let mut matches: Vec<&Mount> = self
+            .mounts
+            .iter()
+            .filter(|m| is_prefix(&m.prefix, &components))
+            .collect();
+        // Longest prefix first; within equal prefix, most-recently-mounted first.
+        matches.sort_by(|a, b| {
+            b.prefix.len().cmp(&a.prefix.len()).then_with(|| {
+                let ai = self.mounts.iter().position(|m| std::ptr::eq(m, *a));
+                let bi = self.mounts.iter().position(|m| std::ptr::eq(m, *b));
+                bi.cmp(&ai)
+            })
+        });
+        matches
+            .into_iter()
+            .map(|m| Resolved {
+                tree: m.tree.clone(),
+                rel: components[m.prefix.len()..].to_vec(),
+                access: m.access,
+            })
+            .collect()
     }
 }
 

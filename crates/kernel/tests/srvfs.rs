@@ -36,27 +36,87 @@ async fn a_posted_handle_is_discoverable_and_mountable() {
 }
 
 #[tokio::test]
-async fn a_withheld_handle_is_filtered_and_not_remountable() {
+async fn a_withheld_handle_is_filtered_on_the_ap_surface_and_not_remountable() {
     let srv = SrvFs::new();
     srv.post("llm", memfs(), Access::ReadWrite).await;
     srv.post("mem", memfs(), Access::ReadOnly).await;
 
-    // A restricted child's /srv view withholds "llm".
+    // A restricted child's /srv is a real filtered file server withholding "llm".
     let denied: HashSet<String> = ["llm".to_string()].into_iter().collect();
     let view = srv.view(&denied).await;
 
     assert_eq!(
-        view.list(),
+        view.list().await,
         vec!["mem".to_string()],
-        "withheld handle is absent from the view"
+        "withheld handle absent from listing"
     );
     assert!(
-        view.lookup("mem").is_some(),
+        view.lookup("mem").await.is_some(),
         "permitted handle still mounts"
     );
     assert!(
-        view.lookup("llm").is_none(),
-        "withheld service cannot be regained via /srv"
+        view.lookup("llm").await.is_none(),
+        "withheld service not resolvable"
+    );
+
+    // Crucially, the filter holds on the aP surface the process reads: reading
+    // /srv lists only "mem", and walking the withheld handle fails.
+    view.walk(Fid::ROOT, Fid(1), &[]).await.unwrap();
+    view.open(Fid(1), OpenMode::Read).await.unwrap();
+    let listing = String::from_utf8(view.read(Fid(1), 0, 1024).await.unwrap()).unwrap();
+    assert_eq!(
+        listing.lines().collect::<Vec<_>>(),
+        vec!["mem"],
+        "aP read is filtered too"
+    );
+    assert_eq!(
+        view.walk(Fid::ROOT, Fid(2), &["llm".into()]).await,
+        Err(alan_ap::ErrorCode::NotFound),
+        "withheld handle is not walkable over aP"
+    );
+}
+
+#[tokio::test]
+async fn srv_walk_binds_fids_and_handles_get_unique_qids() {
+    let srv = SrvFs::new();
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    srv.post("mem", memfs(), Access::ReadOnly).await;
+
+    // Walking a handle binds the fid to that handle; reading it returns the
+    // handle name (not the root listing), and the qids are distinct per handle.
+    let llm_qid = srv.walk(Fid::ROOT, Fid(1), &["llm".into()]).await.unwrap();
+    let mem_qid = srv.walk(Fid::ROOT, Fid(2), &["mem".into()]).await.unwrap();
+    assert_ne!(
+        llm_qid.path, mem_qid.path,
+        "distinct handles get distinct qids"
+    );
+
+    srv.open(Fid(1), OpenMode::Read).await.unwrap();
+    let bytes = srv.read(Fid(1), 0, 64).await.unwrap();
+    assert_eq!(
+        String::from_utf8(bytes).unwrap(),
+        "llm",
+        "the handle fid reads its own entry"
+    );
+}
+
+#[tokio::test]
+async fn reposting_a_name_replaces_the_stale_handle() {
+    let srv = SrvFs::new();
+    srv.post("llm", memfs(), Access::ReadOnly).await;
+    // A restart re-posts the same name with new access; it supersedes, not dupes.
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+
+    assert_eq!(
+        srv.list().await,
+        vec!["llm".to_string()],
+        "one entry per name"
+    );
+    let (_tree, access) = srv.lookup("llm").await.unwrap();
+    assert_eq!(
+        access,
+        Access::ReadWrite,
+        "lookup returns the current handle, not the stale one"
     );
 }
 

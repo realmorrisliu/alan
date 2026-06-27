@@ -7,11 +7,153 @@
 use std::sync::Arc;
 
 use alan_ap::reference::MemFs;
-use alan_ap::{Fid, InProcessTransport, OpenMode, Request, Response};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Request,
+    Response, Stat,
+};
 use alan_kernel::{Access, Namespace};
 
 fn memfs() -> InProcessTransport {
     InProcessTransport::new(Arc::new(MemFs::new()))
+}
+
+/// A server with no files — every walk fails. Used to model a union contributor
+/// that does not hold the requested file.
+struct EmptyFs;
+
+#[async_trait::async_trait]
+impl FileServer for EmptyFs {
+    async fn walk(&self, _: Fid, _: Fid, _: &[String]) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn open(&self, _: Fid, _: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn read(&self, _: Fid, _: Offset, _: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn write(&self, _: Fid, _: Offset, _: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn stat(&self, _: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+    async fn clunk(&self, _: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+fn emptyfs() -> InProcessTransport {
+    InProcessTransport::new(Arc::new(EmptyFs))
+}
+
+// §2.5a / D6 — a read-only mount enforces awareness-only: mutating calls through
+// the resolved handle are denied, not merely advisory (PR #574 review).
+#[tokio::test]
+async fn read_only_mount_enforces_access_on_calls() {
+    let mut ns = Namespace::new();
+    ns.mount("/lib", memfs(), Access::ReadOnly);
+    ns.mount("/mnt/llm", memfs(), Access::ReadWrite);
+
+    let ro = ns.resolve("/lib/submit").unwrap();
+    // Read-opens and reads pass through.
+    ro.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(1),
+        names: vec!["greeting".into()],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        ro.call(Request::Open {
+            fid: Fid(1),
+            mode: OpenMode::Read
+        })
+        .await,
+        Ok(Response::Open { .. })
+    ));
+    // Mutating calls are rejected by the mount, before reaching the tree.
+    assert_eq!(
+        ro.call(Request::Open {
+            fid: Fid(2),
+            mode: OpenMode::Write
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        ro.call(Request::Write {
+            fid: Fid(1),
+            offset: 0,
+            data: b"x".to_vec()
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // A read-write mount allows the same mutating call to reach the tree.
+    let rw = ns.resolve("/mnt/llm/submit").unwrap();
+    rw.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(3),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        rw.call(Request::Open {
+            fid: Fid(3),
+            mode: OpenMode::Write
+        })
+        .await,
+        Ok(Response::Open { .. })
+    ));
+}
+
+// A union directory's earlier contributor stays reachable: resolve_candidates
+// returns every contributor so the caller can search past a last-mounted tree
+// that lacks the file (PR #574 review).
+#[tokio::test]
+async fn resolve_candidates_searches_union_contributors() {
+    let mut ns = Namespace::new();
+    ns.mount("/bin", memfs(), Access::ReadOnly); // earlier: has "greeting"
+    ns.mount("/bin", emptyfs(), Access::ReadOnly); // later: has nothing
+
+    let candidates = ns.resolve_candidates("/bin/greeting");
+    assert_eq!(candidates.len(), 2, "both union contributors are returned");
+    for c in &candidates {
+        assert_eq!(c.rel, vec!["greeting".to_string()]);
+    }
+
+    // Walking the most-recent (empty) candidate fails; the earlier one resolves —
+    // so the file is reachable instead of shadowed by last-wins.
+    assert!(
+        candidates[0]
+            .tree
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(1),
+                names: vec!["greeting".into()]
+            })
+            .await
+            .is_err(),
+        "the last-mounted contributor lacks the file"
+    );
+    candidates[1]
+        .tree
+        .call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(2),
+            names: vec!["greeting".into()],
+        })
+        .await
+        .expect("an earlier contributor still serves the file");
 }
 
 #[tokio::test]
