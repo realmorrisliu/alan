@@ -25,6 +25,21 @@
 - [x] 1.14 Add an `io/output` completeness invariant (append-only, offset-
   resumable, tail-reachable) so newest output is never a data gap.
 
+## 1a. Access discipline (consolidated from D7–D12 + external-writers)
+
+- [x] 1a.1 Define `ctl` scoping: one `ctl` per lifecycle-bearing object
+  (`/proc/<pid>/ctl` generic, `machine/ctl` runtime), no global/per-leaf `ctl`;
+  leaf state (`machine/status`, `requests/<id>/status`) is read-only.
+- [x] 1a.2 Define `machine/tape`/`events` append-only and the generation
+  exclusive-write tape lease (one writer, open readers; amend-window is the yield).
+- [x] 1a.3 Define actor-keyed write authority and extension-by-interpose (the iron
+  law: who-may-{read,write,mount,interpose}, no out-of-band API).
+- [x] 1a.4 Define the external-writer prerequisite: no non-engine writer until the
+  tape lease is enforced at the aP protocol layer (folds in the retired
+  `add-external-namespace-writers` requirement).
+- [x] 1a.5 Define the in-band self-describing namespace (per-stream record
+  vocabulary + `ctl`-help; minimal form, expanded incrementally).
+
 ## 2. Verification
 
 - [x] 2.1 Run `openspec validate define-agent-file-layout-contract --strict`.

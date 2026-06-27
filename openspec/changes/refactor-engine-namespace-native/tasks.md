@@ -50,23 +50,22 @@
   structured `requests/<id>/options`. These land once the engine drives the
   writes and the record kinds exist.
 
-## 4a. Access discipline on the agent files (D7–D10)
+## 4a. Access discipline — owned by the file-layout contract
 
-- [x] 4a.1 Remove control-as-side-effect: writing `requests/<id>/response` no longer
-  flips status to `answered`; add `requests/<id>/ctl` (answer verb) and `machine/ctl`
-  (lifecycle verbs: interrupt/pause/resume over a fixed vocabulary); demote
-  `machine/status` to read-only state. TDD that a data write performs no operation. (D7)
-  Done in `alan-agentfs` (#576): data/ctl split landed; `machine/status` read-only;
-  `requests/<id>/status` read-only (settled only via ctl).
-- [ ] 4a.2 Gate tape writes by run-state: the generating engine holds an exclusive
-  write lease on `machine/tape` (lean: aP-layer `DMEXCL` open); enforce
-  `machine/tape` and `events` append-only; a second writer mid-generation is
-  refused. TDD the concurrent-writer case. (D8)
-- [ ] 4a.3 Add in-band self-description: a documented record vocabulary per stream
-  and a `ctl`-help/`man` the engine can read as prose; minimal form first. (D9)
-- [ ] 4a.4 Reshape `is_writable(node)` into `access(node, run_state, actor)`,
-  leaving the actor/capability seam the iron law needs; restate
-  convention-vs-isolation pending the kernel §7.1a amplification check. (D10)
+The agent-file access discipline (`ctl` roles/scoping, the `machine/tape`
+generation lease, append-only tape/events, actor-keyed authority + interpose, the
+external-writer protocol-layer prerequisite, self-description) is **specified in
+`define-agent-file-layout-contract`, not here.** This change only has to honor it:
+
+- [x] 4a.1 The agentfs file surface (#576) conforms to the contract: answering is
+  a `requests/<id>/response` write committed on clunk (rejected if terminal),
+  `machine/ctl` carries agent-runtime tape commands (`compact`/`rollback`),
+  generic lifecycle control is the kernel `/proc/<pid>/ctl`, and
+  `machine/status`/`requests/<id>/status` are read-only state.
+- [ ] 4a.2 When the engine drives tape writes (D4), honor the contract's
+  GENERATING exclusive-write lease on `machine/tape` (one writer, open readers;
+  append-only). The aP-layer promotion of the lease before the first external
+  writer is owned by the future external-writers work, not here.
 
 ## 5. M2 — a real conversation through files (D1+D2+D4)
 

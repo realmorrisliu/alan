@@ -97,64 +97,21 @@ D1+D2+D4. *Alternative*: feature-flag old vs new — rejected for the live model
 (a flagged bridge is still a bridge); test doubles (in-memory aP servers) provide
 the safety net instead.
 
-### Access discipline (the namespace's own law)
+### Access discipline is owned by the agent file-layout contract
 
-D1–D6 decide *what becomes a file*. D7–D10 decide *the discipline those files
-obey*, so that "the agent's state is files" does not quietly re-introduce the
-side-channels the Plan 9 model exists to remove. The governing constraint (the
-*iron law*) is: **every behavior change or extension SHALL be expressible as a file
-operation or a mount/interpose on the namespace — never an out-of-band API.** An
-audit of the current `agentfs` surface found three deviations this change must not
-cement: control smuggled into a data write (writing `requests/<id>/response` flips
-status to `answered`), `machine/status` as free-text doubling as lifecycle control,
-and no control plane for interrupt/pause/resume at all.
+The namespace's access discipline — `ctl` role/scoping, the `machine/tape`
+generation lease, append-only tape/events, actor-keyed write authority, the
+interpose extension seam, the external-writer protocol-layer prerequisite, and
+self-description — is **not** specified here. It is consolidated in
+`define-agent-file-layout-contract` (the single authoritative file-surface
+contract). This change implements the engine *against* that contract; it does not
+redefine the file surface.
 
-### D7. Control, state, and notification are three separate file roles
-
-State is read from `data`/field files; an operation is a write to a `ctl` file; a
-notification is an append to an `events` stream. A write to a state file SHALL NOT
-perform an operation as a side effect. Concretely: answering a yield becomes
-`requests/<id>/ctl <- answer` (not a side effect of writing `response`), and
-lifecycle transitions become verbs on `machine/ctl` over a fixed vocabulary
-(`interrupt`/`pause`/`resume`), with `machine/status` demoted to read-only state.
-*Why now*: this change writes the engine→file paths for the first time; baking in
-the data/ctl split here avoids cementing the side-channel shape the iron law
-forbids. *Alternative*: keep status/response overloaded — rejected, a control
-side-channel disguised as a field.
-
-### D8. Access is gated by the agent's run-state, not statically by node
-
-`is_writable(node)` becomes `access(node, run_state, actor)`. While the agent is
-GENERATING, `machine/tape` is held under an *exclusive-write* lease by the generator
-(one writer, open to readers — not Plan 9 `DMEXCL`, which would also exclude the
-consumers tailing the tape) so no second writer can splice the tape mid-stream;
-`machine/tape` and `events` are append-only by policy, not merely by absent
-capability. The lease's enforcement layer is decided in D12. The safe
-window for a human/extension to amend tape or context is the YIELDED/paused state —
-which is exactly the existing recoverable-Yield point where control returns to a
-consumer. *Scope note*: the run-state→access matrix and the GENERATING tape lease
-are load-bearing for M2 (the moment a live writer exists) and are in-scope; the
-human-edit-on-yield *surfacing* is stated as the contract but staged to a follow-on.
-
-### D9. The namespace is self-describing, because the agent is a consumer
-
-Because the agent (an LLM) itself reads and writes these files to think, each node
-SHALL expose its byte contract in-band — a `man`/`ctl`-help the engine can read as
-prose — rather than the contract living only in Rust doc-comments and specs. This
-is the one place the Plan 9 "files + out-of-band man pages" model improves on its
-ancestor: the consumer reads prose, so the manual ships inside the namespace.
-*Scope note*: principle adopted now; minimal form is a documented record vocabulary
-per stream, expanded incrementally.
-
-### D10. Permission carries an actor dimension; the iron law needs the seam
-
-Write authority is keyed to the actor (agent / parent / human / interposing
-extension) and the agent's mounted capabilities, not a global property of the node.
-This is the seam the iron law requires: an extension changes behavior by
-interposing a file server on the namespace, governed by who-may-{read,write,mount,
-interpose}, never by a private API. Cross-actor enforcement leans on the kernel's
-deferred §7.1a amplification check (ADR-0024 R1); until it lands the boundary is
-convention-enforced, which this change restates, not claims to isolate.
+Earlier drafts of this change carried a conflicting D7 shape (answer via
+`requests/<id>/ctl`, lifecycle verbs on `machine/ctl`). That shape is superseded:
+answering is a `requests/<id>/response` write committed on clunk, generic
+lifecycle control is the kernel `/proc/<pid>/ctl`, and `machine/ctl` carries
+agent-runtime tape/checkpoint commands (`compact`/`rollback`).
 
 ## Risks / Trade-offs
 
@@ -173,12 +130,12 @@ convention-enforced, which this change restates, not claims to isolate.
   §7.1a amplification check; until that lands, the boundary is convention-
   enforced (ADR-0024 R1), which this change must restate, not claim hard
   isolation.
-- **Access discipline (D7–D10) could balloon the rewrite** → only the data/ctl
-  split (D7) and the GENERATING tape lease (D8) are load-bearing for M2 and stay
-  in-scope; self-description (D9) is incremental and cross-actor permission (D10)
-  rides the deferred kernel check. If D7–D10 threaten M2, split the
-  human-edit/interpose *surfacing* into a follow-on change rather than blocking the
-  talking-agent spine.
+- **Access discipline could balloon the rewrite** → the discipline now lives in
+  `define-agent-file-layout-contract`, not here. Of it, only the GENERATING
+  `machine/tape` exclusive-write lease is load-bearing for M2 (the moment a live
+  writer exists) and must be honored by the engine's writes; the human-edit and
+  interpose surfaces are deferred follow-ons and do not block the talking-agent
+  spine.
 
 ## Migration Plan
 
@@ -205,9 +162,3 @@ convention-enforced, which this change restates, not claims to isolate.
 - How much of the current `Tape`/compaction logic stays in-engine vs becomes
   views over `machine/tape`? Compaction-as-view is the target; scope the first
   pass to writing the tape, keep compaction in-engine initially.
-- Does the `ctl` vocabulary live per-node (each writable file has its own verbs) or
-  split as `machine/ctl` for lifecycle plus per-container ctl for requests/actions?
-  Leaning: lifecycle on `machine/ctl`, answering on `requests/<id>/ctl`.
-- Is the GENERATING tape lease modeled as a Plan 9 `DMEXCL` exclusive open at the
-  aP layer, or as a run-state check inside agentfs? Leaning aP-layer exclusive open
-  so the guarantee is structural, not a per-server convention.
