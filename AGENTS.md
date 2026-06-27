@@ -196,7 +196,7 @@ alan/
 ├── clippy.toml                # Lint configuration
 ├── .tarpaulin.toml            # Code coverage config
 ├── crates/
-│   ├── protocol/              # Event/Op protocol (the "alphabet")
+│   ├── agent-protocol/        # Event/Op protocol (the "alphabet")
 │   │   └── src/
 │   │       ├── lib.rs         # Re-exports
 │   │       ├── event.rs       # Event, EventEnvelope (turn/text/thinking/tool/yield/plan/compaction/error)
