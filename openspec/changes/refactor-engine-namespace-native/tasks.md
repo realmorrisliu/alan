@@ -42,6 +42,12 @@
 - [x] 4.4 TDD: reading the agent's files reflects engine state directly, with no
   event-projection step.
 
+- [ ] 4.5 Engine-wiring follow-ons for agentfs surfaces (deferred from the
+  agentfs rework): per-container `requests/events` + `actions/events` streams,
+  `io/events` scoped to IO-only lifecycle records (vs the aggregate), and
+  structured `requests/<id>/options`. These land once the engine drives the
+  writes and the record kinds exist.
+
 ## 5. M2 — a real conversation through files (D1+D2+D4)
 
 - [ ] 5.1 Spawn an agent process via `/proc/clone` with a namespace mounting an
