@@ -211,7 +211,7 @@ alan/
 │   │       ├── openrouter.rs       # OpenRouter SDK-backed chat adapter
 │   │       └── anthropic_messages.rs
 │   │
-│   ├── runtime/               # Agent Execution Engine (current alan-agent-engine)
+│   ├── agent-engine/          # Agent Execution Engine (alan-agent-engine)
 │   │   ├── prompts/           # Embedded prompt templates
 │   │   │   ├── runtime_base.md
 │   │   │   ├── system.md

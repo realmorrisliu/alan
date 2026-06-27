@@ -260,13 +260,13 @@ Coding launches do not implicitly inherit:
 
 ### Requirement: Repo-coding package owns first-party worker implementation
 alan SHALL keep the first-party repo worker under the package-native
-`crates/runtime/skills/repo-coding/` path and SHALL NOT keep duplicate
+`crates/agent-engine/skills/repo-coding/` path and SHALL NOT keep duplicate
 top-level staging copies as product boundaries.
 
 Target package layout:
 
 ```text
-crates/runtime/skills/repo-coding/
+crates/agent-engine/skills/repo-coding/
 |-- SKILL.md
 |-- skill.yaml
 |-- references/
@@ -299,7 +299,7 @@ Package roles:
 #### Scenario: Docs name the repo-worker implementation
 - **WHEN** docs describe the first-party repo-worker package, child launch
   root, micro-skills, scripts, evals, or harness entrypoints
-- **THEN** they point to `crates/runtime/skills/repo-coding/` and the relevant
+- **THEN** they point to `crates/agent-engine/skills/repo-coding/` and the relevant
   OpenSpec owners rather than a historical top-level staging copy
 
 ### Requirement: Coding governance separates steward and repo-worker fast paths
@@ -458,7 +458,7 @@ Validation ladder:
    restart recovery, irreversible-effect dedupe continuity, and governance
    boundary coverage.
 3. **Package-local benchmark scaffold** lives under
-   `crates/runtime/skills/repo-coding/evals/evals.json` and covers activation
+   `crates/agent-engine/skills/repo-coding/evals/evals.json` and covers activation
    selection, bounded single-repo routing, multi-repo steward-owned cases, and
    owner-boundary escalation cases.
 4. **External benchmark adapters** transform outside task corpora into
@@ -485,13 +485,13 @@ Minimum executable surfaces:
 
 1. `bash scripts/harness/run_coding_steward_suite.sh`
 2. `bash scripts/harness/run_repo_worker_suite.sh`
-3. `cargo run -p alan -- skills eval crates/runtime/skills/repo-coding`
+3. `cargo run -p alan -- skills eval crates/agent-engine/skills/repo-coding`
 
 First external benchmark operator-run surfaces:
 
-1. `bash crates/runtime/skills/swebench/scripts/run_swebench_full_steward_case.sh <case-json>`
-2. `bash crates/runtime/skills/swebench/scripts/run_swebench_full_steward_subset.sh <suite-json>`
-3. `bash crates/runtime/skills/swebench/scripts/score_swebench_predictions.sh <predictions-jsonl>`
+1. `bash crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_case.sh <case-json>`
+2. `bash crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_subset.sh <suite-json>`
+3. `bash crates/agent-engine/skills/swebench/scripts/score_swebench_predictions.sh <predictions-jsonl>`
 
 Shared KPI fields:
 

@@ -3,7 +3,7 @@
   "category": "repo_worker",
   "description": "Validate repo-worker delivery-contract fixtures for verification honesty and behavior-preserving reporting rules.",
   "blocking": true,
-  "command": "bash crates/runtime/skills/repo-coding/scripts/check_delivery_contract_examples.sh",
+  "command": "bash crates/agent-engine/skills/repo-coding/scripts/check_delivery_contract_examples.sh",
   "assertions": [
     "valid fixtures cover mixed and environment-blocked verification outcomes",
     "dishonest passed-with-failed-exit fixtures are rejected",

@@ -3,7 +3,7 @@
   "category": "coding_steward",
   "description": "Validate the steward records delegated child outcomes through bounded rollout metadata instead of importing the full child transcript.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call --lib -- --exact && cargo test -p alan-runtime runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload --lib -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call --lib -- --exact && cargo test -p alan-agent-engine runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload --lib -- --exact",
   "assertions": [
     "delegated tool calls produce successful rollout records",
     "preview text and persisted payload stay bounded",

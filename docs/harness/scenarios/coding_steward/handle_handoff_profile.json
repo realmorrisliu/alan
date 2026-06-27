@@ -3,7 +3,7 @@
   "category": "coding_steward",
   "description": "Validate the steward default handoff stays non-inheriting while explicit bound handles remain available when requested.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::child_agents::tests::spawn_child_runtime_defaults_to_exec_like_non_inheritance --lib -- --exact && cargo test -p alan-runtime runtime::child_agents::tests::spawn_child_runtime_binds_requested_parent_handles --lib -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::child_agents::tests::spawn_child_runtime_defaults_to_exec_like_non_inheritance --lib -- --exact && cargo test -p alan-agent-engine runtime::child_agents::tests::spawn_child_runtime_binds_requested_parent_handles --lib -- --exact",
   "assertions": [
     "default child launches omit parent conversation, plan, and tool-result snapshots",
     "explicit handle requests project bounded parent context into the child prompt",
