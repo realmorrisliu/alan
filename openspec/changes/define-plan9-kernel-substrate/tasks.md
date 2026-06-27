@@ -30,31 +30,31 @@
 
 ## 5. aP protocol crate (`alan-ap`)
 
-- [ ] 5.0 Create the standalone `alan-ap` crate (ADR-0025 D2) — the aP protocol
+- [x] 5.0 Create the standalone `alan-ap` crate (ADR-0025 D2) — the aP protocol
   (9P analog) — with no alan-specific dependencies; `alan-kernel` depends on it.
-- [ ] 5.1 Define the `FileServer` trait over fids: `walk`, `open`, `read`,
+- [x] 5.1 Define the `FileServer` trait over fids: `walk`, `open`, `read`,
   `write`, `stat`, `create`, `remove`, `clunk`. Inputs/outputs are paths/fids,
   byte buffers, offsets, and error codes only — no borrows, no rich return types
   (D5, wire-shaped).
-- [ ] 5.2 Define the fid lifecycle: a fid is a handle to one interaction;
+- [x] 5.2 Define the fid lifecycle: a fid is a handle to one interaction;
   `walk`/`open` allocate it, `clunk` releases it, and `open` MAY have allocation
   side effects (see clone-via-open, 5.5). Each `open` yields an independent fid so
   concurrent callers do not interfere.
-- [ ] 5.3 Define a byte/offset stream file kind with retained history: `read`
+- [x] 5.3 Define a byte/offset stream file kind with retained history: `read`
   blocks until new bytes are available, resumes from a caller-held offset, and
   retains records up to a server policy so a reconnecting reader neither misses
   nor mis-replays (D8). No separate notification primitive.
-- [ ] 5.4 Define clone-via-open: opening a `clone` file allocates a new resource
+- [x] 5.4 Define clone-via-open: opening a `clone` file allocates a new resource
   (for example a connection directory) and returns its name/handle — an
   open-with-allocation convention, not a new operation. (Used by `alan-llmfs`
   Generations.)
-- [ ] 5.5 Define the three-phase error model: dial-time failures (no access, rate
+- [x] 5.5 Define the three-phase error model: dial-time failures (no access, rate
   limited, not found) return an `open` error; commit-time failures (malformed/
   truncated request at `clunk`) return a `write`/`clunk` error and start nothing;
   mid-interaction failures surface as a terminal error record in the stream.
-- [ ] 5.6 Implement the in-process fast-path transport that dispatches aP calls
+- [x] 5.6 Implement the in-process fast-path transport that dispatches aP calls
   without serialization, so high-rate streams pay no protocol cost.
-- [ ] 5.7 Add a serialization round-trip test over the aP wire shape to prove a
+- [x] 5.7 Add a serialization round-trip test over the aP wire shape to prove a
   dumb byte transport could carry every operation unchanged (guards the D5
   discipline before any wire transport exists).
 

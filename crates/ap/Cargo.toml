@@ -1,0 +1,14 @@
+[package]
+name = "alan-ap"
+description = "aP — Alan's 9P-analog file-service protocol (FileServer trait, fids, byte/offset streams, in-process transport)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
