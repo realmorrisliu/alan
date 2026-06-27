@@ -1,6 +1,6 @@
 [package]
 name = "alan-agentfs"
-description = "alan-agentfs — the projection file server that maps the Agent Execution Engine's session/event stream onto the agent file layout served at /agent (the alan-agent-adapter-contract)."
+description = "alan-agentfs — the agent file server: the read-write file backing of the agent process's own state, served at /agent (the alan-agent-adapter-contract). aP-only; no EventEnvelope on the live path."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,7 +8,5 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
-alan-agent-protocol.workspace = true
 async-trait.workspace = true
-serde_json.workspace = true
 tokio = { workspace = true }

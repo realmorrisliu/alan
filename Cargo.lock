@@ -115,10 +115,8 @@ dependencies = [
 name = "alan-agentfs"
 version = "0.1.0"
 dependencies = [
- "alan-agent-protocol",
  "alan-ap",
  "async-trait",
- "serde_json",
  "tokio",
 ]
 
