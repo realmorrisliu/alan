@@ -3,7 +3,7 @@
   "category": "governance",
   "description": "Validate unknown side-effect status triggers confirmation boundary and avoids recovery bypass.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::tool_orchestrator::tests::test_unknown_effect_status_escalates_without_execution -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::tool_orchestrator::tests::test_unknown_effect_status_escalates_without_execution -- --exact",
   "assertions": [
     "unknown effect status does not auto-execute",
     "confirmation yield is emitted for boundary handoff",

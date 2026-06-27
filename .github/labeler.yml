@@ -1,12 +1,12 @@
 area/runtime:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/runtime/**"
+          - "crates/agent-engine/**"
 
 area/protocol:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/protocol/**"
+          - "crates/agent-protocol/**"
 
 area/llm:
   - changed-files:

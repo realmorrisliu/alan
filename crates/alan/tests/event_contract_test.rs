@@ -5,7 +5,7 @@
 //! 2. Event types expected by clients are actually emitted by the server.
 //! 3. Event payload structures match expectations.
 
-use alan_protocol::{
+use alan_agent_protocol::{
     CompactionAttemptSnapshot, CompactionMode, CompactionPressureLevel, CompactionReason,
     CompactionRequestMetadata, CompactionResult, CompactionTrigger, Event, EventEnvelope,
     MemoryFlushAttemptSnapshot, MemoryFlushResult,
@@ -315,7 +315,7 @@ fn representative_protocol_events() -> Vec<Event> {
         },
         Event::Yield {
             request_id: "req-1".to_string(),
-            kind: alan_protocol::YieldKind::Confirmation,
+            kind: alan_agent_protocol::YieldKind::Confirmation,
             payload: serde_json::json!({}),
         },
         Event::CompactionObserved {

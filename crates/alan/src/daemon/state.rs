@@ -18,15 +18,15 @@ use crate::skill_catalog::{
     SkillCatalogSnapshot, SkillCatalogTarget, build_skill_catalog_snapshot,
     resolve_skill_catalog_context, write_skill_override,
 };
-use alan_protocol::{
-    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
-};
-use alan_runtime::{
+use alan_agent_engine::{
     Config, LoadedConfig,
     runtime::{
         RuntimeEventEnvelope, RuntimeStartupMetadata, SessionDurabilityState,
         WorkspaceRuntimeConfig,
     },
+};
+use alan_agent_protocol::{
+    CompactionAttemptSnapshot, Event, EventEnvelope, MemoryFlushAttemptSnapshot, Submission,
 };
 use serde::Serialize;
 use std::{
@@ -55,7 +55,7 @@ const RUNTIME_EVENT_ACTOR: &str = "runtime_event_bridge";
 fn auth_path_from_alan_home_dir(alan_home_dir: &Path) -> PathBuf {
     let canonical_alan_home_dir =
         std::fs::canonicalize(alan_home_dir).unwrap_or_else(|_| alan_home_dir.to_path_buf());
-    alan_runtime::AlanHomePaths::from_alan_home_dir(&canonical_alan_home_dir).global_auth_path
+    alan_agent_engine::AlanHomePaths::from_alan_home_dir(&canonical_alan_home_dir).global_auth_path
 }
 
 /// Shared application state
@@ -106,19 +106,19 @@ pub struct SessionEntry {
     /// Bound connection profile id for this session.
     pub profile_id: Option<String>,
     /// Bound provider for this session.
-    pub provider: Option<alan_runtime::LlmProvider>,
+    pub provider: Option<alan_agent_engine::LlmProvider>,
     /// Bound resolved model for this session.
     pub resolved_model: String,
     /// Effective reasoning effort for this session, if resolved.
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     /// Governance configuration for this session runtime.
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     /// Active execution backend for this session runtime.
     pub execution_backend: String,
     /// Streaming mode for this session runtime.
-    pub streaming_mode: alan_runtime::StreamingMode,
+    pub streaming_mode: alan_agent_engine::StreamingMode,
     /// Partial stream recovery mode for this session runtime.
-    pub partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+    pub partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
     /// Whether startup required durable persistence.
     pub durability_required: bool,
     /// Whether the session currently has a persistent recorder attached.
@@ -166,7 +166,7 @@ pub struct SessionEventReplaySummary {
 pub struct SessionPlanSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
-    pub items: Vec<alan_protocol::PlanItem>,
+    pub items: Vec<alan_agent_protocol::PlanItem>,
     pub last_updated_event_id: String,
     pub last_updated_at: u64,
 }
@@ -177,10 +177,10 @@ pub struct CreateSessionFromRolloutOptions {
     pub resume_rollout_path: Option<PathBuf>,
     pub agent_name: Option<String>,
     pub profile_id: Option<String>,
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
-    pub governance: Option<alan_protocol::GovernanceConfig>,
-    pub streaming_mode: Option<alan_runtime::StreamingMode>,
-    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    pub governance: Option<alan_agent_protocol::GovernanceConfig>,
+    pub streaming_mode: Option<alan_agent_engine::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
 }
 
 /// In-memory replay log for a session's transport events.
@@ -475,12 +475,12 @@ impl SessionEntry {
         workspace_alan_dir: PathBuf,
         agent_name: Option<String>,
         profile_id: Option<String>,
-        provider: Option<alan_runtime::LlmProvider>,
+        provider: Option<alan_agent_engine::LlmProvider>,
         resolved_model: String,
-        reasoning_effort: Option<alan_protocol::ReasoningEffort>,
-        governance: alan_protocol::GovernanceConfig,
-        streaming_mode: alan_runtime::StreamingMode,
-        partial_stream_recovery_mode: alan_runtime::PartialStreamRecoveryMode,
+        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+        governance: alan_agent_protocol::GovernanceConfig,
+        streaming_mode: alan_agent_engine::StreamingMode,
+        partial_stream_recovery_mode: alan_agent_engine::PartialStreamRecoveryMode,
         durability: SessionDurabilityState,
         submission_tx: mpsc::Sender<Submission>,
         events_tx: broadcast::Sender<EventEnvelope>,
@@ -501,7 +501,7 @@ impl SessionEntry {
             resolved_model,
             reasoning_effort,
             governance,
-            execution_backend: alan_runtime::tools::active_backend_name().to_string(),
+            execution_backend: alan_agent_engine::tools::active_backend_name().to_string(),
             streaming_mode,
             partial_stream_recovery_mode,
             durability_required: durability.required,
@@ -672,7 +672,7 @@ impl AppState {
         Self::from_loaded_config(LoadedConfig {
             config,
             path: None,
-            source: alan_runtime::ConfigSourceKind::Default,
+            source: alan_agent_engine::ConfigSourceKind::Default,
         })
     }
 
@@ -714,7 +714,7 @@ impl AppState {
         runtime_config.agent_home_paths = Some(workspace_resolver.alan_home_paths().clone());
         let runtime_manager = Arc::new(RuntimeManager::with_template(runtime_config));
         let session_store = Arc::new(SessionStore::with_dir(
-            alan_runtime::workspace_sessions_dir_from_alan_dir(&alan_home),
+            alan_agent_engine::workspace_sessions_dir_from_alan_dir(&alan_home),
         )?);
         let task_store = Arc::new(TaskStore::with_dir(alan_home.join("tasks"))?);
 
@@ -812,19 +812,19 @@ impl AppState {
         }
     }
 
-    fn install_channel(&self) -> alan_runtime::InstallChannel {
+    fn install_channel(&self) -> alan_agent_engine::InstallChannel {
         self.workspace_resolver.install_channel()
     }
 
     fn workspace_session_write_dir(&self, workspace_alan_dir: &Path) -> PathBuf {
-        alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(
+        alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(
             workspace_alan_dir,
             self.install_channel(),
         )
     }
 
     fn workspace_session_read_dirs(&self, workspace_alan_dir: &Path) -> Vec<PathBuf> {
-        alan_runtime::workspace_session_read_dirs_for_channel_from_alan_dir(
+        alan_agent_engine::workspace_session_read_dirs_for_channel_from_alan_dir(
             workspace_alan_dir,
             self.install_channel(),
         )
@@ -873,7 +873,8 @@ impl AppState {
         runtime_config.workspace_root_dir = Some(workspace_root_dir);
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
         runtime_config.agent_name =
-            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+            alan_agent_engine::normalize_agent_name(target.agent_name.as_deref())
+                .map(str::to_owned);
         let context = resolve_skill_catalog_context(&runtime_config)?;
         build_skill_catalog_snapshot(&context)
     }
@@ -885,7 +886,7 @@ impl AppState {
         enabled: Option<Option<bool>>,
         allow_implicit_invocation: Option<Option<bool>>,
     ) -> anyhow::Result<(PathBuf, SkillCatalogSnapshot)> {
-        alan_runtime::skills::validate_canonical_skill_id(skill_id)
+        alan_agent_engine::skills::validate_canonical_skill_id(skill_id)
             .map_err(|message| anyhow::anyhow!(message))?;
         let skill_id = skill_id.to_string();
         let (workspace_root_dir, workspace_alan_dir) =
@@ -894,7 +895,8 @@ impl AppState {
         runtime_config.workspace_root_dir = Some(workspace_root_dir);
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
         runtime_config.agent_name =
-            alan_runtime::normalize_agent_name(target.agent_name.as_deref()).map(str::to_owned);
+            alan_agent_engine::normalize_agent_name(target.agent_name.as_deref())
+                .map(str::to_owned);
         let context = resolve_skill_catalog_context(&runtime_config)?;
         if context.registry.get(&skill_id).is_none() {
             anyhow::bail!(
@@ -1571,7 +1573,7 @@ impl AppState {
         let workspace_path = resolved.path;
         let workspace_alan_dir = resolved.alan_dir;
         let agent_name =
-            alan_runtime::normalize_agent_name(agent_name.as_deref()).map(str::to_owned);
+            alan_agent_engine::normalize_agent_name(agent_name.as_deref()).map(str::to_owned);
 
         // Determine governance configuration for this session runtime
         let governance = governance.unwrap_or_default();
@@ -1771,10 +1773,10 @@ impl AppState {
                             .get(id)
                             .map(|entry| entry.execution_backend.clone())
                             .unwrap_or_else(|| {
-                                alan_runtime::tools::active_backend_name().to_string()
+                                alan_agent_engine::tools::active_backend_name().to_string()
                             })
                     },
-                    request_controls: alan_runtime::ResolvedRequestControls::default(),
+                    request_controls: alan_agent_engine::ResolvedRequestControls::default(),
                     warnings: Vec::new(),
                 },
                 resolved_profile_id: None,
@@ -2325,7 +2327,7 @@ fn canonical_rollout_file_path(root: &std::path::Path, path: &std::path::Path) -
 }
 
 pub(crate) fn rollout_path_matches_session(path: &std::path::Path, session_id: &str) -> bool {
-    let storage_key = alan_runtime::session_storage_key(session_id);
+    let storage_key = alan_agent_engine::session_storage_key(session_id);
     let filename_matches = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -2378,9 +2380,9 @@ fn resolve_resume_rollout_path(
     session_id: &str,
     persisted_rollout_path: Option<PathBuf>,
     workspace_alan_dir: &std::path::Path,
-    channel: alan_runtime::InstallChannel,
+    channel: alan_agent_engine::InstallChannel,
 ) -> anyhow::Result<ResumeRolloutResolution> {
-    let sessions_dirs = alan_runtime::workspace_session_read_dirs_for_channel_from_alan_dir(
+    let sessions_dirs = alan_agent_engine::workspace_session_read_dirs_for_channel_from_alan_dir(
         workspace_alan_dir,
         channel,
     );
@@ -2428,7 +2430,7 @@ mod tests {
     use super::super::runtime_manager::RuntimeManager;
     use super::super::workspace_resolver::WorkspaceResolver;
     use super::*;
-    use alan_runtime::runtime::WorkspaceRuntimeConfig;
+    use alan_agent_engine::runtime::WorkspaceRuntimeConfig;
     use chrono::Utc;
     use tempfile::TempDir;
 
@@ -2531,7 +2533,10 @@ mod tests {
         let state = test_state_with_base_dir(&dev_home_link);
         let workspace_alan_dir = temp.path().join("workspace").join(".alan");
 
-        assert_eq!(state.install_channel(), alan_runtime::InstallChannel::Dev);
+        assert_eq!(
+            state.install_channel(),
+            alan_agent_engine::InstallChannel::Dev
+        );
         assert_eq!(
             state.workspace_session_write_dir(&workspace_alan_dir),
             workspace_alan_dir.join("runtime/dev/sessions")
@@ -2697,13 +2702,13 @@ Body
             None,
             None,
             "gpt-5.4".to_string(),
-            Some(alan_protocol::ReasoningEffort::Medium),
-            alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            Some(alan_agent_protocol::ReasoningEffort::Medium),
+            alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
-            alan_runtime::StreamingMode::Auto,
-            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            alan_agent_engine::StreamingMode::Auto,
+            alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
             SessionDurabilityState {
                 durable: true,
                 required: false,
@@ -2759,7 +2764,7 @@ Body
             "sess-a",
             Some(persisted.clone()),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2785,7 +2790,7 @@ Body
             "sess-a",
             Some(legacy),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2814,7 +2819,7 @@ Body
             "sess-a",
             Some(missing),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2841,7 +2846,7 @@ Body
             "sess-a",
             Some(outside),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2865,7 +2870,7 @@ Body
             "sess-legacy",
             None,
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2892,7 +2897,7 @@ Body
             "sess-a",
             None,
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2914,7 +2919,7 @@ Body
             "sess-a",
             Some(legacy),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Dev,
+            alan_agent_engine::InstallChannel::Dev,
         )
         .unwrap_err();
         assert!(
@@ -2930,7 +2935,7 @@ Body
         let sessions_dir = workspace_alan_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
-        let storage_key = alan_runtime::session_storage_key("sess-storage");
+        let storage_key = alan_agent_engine::session_storage_key("sess-storage");
         let persisted = sessions_dir.join(format!("rollout-20260305-{storage_key}.jsonl"));
         write_rollout_with_session(&persisted, &storage_key);
 
@@ -2938,7 +2943,7 @@ Body
             "sess-storage",
             None,
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(
@@ -2961,7 +2966,7 @@ Body
             "sess-daemon",
             Some(legacy),
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap();
         assert_eq!(resolved, ResumeRolloutResolution::StartFresh);
@@ -2980,7 +2985,7 @@ Body
             "sess-missing",
             None,
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         )
         .unwrap_err();
         assert!(
@@ -3089,15 +3094,15 @@ Body
                 session_id: "sess-daemon".to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: Some(legacy.clone()),
                 durability_required: Some(false),
@@ -3148,9 +3153,9 @@ Body
         );
 
         let workspace_alan_dir = temp.path().join(".alan");
-        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
             &workspace_alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
         std::fs::create_dir_all(&sessions_dir).unwrap();
         let source_rollout = sessions_dir.join("rollout-20260305-legacy-runtime.jsonl");
@@ -3444,15 +3449,15 @@ Body
                 session_id: "sess-aged".to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: None,
                 durability_required: Some(false),
@@ -3482,15 +3487,15 @@ Body
                 session_id: "sess-legacy".to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: None,
                 durability_required: None,
@@ -3523,15 +3528,15 @@ Body
                 session_id: "sess-placeholder".to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: Some(rollout_path),
                 durability_required: Some(true),
@@ -3567,15 +3572,15 @@ Body
                 session_id: session_id.to_string(),
                 workspace_path: workspace_path.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                governance: alan_protocol::GovernanceConfig::default(),
+                governance: alan_agent_protocol::GovernanceConfig::default(),
                 agent_name: None,
                 profile_id: None,
                 provider: None,
                 resolved_model: String::new(),
                 reasoning_effort: None,
-                streaming_mode: Some(alan_runtime::StreamingMode::Auto),
+                streaming_mode: Some(alan_agent_engine::StreamingMode::Auto),
                 partial_stream_recovery_mode: Some(
-                    alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+                    alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
                 ),
                 rollout_path: Some(rollout_path),
                 durability_required: None,
@@ -4141,7 +4146,7 @@ Body
         runtime_events_tx
             .send(runtime_event(Event::Yield {
                 request_id: "req-bridge".to_string(),
-                kind: alan_protocol::YieldKind::Confirmation,
+                kind: alan_agent_protocol::YieldKind::Confirmation,
                 payload: serde_json::json!({}),
             }))
             .unwrap();
@@ -4191,7 +4196,7 @@ Body
         runtime_events_tx
             .send(runtime_event(Event::Yield {
                 request_id: "req-bridge-resume".to_string(),
-                kind: alan_protocol::YieldKind::Confirmation,
+                kind: alan_agent_protocol::YieldKind::Confirmation,
                 payload: serde_json::json!({}),
             }))
             .unwrap();
@@ -4440,13 +4445,13 @@ Body
         let attempt = CompactionAttemptSnapshot {
             attempt_id: "attempt-evicted".to_string(),
             submission_id: Some("sub-evicted".to_string()),
-            request: alan_protocol::CompactionRequestMetadata {
-                mode: alan_protocol::CompactionMode::Manual,
-                trigger: alan_protocol::CompactionTrigger::Manual,
-                reason: alan_protocol::CompactionReason::ExplicitRequest,
+            request: alan_agent_protocol::CompactionRequestMetadata {
+                mode: alan_agent_protocol::CompactionMode::Manual,
+                trigger: alan_agent_protocol::CompactionTrigger::Manual,
+                reason: alan_agent_protocol::CompactionReason::ExplicitRequest,
                 focus: Some("preserve cache".to_string()),
             },
-            result: alan_protocol::CompactionResult::Success,
+            result: alan_agent_protocol::CompactionResult::Success,
             pressure_level: None,
             memory_flush_attempt_id: None,
             input_messages: Some(5),
@@ -4504,11 +4509,11 @@ Body
     #[test]
     fn session_event_log_retains_latest_memory_flush_attempt_after_eviction() {
         let mut log = SessionEventLog::new(2);
-        let attempt = alan_protocol::MemoryFlushAttemptSnapshot {
+        let attempt = alan_agent_protocol::MemoryFlushAttemptSnapshot {
             attempt_id: "flush-evicted".to_string(),
-            compaction_mode: alan_protocol::CompactionMode::AutoPreTurn,
-            pressure_level: alan_protocol::CompactionPressureLevel::Soft,
-            result: alan_protocol::MemoryFlushResult::Success,
+            compaction_mode: alan_agent_protocol::CompactionMode::AutoPreTurn,
+            pressure_level: alan_agent_protocol::CompactionPressureLevel::Soft,
+            result: alan_agent_protocol::MemoryFlushResult::Success,
             skip_reason: None,
             source_messages: Some(6),
             output_path: Some(".alan/memory/daily/2026-03-17.md".to_string()),
@@ -4551,10 +4556,10 @@ Body
     #[test]
     fn session_event_log_retains_latest_plan_snapshot_after_eviction() {
         let mut log = SessionEventLog::new(2);
-        let items = vec![alan_protocol::PlanItem {
+        let items = vec![alan_agent_protocol::PlanItem {
             id: "plan-1".to_string(),
             content: "Keep rendering the plan panel".to_string(),
-            status: alan_protocol::PlanItemStatus::InProgress,
+            status: alan_agent_protocol::PlanItemStatus::InProgress,
         }];
 
         log.append_runtime_event("sess-1", runtime_event(Event::TurnStarted {}));
@@ -4602,10 +4607,10 @@ Body
             "sess-1",
             runtime_event(Event::PlanUpdated {
                 explanation: Some("Current plan".to_string()),
-                items: vec![alan_protocol::PlanItem {
+                items: vec![alan_agent_protocol::PlanItem {
                     id: "plan-1".to_string(),
                     content: "Clear me".to_string(),
-                    status: alan_protocol::PlanItemStatus::InProgress,
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
                 }],
             }),
         );
@@ -4630,10 +4635,10 @@ Body
             "sess-1",
             runtime_event(Event::PlanUpdated {
                 explanation: Some("Current plan".to_string()),
-                items: vec![alan_protocol::PlanItem {
+                items: vec![alan_agent_protocol::PlanItem {
                     id: "plan-1".to_string(),
                     content: "Clear me".to_string(),
-                    status: alan_protocol::PlanItemStatus::InProgress,
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
                 }],
             }),
         );

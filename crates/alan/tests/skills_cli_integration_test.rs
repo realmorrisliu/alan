@@ -62,7 +62,7 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
         PackageBinWrapperCase {
             wrapper_name: "aggregate-benchmark",
             wrapper_contents: include_str!(
-                "../../runtime/skills/skill-creator/bin/aggregate-benchmark"
+                "../../agent-engine/skills/skill-creator/bin/aggregate-benchmark"
             ),
             path_binary_name: "alan",
             expected_args: &["skills", "aggregate-benchmark", "input"],
@@ -70,7 +70,7 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
         PackageBinWrapperCase {
             wrapper_name: "generate-review",
             wrapper_contents: include_str!(
-                "../../runtime/skills/skill-creator/bin/generate-review"
+                "../../agent-engine/skills/skill-creator/bin/generate-review"
             ),
             path_binary_name: "alan",
             expected_args: &["skills", "generate-review", "input"],
@@ -78,7 +78,7 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
         PackageBinWrapperCase {
             wrapper_name: "swebench-lite-prepare-workspaces",
             wrapper_contents: include_str!(
-                "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
+                "../../agent-engine/skills/swebench/bin/swebench-lite-prepare-workspaces"
             ),
             path_binary_name: "alan",
             expected_args: &["skills", "swebench-lite-prepare-workspaces", "input"],
@@ -86,7 +86,7 @@ fn package_bin_wrappers_fall_back_to_path_outside_source_tree() {
         PackageBinWrapperCase {
             wrapper_name: "swebench-lite-materialize-subset",
             wrapper_contents: include_str!(
-                "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
+                "../../agent-engine/skills/swebench/bin/swebench-lite-materialize-subset"
             ),
             path_binary_name: "alan",
             expected_args: &["skills", "swebench-lite-materialize-subset", "input"],
@@ -138,7 +138,7 @@ fn swebench_bin_wrappers_skip_themselves_when_searching_path_helpers() {
         PackageBinWrapperCase {
             wrapper_name: "swebench-lite-prepare-workspaces",
             wrapper_contents: include_str!(
-                "../../runtime/skills/swebench/bin/swebench-lite-prepare-workspaces"
+                "../../agent-engine/skills/swebench/bin/swebench-lite-prepare-workspaces"
             ),
             path_binary_name: "swebench-lite-prepare-workspaces",
             expected_args: &["input"],
@@ -146,7 +146,7 @@ fn swebench_bin_wrappers_skip_themselves_when_searching_path_helpers() {
         PackageBinWrapperCase {
             wrapper_name: "swebench-lite-materialize-subset",
             wrapper_contents: include_str!(
-                "../../runtime/skills/swebench/bin/swebench-lite-materialize-subset"
+                "../../agent-engine/skills/swebench/bin/swebench-lite-materialize-subset"
             ),
             path_binary_name: "swebench-lite-materialize-subset",
             expected_args: &["input"],

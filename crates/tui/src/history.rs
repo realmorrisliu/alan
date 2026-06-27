@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use alan_protocol::{
+use alan_agent_protocol::{
     ContentPart, DiffLine, Event, EventEnvelope, PlanItemStatus, StructuredInputKind,
     StructuredInputQuestion, ToolResultPresentation, YieldKind,
 };
@@ -853,7 +853,7 @@ fn structured_kind_label(kind: StructuredInputKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_protocol::EventEnvelope;
+    use alan_agent_protocol::EventEnvelope;
 
     fn envelope(event: Event) -> EventEnvelope {
         EventEnvelope {
@@ -935,7 +935,7 @@ mod tests {
 
     #[test]
     fn completed_tool_renders_diff_presentation() {
-        use alan_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
+        use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
         let mut reducer = SessionReducer::default();
         reducer.apply_envelope(envelope(Event::ToolCallCompleted {
             id: "t1".into(),
@@ -1000,12 +1000,12 @@ mod tests {
         reducer.apply_envelope(envelope(Event::PlanUpdated {
             explanation: None,
             items: vec![
-                alan_protocol::PlanItem {
+                alan_agent_protocol::PlanItem {
                     id: "1".into(),
                     content: "first".into(),
                     status: PlanItemStatus::Completed,
                 },
-                alan_protocol::PlanItem {
+                alan_agent_protocol::PlanItem {
                     id: "2".into(),
                     content: "second".into(),
                     status: PlanItemStatus::InProgress,

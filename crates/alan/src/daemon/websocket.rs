@@ -1,6 +1,6 @@
 //! WebSocket handler for real-time communication.
 
-use alan_protocol::{Event, EventEnvelope, Submission};
+use alan_agent_protocol::{Event, EventEnvelope, Submission};
 use axum::{
     extract::{
         Extension, Path, State, WebSocketUpgrade,
@@ -415,11 +415,11 @@ mod tests {
     use super::{
         MAX_WEBSOCKET_MESSAGE_BYTES, MAX_WEBSOCKET_SESSION_ID_BYTES, bounded_session_id, ws_handler,
     };
-    use alan_protocol::{Event, EventEnvelope, Op, Submission};
-    use alan_runtime::{
+    use alan_agent_engine::{
         Config,
         runtime::{SessionDurabilityState, WorkspaceRuntimeConfig},
     };
+    use alan_agent_protocol::{Event, EventEnvelope, Op, Submission};
     use axum::{Extension, Router, http::StatusCode, routing::get};
     use futures::{SinkExt, StreamExt};
     use tokio::sync::{broadcast, mpsc};
@@ -508,13 +508,13 @@ mod tests {
             None,
             None,
             "gpt-5.4".to_string(),
-            Some(alan_protocol::ReasoningEffort::Medium),
-            alan_protocol::GovernanceConfig {
-                profile: alan_protocol::GovernanceProfile::Autonomous,
+            Some(alan_agent_protocol::ReasoningEffort::Medium),
+            alan_agent_protocol::GovernanceConfig {
+                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
                 policy_path: None,
             },
-            alan_runtime::StreamingMode::Auto,
-            alan_runtime::PartialStreamRecoveryMode::ContinueOnce,
+            alan_agent_engine::StreamingMode::Auto,
+            alan_agent_engine::PartialStreamRecoveryMode::ContinueOnce,
             SessionDurabilityState {
                 durable: true,
                 required: false,

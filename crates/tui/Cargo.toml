@@ -9,7 +9,7 @@ name = "alan_tui"
 path = "src/lib.rs"
 
 [dependencies]
-alan-protocol.workspace = true
+alan-agent-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

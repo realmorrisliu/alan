@@ -1,0 +1,53 @@
+[package]
+name = "alan-agent-engine"
+description = "Core runtime for the alan agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alan-agent-protocol.workspace = true
+alan-llm.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+toml = "1.1"
+jsonschema.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+urlencoding.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+sha2.workspace = true
+hex.workspace = true
+dunce.workspace = true
+include_dir.workspace = true
+async-trait.workspace = true
+regex.workspace = true
+semver = "1"
+glob = "0.3"
+rand.workspace = true
+
+# SSE streaming
+eventsource-stream.workspace = true
+futures-core.workspace = true
+pin-utils.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+alan-llm = { workspace = true, features = ["mock"] }
+# test-util (paused clock) is not part of tokio's "full" feature set.
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+default = []
+mock = ["alan-llm/mock"]

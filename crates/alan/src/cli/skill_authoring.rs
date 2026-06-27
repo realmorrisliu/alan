@@ -4,7 +4,7 @@ use crate::cli::skill_eval::{
     SkillEvalRunSummary as StructuredSkillEvalRunSummary, default_eval_manifest_path,
     generate_review_bundle, load_eval_manifest, regenerate_benchmark, run_eval_manifest,
 };
-use alan_runtime::skills::{
+use alan_agent_engine::skills::{
     COMPATIBILITY_METADATA_DIR, COMPATIBILITY_METADATA_FILE, PACKAGE_SIDECAR_FILE,
     SKILL_SIDECAR_FILE, SkillScope, SkillsError, compatibility_metadata_path,
     load_compatibility_metadata, load_package_sidecar, load_skill, load_skill_sidecar, name_to_id,
@@ -651,7 +651,7 @@ pub fn validate_skill_package(package_root: &Path) -> SkillPackageValidationRepo
     skill.metadata.execution = resolve_skill_execution(&skill.metadata, &child_agent_exports);
     execution = Some(skill.metadata.execution.render_label());
 
-    if let alan_runtime::skills::ResolvedSkillExecution::Unresolved { reason } =
+    if let alan_agent_engine::skills::ResolvedSkillExecution::Unresolved { reason } =
         &skill.metadata.execution
     {
         push_diagnostic(
@@ -994,10 +994,10 @@ fn push_diagnostic(
 fn inspect_package_exports(
     package_id: &str,
     package_root: &Path,
-) -> alan_runtime::skills::CapabilityPackageExports {
-    alan_runtime::skills::CapabilityPackageExports {
+) -> alan_agent_engine::skills::CapabilityPackageExports {
+    alan_agent_engine::skills::CapabilityPackageExports {
         child_agents: discover_child_agent_exports(package_id, package_root),
-        resources: alan_runtime::skills::CapabilityPackageResources {
+        resources: alan_agent_engine::skills::CapabilityPackageResources {
             bin_dir: existing_dir(package_root.join("bin")),
             scripts_dir: existing_dir(package_root.join("scripts")),
             references_dir: existing_dir(package_root.join("references")),
@@ -1009,7 +1009,7 @@ fn inspect_package_exports(
 fn discover_child_agent_exports(
     package_id: &str,
     package_root: &Path,
-) -> Vec<alan_runtime::skills::CapabilityChildAgentExport> {
+) -> Vec<alan_agent_engine::skills::CapabilityChildAgentExport> {
     let agents_dir = package_root.join(COMPATIBILITY_METADATA_DIR);
     let canonical_package_root =
         fs::canonicalize(package_root).unwrap_or_else(|_| package_root.to_path_buf());
@@ -1037,8 +1037,8 @@ fn discover_child_agent_exports(
             }
 
             let name = path.file_name()?.to_str()?.to_string();
-            Some(alan_runtime::skills::CapabilityChildAgentExport {
-                handle: alan_runtime::skills::CapabilityChildAgentExport::package_handle(
+            Some(alan_agent_engine::skills::CapabilityChildAgentExport {
+                handle: alan_agent_engine::skills::CapabilityChildAgentExport::package_handle(
                     package_id, &name,
                 ),
                 name,
@@ -1051,8 +1051,8 @@ fn discover_child_agent_exports(
 }
 
 fn looks_like_child_agent_root(root_dir: &Path) -> bool {
-    let root = alan_runtime::AgentRootPaths::new(
-        alan_runtime::AgentRootKind::LaunchRoot,
+    let root = alan_agent_engine::AgentRootPaths::new(
+        alan_agent_engine::AgentRootKind::LaunchRoot,
         root_dir.to_path_buf(),
     );
     root.config_path.is_file()
@@ -1065,7 +1065,9 @@ fn existing_dir(path: PathBuf) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-fn collect_resource_dirs(exports: &alan_runtime::skills::CapabilityPackageExports) -> Vec<String> {
+fn collect_resource_dirs(
+    exports: &alan_agent_engine::skills::CapabilityPackageExports,
+) -> Vec<String> {
     let mut resource_dirs = Vec::new();
     if exports.resources.bin_dir.is_some() {
         resource_dirs.push("bin".to_string());

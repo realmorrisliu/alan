@@ -355,7 +355,7 @@ impl JsonFileTaskStoreBackend {
 
     #[allow(dead_code)]
     pub fn default_path() -> Result<PathBuf> {
-        alan_runtime::AlanHomePaths::detect()
+        alan_agent_engine::AlanHomePaths::detect()
             .map(|paths| paths.alan_home_dir.join("tasks").join(TASK_STORE_FILENAME))
             .context("Cannot determine home directory")
     }

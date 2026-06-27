@@ -5,8 +5,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-alan-runtime.workspace = true
-alan-protocol.workspace = true
+alan-agent-engine.workspace = true
+alan-agent-protocol.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

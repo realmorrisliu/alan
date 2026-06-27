@@ -3,7 +3,7 @@
   "category": "coding_steward",
   "description": "Validate that the steward delegates repo-scoped coding work through the package child target with an explicit launch contract.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill --lib -- --exact && cargo test -p alan-runtime runtime::child_agents::tests::spawn_child_runtime_resolves_package_child_agent_target --lib -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill --lib -- --exact && cargo test -p alan-agent-engine runtime::child_agents::tests::spawn_child_runtime_resolves_package_child_agent_target --lib -- --exact",
   "assertions": [
     "invoke_delegated_skill resolves the package child target",
     "repo-scoped launch binds workspace and approval scope",

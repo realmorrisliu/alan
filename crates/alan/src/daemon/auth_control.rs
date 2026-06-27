@@ -1,11 +1,11 @@
+use alan_agent_protocol::{
+    AuthEvent, AuthEventEnvelope, AuthLoginMethod, AuthPendingLoginSummary, AuthProviderId,
+    AuthStatusKind, AuthStatusSnapshot,
+};
 use alan_auth::{
     BrowserLoginCompletion, BrowserLoginOptions, ChatgptAuthError, ChatgptAuthManager,
     ChatgptLoginSuccess, DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle,
     PendingBrowserLogin,
-};
-use alan_protocol::{
-    AuthEvent, AuthEventEnvelope, AuthLoginMethod, AuthPendingLoginSummary, AuthProviderId,
-    AuthStatusKind, AuthStatusSnapshot,
 };
 use chrono::{DateTime, Utc};
 use std::{collections::HashMap, sync::Arc, time::Duration};

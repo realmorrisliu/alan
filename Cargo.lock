@@ -29,10 +29,10 @@ dependencies = [
 name = "alan"
 version = "0.1.0"
 dependencies = [
+ "alan-agent-engine",
+ "alan-agent-protocol",
  "alan-auth",
  "alan-llm",
- "alan-protocol",
- "alan-runtime",
  "alan-swebench-tooling",
  "alan-terminal-ui",
  "alan-tools",
@@ -59,6 +59,55 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "alan-agent-engine"
+version = "0.1.0"
+dependencies = [
+ "alan-agent-protocol",
+ "alan-llm",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "dunce",
+ "eventsource-stream",
+ "futures",
+ "futures-core",
+ "glob",
+ "hex",
+ "include_dir",
+ "jsonschema",
+ "landlock",
+ "pin-utils",
+ "rand 0.10.1",
+ "regex",
+ "reqwest 0.13.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "alan-agent-protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -109,8 +158,8 @@ dependencies = [
 name = "alan-llm"
 version = "0.1.0"
 dependencies = [
+ "alan-agent-protocol",
  "alan-auth",
- "alan-protocol",
  "anyhow",
  "async-trait",
  "axum",
@@ -126,55 +175,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "alan-protocol"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "alan-runtime"
-version = "0.1.0"
-dependencies = [
- "alan-llm",
- "alan-protocol",
- "anyhow",
- "async-trait",
- "chrono",
- "dirs",
- "dunce",
- "eventsource-stream",
- "futures",
- "futures-core",
- "glob",
- "hex",
- "include_dir",
- "jsonschema",
- "landlock",
- "pin-utils",
- "rand 0.10.1",
- "regex",
- "reqwest 0.13.4",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
 ]
 
 [[package]]
@@ -216,7 +216,7 @@ dependencies = [
 name = "alan-terminal-ui"
 version = "0.1.0"
 dependencies = [
- "alan-protocol",
+ "alan-agent-protocol",
  "anyhow",
  "async-trait",
  "bytes",
@@ -240,8 +240,8 @@ dependencies = [
 name = "alan-tools"
 version = "0.1.0"
 dependencies = [
- "alan-protocol",
- "alan-runtime",
+ "alan-agent-engine",
+ "alan-agent-protocol",
  "anyhow",
  "dunce",
  "glob",

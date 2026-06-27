@@ -3,7 +3,7 @@
   "category": "coding_steward",
   "description": "Validate the steward fails safe when delegated execution support or artifact routing is unavailable.",
   "blocking": true,
-  "command": "cargo test -p alan-runtime runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_when_runtime_support_is_disabled --lib -- --exact && cargo test -p alan-runtime runtime::child_agents::tests::spawn_child_runtime_rejects_artifact_handle_without_runtime_binding --lib -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::virtual_tools::tests::test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_when_runtime_support_is_disabled --lib -- --exact && cargo test -p alan-agent-engine runtime::child_agents::tests::spawn_child_runtime_rejects_artifact_handle_without_runtime_binding --lib -- --exact",
   "assertions": [
     "delegated invocation returns an unavailable status instead of silently spawning",
     "artifact routing stays blocked until runtime bindings exist",

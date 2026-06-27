@@ -1,4 +1,4 @@
-use alan_protocol::ContentPart;
+use alan_agent_protocol::ContentPart;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::completion::{self, CompletionCandidate, CompletionSources, CompletionState};
@@ -28,7 +28,7 @@ fn default_commands() -> Vec<CompletionCandidate> {
 #[derive(Debug)]
 pub enum AppEvent {
     Terminal(TerminalEvent),
-    Daemon(Box<alan_protocol::EventEnvelope>),
+    Daemon(Box<alan_agent_protocol::EventEnvelope>),
     Hydrated(SessionHydration),
     Status(String),
     Error(String),
@@ -279,12 +279,12 @@ impl TuiApp {
     /// options default to approve/reject; full transcript replay is a follow-up.
     fn restore_pending_yield(&mut self, pending: PendingHydration) {
         let kind = match pending.kind.as_str() {
-            "confirmation" => alan_protocol::YieldKind::Confirmation,
-            "structured_input" => alan_protocol::YieldKind::StructuredInput,
-            "dynamic_tool" => alan_protocol::YieldKind::DynamicTool,
-            other => alan_protocol::YieldKind::Custom(other.to_string()),
+            "confirmation" => alan_agent_protocol::YieldKind::Confirmation,
+            "structured_input" => alan_agent_protocol::YieldKind::StructuredInput,
+            "dynamic_tool" => alan_agent_protocol::YieldKind::DynamicTool,
+            other => alan_agent_protocol::YieldKind::Custom(other.to_string()),
         };
-        let options = if matches!(kind, alan_protocol::YieldKind::Confirmation) {
+        let options = if matches!(kind, alan_agent_protocol::YieldKind::Confirmation) {
             vec!["approve".to_string(), "reject".to_string()]
         } else {
             Vec::new()
@@ -307,7 +307,7 @@ impl TuiApp {
             .push(crate::history::HistoryCell::PendingYield(cell));
     }
 
-    fn record_sequence_gap(&mut self, envelope: &alan_protocol::EventEnvelope) {
+    fn record_sequence_gap(&mut self, envelope: &alan_agent_protocol::EventEnvelope) {
         if let Some(previous) = self.last_sequence
             && envelope.sequence > previous.saturating_add(1)
         {
@@ -500,7 +500,7 @@ impl TuiApp {
             return None;
         }
         let pending = self.reducer.pending_yield.as_ref()?;
-        if !matches!(pending.kind, alan_protocol::YieldKind::Confirmation) {
+        if !matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation) {
             return None;
         }
         if !self.composer.text().is_empty() {
@@ -541,8 +541,10 @@ impl TuiApp {
     fn sync_form(&mut self) {
         match &self.reducer.pending_yield {
             Some(pending)
-                if matches!(pending.kind, alan_protocol::YieldKind::StructuredInput)
-                    && pending.questions.len() > 1 =>
+                if matches!(
+                    pending.kind,
+                    alan_agent_protocol::YieldKind::StructuredInput
+                ) && pending.questions.len() > 1 =>
             {
                 if self
                     .form
@@ -812,9 +814,9 @@ mod tests {
         // A multi-question form yield arrives while the popup is still open.
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "form-3".into(),
-                kind: alan_protocol::YieldKind::StructuredInput,
+                kind: alan_agent_protocol::YieldKind::StructuredInput,
                 payload: serde_json::json!({
                     "title": "Deploy",
                     "questions": [
@@ -921,7 +923,10 @@ mod tests {
         app.dispatch(AppEvent::Hydrated(hydration));
         let pending = app.reducer.pending_yield.clone().expect("pending restored");
         assert_eq!(pending.request_id, "req-si");
-        assert_eq!(pending.kind, alan_protocol::YieldKind::StructuredInput);
+        assert_eq!(
+            pending.kind,
+            alan_agent_protocol::YieldKind::StructuredInput
+        );
     }
 
     #[test]
@@ -955,9 +960,9 @@ mod tests {
         let mut app = app();
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "r-1".into(),
-                kind: alan_protocol::YieldKind::StructuredInput,
+                kind: alan_agent_protocol::YieldKind::StructuredInput,
                 payload: serde_json::json!({
                     "title": "Pick environment",
                     "questions": [{
@@ -994,9 +999,9 @@ mod tests {
         let mut app = app();
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "form-1".into(),
-                kind: alan_protocol::YieldKind::StructuredInput,
+                kind: alan_agent_protocol::YieldKind::StructuredInput,
                 payload: serde_json::json!({
                     "title": "Deploy",
                     "questions": [
@@ -1042,9 +1047,9 @@ mod tests {
         let mut app = app();
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "form-2".into(),
-                kind: alan_protocol::YieldKind::StructuredInput,
+                kind: alan_agent_protocol::YieldKind::StructuredInput,
                 payload: serde_json::json!({
                     "title": "Deploy",
                     "questions": [
@@ -1071,9 +1076,9 @@ mod tests {
         let mut app = app();
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "r-9".into(),
-                kind: alan_protocol::YieldKind::Confirmation,
+                kind: alan_agent_protocol::YieldKind::Confirmation,
                 payload: serde_json::json!({
                     "message": "Approve?",
                     "options": ["approve", "reject"]
@@ -1102,9 +1107,9 @@ mod tests {
         let mut app = app();
         app.dispatch(AppEvent::Daemon(Box::new(envelope_with_event(
             1,
-            alan_protocol::Event::Yield {
+            alan_agent_protocol::Event::Yield {
                 request_id: "r-1".into(),
-                kind: alan_protocol::YieldKind::Confirmation,
+                kind: alan_agent_protocol::YieldKind::Confirmation,
                 payload: serde_json::json!({
                     "message": "Approve?",
                     "options": ["approve", "reject"]
@@ -1182,7 +1187,7 @@ mod tests {
         let drained = app.drain_committed_scrollback(32, 8);
         app.reducer.apply_envelope(envelope_with_event(
             2,
-            alan_protocol::Event::TextDelta {
+            alan_agent_protocol::Event::TextDelta {
                 chunk: "tail".into(),
                 is_final: false,
             },
@@ -1196,15 +1201,15 @@ mod tests {
         ));
     }
 
-    fn envelope(sequence: u64) -> alan_protocol::EventEnvelope {
-        envelope_with_event(sequence, alan_protocol::Event::TurnStarted {})
+    fn envelope(sequence: u64) -> alan_agent_protocol::EventEnvelope {
+        envelope_with_event(sequence, alan_agent_protocol::Event::TurnStarted {})
     }
 
     fn envelope_with_event(
         sequence: u64,
-        event: alan_protocol::Event,
-    ) -> alan_protocol::EventEnvelope {
-        alan_protocol::EventEnvelope {
+        event: alan_agent_protocol::Event,
+    ) -> alan_agent_protocol::EventEnvelope {
+        alan_agent_protocol::EventEnvelope {
             event_id: format!("e-{sequence}"),
             sequence,
             session_id: "s-1".into(),

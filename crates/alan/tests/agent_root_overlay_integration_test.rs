@@ -1,10 +1,10 @@
+use alan_agent_engine::runtime::spawn_with_llm_client_and_tools;
+use alan_agent_engine::{
+    AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, session_storage_key,
+};
+use alan_agent_protocol::{ContentPart, Event, Op, Submission};
 use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, ToolCall,
-};
-use alan_protocol::{ContentPart, Event, Op, Submission};
-use alan_runtime::runtime::spawn_with_llm_client_and_tools;
-use alan_runtime::{
-    AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, session_storage_key,
 };
 use std::{
     collections::VecDeque,
@@ -182,15 +182,19 @@ fn prepare_overlay_chain(temp: &TempDir) -> (AlanHomePaths, PathBuf, PathBuf, Pa
     let workspace_alan_dir = workspace_root.join(".alan");
     let home_paths = AlanHomePaths::from_home_dir(&home_dir);
 
-    std::fs::create_dir_all(alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
-        &workspace_alan_dir,
-        alan_runtime::InstallChannel::Stable,
-    ))
+    std::fs::create_dir_all(
+        alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
+            &workspace_alan_dir,
+            alan_agent_engine::InstallChannel::Stable,
+        ),
+    )
     .unwrap();
-    std::fs::create_dir_all(alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
-        &workspace_alan_dir,
-        alan_runtime::InstallChannel::Stable,
-    ))
+    std::fs::create_dir_all(
+        alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
+            &workspace_alan_dir,
+            alan_agent_engine::InstallChannel::Stable,
+        ),
+    )
     .unwrap();
 
     write_agent_root(
@@ -255,9 +259,9 @@ fn runtime_config_for(
     config.agent_name = Some(AGENT_NAME.to_string());
     config.agent_config.core_config.openai_responses_api_key = Some("sk-test".to_string());
     config.agent_config.core_config.openai_responses_model = MODEL.to_string();
-    config.agent_config.runtime_config.streaming_mode = alan_runtime::StreamingMode::Off;
-    config.agent_config.runtime_config.governance = alan_protocol::GovernanceConfig {
-        profile: alan_protocol::GovernanceProfile::Autonomous,
+    config.agent_config.runtime_config.streaming_mode = alan_agent_engine::StreamingMode::Off;
+    config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     config
@@ -348,12 +352,12 @@ fn assert_overlay_request(request: &GenerationRequest) {
     assert!(!system_prompt.contains("workspace default skill body"));
     assert_eq!(
         request.reasoning.effort,
-        Some(alan_protocol::ReasoningEffort::High)
+        Some(alan_agent_protocol::ReasoningEffort::High)
     );
 }
 
 fn is_memory_promotion_request(request: &GenerationRequest) -> bool {
-    request.system_prompt.as_deref() == Some(alan_runtime::prompts::MEMORY_PROMOTION_PROMPT)
+    request.system_prompt.as_deref() == Some(alan_agent_engine::prompts::MEMORY_PROMOTION_PROMPT)
 }
 
 fn overlay_requests(requests: &[GenerationRequest]) -> Vec<&GenerationRequest> {
@@ -470,9 +474,9 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
 async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
     let temp = TempDir::new().unwrap();
     let (home_paths, workspace_root, workspace_alan_dir, _) = prepare_overlay_chain(&temp);
-    let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+    let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
         &workspace_alan_dir,
-        alan_runtime::InstallChannel::Stable,
+        alan_agent_engine::InstallChannel::Stable,
     );
 
     let session_id = "sess-overlay-base";

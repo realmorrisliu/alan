@@ -8,7 +8,7 @@ use super::connection_control::{
     ConnectionPinScope, ConnectionProfileSummary,
 };
 use super::state::AppState;
-use alan_runtime::{LlmProvider, ProviderDescriptor};
+use alan_agent_engine::{LlmProvider, ProviderDescriptor};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -30,7 +30,7 @@ pub struct ConnectionCatalogResponse {
 pub struct ProviderDescriptorView {
     pub provider_id: LlmProvider,
     pub display_name: String,
-    pub credential_kind: alan_runtime::CredentialKind,
+    pub credential_kind: alan_agent_engine::CredentialKind,
     pub supports_browser_login: bool,
     pub supports_device_login: bool,
     pub supports_secret_entry: bool,
@@ -644,13 +644,14 @@ mod tests {
 
     #[test]
     fn provider_descriptor_view_includes_openrouter_catalog_metadata() {
-        let descriptor = alan_runtime::ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
+        let descriptor =
+            alan_agent_engine::ConnectionsFile::profile_descriptor(LlmProvider::OpenRouter);
         let view = provider_descriptor_view(descriptor.clone());
 
         assert_eq!(view.provider_id, LlmProvider::OpenRouter);
         assert_eq!(
             view.credential_kind,
-            alan_runtime::CredentialKind::SecretString
+            alan_agent_engine::CredentialKind::SecretString
         );
         assert!(view.supports_secret_entry);
         assert!(view.required_settings.contains(&"model".to_string()));

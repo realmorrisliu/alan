@@ -3,7 +3,7 @@
 //! Extracted from the original `agentd` main function so it can be called
 //! from the `alan daemon start` subcommand.
 
-use alan_runtime::{Config, LoadedConfig};
+use alan_agent_engine::{Config, LoadedConfig};
 use anyhow::Result;
 use axum::{
     Extension, Router, middleware,
@@ -33,7 +33,7 @@ pub async fn run_server(config: Config) -> Result<()> {
     run_server_with_loaded_config(LoadedConfig {
         config,
         path: None,
-        source: alan_runtime::ConfigSourceKind::Default,
+        source: alan_agent_engine::ConfigSourceKind::Default,
     })
     .await
 }

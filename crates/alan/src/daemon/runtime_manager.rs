@@ -3,12 +3,12 @@
 //! Replaces the legacy `WorkspaceManager` by removing the `WorkspaceInstance`
 //! middle layer and managing the `session -> runtime` mapping directly.
 
-use alan_runtime::runtime::{
+use alan_agent_engine::runtime::{
     ChildRunRecord, ChildRunRegistryError, ChildRunTerminationMode, RuntimeController,
     RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig, global_child_run_registry,
     spawn_with_tool_registry,
 };
-use alan_runtime::{AlanHomePaths, ModelCatalog};
+use alan_agent_engine::{AlanHomePaths, ModelCatalog};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -37,11 +37,11 @@ struct RuntimeEntry {
     /// Resolved connection profile id reported at startup.
     resolved_profile_id: Option<String>,
     /// Resolved provider reported at startup.
-    resolved_provider: Option<alan_runtime::LlmProvider>,
+    resolved_provider: Option<alan_agent_engine::LlmProvider>,
     /// Resolved model reported at startup.
     resolved_model: String,
     /// Resolved reasoning effort reported at startup.
-    effective_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    effective_reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     /// Creation timestamp
     #[allow(dead_code)]
     created_at: Instant,
@@ -71,12 +71,12 @@ impl Default for RuntimeManagerConfig {
 /// Per-session runtime policy overrides.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeSessionPolicy {
-    pub governance: alan_protocol::GovernanceConfig,
+    pub governance: alan_agent_protocol::GovernanceConfig,
     pub agent_name: Option<String>,
     pub connection_profile: Option<String>,
-    pub reasoning_effort: Option<alan_protocol::ReasoningEffort>,
-    pub streaming_mode: Option<alan_runtime::StreamingMode>,
-    pub partial_stream_recovery_mode: Option<alan_runtime::PartialStreamRecoveryMode>,
+    pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    pub streaming_mode: Option<alan_agent_engine::StreamingMode>,
+    pub partial_stream_recovery_mode: Option<alan_agent_engine::PartialStreamRecoveryMode>,
     pub durability_required: bool,
 }
 
@@ -97,9 +97,9 @@ pub struct RuntimeStartResult {
     pub handle: RuntimeHandle,
     pub startup: RuntimeStartupMetadata,
     pub resolved_profile_id: Option<String>,
-    pub resolved_provider: Option<alan_runtime::LlmProvider>,
+    pub resolved_provider: Option<alan_agent_engine::LlmProvider>,
     pub resolved_model: String,
-    pub effective_reasoning_effort: Option<alan_protocol::ReasoningEffort>,
+    pub effective_reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
 }
 
 impl RuntimeManager {
@@ -246,7 +246,7 @@ impl RuntimeManager {
         runtime_config.agent_config.refresh_runtime_derived_fields();
 
         let resolved_core_config =
-            alan_runtime::runtime::effective_core_config_for_runtime(&runtime_config)?;
+            alan_agent_engine::runtime::effective_core_config_for_runtime(&runtime_config)?;
         let resolved_model = resolved_core_config.effective_model().to_string();
         let resolved_connection = if let Some(home_paths) = runtime_config
             .agent_home_paths
@@ -261,7 +261,7 @@ impl RuntimeManager {
             None
         };
 
-        let mut tools = alan_runtime::tools::ToolRegistry::with_config(Arc::new(
+        let mut tools = alan_agent_engine::tools::ToolRegistry::with_config(Arc::new(
             runtime_config.agent_config.core_config.clone(),
         ));
         alan_tools::register_builtin_tool_catalog(&mut tools);
@@ -551,7 +551,7 @@ pub struct RuntimeInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_runtime::Config;
+    use alan_agent_engine::Config;
     use tempfile::TempDir;
 
     fn test_runtime_config() -> Config {
@@ -561,7 +561,7 @@ mod tests {
     fn manager_with_isolated_agent_overlays(
         mut template: WorkspaceRuntimeConfig,
     ) -> RuntimeManager {
-        template.core_config_source = alan_runtime::ConfigSourceKind::EnvOverride;
+        template.core_config_source = alan_agent_engine::ConfigSourceKind::EnvOverride;
         RuntimeManager::with_template(template)
     }
 
@@ -570,13 +570,13 @@ mod tests {
     ) -> (PathBuf, PathBuf, SessionsDirPermissionGuard) {
         let workspace_root = temp.path().join("workspace");
         let alan_dir = workspace_root.join(".alan");
-        let sessions_dir = alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
+        let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
             &alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
-        let memory_dir = alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
+        let memory_dir = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
             &alan_dir,
-            alan_runtime::InstallChannel::Stable,
+            alan_agent_engine::InstallChannel::Stable,
         );
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::create_dir_all(memory_dir).unwrap();
@@ -729,15 +729,19 @@ mod tests {
         let workspace_root = temp.path().join("workspace");
         let alan_dir = workspace_root.join(".alan");
         std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::create_dir_all(alan_runtime::workspace_runtime_sessions_dir_from_alan_dir(
-            &alan_dir,
-            alan_runtime::InstallChannel::Stable,
-        ))
+        std::fs::create_dir_all(
+            alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
+                &alan_dir,
+                alan_agent_engine::InstallChannel::Stable,
+            ),
+        )
         .unwrap();
-        std::fs::create_dir_all(alan_runtime::workspace_runtime_memory_dir_from_alan_dir(
-            &alan_dir,
-            alan_runtime::InstallChannel::Stable,
-        ))
+        std::fs::create_dir_all(
+            alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
+                &alan_dir,
+                alan_agent_engine::InstallChannel::Stable,
+            ),
+        )
         .unwrap();
         std::fs::create_dir_all(alan_dir.join("agents/default/persona")).unwrap();
         std::fs::write(
@@ -853,8 +857,9 @@ required = true
         .unwrap();
 
         let mut template = WorkspaceRuntimeConfig::from(test_runtime_config());
-        template.core_config_source = alan_runtime::ConfigSourceKind::GlobalAgentHome;
-        template.agent_home_paths = Some(alan_runtime::AlanHomePaths::from_home_dir(home.path()));
+        template.core_config_source = alan_agent_engine::ConfigSourceKind::GlobalAgentHome;
+        template.agent_home_paths =
+            Some(alan_agent_engine::AlanHomePaths::from_home_dir(home.path()));
 
         let manager = RuntimeManager::with_template(template);
         let result = manager

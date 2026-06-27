@@ -6,8 +6,8 @@ violations=()
 
 is_allowed_file() {
   case "$1" in
-    "$repo_root/crates/runtime/src/agent_root.rs") return 0 ;;
-    "$repo_root/crates/runtime/src/paths.rs") return 0 ;;
+    "$repo_root/crates/agent-engine/src/agent_root.rs") return 0 ;;
+    "$repo_root/crates/agent-engine/src/paths.rs") return 0 ;;
     "$repo_root"/crates/*/tests/*.rs) return 0 ;;
     *_tests.rs) return 0 ;;
     *) return 1 ;;
@@ -53,6 +53,6 @@ done < <(find "$repo_root/crates" -path '*/target/*' -prune -o -name '*.rs' -pri
 if ((${#violations[@]})); then
   printf 'Raw default agent-root layout strings found outside the runtime layout owner:\n' >&2
   printf '%s\n' "${violations[@]}" >&2
-  printf '\nUse alan_runtime::AgentRootLayout or add a focused allowlist entry with justification.\n' >&2
+  printf '\nUse alan_agent_engine::AgentRootLayout or add a focused allowlist entry with justification.\n' >&2
   exit 1
 fi

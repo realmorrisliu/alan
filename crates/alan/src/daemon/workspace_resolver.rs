@@ -37,7 +37,7 @@ pub struct ResolvedWorkspace {
 #[derive(Debug, Clone)]
 pub struct WorkspaceResolver {
     registry: WorkspaceRegistry,
-    alan_home_paths: alan_runtime::AlanHomePaths,
+    alan_home_paths: alan_agent_engine::AlanHomePaths,
     default_workspace_dir: PathBuf,
 }
 
@@ -45,8 +45,8 @@ impl WorkspaceResolver {
     /// Create a new resolver and load the CLI registry
     pub fn new() -> Result<Self> {
         let registry = WorkspaceRegistry::load()?;
-        let alan_home_paths =
-            alan_runtime::AlanHomePaths::detect().context("Cannot determine home directory")?;
+        let alan_home_paths = alan_agent_engine::AlanHomePaths::detect()
+            .context("Cannot determine home directory")?;
         let default_workspace_dir =
             canonicalize_existing_or_self(alan_home_paths.alan_home_dir.clone());
 
@@ -60,7 +60,7 @@ impl WorkspaceResolver {
     /// Create with an explicit registry and default workspace directory.
     #[allow(dead_code)]
     pub fn with_registry(registry: WorkspaceRegistry, default_dir: PathBuf) -> Self {
-        let alan_home_paths = alan_runtime::AlanHomePaths::from_alan_home_dir(&default_dir);
+        let alan_home_paths = alan_agent_engine::AlanHomePaths::from_alan_home_dir(&default_dir);
         Self {
             registry,
             alan_home_paths,
@@ -73,18 +73,18 @@ impl WorkspaceResolver {
         &self.default_workspace_dir
     }
 
-    pub fn alan_home_paths(&self) -> &alan_runtime::AlanHomePaths {
+    pub fn alan_home_paths(&self) -> &alan_agent_engine::AlanHomePaths {
         &self.alan_home_paths
     }
 
-    pub fn install_channel(&self) -> alan_runtime::InstallChannel {
+    pub fn install_channel(&self) -> alan_agent_engine::InstallChannel {
         self.alan_home_paths.channel
     }
 
     /// Get the default workspace directory (`~/.alan/`)
     #[allow(dead_code)]
     fn default_workspace_dir() -> Result<PathBuf> {
-        alan_runtime::AlanHomePaths::detect()
+        alan_agent_engine::AlanHomePaths::detect()
             .map(|paths| paths.alan_home_dir)
             .context("Cannot determine home directory")
     }
@@ -262,14 +262,14 @@ impl WorkspaceResolver {
         {
             workspace_path.to_path_buf()
         } else {
-            alan_runtime::workspace_alan_dir(workspace_path)
+            alan_agent_engine::workspace_alan_dir(workspace_path)
         }
     }
 
     /// Get the channel-scoped generated workspace sessions directory.
     #[allow(dead_code)]
     pub fn workspace_sessions_dir(&self, workspace_path: &Path) -> PathBuf {
-        alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(
+        alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(
             &self.workspace_alan_dir(workspace_path),
             self.install_channel(),
         )
@@ -278,7 +278,7 @@ impl WorkspaceResolver {
     /// Get the channel-scoped generated workspace memory directory.
     #[allow(dead_code)]
     pub fn workspace_memory_dir(&self, workspace_path: &Path) -> PathBuf {
-        alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(
+        alan_agent_engine::workspace_memory_dir_for_channel_from_alan_dir(
             &self.workspace_alan_dir(workspace_path),
             self.install_channel(),
         )
@@ -287,7 +287,9 @@ impl WorkspaceResolver {
     /// Get the workspace `persona` directory
     #[allow(dead_code)]
     pub fn workspace_persona_dir(&self, workspace_path: &Path) -> PathBuf {
-        alan_runtime::workspace_persona_dir_from_alan_dir(&self.workspace_alan_dir(workspace_path))
+        alan_agent_engine::workspace_persona_dir_from_alan_dir(
+            &self.workspace_alan_dir(workspace_path),
+        )
     }
 
     /// Check whether a path is a valid workspace (contains a workspace state directory)
@@ -356,9 +358,9 @@ impl WorkspaceResolver {
         let _skills_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "skills")?;
         let channel = self.install_channel();
         let sessions_dir =
-            alan_runtime::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel);
+            alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel);
         let memory_dir =
-            alan_runtime::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel);
+            alan_agent_engine::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel);
         std::fs::create_dir_all(&sessions_dir).with_context(|| {
             format!(
                 "Failed to create workspace sessions directory: {}",
@@ -395,8 +397,8 @@ impl WorkspaceResolver {
         );
         let persona_dir = Self::ensure_fixed_child_dir(&default_agent_dir, "persona")?;
 
-        alan_runtime::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
-        alan_runtime::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
+        alan_agent_engine::prompts::ensure_workspace_memory_layout_at(&memory_dir)?;
+        alan_agent_engine::prompts::ensure_workspace_bootstrap_files_at(&persona_dir)?;
 
         debug!(path = %alan_dir.display(), "Created workspace directory structure");
         Ok(())
@@ -1136,7 +1138,7 @@ mod tests {
 
         assert_eq!(
             resolver.install_channel(),
-            alan_runtime::InstallChannel::Dev
+            alan_agent_engine::InstallChannel::Dev
         );
         assert_eq!(resolver.alan_home_dir(), canonical_physical_home.as_path());
         assert_eq!(
