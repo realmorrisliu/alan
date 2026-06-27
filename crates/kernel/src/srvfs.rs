@@ -3,9 +3,10 @@
 //! `/srv` exists before any user-space file server so servers have a place to
 //! publish mountable handles and clients have a place to mount from. It is **not
 //! an ambient backdoor**: a service withheld from a process is filtered out of
-//! its `/srv` and is not remountable — denial-by-absent-mount (D6). The filtered
-//! view is itself a [`SrvFs`] (a real `FileServer`), so the denial holds on the
-//! aP surface a process actually reads, not just in a Rust-side snapshot.
+//! its `/srv` and is not remountable — denial-by-absent-mount (D6). A filtered
+//! view shares the **live** registry and applies its deny set per operation, so
+//! it is a real `FileServer` *and* stays current as services post/restart — not
+//! a stale snapshot.
 //!
 //! In v1 (in-process) a handle is an [`InProcessTransport`]; the aP surface lists
 //! handle *names* and the in-process kernel mounts a named handle via
@@ -14,6 +15,7 @@
 //! instead, with the same access-filtered listing.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
@@ -32,6 +34,13 @@ struct Handle {
     qid_path: u64,
 }
 
+/// The shared, live registry of posted handles. Views hold an `Arc` to the same
+/// registry so they observe later posts/restarts.
+struct Registry {
+    handles: Vec<Handle>,
+    next_qid: u64,
+}
+
 /// What a fid in `/srv` points at.
 #[derive(Clone)]
 enum Node {
@@ -39,15 +48,13 @@ enum Node {
     Handle(String),
 }
 
-struct SrvState {
-    handles: Vec<Handle>,
-    fids: HashMap<Fid, Node>,
-    next_qid: u64,
-}
-
-/// The `/srv` rendezvous registry (or a filtered view of one).
+/// The `/srv` rendezvous device, or an access-filtered view of one. A view shares
+/// the same live registry and only adds names to its `denied` set; fids are
+/// per-view.
 pub struct SrvFs {
-    state: Mutex<SrvState>,
+    registry: Arc<Mutex<Registry>>,
+    denied: HashSet<String>,
+    fids: Mutex<HashMap<Fid, Node>>,
 }
 
 impl Default for SrvFs {
@@ -59,23 +66,28 @@ impl Default for SrvFs {
 impl SrvFs {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(SrvState {
+            registry: Arc::new(Mutex::new(Registry {
                 handles: Vec::new(),
-                fids: HashMap::new(),
                 next_qid: 1,
-            }),
+            })),
+            denied: HashSet::new(),
+            fids: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn visible(&self, name: &str) -> bool {
+        !self.denied.contains(name)
     }
 
     /// Post a mountable handle under `name`. A repeat post of the same name
     /// **replaces** the previous handle (a restarted service supersedes its stale
     /// transport), so a name identifies exactly one rendezvous entry.
     pub async fn post(&self, name: &str, tree: InProcessTransport, access: Access) {
-        let mut state = self.state.lock().await;
-        let qid_path = state.next_qid;
-        state.next_qid += 1;
-        state.handles.retain(|h| h.name != name);
-        state.handles.push(Handle {
+        let mut reg = self.registry.lock().await;
+        let qid_path = reg.next_qid;
+        reg.next_qid += 1;
+        reg.handles.retain(|h| h.name != name);
+        reg.handles.push(Handle {
             name: name.to_string(),
             tree,
             access,
@@ -83,20 +95,24 @@ impl SrvFs {
         });
     }
 
-    /// Every posted handle name, in post order.
+    /// Every posted handle name visible through this view, in post order.
     pub async fn list(&self) -> Vec<String> {
-        self.state
+        self.registry
             .lock()
             .await
             .handles
             .iter()
+            .filter(|h| self.visible(&h.name))
             .map(|h| h.name.clone())
             .collect()
     }
 
-    /// Resolve a handle to its mountable tree and access, or `None`.
+    /// Resolve a visible handle to its mountable tree and access, or `None`.
     pub async fn lookup(&self, name: &str) -> Option<(InProcessTransport, Access)> {
-        self.state
+        if !self.visible(name) {
+            return None;
+        }
+        self.registry
             .lock()
             .await
             .handles
@@ -105,37 +121,21 @@ impl SrvFs {
             .map(|h| (h.tree.clone(), h.access))
     }
 
-    /// A real, access-filtered `/srv` for a restricted process: handles in
-    /// `denied` are absent from the returned server's listing and unresolvable —
-    /// and because it is a [`FileServer`], the denial holds on the aP surface the
-    /// process reads, not only in a snapshot.
+    /// An access-filtered `/srv` for a restricted process: handles in `denied`
+    /// are absent and unresolvable. The view shares the **live** registry, so a
+    /// later permitted post/restart on the parent is immediately visible to it.
     pub async fn view(&self, denied: &HashSet<String>) -> SrvFs {
-        let state = self.state.lock().await;
-        let visible: Vec<Handle> = state
-            .handles
-            .iter()
-            .filter(|h| !denied.contains(&h.name))
-            .cloned()
-            .collect();
+        let mut combined = self.denied.clone();
+        combined.extend(denied.iter().cloned());
         SrvFs {
-            state: Mutex::new(SrvState {
-                handles: visible,
-                fids: HashMap::new(),
-                next_qid: state.next_qid,
-            }),
+            registry: Arc::clone(&self.registry),
+            denied: combined,
+            fids: Mutex::new(HashMap::new()),
         }
     }
-}
 
-impl SrvState {
-    fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
-        if fid == Fid::ROOT {
-            return Ok(Node::Root);
-        }
-        self.fids.get(&fid).cloned().ok_or(ErrorCode::NotFound)
-    }
-
-    fn qid_of(&self, node: &Node) -> Qid {
+    /// The qid for a node, looked up against the live registry.
+    async fn qid_of(&self, node: &Node) -> Qid {
         match node {
             Node::Root => Qid {
                 kind: FileKind::Dir,
@@ -144,6 +144,9 @@ impl SrvState {
             },
             Node::Handle(name) => {
                 let path = self
+                    .registry
+                    .lock()
+                    .await
                     .handles
                     .iter()
                     .find(|h| &h.name == name)
@@ -157,41 +160,66 @@ impl SrvState {
             }
         }
     }
+
+    async fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
+        if fid == Fid::ROOT {
+            return Ok(Node::Root);
+        }
+        self.fids
+            .lock()
+            .await
+            .get(&fid)
+            .cloned()
+            .ok_or(ErrorCode::NotFound)
+    }
 }
 
 #[async_trait]
 impl FileServer for SrvFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let mut state = self.state.lock().await;
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+        if newfid == Fid::ROOT || self.fids.lock().await.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let start = state.node_of(fid)?;
+        let start = self.node_of(fid).await?;
         let node = match (&start, names) {
             (_, []) => start.clone(),
-            (Node::Root, [name]) if state.handles.iter().any(|h| &h.name == name) => {
-                Node::Handle(name.clone())
+            (Node::Root, [name]) if self.visible(name) => {
+                let present = self
+                    .registry
+                    .lock()
+                    .await
+                    .handles
+                    .iter()
+                    .any(|h| &h.name == name);
+                if present {
+                    Node::Handle(name.clone())
+                } else {
+                    return Err(ErrorCode::NotFound);
+                }
             }
             (Node::Root, [_]) => return Err(ErrorCode::NotFound),
             _ => return Err(ErrorCode::NotDirectory),
         };
-        let qid = state.qid_of(&node);
-        state.fids.insert(newfid, node);
+        let qid = self.qid_of(&node).await;
+        self.fids.lock().await.insert(newfid, node);
         Ok(qid)
     }
 
     async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let state = self.state.lock().await;
-        Ok(state.qid_of(&state.node_of(fid)?))
+        let node = self.node_of(fid).await?;
+        Ok(self.qid_of(&node).await)
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let state = self.state.lock().await;
-        let bytes = match state.node_of(fid)? {
-            // The root lists the (filtered) handle names this server exposes.
-            Node::Root => state
+        let bytes = match self.node_of(fid).await? {
+            // The root lists the handle names visible through this view (live).
+            Node::Root => self
+                .registry
+                .lock()
+                .await
                 .handles
                 .iter()
+                .filter(|h| self.visible(&h.name))
                 .map(|h| h.name.clone())
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -209,11 +237,10 @@ impl FileServer for SrvFs {
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let node = self.node_of(fid).await?;
         Ok(Stat {
             name: String::new(),
-            qid: state.qid_of(&node),
+            qid: self.qid_of(&node).await,
             length: 0,
             writable: false,
         })
@@ -234,7 +261,7 @@ impl FileServer for SrvFs {
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        self.state.lock().await.fids.remove(&fid);
+        self.fids.lock().await.remove(&fid);
         Ok(())
     }
 }

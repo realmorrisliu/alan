@@ -120,6 +120,38 @@ async fn reposting_a_name_replaces_the_stale_handle() {
     );
 }
 
+// A filtered view shares the live registry: a later permitted post on the parent
+// is visible to the child, and a withheld name stays hidden (PR #574 review).
+#[tokio::test]
+async fn filtered_view_stays_live() {
+    let srv = SrvFs::new();
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+
+    let denied: HashSet<String> = ["mem".to_string()].into_iter().collect();
+    let view = srv.view(&denied).await;
+    assert_eq!(view.list().await, vec!["llm".to_string()]);
+
+    // Parent posts a newly permitted handle and a denied one after the view exists.
+    srv.post("route", memfs(), Access::ReadWrite).await;
+    srv.post("mem", memfs(), Access::ReadOnly).await;
+
+    let mut names = view.list().await;
+    names.sort();
+    assert_eq!(
+        names,
+        vec!["llm".to_string(), "route".to_string()],
+        "view sees new allowed post, not the denied one"
+    );
+    assert!(
+        view.lookup("route").await.is_some(),
+        "newly posted permitted handle resolves"
+    );
+    assert!(
+        view.lookup("mem").await.is_none(),
+        "denied handle stays hidden"
+    );
+}
+
 #[tokio::test]
 async fn srv_root_lists_posted_handles_over_ap() {
     let srv = SrvFs::new();

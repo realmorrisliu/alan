@@ -225,6 +225,11 @@ impl FileServer for ProcFs {
     }
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        // The pre-bound root fid is openable directly (to read the listing)
+        // without a redundant empty walk, matching SrvFs and the reference server.
+        if fid == Fid::ROOT {
+            return Ok(qid_of(&Node::Root));
+        }
         let mut state = self.state.lock().await;
         let node = state.node_of(fid)?;
         // Reopening a live fid before clunk is rejected, so a retried open cannot
@@ -329,10 +334,20 @@ impl FileServer for ProcFs {
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let state = self.state.lock().await;
         let node = state.node_of(fid)?;
+        // Report the readable byte length so clients can size reads; write-only
+        // surfaces (clone/ctl) are 0, and a process output is its retained length.
+        let length = match &node {
+            Node::Output(pid) => match state.outputs.get(pid) {
+                Some(stream) => stream.len().await,
+                None => 0,
+            },
+            Node::Clone | Node::Ctl(_) => 0,
+            other => state.file_bytes(other).map(|b| b.len() as u64).unwrap_or(0),
+        };
         Ok(Stat {
             name: String::new(),
             qid: qid_of(&node),
-            length: 0,
+            length,
             writable: is_writable(&node),
         })
     }

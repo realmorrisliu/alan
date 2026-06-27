@@ -204,6 +204,34 @@ async fn clone_exec_spec_write_honors_offset() {
     );
 }
 
+// stat reports the readable byte length, so clients can size reads (PR #574).
+#[tokio::test]
+async fn stat_reports_readable_length() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    fs.walk(Fid::ROOT, Fid(11), &[pid, "status".into()])
+        .await
+        .unwrap();
+    let st = fs.stat(Fid(11)).await.unwrap();
+    // status reads "running\n" (8 bytes); stat must not report 0.
+    assert_eq!(st.length, 8, "stat length matches the bytes read returns");
+}
+
+// The pre-bound /proc root fid can be opened directly (no redundant empty walk),
+// matching SrvFs and the reference server (PR #574 review).
+#[tokio::test]
+async fn root_fid_is_openable_directly() {
+    let fs = proc();
+    fs.open(Fid::ROOT, OpenMode::Read)
+        .await
+        .expect("root fid opens directly");
+    let listing = String::from_utf8(fs.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap();
+    assert!(
+        listing.lines().any(|l| l == "clone"),
+        "root listing is readable via the root fid"
+    );
+}
+
 // /proc/<pid>/namespace renders the process's mounted capability set
 // (PR #574 review).
 #[tokio::test]

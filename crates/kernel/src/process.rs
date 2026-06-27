@@ -10,8 +10,9 @@
 //! Spawn is staged so process creation can be driven by aP clone-via-open
 //! (§7.1a): [`clone_begin`](ProcessTable::clone_begin) allocates a **pending**
 //! slot that is not yet in the public listing; [`commit`](ProcessTable::commit)
-//! writes the exec spec and starts it (now public); [`discard`] drops a pending
-//! slot so a failed spawn leaks nothing into `/proc`.
+//! writes the exec spec and starts it (now public);
+//! [`discard`](ProcessTable::discard) drops a pending slot so a failed spawn
+//! leaks nothing into `/proc`.
 
 use std::collections::BTreeMap;
 
