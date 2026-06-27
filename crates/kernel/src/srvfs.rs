@@ -238,10 +238,24 @@ impl FileServer for SrvFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let node = self.node_of(fid).await?;
+        // Report the readable byte length so clients can size reads.
+        let length = match &node {
+            Node::Root => {
+                let reg = self.registry.lock().await;
+                reg.handles
+                    .iter()
+                    .filter(|h| self.visible(&h.name))
+                    .map(|h| h.name.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .len() as u64
+            }
+            Node::Handle(name) => name.len() as u64,
+        };
         Ok(Stat {
             name: String::new(),
             qid: self.qid_of(&node).await,
-            length: 0,
+            length,
             writable: false,
         })
     }

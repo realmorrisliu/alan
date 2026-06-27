@@ -135,7 +135,6 @@ async fn resolve_candidates_searches_union_contributors() {
     // so the file is reachable instead of shadowed by last-wins.
     assert!(
         candidates[0]
-            .tree
             .call(Request::Walk {
                 fid: Fid::ROOT,
                 newfid: Fid(1),
@@ -146,7 +145,6 @@ async fn resolve_candidates_searches_union_contributors() {
         "the last-mounted contributor lacks the file"
     );
     candidates[1]
-        .tree
         .call(Request::Walk {
             fid: Fid::ROOT,
             newfid: Fid(2),
@@ -154,6 +152,33 @@ async fn resolve_candidates_searches_union_contributors() {
         })
         .await
         .expect("an earlier contributor still serves the file");
+}
+
+// resolve_candidates keeps only the longest-prefix contributors — a deeper
+// overmount shadows the broader mount, never falls through to it (PR #574 review).
+#[tokio::test]
+async fn resolve_candidates_keeps_only_the_longest_prefix() {
+    let mut ns = Namespace::new();
+    ns.mount("/", memfs(), Access::ReadOnly); // broad: has "greeting"
+    ns.mount("/mnt/llm", emptyfs(), Access::ReadOnly); // deeper overmount: empty
+
+    let candidates = ns.resolve_candidates("/mnt/llm/greeting");
+    assert_eq!(
+        candidates.len(),
+        1,
+        "only the longest-prefix mount, no fall-through to /"
+    );
+    assert!(
+        candidates[0]
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(1),
+                names: vec!["greeting".into()]
+            })
+            .await
+            .is_err(),
+        "the deeper overmount shadows the broader mount"
+    );
 }
 
 #[tokio::test]
@@ -167,7 +192,6 @@ async fn resolve_routes_a_path_into_the_mounted_tree() {
 
     // The returned tree is live: walking the rel path and reading works.
     resolved
-        .tree
         .call(Request::Walk {
             fid: Fid::ROOT,
             newfid: Fid(1),
@@ -176,7 +200,6 @@ async fn resolve_routes_a_path_into_the_mounted_tree() {
         .await
         .unwrap();
     resolved
-        .tree
         .call(Request::Open {
             fid: Fid(1),
             mode: OpenMode::Read,
@@ -184,7 +207,6 @@ async fn resolve_routes_a_path_into_the_mounted_tree() {
         .await
         .unwrap();
     let read = resolved
-        .tree
         .call(Request::Read {
             fid: Fid(1),
             offset: 0,
@@ -225,7 +247,6 @@ async fn bind_aliases_a_mounted_tree_under_a_new_path() {
     let resolved = ns.resolve("/bin/greeting").expect("bound path resolves");
     assert_eq!(resolved.rel, vec!["greeting".to_string()]);
     resolved
-        .tree
         .call(Request::Walk {
             fid: Fid::ROOT,
             newfid: Fid(1),
@@ -234,7 +255,6 @@ async fn bind_aliases_a_mounted_tree_under_a_new_path() {
         .await
         .unwrap();
     resolved
-        .tree
         .call(Request::Open {
             fid: Fid(1),
             mode: OpenMode::Read,
@@ -242,7 +262,6 @@ async fn bind_aliases_a_mounted_tree_under_a_new_path() {
         .await
         .unwrap();
     let read = resolved
-        .tree
         .call(Request::Read {
             fid: Fid(1),
             offset: 0,

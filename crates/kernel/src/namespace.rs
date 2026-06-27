@@ -35,11 +35,13 @@ impl Access {
     }
 }
 
-/// A successful path resolution: the file server backing the path, the path
-/// components to walk within it, and the access the mount grants.
+/// A successful path resolution: the path components to walk within the backing
+/// tree and the access the mount grants. The backing transport is intentionally
+/// **private** — callers operate through [`Resolved::call`], which enforces the
+/// mount's access, so the boundary cannot be bypassed by reaching the raw tree.
 #[derive(Clone)]
 pub struct Resolved {
-    pub tree: InProcessTransport,
+    tree: InProcessTransport,
     pub rel: Vec<String>,
     pub access: Access,
 }
@@ -49,8 +51,8 @@ impl Resolved {
     /// rights: a read-only mount rejects any mutating request (open-for-write,
     /// write, create, remove) with [`ErrorCode::NoAccess`], so awareness never
     /// implies authority (D6). Read/walk/stat/clunk and read-opens pass through.
-    /// Callers operate through this rather than the raw `tree` so the access
-    /// boundary is enforced, not advisory.
+    /// This is the only way to reach the backing tree, so the access boundary is
+    /// enforced, not advisory.
     pub async fn call(&self, request: Request) -> Result<Response, ErrorCode> {
         if self.access == Access::ReadOnly && is_mutating(&request) {
             return Err(ErrorCode::NoAccess);
@@ -214,31 +216,31 @@ impl Namespace {
             .collect()
     }
 
-    /// Every mount that could serve `path`, ordered by preference: longest
-    /// matching prefix first, and among equal prefixes the most recent mount
-    /// first. A union directory (several trees at one prefix) yields several
-    /// candidates; the caller walks each in order until one resolves, so a file
-    /// present only in an earlier contributor (e.g. binfs under a `/bin` union
-    /// also fed by agent-bin) stays reachable instead of being shadowed by a
-    /// last-wins collapse.
+    /// The union contributors at the **longest** matching prefix for `path`,
+    /// most-recently-mounted first. Only equal-prefix contributors are returned —
+    /// resolution never falls through from a more-specific overmount to a broader
+    /// mount, preserving longest-prefix shadowing (a deeper mount hides what `/`
+    /// would otherwise expose). A union directory (several trees at that same
+    /// prefix) yields several candidates; the caller walks each in order until one
+    /// resolves, so a file present only in an earlier contributor stays reachable.
     pub fn resolve_candidates(&self, path: &str) -> Vec<Resolved> {
         let components = split_path(path);
-        let mut matches: Vec<&Mount> = self
+        let max_len = self
             .mounts
             .iter()
             .filter(|m| is_prefix(&m.prefix, &components))
-            .collect();
-        // Longest prefix first; within equal prefix, most-recently-mounted first.
-        matches.sort_by(|a, b| {
-            b.prefix.len().cmp(&a.prefix.len()).then_with(|| {
-                let ai = self.mounts.iter().position(|m| std::ptr::eq(m, *a));
-                let bi = self.mounts.iter().position(|m| std::ptr::eq(m, *b));
-                bi.cmp(&ai)
-            })
-        });
-        matches
-            .into_iter()
-            .map(|m| Resolved {
+            .map(|m| m.prefix.len())
+            .max();
+        let Some(max_len) = max_len else {
+            return Vec::new();
+        };
+        // Only the longest-prefix contributors; most-recently-mounted first.
+        self.mounts
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| is_prefix(&m.prefix, &components) && m.prefix.len() == max_len)
+            .rev()
+            .map(|(_, m)| Resolved {
                 tree: m.tree.clone(),
                 rel: components[m.prefix.len()..].to_vec(),
                 access: m.access,

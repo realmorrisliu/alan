@@ -152,6 +152,19 @@ async fn filtered_view_stays_live() {
     );
 }
 
+// stat on a /srv handle reports its readable byte length, not 0 (PR #574 review).
+#[tokio::test]
+async fn handle_stat_reports_real_length() {
+    let srv = SrvFs::new();
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    srv.walk(Fid::ROOT, Fid(1), &["llm".into()]).await.unwrap();
+    let st = srv.stat(Fid(1)).await.unwrap();
+    assert_eq!(
+        st.length, 3,
+        "handle file length matches the bytes read returns (\"llm\")"
+    );
+}
+
 #[tokio::test]
 async fn srv_root_lists_posted_handles_over_ap() {
     let srv = SrvFs::new();
