@@ -16,6 +16,8 @@
 
 use std::collections::BTreeMap;
 
+use alan_ap::VersionTable;
+
 use crate::Namespace;
 
 /// A process identity. Ephemeral: never reused as a durable reference.
@@ -88,7 +90,16 @@ pub struct ProcessTable {
     next: u64,
     pending: BTreeMap<Pid, Pending>,
     processes: BTreeMap<Pid, Process>,
+    /// qid generations: key `0` (no pid is ever `0` — `next` starts at 1) is the
+    /// public listing generation (bumped when a process appears); key `pid.0` is a
+    /// per-process generation (bumped when that process's state changes, e.g. on
+    /// exit). A `/proc` view reads these so a cached qid/version goes stale.
+    versions: VersionTable,
 }
+
+/// The `VersionTable` key for the public `/proc` listing generation (no real pid
+/// is `0`, so it never collides with a per-process key).
+const LISTING_KEY: u64 = 0;
 
 impl Default for ProcessTable {
     fn default() -> Self {
@@ -102,7 +113,19 @@ impl ProcessTable {
             next: 1,
             pending: BTreeMap::new(),
             processes: BTreeMap::new(),
+            versions: VersionTable::new(),
         }
+    }
+
+    /// The qid version of the public `/proc` listing (bumped when a process
+    /// becomes public).
+    pub fn listing_generation(&self) -> u32 {
+        self.versions.get(LISTING_KEY)
+    }
+
+    /// The qid version of a process's files (bumped when its state changes).
+    pub fn generation(&self, pid: Pid) -> u32 {
+        self.versions.get(pid.0)
     }
 
     fn alloc_pid(&mut self) -> Pid {
@@ -148,6 +171,8 @@ impl ProcessTable {
                 exit_code: None,
             },
         );
+        // A process became public: the /proc listing changed.
+        self.versions.bump(LISTING_KEY);
         Some(slot)
     }
 
@@ -166,6 +191,8 @@ impl ProcessTable {
         {
             proc.status = Status::Exited;
             proc.exit_code = Some(code);
+            // The process's status/exit changed: bump its per-process generation.
+            self.versions.bump(pid.0);
         }
     }
 

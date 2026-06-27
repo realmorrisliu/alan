@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
+use crate::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, VersionTable};
 
 /// Upper bound on a buffered commit-on-clunk document, so a huge/sparse write
 /// offset cannot make the reference server allocate unbounded memory.
@@ -55,6 +55,9 @@ impl FidState {
 struct State {
     nodes: Vec<Node>,
     fids: HashMap<Fid, FidState>,
+    /// Per-node qid versions, keyed by `NodeId`; bumped when a node's content
+    /// changes (here, the root listing when a clone allocates a connection).
+    versions: VersionTable,
 }
 
 impl State {
@@ -72,7 +75,7 @@ impl State {
         };
         Qid {
             kind,
-            version: 0,
+            version: self.versions.get(node as u64),
             path: node as u64,
         }
     }
@@ -108,6 +111,7 @@ impl MemFs {
         let mut state = State {
             nodes,
             fids: HashMap::new(),
+            versions: VersionTable::new(),
         };
 
         let greeting = state.push(Node::Bytes(b"hi".to_vec()));
@@ -176,6 +180,8 @@ impl FileServer for MemFs {
             if let Node::Dir(root) = &mut state.nodes[0] {
                 root.insert(name.clone(), conn_dir);
             }
+            // The root directory's listing changed: bump its qid version.
+            state.versions.bump(0);
             Some(name)
         } else {
             None
