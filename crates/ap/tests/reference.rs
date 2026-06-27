@@ -316,6 +316,67 @@ async fn document_writes_honor_offset() {
     );
 }
 
+// A huge/overflowing write offset returns an aP error instead of panicking the
+// in-process server (PR #573 review).
+#[tokio::test]
+async fn overflowing_write_offset_is_rejected_not_panicked() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(100),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(100),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Write {
+            fid: Fid(100),
+            offset: u64::MAX,
+            data: b"x".to_vec()
+        })
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+// Root is the reusable anchor: opening then clunking it must leave it openable
+// again, not locked out for the server's lifetime (PR #573 review).
+#[tokio::test]
+async fn root_fid_can_be_opened_again_after_clunk() {
+    let t = transport();
+    t.call(Request::Open {
+        fid: Fid::ROOT,
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Clunk { fid: Fid::ROOT }).await,
+        Ok(Response::Clunk)
+    );
+    // Reopening root succeeds — its per-open state was cleared on clunk.
+    t.call(Request::Open {
+        fid: Fid::ROOT,
+        mode: OpenMode::Read,
+    })
+    .await
+    .expect("root remains the reusable anchor after clunk");
+    // And it still resolves walks afterward.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(101),
+        names: vec!["greeting".into()],
+    })
+    .await
+    .expect("root still anchors walks");
+}
+
 // §5.5 — commit-time failure: a document write commits on clunk and a malformed
 // document is rejected at clunk, distinct from a dial-time error.
 #[tokio::test]

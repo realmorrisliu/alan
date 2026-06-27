@@ -217,9 +217,10 @@ impl FileServer for MemFs {
                 // Honor the byte offset: the aP contract addresses writes by
                 // offset, so place bytes at `offset` (out-of-order, retried, or
                 // overwriting chunks build the document the caller addressed),
-                // rather than blindly appending.
-                let start = offset as usize;
-                let end = start + data.len();
+                // rather than blindly appending. Use checked arithmetic so a
+                // hostile/huge offset returns an aP error instead of panicking.
+                let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+                let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
                 if f.write_buf.len() < end {
                     f.write_buf.resize(end, 0);
                 }
@@ -262,6 +263,15 @@ impl FileServer for MemFs {
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
         if fid == Fid::ROOT {
+            // Root is the reusable pre-bound anchor: never remove it, but clear
+            // its per-open state so it can be opened again (otherwise the
+            // reopen guard would lock root out for the server's lifetime).
+            let mut state = self.state.lock().await;
+            if let Some(root) = state.fids.get_mut(&Fid::ROOT) {
+                root.mode = None;
+                root.clone_name = None;
+                root.write_buf.clear();
+            }
             return Ok(());
         }
         let mut state = self.state.lock().await;
