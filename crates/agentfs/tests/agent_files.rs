@@ -216,8 +216,11 @@ async fn clone_allocation_requires_write_intent() {
         fs.open(Fid(2), OpenMode::Write).await,
         Err(ErrorCode::NoAccess)
     );
-    // The requests dir still lists only `clone` — nothing was created.
-    assert_eq!(read_text(&fs, &["requests"], Fid(3)).await, "clone");
+    // No request id was created — the dir lists only its fixed entries.
+    let listing = read_text(&fs, &["requests"], Fid(3)).await;
+    let mut entries: Vec<&str> = listing.lines().collect();
+    entries.sort();
+    assert_eq!(entries, vec!["clone", "events"], "no rN entry leaked");
 }
 
 #[tokio::test]
@@ -234,6 +237,84 @@ async fn machine_status_is_writable_agent_state() {
     assert_eq!(
         read_text(&fs, &["machine", "status"], Fid(3)).await,
         "waiting-for-input"
+    );
+}
+
+#[tokio::test]
+async fn requests_events_stream_announces_new_requests() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    let fs = Arc::new(AgentFs::new());
+
+    // A watcher tails requests/events before any request exists.
+    let watcher = fs.clone();
+    let handle = tokio::spawn(async move {
+        watcher
+            .walk(Fid::ROOT, Fid(9), &["requests".into(), "events".into()])
+            .await
+            .unwrap();
+        watcher.open(Fid(9), OpenMode::Read).await.unwrap();
+        watcher.read(Fid(9), 0, 4096).await.unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !handle.is_finished(),
+        "requests/events blocks until a request appears"
+    );
+
+    // Creating a request (clone-via-open) announces it.
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let rec = tokio::time::timeout(Duration::from_millis(500), handle)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8(rec).unwrap().contains("created:"));
+}
+
+#[tokio::test]
+async fn io_events_is_scoped_to_io_not_the_aggregate() {
+    let fs = AgentFs::new();
+    // A tape write goes to the aggregate `events` but NOT to io/events.
+    write_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
+        .await
+        .unwrap();
+    assert!(read_text(&fs, &["events"], Fid(2)).await.contains("tape:"));
+
+    // io/events only carries io output/input. Read non-blocking: it has no tape
+    // record. (An output write does land here.)
+    write_doc(&fs, &["io", "output"], Fid(3), b"hi")
+        .await
+        .unwrap();
+    let io_events = read_text(&fs, &["io", "events"], Fid(4)).await;
+    assert!(io_events.contains("output:"), "io/events carries io output");
+    assert!(
+        !io_events.contains("tape:"),
+        "io/events is not the aggregate (no tape records)"
+    );
+}
+
+#[tokio::test]
+async fn request_options_is_a_file() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["requests", &id, "options"],
+        Fid(2),
+        b"[\"approve\",\"reject\"]",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_text(&fs, &["requests", &id, "options"], Fid(3)).await,
+        "[\"approve\",\"reject\"]"
     );
 }
 

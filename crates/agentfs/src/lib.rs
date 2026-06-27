@@ -34,6 +34,7 @@ const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 struct Request {
     kind: String,
     prompt: String,
+    options: String,
     status: String,
     response: String,
 }
@@ -48,7 +49,13 @@ struct Action {
 struct State {
     input: Stream,
     output: Stream,
+    /// The aggregate, watchable record stream (`events`): every surface write.
     events: Stream,
+    /// IO-scoped lifecycle stream (`io/events`): only io/input and io/output.
+    io_events: Stream,
+    /// Per-container notification streams: a new request/action or field change.
+    request_events: Stream,
+    action_events: Stream,
     tape: Stream,
     requests: BTreeMap<String, Request>,
     actions: BTreeMap<String, Action>,
@@ -92,10 +99,12 @@ enum Node {
     Events,
     RequestsDir,
     RequestsClone,
+    RequestsEvents,
     Request(String),
     RequestField(String, &'static str),
     ActionsDir,
     ActionsClone,
+    ActionsEvents,
     Action(String),
     ActionField(String, &'static str),
     ContextDir,
@@ -120,6 +129,9 @@ impl AgentFs {
                 input: Stream::new(),
                 output: Stream::new(),
                 events: Stream::new(),
+                io_events: Stream::new(),
+                request_events: Stream::new(),
+                action_events: Stream::new(),
                 tape: Stream::new(),
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
@@ -166,31 +178,26 @@ impl State {
                 "status" => Ok(Node::Status),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::RequestsDir => {
-                if name == "clone" {
-                    Ok(Node::RequestsClone)
-                } else if self.requests.contains_key(name) {
-                    Ok(Node::Request(name.to_string()))
-                } else {
-                    Err(ErrorCode::NotFound)
-                }
-            }
+            Node::RequestsDir => match name {
+                "clone" => Ok(Node::RequestsClone),
+                "events" => Ok(Node::RequestsEvents),
+                id if self.requests.contains_key(id) => Ok(Node::Request(id.to_string())),
+                _ => Err(ErrorCode::NotFound),
+            },
             Node::Request(id) => match name {
                 "kind" => Ok(Node::RequestField(id.clone(), "kind")),
                 "prompt" => Ok(Node::RequestField(id.clone(), "prompt")),
+                "options" => Ok(Node::RequestField(id.clone(), "options")),
                 "status" => Ok(Node::RequestField(id.clone(), "status")),
                 "response" => Ok(Node::RequestField(id.clone(), "response")),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::ActionsDir => {
-                if name == "clone" {
-                    Ok(Node::ActionsClone)
-                } else if self.actions.contains_key(name) {
-                    Ok(Node::Action(name.to_string()))
-                } else {
-                    Err(ErrorCode::NotFound)
-                }
-            }
+            Node::ActionsDir => match name {
+                "clone" => Ok(Node::ActionsClone),
+                "events" => Ok(Node::ActionsEvents),
+                id if self.actions.contains_key(id) => Ok(Node::Action(id.to_string())),
+                _ => Err(ErrorCode::NotFound),
+            },
             Node::Action(id) => match name {
                 "name" => Ok(Node::ActionField(id.clone(), "name")),
                 "status" => Ok(Node::ActionField(id.clone(), "status")),
@@ -211,15 +218,16 @@ impl State {
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus".to_vec(),
             Node::Status => self.status.clone().into_bytes(),
-            Node::RequestsDir => listing("clone", self.requests.keys()),
-            Node::ActionsDir => listing("clone", self.actions.keys()),
-            Node::Request(_) => b"kind\nprompt\nstatus\nresponse".to_vec(),
+            Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
+            Node::ActionsDir => listing(&["clone", "events"], self.actions.keys()),
+            Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
             Node::Action(_) => b"name\nstatus\noutput".to_vec(),
             Node::RequestField(id, field) => {
                 let r = self.requests.get(id).ok_or(ErrorCode::NotFound)?;
                 match *field {
                     "kind" => &r.kind,
                     "prompt" => &r.prompt,
+                    "options" => &r.options,
                     "status" => &r.status,
                     _ => &r.response,
                 }
@@ -237,7 +245,13 @@ impl State {
                 .into_bytes()
             }
             // Streams are served via stream_for; clone files via the fid's clone_id.
-            Node::Input | Node::Output | Node::IoEvents | Node::Tape | Node::Events => {
+            Node::Input
+            | Node::Output
+            | Node::IoEvents
+            | Node::Tape
+            | Node::Events
+            | Node::RequestsEvents
+            | Node::ActionsEvents => {
                 return Err(ErrorCode::Unsupported);
             }
             Node::RequestsClone | Node::ActionsClone => return Err(ErrorCode::Unsupported),
@@ -250,15 +264,19 @@ impl State {
             Node::Output => Some(self.output.clone()),
             Node::Input => Some(self.input.clone()),
             Node::Tape => Some(self.tape.clone()),
-            Node::Events | Node::IoEvents => Some(self.events.clone()),
+            Node::Events => Some(self.events.clone()),
+            // io/events is IO-scoped; the per-container streams are their own.
+            Node::IoEvents => Some(self.io_events.clone()),
+            Node::RequestsEvents => Some(self.request_events.clone()),
+            Node::ActionsEvents => Some(self.action_events.clone()),
             _ => None,
         }
     }
 }
 
-/// A directory listing joining a fixed entry with dynamic ids.
-fn listing<'a>(fixed: &str, ids: impl Iterator<Item = &'a String>) -> Vec<u8> {
-    let mut names = vec![fixed.to_string()];
+/// A directory listing joining fixed entries with dynamic ids.
+fn listing<'a>(fixed: &[&str], ids: impl Iterator<Item = &'a String>) -> Vec<u8> {
+    let mut names: Vec<String> = fixed.iter().map(|s| s.to_string()).collect();
     names.extend(ids.cloned());
     names.join("\n").into_bytes()
 }
@@ -314,6 +332,15 @@ impl FileServer for AgentFs {
                         ..Default::default()
                     },
                 );
+                // Announce the new request on its container stream + the aggregate.
+                state
+                    .request_events
+                    .append(format!("created:{id}\n").as_bytes())
+                    .await;
+                state
+                    .events
+                    .append(format!("request:{id}\n").as_bytes())
+                    .await;
                 Some(id)
             }
             Node::ActionsClone => {
@@ -326,6 +353,14 @@ impl FileServer for AgentFs {
                         ..Default::default()
                     },
                 );
+                state
+                    .action_events
+                    .append(format!("created:{id}\n").as_bytes())
+                    .await;
+                state
+                    .events
+                    .append(format!("action:{id}\n").as_bytes())
+                    .await;
                 Some(id)
             }
             _ => None,
@@ -374,21 +409,21 @@ impl FileServer for AgentFs {
             return Err(ErrorCode::NoAccess);
         }
         match node {
-            // The agent appends assistant output and tape records directly.
+            // The agent appends assistant output and tape records directly. Output
+            // also goes to the IO-scoped io/events stream; both go to the aggregate.
             Node::Output | Node::Tape => {
                 let stream = state.stream_for(&node).expect("stream node");
-                let record = match node {
-                    Node::Output => format!("output:{}", data.len()),
-                    _ => format!("tape:{}", data.len()),
+                let is_output = matches!(node, Node::Output);
+                let record = if is_output {
+                    format!("output:{}\n", data.len())
+                } else {
+                    format!("tape:{}\n", data.len())
                 };
-                drop(state);
                 stream.append(data).await;
-                self.state
-                    .lock()
-                    .await
-                    .events
-                    .append(format!("{record}\n").as_bytes())
-                    .await;
+                if is_output {
+                    state.io_events.append(record.as_bytes()).await;
+                }
+                state.events.append(record.as_bytes()).await;
                 Ok(data.len() as u32)
             }
             // io/input, machine/status, and request/action fields are framed
@@ -455,13 +490,13 @@ impl FileServer for AgentFs {
         };
         // Commit a buffered write on clunk.
         if matches!(f.node, Node::Input) && !f.write_buf.is_empty() {
-            // The whole message is committed as one framed unit to io/input.
+            // The whole message is committed as one framed unit to io/input, and
+            // announced on the IO-scoped io/events plus the aggregate.
             let input = state.input.clone();
             input.append(&f.write_buf).await;
-            state
-                .events
-                .append(format!("input:{}\n", f.write_buf.len()).as_bytes())
-                .await;
+            let record = format!("input:{}\n", f.write_buf.len());
+            state.io_events.append(record.as_bytes()).await;
+            state.events.append(record.as_bytes()).await;
         } else if matches!(f.node, Node::Status) && !f.write_buf.is_empty() {
             // The engine publishes its runtime status as a framed value.
             state.status = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
@@ -474,6 +509,7 @@ impl FileServer for AgentFs {
                 match *field {
                     "kind" => r.kind = value,
                     "prompt" => r.prompt = value,
+                    "options" => r.options = value,
                     "status" => r.status = value,
                     "response" => {
                         r.response = value;
@@ -483,6 +519,8 @@ impl FileServer for AgentFs {
                     _ => {}
                 }
             }
+            let record = format!("{id}:{field}\n");
+            state.request_events.append(record.as_bytes()).await;
             state
                 .events
                 .append(format!("request:{id}\n").as_bytes())
@@ -499,6 +537,8 @@ impl FileServer for AgentFs {
                     _ => {}
                 }
             }
+            let record = format!("{id}:{field}\n");
+            state.action_events.append(record.as_bytes()).await;
             state
                 .events
                 .append(format!("action:{id}\n").as_bytes())
@@ -529,6 +569,8 @@ fn qid_of(node: &Node) -> Qid {
         Node::Action(id) => (FileKind::Dir, format!("actions/{id}")),
         Node::RequestsClone => (FileKind::Clone, "requests/clone".into()),
         Node::ActionsClone => (FileKind::Clone, "actions/clone".into()),
+        Node::RequestsEvents => (FileKind::Stream, "requests/events".into()),
+        Node::ActionsEvents => (FileKind::Stream, "actions/events".into()),
         Node::Input => (FileKind::Stream, "io/input".into()),
         Node::Output => (FileKind::Stream, "io/output".into()),
         Node::IoEvents => (FileKind::Stream, "io/events".into()),
