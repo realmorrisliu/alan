@@ -52,6 +52,8 @@ struct State {
     tape: Stream,
     requests: BTreeMap<String, Request>,
     actions: BTreeMap<String, Action>,
+    /// Agent-owned runtime status (machine/status), writable by the engine.
+    status: String,
     next_request: u64,
     next_action: u64,
     fids: HashMap<Fid, AgentFid>,
@@ -121,6 +123,7 @@ impl AgentFs {
                 tape: Stream::new(),
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
+                status: "running".to_string(),
                 next_request: 0,
                 next_action: 0,
                 fids: HashMap::new(),
@@ -207,7 +210,7 @@ impl State {
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus".to_vec(),
-            Node::Status => b"running\n".to_vec(),
+            Node::Status => self.status.clone().into_bytes(),
             Node::RequestsDir => listing("clone", self.requests.keys()),
             Node::ActionsDir => listing("clone", self.actions.keys()),
             Node::Request(_) => b"kind\nprompt\nstatus\nresponse".to_vec(),
@@ -288,6 +291,13 @@ impl FileServer for AgentFs {
         // Dial-time access check: a write-intent open on a read-only node fails at
         // open, not later as Unsupported on write.
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
+            return Err(ErrorCode::NoAccess);
+        }
+        // Clone-via-open allocates state, so it requires write authority: a
+        // read-only observer must not be able to create pending requests/actions.
+        if matches!(node, Node::RequestsClone | Node::ActionsClone)
+            && !matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
+        {
             return Err(ErrorCode::NoAccess);
         }
         // Clone-via-open: allocate a fresh request/action and remember its id.
@@ -379,10 +389,10 @@ impl FileServer for AgentFs {
                     .await;
                 Ok(data.len() as u32)
             }
-            // io/input and request/action fields are framed documents: buffer at
-            // offset and commit the whole unit on clunk, so a turn never starts on
-            // a truncated message (commit-on-clunk).
-            Node::Input | Node::RequestField(..) | Node::ActionField(..) => {
+            // io/input, machine/status, and request/action fields are framed
+            // documents: buffer at offset and commit the whole unit on clunk, so a
+            // turn never starts on a truncated message (commit-on-clunk).
+            Node::Input | Node::Status | Node::RequestField(..) | Node::ActionField(..) => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
@@ -450,6 +460,10 @@ impl FileServer for AgentFs {
                 .events
                 .append(format!("input:{}\n", f.write_buf.len()).as_bytes())
                 .await;
+        } else if matches!(f.node, Node::Status) && !f.write_buf.is_empty() {
+            // The engine publishes its runtime status as a framed value.
+            state.status = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+            state.events.append(b"status\n").await;
         } else if let Node::RequestField(id, field) = &f.node
             && !f.write_buf.is_empty()
         {
@@ -535,6 +549,7 @@ fn is_writable(node: &Node) -> bool {
         Node::Input
             | Node::Output
             | Node::Tape
+            | Node::Status
             | Node::RequestsClone
             | Node::ActionsClone
             | Node::RequestField(..)

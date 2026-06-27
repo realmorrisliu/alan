@@ -198,6 +198,38 @@ async fn distinct_files_get_distinct_qids() {
 }
 
 #[tokio::test]
+async fn clone_allocation_requires_write_intent() {
+    let fs = AgentFs::new();
+    // A read-only observer opening requests/clone must not allocate a pending entry.
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(1), OpenMode::Read).await,
+        Err(ErrorCode::NoAccess)
+    );
+    // The requests dir still lists only `clone` — nothing was created.
+    assert_eq!(read_text(&fs, &["requests"], Fid(2)).await, "clone");
+}
+
+#[tokio::test]
+async fn machine_status_is_writable_agent_state() {
+    let fs = AgentFs::new();
+    assert_eq!(
+        read_text(&fs, &["machine", "status"], Fid(1)).await,
+        "running"
+    );
+    // The engine publishes a new status.
+    write_doc(&fs, &["machine", "status"], Fid(2), b"waiting-for-input")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["machine", "status"], Fid(3)).await,
+        "waiting-for-input"
+    );
+}
+
+#[tokio::test]
 async fn context_and_children_dirs_are_walkable() {
     let fs = AgentFs::new();
     let root = read_text(&fs, &[], Fid(1)).await;
