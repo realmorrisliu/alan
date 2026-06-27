@@ -154,6 +154,84 @@ async fn dial_time_failure_returns_open_error() {
     .expect_err("walking a missing name fails");
 }
 
+// §5.2 — a fid is a handle to one interaction: walk must not rebind the reserved
+// root or an already-live fid (PR #573 review).
+#[tokio::test]
+async fn walk_rejects_rebinding_reserved_or_live_fids() {
+    let t = transport();
+
+    // Rebinding the well-known root is rejected (would corrupt the whole server).
+    assert_eq!(
+        t.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid::ROOT,
+            names: vec!["greeting".into()]
+        })
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+
+    // A second walk onto an already-live fid is rejected, not a silent clobber.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(60),
+        names: vec!["greeting".into()],
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(60),
+            names: vec!["clone".into()]
+        })
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+// §5.5 — a write without write authority must be rejected, not silently buffered
+// and skipped at commit (PR #573 review).
+#[tokio::test]
+async fn write_without_write_intent_is_rejected() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(70),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+
+    // No open at all: a write is denied.
+    assert_eq!(
+        t.call(Request::Write {
+            fid: Fid(70),
+            offset: 0,
+            data: b"{}".to_vec()
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // Opened read-only: still denied (cannot escalate to write).
+    t.call(Request::Open {
+        fid: Fid(70),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        t.call(Request::Write {
+            fid: Fid(70),
+            offset: 0,
+            data: b"{}".to_vec()
+        })
+        .await,
+        Err(ErrorCode::NoAccess)
+    );
+}
+
 // §5.5 — commit-time failure: a document write commits on clunk and a malformed
 // document is rejected at clunk, distinct from a dial-time error.
 #[tokio::test]

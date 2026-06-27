@@ -126,6 +126,12 @@ impl MemFs {
 impl FileServer for MemFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
         let mut state = self.state.lock().await;
+        // A fid is a handle to one interaction (§5.2): never rebind the reserved
+        // root or an already-live fid, or two callers reusing a number would
+        // clobber each other's state.
+        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+            return Err(ErrorCode::BadRequest);
+        }
         let mut node = state.fid(fid)?.node;
         for name in names {
             node = state.dir_entry(node, name)?;
@@ -193,6 +199,13 @@ impl FileServer for MemFs {
             // Commit-on-clunk: buffer the document; it is acted on only at clunk.
             Node::Doc => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                // Writing needs write authority: a fid opened read-only (or not
+                // opened for write) must not buffer, or its malformed payload
+                // would be silently skipped at commit and defeat the
+                // commit-on-clunk error model this server demonstrates.
+                if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
+                    return Err(ErrorCode::NoAccess);
+                }
                 f.write_buf.extend_from_slice(data);
                 Ok(data.len() as u32)
             }
