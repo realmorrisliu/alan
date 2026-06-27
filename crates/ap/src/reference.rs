@@ -14,6 +14,10 @@ use tokio::sync::Mutex;
 
 use crate::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 
+/// Upper bound on a buffered commit-on-clunk document, so a huge/sparse write
+/// offset cannot make the reference server allocate unbounded memory.
+const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
+
 type NodeId = usize;
 
 enum Node {
@@ -234,6 +238,13 @@ impl FileServer for MemFs {
                 // hostile/huge offset returns an aP error instead of panicking.
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+                // Bound the buffered document: a representable-but-huge offset (a
+                // sparse 1 TiB write) would otherwise resize/zero-fill gigabytes
+                // and OOM the in-process server. Cap the addressable size so it
+                // returns an aP error instead.
+                if end > MAX_DOC_BYTES {
+                    return Err(ErrorCode::BadRequest);
+                }
                 if f.write_buf.len() < end {
                     f.write_buf.resize(end, 0);
                 }

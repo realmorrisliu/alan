@@ -427,6 +427,36 @@ async fn read_requires_read_intent() {
     );
 }
 
+// A representable-but-huge sparse write offset is rejected instead of
+// allocating gigabytes and OOMing the server (PR #573 review).
+#[tokio::test]
+async fn huge_sparse_write_offset_is_rejected() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(130),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(130),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    // 1 TiB offset with a 1-byte payload: representable, but far past the cap.
+    assert_eq!(
+        t.call(Request::Write {
+            fid: Fid(130),
+            offset: 1 << 40,
+            data: b"x".to_vec()
+        })
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
 // §5.5 — commit-time failure: a document write commits on clunk and a malformed
 // document is rejected at clunk, distinct from a dial-time error.
 #[tokio::test]
