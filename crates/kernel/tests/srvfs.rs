@@ -165,6 +165,28 @@ async fn handle_stat_reports_real_length() {
     );
 }
 
+// Concurrent walks reusing the same newfid don't both succeed: the fid table is
+// reserved atomically, so exactly one binds and the other is rejected (PR #574).
+#[tokio::test]
+async fn concurrent_walks_on_one_newfid_do_not_clobber() {
+    use std::sync::Arc;
+    let srv = Arc::new(SrvFs::new());
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    srv.post("mem", memfs(), Access::ReadOnly).await;
+
+    let a = srv.clone();
+    let b = srv.clone();
+    let h1 = tokio::spawn(async move { a.walk(Fid::ROOT, Fid(1), &["llm".into()]).await });
+    let h2 = tokio::spawn(async move { b.walk(Fid::ROOT, Fid(1), &["mem".into()]).await });
+    let (r1, r2) = (h1.await.unwrap(), h2.await.unwrap());
+
+    // Exactly one walk binds Fid(1); the other is rejected, not a silent rebind.
+    assert!(
+        r1.is_ok() ^ r2.is_ok(),
+        "exactly one of the racing walks binds the shared newfid: {r1:?} {r2:?}"
+    );
+}
+
 #[tokio::test]
 async fn srv_root_lists_posted_handles_over_ap() {
     let srv = SrvFs::new();

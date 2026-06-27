@@ -57,7 +57,17 @@ impl Resolved {
         if self.access == Access::ReadOnly && is_mutating(&request) {
             return Err(ErrorCode::NoAccess);
         }
-        self.tree.call(request).await
+        let response = self.tree.call(request).await?;
+        // `stat.writable` reports mount-granted authority: a read-only mount masks
+        // it to false even if the backing node is writable, so a caller never sees
+        // a capability this mount would reject.
+        if self.access == Access::ReadOnly
+            && let Response::Stat { mut stat } = response
+        {
+            stat.writable = false;
+            return Ok(Response::Stat { stat });
+        }
+        Ok(response)
     }
 }
 

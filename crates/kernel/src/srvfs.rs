@@ -177,10 +177,19 @@ impl SrvFs {
 #[async_trait]
 impl FileServer for SrvFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        if newfid == Fid::ROOT || self.fids.lock().await.contains_key(&newfid) {
+        // Hold the fid table across check-and-insert so a concurrent walk reusing
+        // the same `newfid` cannot observe it as free and rebind it. The start
+        // node is read from the held guard (not `node_of`, which would re-lock and
+        // deadlock); the registry lock is always taken *after* the fid lock.
+        let mut fids = self.fids.lock().await;
+        if newfid == Fid::ROOT || fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let start = self.node_of(fid).await?;
+        let start = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            fids.get(&fid).cloned().ok_or(ErrorCode::NotFound)?
+        };
         let node = match (&start, names) {
             (_, []) => start.clone(),
             (Node::Root, [name]) if self.visible(name) => {
@@ -201,7 +210,7 @@ impl FileServer for SrvFs {
             _ => return Err(ErrorCode::NotDirectory),
         };
         let qid = self.qid_of(&node).await;
-        self.fids.lock().await.insert(newfid, node);
+        fids.insert(newfid, node);
         Ok(qid)
     }
 

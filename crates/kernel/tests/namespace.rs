@@ -154,6 +154,51 @@ async fn resolve_candidates_searches_union_contributors() {
         .expect("an earlier contributor still serves the file");
 }
 
+// stat through a read-only mount masks `writable`, so a caller never sees a
+// capability the mount would reject (PR #574 review). `/proc`'s `clone` reports
+// writable:true at the backing node, making it the right fixture.
+#[tokio::test]
+async fn read_only_mount_masks_stat_writability() {
+    use alan_kernel::ProcFs;
+    let procfs_ro = InProcessTransport::new(Arc::new(ProcFs::new()));
+    let procfs_rw = InProcessTransport::new(Arc::new(ProcFs::new()));
+    let mut ns = Namespace::new();
+    ns.mount("/proc-ro", procfs_ro, Access::ReadOnly);
+    ns.mount("/proc-rw", procfs_rw, Access::ReadWrite);
+
+    let ro = ns.resolve("/proc-ro/clone").unwrap();
+    ro.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(1),
+        names: vec!["clone".into()],
+    })
+    .await
+    .unwrap();
+    let Response::Stat { stat } = ro.call(Request::Stat { fid: Fid(1) }).await.unwrap() else {
+        panic!("expected stat");
+    };
+    assert!(
+        !stat.writable,
+        "read-only mount masks the writable clone node"
+    );
+
+    let rw = ns.resolve("/proc-rw/clone").unwrap();
+    rw.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(2),
+        names: vec!["clone".into()],
+    })
+    .await
+    .unwrap();
+    let Response::Stat { stat } = rw.call(Request::Stat { fid: Fid(2) }).await.unwrap() else {
+        panic!("expected stat");
+    };
+    assert!(
+        stat.writable,
+        "read-write mount reports the node's writability"
+    );
+}
+
 // resolve_candidates keeps only the longest-prefix contributors — a deeper
 // overmount shadows the broader mount, never falls through to it (PR #574 review).
 #[tokio::test]
