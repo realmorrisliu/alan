@@ -232,6 +232,90 @@ async fn write_without_write_intent_is_rejected() {
     );
 }
 
+// §5.2 — reopening a live fid is rejected, so a second open cannot downgrade
+// write intent and bypass commit-time validation (PR #573 review).
+#[tokio::test]
+async fn reopening_a_live_fid_is_rejected() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(80),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(80),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(80),
+        offset: 0,
+        data: b"{ truncated".to_vec(),
+    })
+    .await
+    .unwrap();
+
+    // A second open (e.g. read) on the same fid must not succeed and clobber mode.
+    assert_eq!(
+        t.call(Request::Open {
+            fid: Fid(80),
+            mode: OpenMode::Read
+        })
+        .await,
+        Err(ErrorCode::BadRequest)
+    );
+    // The malformed document is still rejected at clunk — validation not bypassed.
+    assert_eq!(
+        t.call(Request::Clunk { fid: Fid(80) }).await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+// The document write honors the byte offset, so overwriting a chunk at a lower
+// offset changes the committed document (PR #573 review).
+#[tokio::test]
+async fn document_writes_honor_offset() {
+    let t = transport();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(90),
+        names: vec!["submit".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(90),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    // Placeholder `{"ok":zzzz}` (11 bytes), then overwrite the 4-byte value at
+    // offset 6 with `true` → `{"ok":true}`.
+    t.call(Request::Write {
+        fid: Fid(90),
+        offset: 0,
+        data: br#"{"ok":zzzz}"#.to_vec(),
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(90),
+        offset: 6,
+        data: b"true".to_vec(),
+    })
+    .await
+    .unwrap();
+    // Offset-correct overwrite yields valid JSON → commits cleanly. (An append-
+    // only buffer would instead build `{"ok":zzzz}true` and fail validation.)
+    assert_eq!(
+        t.call(Request::Clunk { fid: Fid(90) }).await,
+        Ok(Response::Clunk)
+    );
+}
+
 // §5.5 — commit-time failure: a document write commits on clunk and a malformed
 // document is rejected at clunk, distinct from a dial-time error.
 #[tokio::test]

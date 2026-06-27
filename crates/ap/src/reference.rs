@@ -142,7 +142,15 @@ impl FileServer for MemFs {
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.fid(fid)?.node;
+        let existing = state.fid(fid)?;
+        // A fid is a handle to one interaction (§5.2): reopening an already-open
+        // fid before clunk is rejected, so a second `open` cannot downgrade the
+        // write intent and let a buffered malformed document bypass commit-time
+        // validation.
+        if existing.mode.is_some() {
+            return Err(ErrorCode::BadRequest);
+        }
+        let node = existing.node;
 
         // Clone-via-open: allocate a fresh connection directory under root and
         // remember its name for this fid's subsequent read.
@@ -192,7 +200,7 @@ impl FileServer for MemFs {
         Ok(bytes[start..end].to_vec())
     }
 
-    async fn write(&self, fid: Fid, _offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
         let node = state.fid(fid)?.node;
         match state.nodes[node] {
@@ -206,7 +214,16 @@ impl FileServer for MemFs {
                 if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
-                f.write_buf.extend_from_slice(data);
+                // Honor the byte offset: the aP contract addresses writes by
+                // offset, so place bytes at `offset` (out-of-order, retried, or
+                // overwriting chunks build the document the caller addressed),
+                // rather than blindly appending.
+                let start = offset as usize;
+                let end = start + data.len();
+                if f.write_buf.len() < end {
+                    f.write_buf.resize(end, 0);
+                }
+                f.write_buf[start..end].copy_from_slice(data);
                 Ok(data.len() as u32)
             }
             _ => Err(ErrorCode::Unsupported),
