@@ -155,6 +155,66 @@ async fn writing_without_write_intent_is_rejected() {
 }
 
 #[tokio::test]
+async fn opening_a_read_only_node_for_write_is_rejected() {
+    let fs = AgentFs::new();
+    // `events` is read-only; a write-intent open fails at dial time.
+    fs.walk(Fid::ROOT, Fid(1), &["events".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(1), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+}
+
+#[tokio::test]
+async fn reading_without_read_open_is_rejected() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    // No open: read is denied (read authority not established).
+    assert_eq!(fs.read(Fid(1), 0, 64).await, Err(ErrorCode::NoAccess));
+}
+
+#[tokio::test]
+async fn distinct_files_get_distinct_qids() {
+    let fs = AgentFs::new();
+    let out = fs
+        .walk(Fid::ROOT, Fid(1), &["io".into(), "output".into()])
+        .await
+        .unwrap();
+    let tape = fs
+        .walk(Fid::ROOT, Fid(2), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    let events = fs
+        .walk(Fid::ROOT, Fid(3), &["events".into()])
+        .await
+        .unwrap();
+    assert_ne!(out.path, tape.path);
+    assert_ne!(out.path, events.path);
+    assert_ne!(tape.path, events.path);
+}
+
+#[tokio::test]
+async fn context_and_children_dirs_are_walkable() {
+    let fs = AgentFs::new();
+    let root = read_text(&fs, &[], Fid(1)).await;
+    assert!(
+        root.lines().any(|l| l == "context"),
+        "root lists context: {root:?}"
+    );
+    assert!(root.lines().any(|l| l == "children"), "root lists children");
+    fs.walk(Fid::ROOT, Fid(2), &["context".into()])
+        .await
+        .expect("context walks");
+    fs.walk(Fid::ROOT, Fid(3), &["children".into()])
+        .await
+        .expect("children walks");
+}
+
+#[tokio::test]
 async fn the_events_stream_is_watchable_by_blocking_read() {
     use std::sync::Arc;
     use std::time::Duration;

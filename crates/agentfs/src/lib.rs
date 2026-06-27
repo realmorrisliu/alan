@@ -96,6 +96,8 @@ enum Node {
     ActionsClone,
     Action(String),
     ActionField(String, &'static str),
+    ContextDir,
+    ChildrenDir,
 }
 
 /// The agent file server.
@@ -146,6 +148,8 @@ impl State {
                 "events" => Ok(Node::Events),
                 "requests" => Ok(Node::RequestsDir),
                 "actions" => Ok(Node::ActionsDir),
+                "context" => Ok(Node::ContextDir),
+                "children" => Ok(Node::ChildrenDir),
                 _ => Err(ErrorCode::NotFound),
             },
             Node::IoDir => match name {
@@ -190,13 +194,17 @@ impl State {
                 "output" => Ok(Node::ActionField(id.clone(), "output")),
                 _ => Err(ErrorCode::NotFound),
             },
+            // context/ and children/ are agent-layout dirs, empty until the engine
+            // projects into them — any child is simply absent for now.
+            Node::ContextDir | Node::ChildrenDir => Err(ErrorCode::NotFound),
             _ => Err(ErrorCode::NotDirectory),
         }
     }
 
     fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         let bytes = match node {
-            Node::Root => b"io\nmachine\nevents\nrequests\nactions".to_vec(),
+            Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
+            Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus".to_vec(),
             Node::Status => b"running\n".to_vec(),
@@ -277,6 +285,11 @@ impl FileServer for AgentFs {
             return Err(ErrorCode::BadRequest);
         }
         let node = state.node_of(fid)?;
+        // Dial-time access check: a write-intent open on a read-only node fails at
+        // open, not later as Unsupported on write.
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
+            return Err(ErrorCode::NoAccess);
+        }
         // Clone-via-open: allocate a fresh request/action and remember its id.
         let clone_id = match node {
             Node::RequestsClone => {
@@ -314,6 +327,14 @@ impl FileServer for AgentFs {
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
         let (node, clone_id, stream) = {
             let state = self.state.lock().await;
+            // Reading needs read authority from a successful read-open (ROOT, the
+            // pre-bound anchor, is always readable).
+            if fid != Fid::ROOT {
+                let mode = state.fids.get(&fid).and_then(|f| f.mode);
+                if !matches!(mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
+                    return Err(ErrorCode::NoAccess);
+                }
+            }
             let clone_id = state.fids.get(&fid).and_then(|f| f.clone_id.clone());
             let node = state.node_of(fid)?;
             let stream = state.stream_for(&node);
@@ -341,12 +362,11 @@ impl FileServer for AgentFs {
             return Err(ErrorCode::NoAccess);
         }
         match node {
-            // Append-only streams: the agent (or shell, for input) appends.
-            Node::Output | Node::Input | Node::Tape => {
+            // The agent appends assistant output and tape records directly.
+            Node::Output | Node::Tape => {
                 let stream = state.stream_for(&node).expect("stream node");
                 let record = match node {
                     Node::Output => format!("output:{}", data.len()),
-                    Node::Input => format!("input:{}", data.len()),
                     _ => format!("tape:{}", data.len()),
                 };
                 drop(state);
@@ -359,8 +379,10 @@ impl FileServer for AgentFs {
                     .await;
                 Ok(data.len() as u32)
             }
-            // Request/action fields commit on clunk; buffer at offset here.
-            Node::RequestField(..) | Node::ActionField(..) => {
+            // io/input and request/action fields are framed documents: buffer at
+            // offset and commit the whole unit on clunk, so a turn never starts on
+            // a truncated message (commit-on-clunk).
+            Node::Input | Node::RequestField(..) | Node::ActionField(..) => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
@@ -419,8 +441,16 @@ impl FileServer for AgentFs {
         let Some(f) = state.fids.remove(&fid) else {
             return Err(ErrorCode::NotFound);
         };
-        // Commit a buffered field write on clunk.
-        if let Node::RequestField(id, field) = &f.node
+        // Commit a buffered write on clunk.
+        if matches!(f.node, Node::Input) && !f.write_buf.is_empty() {
+            // The whole message is committed as one framed unit to io/input.
+            let input = state.input.clone();
+            input.append(&f.write_buf).await;
+            state
+                .events
+                .append(format!("input:{}\n", f.write_buf.len()).as_bytes())
+                .await;
+        } else if let Node::RequestField(id, field) = &f.node
             && !f.write_buf.is_empty()
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
@@ -463,21 +493,39 @@ impl FileServer for AgentFs {
 }
 
 fn qid_of(node: &Node) -> Qid {
-    let (kind, path) = match node {
-        Node::Root | Node::IoDir | Node::MachineDir | Node::RequestsDir | Node::ActionsDir => {
-            (FileKind::Dir, 0)
-        }
-        Node::Request(_) | Node::Action(_) => (FileKind::Dir, 1),
-        Node::RequestsClone | Node::ActionsClone => (FileKind::Clone, 2),
-        Node::Input | Node::Output | Node::IoEvents | Node::Tape | Node::Events => {
-            (FileKind::Stream, 3)
-        }
-        Node::Status | Node::RequestField(..) | Node::ActionField(..) => (FileKind::File, 4),
+    use std::hash::{Hash, Hasher};
+    // A stable, server-unique path per node, keyed by its full file identity, so
+    // distinct files (and distinct request/action ids) never share a qid.
+    fn path_of(key: &str) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        h.finish()
+    }
+    let (kind, key) = match node {
+        Node::Root => (FileKind::Dir, "/".to_string()),
+        Node::IoDir => (FileKind::Dir, "io".into()),
+        Node::MachineDir => (FileKind::Dir, "machine".into()),
+        Node::RequestsDir => (FileKind::Dir, "requests".into()),
+        Node::ActionsDir => (FileKind::Dir, "actions".into()),
+        Node::ContextDir => (FileKind::Dir, "context".into()),
+        Node::ChildrenDir => (FileKind::Dir, "children".into()),
+        Node::Request(id) => (FileKind::Dir, format!("requests/{id}")),
+        Node::Action(id) => (FileKind::Dir, format!("actions/{id}")),
+        Node::RequestsClone => (FileKind::Clone, "requests/clone".into()),
+        Node::ActionsClone => (FileKind::Clone, "actions/clone".into()),
+        Node::Input => (FileKind::Stream, "io/input".into()),
+        Node::Output => (FileKind::Stream, "io/output".into()),
+        Node::IoEvents => (FileKind::Stream, "io/events".into()),
+        Node::Tape => (FileKind::Stream, "machine/tape".into()),
+        Node::Events => (FileKind::Stream, "events".into()),
+        Node::Status => (FileKind::File, "machine/status".into()),
+        Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
+        Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
     };
     Qid {
         kind,
         version: 0,
-        path,
+        path: path_of(&key),
     }
 }
 
