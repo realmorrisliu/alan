@@ -200,7 +200,8 @@ async fn distinct_files_get_distinct_qids() {
 #[tokio::test]
 async fn clone_allocation_requires_write_intent() {
     let fs = AgentFs::new();
-    // A read-only observer opening requests/clone must not allocate a pending entry.
+    // Clone-via-open requires ReadWrite (you allocate *and* read the id back);
+    // neither a read-only nor a write-only open may allocate.
     fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
         .await
         .unwrap();
@@ -208,8 +209,15 @@ async fn clone_allocation_requires_write_intent() {
         fs.open(Fid(1), OpenMode::Read).await,
         Err(ErrorCode::NoAccess)
     );
+    fs.walk(Fid::ROOT, Fid(2), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(2), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
     // The requests dir still lists only `clone` — nothing was created.
-    assert_eq!(read_text(&fs, &["requests"], Fid(2)).await, "clone");
+    assert_eq!(read_text(&fs, &["requests"], Fid(3)).await, "clone");
 }
 
 #[tokio::test]

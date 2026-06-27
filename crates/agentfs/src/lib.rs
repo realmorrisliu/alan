@@ -293,10 +293,12 @@ impl FileServer for AgentFs {
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
-        // Clone-via-open allocates state, so it requires write authority: a
-        // read-only observer must not be able to create pending requests/actions.
+        // Clone-via-open allocates state *and* the caller must read the fid back
+        // to learn the allocated id, so it requires ReadWrite: a read-only
+        // observer can't allocate, and a write-only open can't strand an entry
+        // whose id it could never read.
         if matches!(node, Node::RequestsClone | Node::ActionsClone)
-            && !matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
+            && !matches!(mode, OpenMode::ReadWrite)
         {
             return Err(ErrorCode::NoAccess);
         }
