@@ -53,6 +53,12 @@ struct Action {
     name: String,
     status: String,
     output: String,
+    /// The tool's structured result (agent-file-layout-contract).
+    result: String,
+    /// The action's approval state.
+    approval: String,
+    /// A reference to the tool process in `/proc` (not a copy of its state).
+    process: String,
 }
 
 struct State {
@@ -73,6 +79,9 @@ struct State {
     status: String,
     next_request: u64,
     next_action: u64,
+    /// The fid currently holding the exclusive-write lease on `machine/tape`, if
+    /// any; a second write-open of the tape is refused while this is set.
+    tape_writer: Option<Fid>,
     fids: HashMap<Fid, AgentFid>,
 }
 
@@ -153,6 +162,7 @@ impl AgentFs {
                 status: "running".to_string(),
                 next_request: 0,
                 next_action: 0,
+                tape_writer: None,
                 fids: HashMap::new(),
             }),
         }
@@ -218,6 +228,9 @@ impl State {
                 "name" => Ok(Node::ActionField(id.clone(), "name")),
                 "status" => Ok(Node::ActionField(id.clone(), "status")),
                 "output" => Ok(Node::ActionField(id.clone(), "output")),
+                "result" => Ok(Node::ActionField(id.clone(), "result")),
+                "approval" => Ok(Node::ActionField(id.clone(), "approval")),
+                "process" => Ok(Node::ActionField(id.clone(), "process")),
                 _ => Err(ErrorCode::NotFound),
             },
             // context/ and children/ are agent-layout dirs, empty until the engine
@@ -239,7 +252,7 @@ impl State {
             Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
             Node::ActionsDir => listing(&["clone", "events"], self.actions.keys()),
             Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
-            Node::Action(_) => b"name\nstatus\noutput".to_vec(),
+            Node::Action(_) => b"name\nstatus\noutput\nresult\napproval\nprocess".to_vec(),
             Node::RequestField(id, field) => {
                 let r = self.requests.get(id).ok_or(ErrorCode::NotFound)?;
                 match *field {
@@ -257,6 +270,9 @@ impl State {
                 match *field {
                     "name" => &a.name,
                     "status" => &a.status,
+                    "result" => &a.result,
+                    "approval" => &a.approval,
+                    "process" => &a.process,
                     _ => &a.output,
                 }
                 .clone()
@@ -334,6 +350,18 @@ impl FileServer for AgentFs {
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
+        // Exclusive-write lease on machine/tape (agent-file-layout-contract): while
+        // one fid holds the tape open for write, a second write-open is refused so
+        // no second writer can interleave records into the source-of-truth tape.
+        // Readers are not excluded; the lease releases when the holder clunks. This
+        // is the M2 in-server form of the GENERATING lease (the generator is the
+        // single tape writer); promotion to an aP-layer mode is owned by the future
+        // external-writers work, for writers that bypass this server.
+        let is_tape_write =
+            matches!(node, Node::Tape) && matches!(mode, OpenMode::Write | OpenMode::ReadWrite);
+        if is_tape_write && state.tape_writer.is_some() {
+            return Err(ErrorCode::NoAccess);
+        }
         // Clone-via-open allocates state *and* the caller must read the fid back
         // to learn the allocated id, so it requires ReadWrite: a read-only
         // observer can't allocate, and a write-only open can't strand an entry
@@ -391,6 +419,9 @@ impl FileServer for AgentFs {
         let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
         f.clone_id = clone_id;
+        if is_tape_write {
+            state.tape_writer = Some(fid);
+        }
         Ok(qid_of(&node))
     }
 
@@ -529,6 +560,10 @@ impl FileServer for AgentFs {
         let Some(f) = state.fids.remove(&fid) else {
             return Err(ErrorCode::NotFound);
         };
+        // Releasing the tape's write fid releases its exclusive-write lease.
+        if state.tape_writer == Some(fid) {
+            state.tape_writer = None;
+        }
         // Commit a buffered write on clunk.
         if matches!(f.node, Node::Input) && !f.write_buf.is_empty() {
             // Each committed message is length-framed in io/input so consecutive
@@ -582,6 +617,9 @@ impl FileServer for AgentFs {
                     "name" => a.name = value,
                     "status" => a.status = value,
                     "output" => a.output = value,
+                    "result" => a.result = value,
+                    "approval" => a.approval = value,
+                    "process" => a.process = value,
                     _ => {}
                 }
             }

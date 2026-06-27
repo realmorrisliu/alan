@@ -195,6 +195,79 @@ async fn a_tool_call_is_an_action_the_agent_records() {
 }
 
 #[tokio::test]
+async fn an_action_exposes_all_documented_fields() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+
+    // The contract records result, approval state, and a process reference in
+    // addition to name/status/output — all reachable through actions/<id>/.
+    let listing = read_text(&fs, &["actions", &id], Fid(2)).await;
+    let mut entries: Vec<&str> = listing.lines().collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        vec!["approval", "name", "output", "process", "result", "status"]
+    );
+    write_doc(&fs, &["actions", &id, "result"], Fid(3), b"{\"ok\":true}")
+        .await
+        .unwrap();
+    write_doc(&fs, &["actions", &id, "approval"], Fid(4), b"approved")
+        .await
+        .unwrap();
+    write_doc(&fs, &["actions", &id, "process"], Fid(5), b"/proc/42")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "result"], Fid(6)).await,
+        "{\"ok\":true}"
+    );
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "approval"], Fid(7)).await,
+        "approved"
+    );
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "process"], Fid(8)).await,
+        "/proc/42"
+    );
+}
+
+#[tokio::test]
+async fn machine_tape_holds_an_exclusive_write_lease() {
+    let fs = AgentFs::new();
+    // One writer holds machine/tape open for write (the generating engine).
+    fs.walk(Fid::ROOT, Fid(1), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+
+    // A second write-open of the tape is refused while the lease is held.
+    fs.walk(Fid::ROOT, Fid(2), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.open(Fid(2), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+
+    // Readers are not excluded — a tail during generation still works.
+    fs.walk(Fid::ROOT, Fid(3), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(3), OpenMode::Read).await.unwrap();
+
+    // Releasing the writer releases the lease; a new writer may then take it.
+    fs.clunk(Fid(1)).await.unwrap();
+    fs.walk(Fid::ROOT, Fid(4), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(4), OpenMode::Write).await.unwrap();
+}
+
+#[tokio::test]
 async fn writing_without_write_intent_is_rejected() {
     let fs = AgentFs::new();
     fs.walk(Fid::ROOT, Fid(1), &["io".into(), "output".into()])
