@@ -100,7 +100,8 @@ async fn a_yield_is_a_request_opened_by_the_agent_and_answered_by_a_consumer() {
         "pending"
     );
 
-    // A consumer writes the response, which answers the request.
+    // A consumer answers by writing the response (committed on clunk), which
+    // settles the request (agent-file-layout-contract).
     write_doc(&fs, &["requests", &id, "response"], Fid(6), b"approved")
         .await
         .unwrap();
@@ -224,19 +225,20 @@ async fn clone_allocation_requires_write_intent() {
 }
 
 #[tokio::test]
-async fn machine_status_is_writable_agent_state() {
+async fn machine_status_is_read_only_state() {
     let fs = AgentFs::new();
     assert_eq!(
         read_text(&fs, &["machine", "status"], Fid(1)).await,
         "running"
     );
-    // The engine publishes a new status.
-    write_doc(&fs, &["machine", "status"], Fid(2), b"waiting-for-input")
+    // status is read-only state (D7): it cannot be set by a free-text data write;
+    // lifecycle changes go through machine/ctl instead.
+    fs.walk(Fid::ROOT, Fid(2), &["machine".into(), "status".into()])
         .await
         .unwrap();
     assert_eq!(
-        read_text(&fs, &["machine", "status"], Fid(3)).await,
-        "waiting-for-input"
+        fs.open(Fid(2), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
     );
 }
 
@@ -333,6 +335,124 @@ async fn context_and_children_dirs_are_walkable() {
     fs.walk(Fid::ROOT, Fid(3), &["children".into()])
         .await
         .expect("children walks");
+}
+
+#[tokio::test]
+async fn opening_the_root_for_write_is_rejected() {
+    let fs = AgentFs::new();
+    // The root is a read-only directory; a write-intent open must be denied
+    // rather than silently succeeding via the ROOT fast-path.
+    assert_eq!(
+        fs.open(Fid::ROOT, OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.open(Fid::ROOT, OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess)
+    );
+    // A read-intent open of the root still works.
+    fs.open(Fid::ROOT, OpenMode::Read).await.unwrap();
+}
+
+#[tokio::test]
+async fn reading_a_released_fid_is_not_found() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["machine".into(), "tape".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Read).await.unwrap();
+    fs.clunk(Fid(1)).await.unwrap();
+    // The fid is gone: reading it is NotFound, not a NoAccess authority error.
+    assert_eq!(fs.read(Fid(1), 0, 64).await, Err(ErrorCode::NotFound));
+    // An fid that was never walked is likewise NotFound.
+    assert_eq!(fs.read(Fid(99), 0, 64).await, Err(ErrorCode::NotFound));
+}
+
+#[tokio::test]
+async fn answering_a_terminal_request_is_rejected() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+
+    // Answering settles the request (response write, committed on clunk).
+    write_doc(&fs, &["requests", &id, "response"], Fid(2), b"approved")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["requests", &id, "status"], Fid(3)).await,
+        "answered"
+    );
+
+    // A second response to the now-terminal request is refused — request-status
+    // integrity (agent-file-layout-contract): a decided yield is not overwritten.
+    assert_eq!(
+        write_doc(&fs, &["requests", &id, "response"], Fid(4), b"rejected").await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", &id, "response"], Fid(5)).await,
+        "approved"
+    );
+}
+
+#[tokio::test]
+async fn stat_reports_container_event_stream_lengths() {
+    let fs = AgentFs::new();
+    // Create a request and an action so their event streams have content.
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    fs.walk(Fid::ROOT, Fid(2), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["requests".into(), "events".into()])
+        .await
+        .unwrap();
+    let req_len = fs.stat(Fid(3)).await.unwrap().length;
+    fs.walk(Fid::ROOT, Fid(4), &["actions".into(), "events".into()])
+        .await
+        .unwrap();
+    let act_len = fs.stat(Fid(4)).await.unwrap().length;
+
+    // stat must report the real stream length, not 0.
+    assert_eq!(req_len, "created:r0\n".len() as u64);
+    assert_eq!(act_len, "created:a0\n".len() as u64);
+}
+
+#[tokio::test]
+async fn machine_ctl_carries_runtime_tape_commands() {
+    let fs = AgentFs::new();
+    // machine/ctl is the agent-runtime control surface (compact/rollback);
+    // semantics belong to the engine, so the file server records the command.
+    let listing = read_text(&fs, &["machine"], Fid(1)).await;
+    assert!(
+        listing.lines().any(|l| l == "ctl"),
+        "machine lists ctl: {listing:?}"
+    );
+    write_doc(&fs, &["machine", "ctl"], Fid(2), b"compact")
+        .await
+        .unwrap();
+    write_doc(&fs, &["machine", "ctl"], Fid(3), b"rollback")
+        .await
+        .unwrap();
+    let events = read_text(&fs, &["events"], Fid(4)).await;
+    assert!(
+        events.contains("ctl:compact"),
+        "compact recorded: {events:?}"
+    );
+    assert!(events.contains("ctl:rollback"), "rollback recorded");
+    // An empty command is malformed.
+    fs.walk(Fid::ROOT, Fid(5), &["machine".into(), "ctl".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(5), OpenMode::Write).await.unwrap();
+    assert_eq!(fs.write(Fid(5), 0, b"").await, Err(ErrorCode::BadRequest));
 }
 
 #[tokio::test]

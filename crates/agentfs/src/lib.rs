@@ -10,10 +10,17 @@
 //! io/output    # the agent appends assistant text; consumers tail it
 //! io/events    # aggregate record stream (every surface write appends here)
 //! machine/tape # the agent appends the tape (append-only source of truth)
-//! machine/status
-//! requests/    # clone-via-open: the agent opens a yield; a consumer writes the response
+//! machine/status # read-only run-state
+//! machine/ctl  # agent-runtime control: compact/rollback (engine-owned semantics)
+//! requests/    # clone-via-open: the agent opens a yield; a consumer answers by
+//!              # writing `response` (committed on clunk), which settles it
 //! actions/     # clone-via-open: the agent records a tool call and its result
 //! ```
+//!
+//! Surfaces follow `define-agent-file-layout-contract`: generic process control
+//! (interrupt/cancel) is the kernel's `/proc/<pid>/ctl`, while `machine/ctl`
+//! carries agent-runtime tape/checkpoint commands. A response written to a request
+//! that is already terminal is rejected (request-status integrity).
 //!
 //! It depends on `alan-ap` only — no `alan-agent-protocol`/`EventEnvelope` on the
 //! live path (that alphabet remains only as legacy compatibility transport, ADR-
@@ -59,7 +66,8 @@ struct State {
     tape: Stream,
     requests: BTreeMap<String, Request>,
     actions: BTreeMap<String, Action>,
-    /// Agent-owned runtime status (machine/status), writable by the engine.
+    /// Agent run-state (machine/status): read-only over aP, transitioned only by
+    /// lifecycle verbs on machine/ctl (D7).
     status: String,
     next_request: u64,
     next_action: u64,
@@ -96,6 +104,11 @@ enum Node {
     MachineDir,
     Tape,
     Status,
+    /// The agent-runtime control surface (`machine/ctl`): text commands such as
+    /// `compact` / `rollback` whose tape/checkpoint semantics belong to the engine
+    /// (agent-file-layout-contract). Generic process control (interrupt/cancel)
+    /// is the kernel's `/proc/<pid>/ctl`, not here.
+    MachineCtl,
     Events,
     RequestsDir,
     RequestsClone,
@@ -176,6 +189,7 @@ impl State {
             Node::MachineDir => match name {
                 "tape" => Ok(Node::Tape),
                 "status" => Ok(Node::Status),
+                "ctl" => Ok(Node::MachineCtl),
                 _ => Err(ErrorCode::NotFound),
             },
             Node::RequestsDir => match name {
@@ -216,8 +230,10 @@ impl State {
             Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
-            Node::MachineDir => b"tape\nstatus".to_vec(),
+            Node::MachineDir => b"tape\nstatus\nctl".to_vec(),
             Node::Status => self.status.clone().into_bytes(),
+            // machine/ctl is a write-only command sink: reading it yields nothing.
+            Node::MachineCtl => Vec::new(),
             Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
             Node::ActionsDir => listing(&["clone", "events"], self.actions.keys()),
             Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
@@ -299,6 +315,11 @@ impl FileServer for AgentFs {
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         if fid == Fid::ROOT {
+            // The root is a read-only directory: a write-intent open is denied
+            // here rather than slipping through the fast-path.
+            if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+                return Err(ErrorCode::NoAccess);
+            }
             return Ok(qid_of(&Node::Root));
         }
         let mut state = self.state.lock().await;
@@ -375,10 +396,11 @@ impl FileServer for AgentFs {
         let (node, clone_id, stream) = {
             let state = self.state.lock().await;
             // Reading needs read authority from a successful read-open (ROOT, the
-            // pre-bound anchor, is always readable).
+            // pre-bound anchor, is always readable). A released/unknown fid is
+            // NotFound — distinct from a live fid lacking read intent (NoAccess).
             if fid != Fid::ROOT {
-                let mode = state.fids.get(&fid).and_then(|f| f.mode);
-                if !matches!(mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
+                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
             }
@@ -426,10 +448,23 @@ impl FileServer for AgentFs {
                 state.events.append(record.as_bytes()).await;
                 Ok(data.len() as u32)
             }
-            // io/input, machine/status, and request/action fields are framed
-            // documents: buffer at offset and commit the whole unit on clunk, so a
-            // turn never starts on a truncated message (commit-on-clunk).
-            Node::Input | Node::Status | Node::RequestField(..) | Node::ActionField(..) => {
+            // machine/ctl is the agent-runtime control surface: a text command
+            // (e.g. `compact`/`rollback`) whose semantics belong to the engine, so
+            // the file server only records it for the engine to consume — it does
+            // not interpret runtime semantics (agent-file-layout-contract). An
+            // empty command is malformed.
+            Node::MachineCtl => {
+                if data.is_empty() {
+                    return Err(ErrorCode::BadRequest);
+                }
+                let cmd = String::from_utf8(data.to_vec()).map_err(|_| ErrorCode::BadRequest)?;
+                state.events.append(format!("ctl:{cmd}\n").as_bytes()).await;
+                Ok(data.len() as u32)
+            }
+            // io/input and request/action data fields are framed documents: buffer
+            // at offset and commit the whole unit on clunk, so a turn never starts
+            // on a truncated message (commit-on-clunk).
+            Node::Input | Node::RequestField(..) | Node::ActionField(..) => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
@@ -450,9 +485,13 @@ impl FileServer for AgentFs {
         let state = self.state.lock().await;
         let node = state.node_of(fid)?;
         let length = match &node {
-            Node::Output | Node::Input | Node::Tape | Node::Events | Node::IoEvents => {
-                state.stream_for(&node).expect("stream").len().await
-            }
+            Node::Output
+            | Node::Input
+            | Node::Tape
+            | Node::Events
+            | Node::IoEvents
+            | Node::RequestsEvents
+            | Node::ActionsEvents => state.stream_for(&node).expect("stream").len().await,
             other => state
                 .computed_bytes(other)
                 .map(|b| b.len() as u64)
@@ -497,23 +536,25 @@ impl FileServer for AgentFs {
             let record = format!("input:{}\n", f.write_buf.len());
             state.io_events.append(record.as_bytes()).await;
             state.events.append(record.as_bytes()).await;
-        } else if matches!(f.node, Node::Status) && !f.write_buf.is_empty() {
-            // The engine publishes its runtime status as a framed value.
-            state.status = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
-            state.events.append(b"status\n").await;
         } else if let Node::RequestField(id, field) = &f.node
             && !f.write_buf.is_empty()
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
             if let Some(r) = state.requests.get_mut(id) {
+                // Request status integrity (agent-file-layout-contract): a write to
+                // a request that is already terminal (answered/closed/cancelled) is
+                // rejected, so a decided yield is never overwritten.
+                if is_terminal(&r.status) {
+                    return Err(ErrorCode::NoAccess);
+                }
                 match *field {
                     "kind" => r.kind = value,
                     "prompt" => r.prompt = value,
                     "options" => r.options = value,
-                    "status" => r.status = value,
                     "response" => {
+                        // Answering is writing the response (committed on clunk):
+                        // delivering the answer settles the request.
                         r.response = value;
-                        // A written response answers the request.
                         r.status = "answered".to_string();
                     }
                     _ => {}
@@ -577,6 +618,7 @@ fn qid_of(node: &Node) -> Qid {
         Node::Tape => (FileKind::Stream, "machine/tape".into()),
         Node::Events => (FileKind::Stream, "events".into()),
         Node::Status => (FileKind::File, "machine/status".into()),
+        Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
     };
@@ -587,18 +629,26 @@ fn qid_of(node: &Node) -> Qid {
     }
 }
 
+/// A request whose decision is final: its fields are frozen against late writes.
+fn is_terminal(status: &str) -> bool {
+    matches!(status, "answered" | "closed" | "cancelled")
+}
+
 fn is_writable(node: &Node) -> bool {
-    matches!(
-        node,
+    match node {
         Node::Input
-            | Node::Output
-            | Node::Tape
-            | Node::Status
-            | Node::RequestsClone
-            | Node::ActionsClone
-            | Node::RequestField(..)
-            | Node::ActionField(..)
-    )
+        | Node::Output
+        | Node::Tape
+        | Node::MachineCtl
+        | Node::RequestsClone
+        | Node::ActionsClone
+        | Node::ActionField(..) => true,
+        // A request's status is read-only state (set by answering, i.e. writing
+        // `response`); its other fields are writable data. `machine/status` is
+        // read-only too (agent-file-layout-contract).
+        Node::RequestField(_, field) => *field != "status",
+        _ => false,
+    }
 }
 
 fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {

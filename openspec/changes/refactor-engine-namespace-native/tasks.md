@@ -50,6 +50,24 @@
   structured `requests/<id>/options`. These land once the engine drives the
   writes and the record kinds exist.
 
+## 4a. Access discipline on the agent files (D7–D10)
+
+- [x] 4a.1 Remove control-as-side-effect: writing `requests/<id>/response` no longer
+  flips status to `answered`; add `requests/<id>/ctl` (answer verb) and `machine/ctl`
+  (lifecycle verbs: interrupt/pause/resume over a fixed vocabulary); demote
+  `machine/status` to read-only state. TDD that a data write performs no operation. (D7)
+  Done in `alan-agentfs` (#576): data/ctl split landed; `machine/status` read-only;
+  `requests/<id>/status` read-only (settled only via ctl).
+- [ ] 4a.2 Gate tape writes by run-state: the generating engine holds an exclusive
+  write lease on `machine/tape` (lean: aP-layer `DMEXCL` open); enforce
+  `machine/tape` and `events` append-only; a second writer mid-generation is
+  refused. TDD the concurrent-writer case. (D8)
+- [ ] 4a.3 Add in-band self-description: a documented record vocabulary per stream
+  and a `ctl`-help/`man` the engine can read as prose; minimal form first. (D9)
+- [ ] 4a.4 Reshape `is_writable(node)` into `access(node, run_state, actor)`,
+  leaving the actor/capability seam the iron law needs; restate
+  convention-vs-isolation pending the kernel §7.1a amplification check. (D10)
+
 ## 5. M2 — a real conversation through files (D1+D2+D4)
 
 - [ ] 5.1 Spawn an agent process via `/proc/clone` with a namespace mounting an
@@ -84,3 +102,6 @@
 - [ ] 8.2 `openspec validate refactor-engine-namespace-native --strict`.
 - [ ] 8.3 Confirm no `LlmProvider`, `ToolRegistry`, or `EventEnvelope` remains on
   the engine's live path (only as legacy transport behind file servers).
+- [ ] 8.4 Confirm the iron law on the agent files: no operation is performed as a
+  side effect of a data/field write (control only via `ctl`), and the GENERATING
+  tape lease holds under a concurrent-writer test.
