@@ -6,7 +6,9 @@
 //! alphabet. It serves the `/agent/<pid>` surfaces over aP:
 //!
 //! ```text
-//! io/input     # the shell/parent writes a message; the agent reads it
+//! io/input     # the shell/parent writes a message; the agent reads it. Each
+//!              # committed message is length-framed (`<len>\n<payload>`) so
+//!              # consecutive messages keep distinct boundaries in the stream
 //! io/output    # the agent appends assistant text; consumers tail it
 //! io/events    # aggregate record stream (every surface write appends here)
 //! machine/tape # the agent appends the tape (append-only source of truth)
@@ -529,10 +531,15 @@ impl FileServer for AgentFs {
         };
         // Commit a buffered write on clunk.
         if matches!(f.node, Node::Input) && !f.write_buf.is_empty() {
-            // The whole message is committed as one framed unit to io/input, and
-            // announced on the IO-scoped io/events plus the aggregate.
+            // Each committed message is length-framed in io/input so consecutive
+            // messages keep distinct boundaries in the stream itself (an agent
+            // draining io/input reconstructs turns without a side channel): a
+            // decimal byte-length, a newline, then the raw payload. The IO-scoped
+            // io/events plus the aggregate also announce it.
             let input = state.input.clone();
-            input.append(&f.write_buf).await;
+            let mut framed = format!("{}\n", f.write_buf.len()).into_bytes();
+            framed.extend_from_slice(&f.write_buf);
+            input.append(&framed).await;
             let record = format!("input:{}\n", f.write_buf.len());
             state.io_events.append(record.as_bytes()).await;
             state.events.append(record.as_bytes()).await;

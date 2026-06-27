@@ -21,6 +21,32 @@ async fn read_text(fs: &AgentFs, path: &[&str], fid: Fid) -> String {
     String::from_utf8(fs.read(fid, 0, 65536).await.unwrap()).unwrap()
 }
 
+/// Parse the length-framed `io/input` stream (`<len>\n<payload>` per message)
+/// into the sequence of message payloads.
+fn parse_input_frames(raw: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let nl = i + raw[i..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .expect("frame header");
+        let len: usize = std::str::from_utf8(&raw[i..nl]).unwrap().parse().unwrap();
+        let start = nl + 1;
+        out.push(String::from_utf8(raw[start..start + len].to_vec()).unwrap());
+        i = start + len;
+    }
+    out
+}
+
+async fn read_input_messages(fs: &AgentFs, fid: Fid) -> Vec<String> {
+    fs.walk(Fid::ROOT, fid, &["io".into(), "input".into()])
+        .await
+        .unwrap();
+    fs.open(fid, OpenMode::Read).await.unwrap();
+    parse_input_frames(&fs.read(fid, 0, 65536).await.unwrap())
+}
+
 #[tokio::test]
 async fn shell_writes_input_and_agent_reads_it() {
     let fs = AgentFs::new();
@@ -28,10 +54,33 @@ async fn shell_writes_input_and_agent_reads_it() {
     write_doc(&fs, &["io", "input"], Fid(1), b"hello agent")
         .await
         .unwrap();
-    // The agent reads it back from the same file.
+    // The agent reads it back as a single framed message.
+    assert_eq!(read_input_messages(&fs, Fid(2)).await, vec!["hello agent"]);
+}
+
+#[tokio::test]
+async fn io_input_preserves_message_boundaries() {
+    let fs = AgentFs::new();
+    // Two messages committed before the agent drains must stay distinguishable —
+    // not collapse into one "helloworld" byte run.
+    write_doc(&fs, &["io", "input"], Fid(1), b"hello")
+        .await
+        .unwrap();
+    write_doc(&fs, &["io", "input"], Fid(2), b"world")
+        .await
+        .unwrap();
     assert_eq!(
-        read_text(&fs, &["io", "input"], Fid(2)).await,
-        "hello agent"
+        read_input_messages(&fs, Fid(3)).await,
+        vec!["hello", "world"]
+    );
+    // A payload containing a newline is still one message (length-framed, not
+    // newline-delimited).
+    write_doc(&fs, &["io", "input"], Fid(4), b"a\nb")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_input_messages(&fs, Fid(5)).await,
+        vec!["hello", "world", "a\nb"]
     );
 }
 
