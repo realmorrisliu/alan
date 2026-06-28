@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
-    VersionTable,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -40,14 +39,7 @@ struct Handle {
 struct Registry {
     handles: Vec<Handle>,
     next_qid: u64,
-    /// qid version of the `/srv` listing (key `LISTING_KEY`), bumped whenever a
-    /// handle is posted or replaced so a cached root qid/version goes stale. A
-    /// handle's own identity already changes via a fresh `qid_path` on each post.
-    versions: VersionTable,
 }
-
-/// The `VersionTable` key for the `/srv` listing generation.
-const LISTING_KEY: u64 = 0;
 
 /// What a fid in `/srv` points at.
 #[derive(Clone)]
@@ -77,7 +69,6 @@ impl SrvFs {
             registry: Arc::new(Mutex::new(Registry {
                 handles: Vec::new(),
                 next_qid: 1,
-                versions: VersionTable::new(),
             })),
             denied: HashSet::new(),
             fids: Mutex::new(HashMap::new()),
@@ -102,8 +93,6 @@ impl SrvFs {
             access,
             qid_path,
         });
-        // The /srv listing (or a handle it names) changed.
-        reg.versions.bump(LISTING_KEY);
     }
 
     /// Every posted handle name visible through this view, in post order.
@@ -149,11 +138,24 @@ impl SrvFs {
     async fn qid_of(&self, node: &Node) -> Qid {
         let reg = self.registry.lock().await;
         match node {
-            Node::Root => Qid {
-                kind: FileKind::Dir,
-                version: reg.versions.get(LISTING_KEY),
-                path: 0,
-            },
+            // The root version is derived from THIS view's *visible* handles
+            // (their names + per-post qid_paths), not a global counter — so a
+            // hidden handle's post/replace never changes a restricted view's root
+            // version. Otherwise denial-by-absent-mount would leak hidden-service
+            // activity through a qid-version side channel (D6).
+            Node::Root => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for handle in reg.handles.iter().filter(|h| self.visible(&h.name)) {
+                    handle.name.hash(&mut h);
+                    handle.qid_path.hash(&mut h);
+                }
+                Qid {
+                    kind: FileKind::Dir,
+                    version: h.finish() as u32,
+                    path: 0,
+                }
+            }
             Node::Handle(name) => {
                 let path = reg
                     .handles
