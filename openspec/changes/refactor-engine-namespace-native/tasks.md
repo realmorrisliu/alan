@@ -10,9 +10,12 @@
 
 ## 2. Namespace handle for the engine (D1)
 
-- [ ] 2.1 Present the kernel namespace as one aP `FileServer` (a thin `MountFs`
+- [x] 2.1 Present the kernel namespace as one aP `FileServer` (a thin `MountFs`
   over `alan-kernel::Namespace`) so `/mnt/llm`, `/proc`, `/agent/<pid>` resolve
-  uniformly through one root handle.
+  uniformly through one root handle. Done in `alan-kernel::MountFs`: per-fid it is
+  either a synthetic namespace dir (lists child mount points) or a backing node
+  forwarded through `Resolved::call` (mount access enforced). Unblocks the shell's
+  path-resolution P1s (#577).
 - [ ] 2.2 Add the namespace-handle environment to `RuntimeLoopState`, replacing
   the `provider` and `tools` fields. TDD against an in-memory root (MemFs +
   mounted servers).
