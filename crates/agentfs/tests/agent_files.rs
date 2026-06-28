@@ -608,3 +608,38 @@ async fn the_events_stream_is_watchable_by_blocking_read() {
         .unwrap();
     assert!(String::from_utf8(rec).unwrap().contains("output:"));
 }
+
+async fn qid_version(fs: &AgentFs, path: &[&str], fid: Fid) -> u32 {
+    let names: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+    fs.walk(Fid::ROOT, fid, &names).await.unwrap();
+    fs.stat(fid).await.unwrap().qid.version
+}
+
+#[tokio::test]
+async fn qid_versions_bump_when_dirs_and_fields_change() {
+    let fs = AgentFs::new();
+
+    // requests/ dir version bumps when a request is created.
+    let r0 = qid_version(&fs, &["requests"], Fid(1)).await;
+    fs.walk(Fid::ROOT, Fid(2), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(2), 0, 64).await.unwrap()).unwrap();
+    let r1 = qid_version(&fs, &["requests"], Fid(3)).await;
+    assert_eq!(r1, r0 + 1, "requests/ listing changed");
+
+    // requests/<id>/status version bumps when answering settles the request.
+    let s0 = qid_version(&fs, &["requests", &id, "status"], Fid(4)).await;
+    write_doc(&fs, &["requests", &id, "response"], Fid(5), b"approved")
+        .await
+        .unwrap();
+    let s1 = qid_version(&fs, &["requests", &id, "status"], Fid(6)).await;
+    assert_eq!(s1, s0 + 1, "answering changed status");
+
+    // A stream's qid version stays stable (freshness is the read offset).
+    write_doc(&fs, &["io", "output"], Fid(7), b"hi")
+        .await
+        .unwrap();
+    assert_eq!(qid_version(&fs, &["io", "output"], Fid(8)).await, 0);
+}

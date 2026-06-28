@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
+    VersionTable,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -39,7 +40,14 @@ struct Handle {
 struct Registry {
     handles: Vec<Handle>,
     next_qid: u64,
+    /// qid version of the `/srv` listing (key `LISTING_KEY`), bumped whenever a
+    /// handle is posted or replaced so a cached root qid/version goes stale. A
+    /// handle's own identity already changes via a fresh `qid_path` on each post.
+    versions: VersionTable,
 }
+
+/// The `VersionTable` key for the `/srv` listing generation.
+const LISTING_KEY: u64 = 0;
 
 /// What a fid in `/srv` points at.
 #[derive(Clone)]
@@ -69,6 +77,7 @@ impl SrvFs {
             registry: Arc::new(Mutex::new(Registry {
                 handles: Vec::new(),
                 next_qid: 1,
+                versions: VersionTable::new(),
             })),
             denied: HashSet::new(),
             fids: Mutex::new(HashMap::new()),
@@ -93,6 +102,8 @@ impl SrvFs {
             access,
             qid_path,
         });
+        // The /srv listing (or a handle it names) changed.
+        reg.versions.bump(LISTING_KEY);
     }
 
     /// Every posted handle name visible through this view, in post order.
@@ -136,17 +147,15 @@ impl SrvFs {
 
     /// The qid for a node, looked up against the live registry.
     async fn qid_of(&self, node: &Node) -> Qid {
+        let reg = self.registry.lock().await;
         match node {
             Node::Root => Qid {
                 kind: FileKind::Dir,
-                version: 0,
+                version: reg.versions.get(LISTING_KEY),
                 path: 0,
             },
             Node::Handle(name) => {
-                let path = self
-                    .registry
-                    .lock()
-                    .await
+                let path = reg
                     .handles
                     .iter()
                     .find(|h| &h.name == name)
@@ -154,6 +163,8 @@ impl SrvFs {
                     .unwrap_or(0);
                 Qid {
                     kind: FileKind::File,
+                    // A handle's identity changes via a fresh qid_path on each
+                    // post; its content within one post does not change.
                     version: 0,
                     path,
                 }

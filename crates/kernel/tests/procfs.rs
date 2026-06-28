@@ -249,3 +249,31 @@ async fn proc_exposes_the_process_namespace() {
         .await
         .expect("namespace is readable");
 }
+
+// §5.1 — qid versions bump when content changes, so a cached qid/version goes
+// stale: the /proc listing on process appearance, a process's files on exit.
+#[tokio::test]
+async fn proc_qid_versions_bump_on_change() {
+    let fs = proc();
+    let v0 = fs.stat(Fid::ROOT).await.unwrap().qid.version;
+    let pid = spawn(&fs, Fid(10)).await;
+    let v1 = fs.stat(Fid::ROOT).await.unwrap().qid.version;
+    assert_eq!(v1, v0 + 1, "/proc listing changed when a process appeared");
+
+    // A process's status qid version bumps when it exits.
+    fs.walk(Fid::ROOT, Fid(11), &[pid.clone(), "status".to_string()])
+        .await
+        .unwrap();
+    let s0 = fs.stat(Fid(11)).await.unwrap().qid.version;
+    fs.walk(Fid::ROOT, Fid(12), &[pid.clone(), "ctl".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(12), OpenMode::Write).await.unwrap();
+    fs.write(Fid(12), 0, b"cancel").await.unwrap();
+    fs.clunk(Fid(12)).await.unwrap();
+    fs.walk(Fid::ROOT, Fid(13), &[pid, "status".to_string()])
+        .await
+        .unwrap();
+    let s1 = fs.stat(Fid(13)).await.unwrap().qid.version;
+    assert_eq!(s1, s0 + 1, "status changed when the process exited");
+}

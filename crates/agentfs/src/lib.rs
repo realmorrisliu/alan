@@ -31,7 +31,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
+};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -82,6 +84,10 @@ struct State {
     /// The fid currently holding the exclusive-write lease on `machine/tape`, if
     /// any; a second write-open of the tape is refused while this is set.
     tape_writer: Option<Fid>,
+    /// Per-node qid versions, keyed by the node's qid path; bumped when a
+    /// directory listing or flat file's content changes (streams are versioned
+    /// by read offset, not qid version, so they are not tracked here).
+    versions: VersionTable,
     fids: HashMap<Fid, AgentFid>,
 }
 
@@ -163,6 +169,7 @@ impl AgentFs {
                 next_request: 0,
                 next_action: 0,
                 tape_writer: None,
+                versions: VersionTable::new(),
                 fids: HashMap::new(),
             }),
         }
@@ -178,6 +185,22 @@ impl State {
             .get(&fid)
             .map(|f| f.node.clone())
             .ok_or(ErrorCode::NotFound)
+    }
+
+    /// The qid for `node`, with its current version from the table.
+    fn qid(&self, node: &Node) -> Qid {
+        let (kind, path) = node_identity(node);
+        Qid {
+            kind,
+            version: self.versions.get(path),
+            path,
+        }
+    }
+
+    /// Record that `node`'s content changed: bump its qid version.
+    fn bump(&mut self, node: &Node) {
+        let (_, path) = node_identity(node);
+        self.versions.bump(path);
     }
 
     fn child(&self, node: &Node, name: &str) -> Result<Node, ErrorCode> {
@@ -326,7 +349,7 @@ impl FileServer for AgentFs {
         for name in names {
             node = state.child(&node, name)?;
         }
-        let qid = qid_of(&node);
+        let qid = state.qid(&node);
         state.fids.insert(newfid, AgentFid::at(node));
         Ok(qid)
     }
@@ -338,7 +361,7 @@ impl FileServer for AgentFs {
             if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
-            return Ok(qid_of(&Node::Root));
+            return Ok(qid_v0(&Node::Root));
         }
         let mut state = self.state.lock().await;
         if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
@@ -392,6 +415,8 @@ impl FileServer for AgentFs {
                     .events
                     .append(format!("request:{id}\n").as_bytes())
                     .await;
+                // The requests/ directory listing gained an entry.
+                state.bump(&Node::RequestsDir);
                 Some(id)
             }
             Node::ActionsClone => {
@@ -412,6 +437,8 @@ impl FileServer for AgentFs {
                     .events
                     .append(format!("action:{id}\n").as_bytes())
                     .await;
+                // The actions/ directory listing gained an entry.
+                state.bump(&Node::ActionsDir);
                 Some(id)
             }
             _ => None,
@@ -422,7 +449,7 @@ impl FileServer for AgentFs {
         if is_tape_write {
             state.tape_writer = Some(fid);
         }
-        Ok(qid_of(&node))
+        Ok(state.qid(&node))
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
@@ -532,7 +559,7 @@ impl FileServer for AgentFs {
         };
         Ok(Stat {
             name: String::new(),
-            qid: qid_of(&node),
+            qid: state.qid(&node),
             length,
             writable: is_writable(&node),
         })
@@ -602,6 +629,11 @@ impl FileServer for AgentFs {
                     _ => {}
                 }
             }
+            // The field's content changed; answering also changes status.
+            state.bump(&Node::RequestField(id.clone(), field));
+            if *field == "response" {
+                state.bump(&Node::RequestField(id.clone(), "status"));
+            }
             let record = format!("{id}:{field}\n");
             state.request_events.append(record.as_bytes()).await;
             state
@@ -623,6 +655,7 @@ impl FileServer for AgentFs {
                     _ => {}
                 }
             }
+            state.bump(&Node::ActionField(id.clone(), field));
             let record = format!("{id}:{field}\n");
             state.action_events.append(record.as_bytes()).await;
             state
@@ -634,10 +667,12 @@ impl FileServer for AgentFs {
     }
 }
 
-fn qid_of(node: &Node) -> Qid {
+/// A node's stable identity: its file kind and a server-unique qid path, keyed by
+/// its full file identity so distinct files (and distinct request/action ids)
+/// never share a qid. The qid *version* is layered on top from the state's
+/// [`VersionTable`] (see [`State::qid`]); this part never changes for a node.
+fn node_identity(node: &Node) -> (FileKind, u64) {
     use std::hash::{Hash, Hasher};
-    // A stable, server-unique path per node, keyed by its full file identity, so
-    // distinct files (and distinct request/action ids) never share a qid.
     fn path_of(key: &str) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         key.hash(&mut h);
@@ -667,10 +702,18 @@ fn qid_of(node: &Node) -> Qid {
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
     };
+    (kind, path_of(&key))
+}
+
+/// The qid for a node at version 0, for the stateless contexts (the pre-bound
+/// root, whose listing never changes). Mutable nodes get their version through
+/// [`State::qid`].
+fn qid_v0(node: &Node) -> Qid {
+    let (kind, path) = node_identity(node);
     Qid {
         kind,
         version: 0,
-        path: path_of(&key),
+        path,
     }
 }
 

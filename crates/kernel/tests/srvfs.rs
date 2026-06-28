@@ -197,3 +197,14 @@ async fn srv_root_lists_posted_handles_over_ap() {
     let listing = String::from_utf8(srv.read(Fid(1), 0, 1024).await.unwrap()).unwrap();
     assert_eq!(listing.lines().collect::<Vec<_>>(), vec!["agent-runtime"]);
 }
+
+// §5.1 — the /srv listing's qid version bumps when a handle is posted, so a
+// client caching the root qid/version detects the new (or replaced) service.
+#[tokio::test]
+async fn srv_root_qid_version_bumps_on_post() {
+    let srv = SrvFs::new();
+    let v0 = srv.stat(Fid::ROOT).await.unwrap().qid.version;
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    let v1 = srv.stat(Fid::ROOT).await.unwrap().qid.version;
+    assert_eq!(v1, v0 + 1, "posting a handle changed the /srv listing");
+}

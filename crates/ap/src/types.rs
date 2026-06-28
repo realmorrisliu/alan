@@ -43,7 +43,14 @@ pub enum FileKind {
 }
 
 /// The unique identity of a file at a point in time (the 9P qid analog): its
-/// kind, a version that bumps on change, and a server-unique path number.
+/// kind, a version, and a server-unique path number.
+///
+/// `version` bumps when the file's observable content changes, so a client
+/// comparing cached qid/version pairs detects a change instead of serving stale
+/// data. Servers track this with [`VersionTable`](crate::VersionTable). A
+/// [`Stream`](crate::Stream) file is the exception: its freshness is the read
+/// offset (history is retained and reads resume by offset), so its qid `version`
+/// is stable and need not bump per append.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Qid {
     pub kind: FileKind,
