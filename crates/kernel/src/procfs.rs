@@ -119,6 +119,31 @@ impl State {
             .ok_or(ErrorCode::NotFound)
     }
 
+    /// The qid for `node`, with its current version from the process table's
+    /// generations: the public listing for the root, a per-process generation for
+    /// per-pid files, and a stable 0 for the clone file and the output stream
+    /// (a stream's freshness is its read offset, not the qid version).
+    fn qid(&self, node: &Node) -> Qid {
+        let (kind, path) = node_identity(node);
+        let version = match node {
+            Node::Root => self.table.listing_generation(),
+            Node::Clone | Node::Output(_) => 0,
+            Node::Proc(p)
+            | Node::IoDir(p)
+            | Node::Status(p)
+            | Node::Parent(p)
+            | Node::Credentials(p)
+            | Node::Exit(p)
+            | Node::Ctl(p)
+            | Node::NamespaceInfo(p) => self.table.generation(*p),
+        };
+        Qid {
+            kind,
+            version,
+            path,
+        }
+    }
+
     /// Resolve one path component from a node to its child node.
     fn child(&self, node: &Node, name: &str) -> Result<Node, ErrorCode> {
         match node {
@@ -219,7 +244,7 @@ impl FileServer for ProcFs {
         for name in names {
             node = state.child(&node, name)?;
         }
-        let qid = qid_of(&node);
+        let qid = state.qid(&node);
         state.fids.insert(newfid, ProcFid::at(node));
         Ok(qid)
     }
@@ -228,7 +253,8 @@ impl FileServer for ProcFs {
         // The pre-bound root fid is openable directly (to read the listing)
         // without a redundant empty walk, matching SrvFs and the reference server.
         if fid == Fid::ROOT {
-            return Ok(qid_of(&Node::Root));
+            let state = self.state.lock().await;
+            return Ok(state.qid(&Node::Root));
         }
         let mut state = self.state.lock().await;
         let node = state.node_of(fid)?;
@@ -254,11 +280,11 @@ impl FileServer for ProcFs {
                 .or_insert_with(|| ProcFid::at(Node::Clone));
             f.clone_pid = Some(slot);
             f.mode = Some(mode);
-            return Ok(qid_of(&node));
+            return Ok(state.qid(&node));
         }
         let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
-        Ok(qid_of(&node))
+        Ok(state.qid(&node))
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
@@ -346,7 +372,7 @@ impl FileServer for ProcFs {
         };
         Ok(Stat {
             name: String::new(),
-            qid: qid_of(&node),
+            qid: state.qid(&node),
             length,
             writable: is_writable(&node),
         })
@@ -396,14 +422,17 @@ impl FileServer for ProcFs {
     }
 }
 
-fn qid_of(node: &Node) -> Qid {
+/// A node's stable identity: file kind and a server-unique qid path. The qid
+/// *version* is layered on from the process table's generations (see
+/// [`State::qid`]); this part never changes for a node.
+fn node_identity(node: &Node) -> (FileKind, u64) {
     // Give each per-process file kind its own 2^48 path space keyed by a tag, so
     // qids stay server-unique even after millions of pids (the old 0x1000 stride
     // collided once pids passed 4096).
     fn tagged(tag: u64, pid: Pid) -> u64 {
         (tag << 48) | pid.0
     }
-    let (kind, path) = match node {
+    match node {
         Node::Root => (FileKind::Dir, 0),
         Node::Clone => (FileKind::Clone, 1),
         Node::Proc(p) => (FileKind::Dir, tagged(1, *p)),
@@ -415,11 +444,6 @@ fn qid_of(node: &Node) -> Qid {
         Node::Exit(p) => (FileKind::File, tagged(7, *p)),
         Node::Ctl(p) => (FileKind::File, tagged(8, *p)),
         Node::NamespaceInfo(p) => (FileKind::File, tagged(9, *p)),
-    };
-    Qid {
-        kind,
-        version: 0,
-        path,
     }
 }
 

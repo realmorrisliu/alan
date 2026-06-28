@@ -197,3 +197,42 @@ async fn srv_root_lists_posted_handles_over_ap() {
     let listing = String::from_utf8(srv.read(Fid(1), 0, 1024).await.unwrap()).unwrap();
     assert_eq!(listing.lines().collect::<Vec<_>>(), vec!["agent-runtime"]);
 }
+
+// §5.1 — the /srv root qid version changes when a visible handle is posted, so a
+// client caching the root qid/version detects the new (or replaced) service.
+#[tokio::test]
+async fn srv_root_qid_version_changes_on_visible_post() {
+    let srv = SrvFs::new();
+    let v0 = srv.stat(Fid::ROOT).await.unwrap().qid.version;
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    let v1 = srv.stat(Fid::ROOT).await.unwrap().qid.version;
+    assert_ne!(v1, v0, "posting a visible handle changed the /srv listing");
+}
+
+// D6 — the root qid version is scoped to a view's *visible* handles, so posting a
+// handle the view denies must NOT change its root version (no covert channel that
+// leaks hidden-service activity past denial-by-absent-mount).
+#[tokio::test]
+async fn srv_root_qid_version_does_not_leak_hidden_handle_activity() {
+    let srv = SrvFs::new();
+    let denied: HashSet<String> = ["secret".to_string()].into_iter().collect();
+    let view = srv.view(&denied).await;
+
+    let v0 = view.stat(Fid::ROOT).await.unwrap().qid.version;
+    // Posting (and replacing) a handle the view cannot see must not move its
+    // root version.
+    srv.post("secret", memfs(), Access::ReadWrite).await;
+    srv.post("secret", memfs(), Access::ReadWrite).await;
+    assert_eq!(
+        view.stat(Fid::ROOT).await.unwrap().qid.version,
+        v0,
+        "a hidden handle's activity must not change the view's root version"
+    );
+    // A visible post still does change it.
+    srv.post("llm", memfs(), Access::ReadWrite).await;
+    assert_ne!(
+        view.stat(Fid::ROOT).await.unwrap().qid.version,
+        v0,
+        "a visible handle still changes the view's root version"
+    );
+}

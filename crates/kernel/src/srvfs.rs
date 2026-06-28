@@ -136,17 +136,28 @@ impl SrvFs {
 
     /// The qid for a node, looked up against the live registry.
     async fn qid_of(&self, node: &Node) -> Qid {
+        let reg = self.registry.lock().await;
         match node {
-            Node::Root => Qid {
-                kind: FileKind::Dir,
-                version: 0,
-                path: 0,
-            },
+            // The root version is derived from THIS view's *visible* handles
+            // (their names + per-post qid_paths), not a global counter — so a
+            // hidden handle's post/replace never changes a restricted view's root
+            // version. Otherwise denial-by-absent-mount would leak hidden-service
+            // activity through a qid-version side channel (D6).
+            Node::Root => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for handle in reg.handles.iter().filter(|h| self.visible(&h.name)) {
+                    handle.name.hash(&mut h);
+                    handle.qid_path.hash(&mut h);
+                }
+                Qid {
+                    kind: FileKind::Dir,
+                    version: h.finish() as u32,
+                    path: 0,
+                }
+            }
             Node::Handle(name) => {
-                let path = self
-                    .registry
-                    .lock()
-                    .await
+                let path = reg
                     .handles
                     .iter()
                     .find(|h| &h.name == name)
@@ -154,6 +165,8 @@ impl SrvFs {
                     .unwrap_or(0);
                 Qid {
                     kind: FileKind::File,
+                    // A handle's identity changes via a fresh qid_path on each
+                    // post; its content within one post does not change.
                     version: 0,
                     path,
                 }

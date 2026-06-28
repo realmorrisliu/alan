@@ -32,6 +32,12 @@ already provide.
   its namespace.
 - Define requests and responses as files, and the durable agent identity (home
   tree) that makes a restarted agent resume.
+- Define the namespace's **access discipline** — consolidated here as the single
+  authoritative home: `ctl` scoped to one lifecycle-bearing object; `machine/tape`
+  and `events` append-only with an exclusive-write lease held by the generating
+  engine; write authority keyed to the acting actor with extension by interpose
+  (the iron law); external writers gated on a protocol-layer tape lease; and an
+  in-band self-describing namespace.
 
 ## Capabilities
 
@@ -40,11 +46,32 @@ already provide.
 - `agent-file-layout-contract`: the OS-level file-layout convention for agents —
   process layout, agent superset, `ctl` control, `/agent` as a `/proc` view, the
   LLM-stream consumer model, namespace-assembled requests, tools-as-`/bin`,
-  request/response files, and the durable home tree.
+  request/response files, the durable home tree, and the namespace access
+  discipline (ctl scoping, the generation tape lease, actor-keyed authority +
+  interpose, the external-writer protocol-layer prerequisite, self-description).
 
 ### Modified Capabilities
 
 - None.
+
+## Supersession
+
+This contract is the single authoritative home for the agent file-layout surface
+and its access discipline. Two overlapping efforts are folded in here:
+
+- `add-external-namespace-writers` (an unmerged draft) is **retired**; its
+  `external-namespace-write-authority` requirement — external writers need the
+  `machine/tape` lease at the aP protocol layer, not just an agent-file-server
+  check — is folded into this contract.
+- `refactor-engine-namespace-native`'s access-discipline design (its D7–D12 notes
+  on `ctl`/answer roles, the tape lease, actor permission, and interpose) is
+  **moved here**; that change keeps only the engine-implementation requirements
+  (environment-as-namespace, generation/tools/state as file ops, M2) and now
+  references this contract for the file surface. Its earlier D7 shape — answering
+  via `requests/<id>/ctl` and lifecycle verbs on `machine/ctl` — is **not** adopted:
+  this contract keeps answering as a `requests/<id>/response` write committed on
+  clunk, generic lifecycle control on the kernel `/proc/<pid>/ctl`, and
+  `machine/ctl` for agent-runtime tape/checkpoint commands.
 
 ## Impact
 

@@ -104,9 +104,11 @@
 
 ## 10. Dependency boundary
 
-- [ ] 10.1 Add tests proving `alan-kernel` has no dependency on `alan-runtime`,
+- [x] 10.1 Add tests proving `alan-kernel` has no dependency on `alan-runtime`,
   `alan-protocol`, provider clients, memory stores, or sandbox backends, and that
-  those live only in the projection crate.
+  those live only in the projection crate. (Kernel side: `alan-kernel`
+  `dependency_boundary`; projection side: `alan-agentfs` `dependency_boundary`
+  asserts the file server never depends on the kernel/another server/a client.)
 
 ## 11. Verification and review
 

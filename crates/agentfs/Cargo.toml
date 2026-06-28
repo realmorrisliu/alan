@@ -1,0 +1,12 @@
+[package]
+name = "alan-agentfs"
+description = "alan-agentfs — the agent file server: the read-write file backing of the agent process's own state, served at /agent (the alan-agent-adapter-contract). aP-only; no EventEnvelope on the live path."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+async-trait.workspace = true
+tokio = { workspace = true }

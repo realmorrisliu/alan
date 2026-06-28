@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/ap",
+    "crates/agentfs",
     "crates/auth",
     "crates/kernel",
     "crates/agent-protocol",

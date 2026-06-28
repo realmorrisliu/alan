@@ -518,3 +518,36 @@ async fn commit_time_failure_is_reported_at_clunk() {
         Err(ErrorCode::BadRequest)
     );
 }
+
+// §5.1 — a mutable directory's qid version bumps when its listing changes, so a
+// client caching qid/version detects the change. Allocating a clone connection
+// adds an entry to root, bumping root's version.
+#[tokio::test]
+async fn root_qid_version_bumps_when_a_clone_connection_appears() {
+    let t = transport();
+
+    let version_of = |resp: Result<Response, ErrorCode>| match resp {
+        Ok(Response::Stat { stat }) => stat.qid.version,
+        other => panic!("expected Stat, got {other:?}"),
+    };
+
+    let v0 = version_of(t.call(Request::Stat { fid: Fid::ROOT }).await);
+
+    // Allocate a connection via clone-via-open (adds a `conn-*` entry to root).
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(20),
+        names: vec!["clone".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(20),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+
+    let v1 = version_of(t.call(Request::Stat { fid: Fid::ROOT }).await);
+    assert_eq!(v1, v0 + 1, "root listing changed, so its qid version bumps");
+}

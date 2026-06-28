@@ -281,3 +281,106 @@ namespace.
   serves
 - **AND** the limit is reached through the namespace mount, not an ambient global
   quota service
+
+### Requirement: A `ctl` is scoped to one lifecycle-bearing object
+Alan OS SHALL place a `ctl` in the directory that represents a single
+lifecycle-bearing object, alongside that object's data/status — the Plan 9 idiom
+(`/proc/<pid>/ctl`, `/net/tcp/<n>/ctl`). There SHALL NOT be one global
+`/agent/<pid>/ctl` that re-encodes object addressing as a verb argument, nor a
+`ctl` on a leaf that is pure state (e.g. `machine/tape/ctl`). The control surfaces
+this yields are `/proc/<pid>/ctl` (generic process) and `machine/ctl`
+(agent-runtime tape/checkpoint); leaf state files (`machine/status`,
+`requests/<id>/status`) are read-only and carry no control.
+
+#### Scenario: A controllable object gains a new verb
+- **WHEN** a new control action is added for an object that already has a `ctl`
+- **THEN** it is a new command on that object's existing `ctl`
+- **AND** no new global control file and no per-leaf `ctl` is introduced
+
+#### Scenario: A leaf state file is not a control surface
+- **WHEN** a consumer wants to change an agent's run-state
+- **THEN** it writes a command to the owning object's `ctl` (`/proc/<pid>/ctl` for
+  generic lifecycle, `machine/ctl` for runtime), never free text to a status leaf
+- **AND** `machine/status` and `requests/<id>/status` remain read-only state
+
+### Requirement: Tape and event streams are append-only and leased during generation
+Alan OS SHALL keep `machine/tape` and every `events` stream append-only. While an
+agent is generating, `machine/tape` SHALL be held under an exclusive-write lease —
+exactly one writer (the generating engine), while readers may still tail it — so
+no second writer can interleave records into the tape mid-stream. The safe window
+for an external actor to amend `machine/tape` or `context/` is the agent's
+yielded/paused state.
+
+#### Scenario: A second writer attempts the tape during generation
+- **WHEN** an agent is generating and another writer attempts to write
+  `machine/tape`
+- **THEN** the write is refused because the generating engine holds the
+  exclusive-write lease
+- **AND** the tape cannot be spliced mid-stream
+
+#### Scenario: A reader tails the tape during generation
+- **WHEN** a consumer tails `machine/tape` while the agent is generating
+- **THEN** the read succeeds and resumes from the caller's offset
+- **AND** the exclusive-write lease bars writers, not readers
+
+#### Scenario: An external actor amends during a yield
+- **WHEN** the agent is yielded/paused and an authorized actor amends
+  `machine/tape` or `context/`
+- **THEN** the amendment is accepted because no generation lease is held
+- **AND** on resume the engine continues from the amended state
+
+### Requirement: Write authority carries an actor dimension; extension is by interpose
+Alan OS SHALL make write authority to an agent's files a function of the acting
+actor (the agent's own engine, a parent, a human operator, an interposing file
+server) and that actor's mounted capabilities — not a static property of the node
+alone. The unit of behavior extension SHALL be interposing a file server on the
+namespace, governed by who-may-{read, write, mount, interpose}, never a private
+out-of-band API (the iron law). Until the kernel's amplification check
+(ADR-0024 R1) lands, this boundary is convention-enforced, not claimed as hard
+isolation.
+
+#### Scenario: An extension changes agent behavior
+- **WHEN** an extension must alter how an agent reads or writes a file
+- **THEN** it interposes a file server between the writer and the agent files
+- **AND** it does so through a mount governed by who-may-{write,mount,interpose},
+  not a private API
+
+#### Scenario: The same node is writable to one actor and not another
+- **WHEN** two actors hold fids on the same node with different mounted authority
+- **THEN** the write decision depends on the actor and its capabilities
+- **AND** node-writability is not a single global property independent of actor
+
+### Requirement: External writers require a protocol-layer tape lease
+Alan OS SHALL NOT permit any actor other than the agent's own engine (a human
+amending `machine/tape`/`context/`, or an interposing file server) to write the
+agent namespace until the `machine/tape` exclusive-write lease is enforced at the
+aP protocol layer rather than solely as a check inside the agent file server.
+Because an interposing server bypasses the agent file server's own `write` path, an
+agent-file-server-internal check MUST NOT remain the sole enforcement of the lease
+once a second writer can exist; the protocol-layer guarantee is a prerequisite that
+gates enabling any external-writer surface.
+
+#### Scenario: The lease is still only an internal check
+- **WHEN** the `machine/tape` lease is enforced solely inside the agent file server
+- **THEN** no external-writer surface (human edit-on-yield or interpose) is enabled
+- **AND** promoting the lease to the aP layer is a prerequisite for any such surface
+
+#### Scenario: An interposer is mounted with the lease at the aP layer
+- **WHEN** the lease is enforced at the aP layer and an interposing server is
+  mounted between a writer and the agent files
+- **THEN** a write attempted while the engine holds the lease is refused regardless
+  of which file server receives it
+- **AND** the interposer cannot grant a write the aP layer forbids
+
+### Requirement: The agent namespace is self-describing
+Alan OS SHALL let an agent's files describe their own byte contract in-band, so the
+agent — itself a consumer that reads and writes these files to think — can read the
+contract as prose rather than depending only on out-of-band documentation. The
+minimal form SHALL be a documented record vocabulary per stream and a readable
+`ctl`-help for each control surface, expanded incrementally.
+
+#### Scenario: A consumer learns a surface's contract from the namespace
+- **WHEN** an agent or tool needs to know a stream's record vocabulary or a
+  `ctl`'s accepted commands
+- **THEN** it reads an in-band description for that node
+- **AND** it does not depend solely on external specs or Rust doc-comments
