@@ -608,7 +608,6 @@ async fn the_events_stream_is_watchable_by_blocking_read() {
         .unwrap();
     assert!(String::from_utf8(rec).unwrap().contains("output:"));
 }
-
 async fn qid_version(fs: &AgentFs, path: &[&str], fid: Fid) -> u32 {
     let names: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     fs.walk(Fid::ROOT, fid, &names).await.unwrap();
@@ -642,4 +641,44 @@ async fn qid_versions_bump_when_dirs_and_fields_change() {
         .await
         .unwrap();
     assert_eq!(qid_version(&fs, &["io", "output"], Fid(8)).await, 0);
+}
+
+#[tokio::test]
+async fn an_empty_response_still_settles_the_request() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+
+    // An intentionally empty answer: a zero-byte write then clunk. The commit
+    // trigger is write intent, not a non-empty buffer, so the request settles.
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &["requests".into(), id.clone(), "response".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"").await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["requests", &id, "response"], Fid(3)).await,
+        ""
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", &id, "status"], Fid(4)).await,
+        "answered"
+    );
+}
+
+#[tokio::test]
+async fn machine_ctl_read_returns_in_band_help() {
+    let fs = AgentFs::new();
+    let help = read_text(&fs, &["machine", "ctl"], Fid(1)).await;
+    assert!(help.contains("compact"), "ctl help lists compact: {help:?}");
+    assert!(help.contains("rollback"), "ctl help lists rollback");
 }

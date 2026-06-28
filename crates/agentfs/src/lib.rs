@@ -41,6 +41,16 @@ use tokio::sync::Mutex;
 /// cannot allocate unbounded memory.
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 
+/// In-band help for `machine/ctl`: reading the control file lists its accepted
+/// commands so a namespace-native client need not consult external docs
+/// (self-describing namespace). Semantics belong to the engine; this is the
+/// documented vocabulary, not an exhaustive parser.
+const MACHINE_CTL_HELP: &str = "\
+# machine/ctl — agent-runtime control. Write one command per write.
+compact   compact the tape into a checkpoint
+rollback  roll back to the previous checkpoint
+";
+
 #[derive(Default)]
 struct Request {
     kind: String,
@@ -98,6 +108,10 @@ struct AgentFid {
     clone_id: Option<String>,
     /// Buffered document for a field write (committed on clunk).
     write_buf: Vec<u8>,
+    /// Whether a write was issued on this fid (even a zero-byte one). The commit
+    /// trigger is write intent, not a non-empty buffer, so an intentionally empty
+    /// answer (`requests/<id>/response`) still settles the request.
+    wrote: bool,
 }
 
 impl AgentFid {
@@ -107,6 +121,7 @@ impl AgentFid {
             mode: None,
             clone_id: None,
             write_buf: Vec::new(),
+            wrote: false,
         }
     }
 }
@@ -270,8 +285,10 @@ impl State {
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus\nctl".to_vec(),
             Node::Status => self.status.clone().into_bytes(),
-            // machine/ctl is a write-only command sink: reading it yields nothing.
-            Node::MachineCtl => Vec::new(),
+            // machine/ctl exposes its accepted commands in-band, so a
+            // namespace-native client discovers them by reading the file rather
+            // than from external docs (self-describing namespace).
+            Node::MachineCtl => MACHINE_CTL_HELP.as_bytes().to_vec(),
             Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
             Node::ActionsDir => listing(&["clone", "events"], self.actions.keys()),
             Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
@@ -535,6 +552,9 @@ impl FileServer for AgentFs {
                     f.write_buf.resize(end, 0);
                 }
                 f.write_buf[start..end].copy_from_slice(data);
+                // A write was issued (even zero-byte): mark intent so an empty
+                // answer still commits on clunk.
+                f.wrote = true;
                 Ok(data.len() as u32)
             }
             _ => Err(ErrorCode::Unsupported),
@@ -592,7 +612,7 @@ impl FileServer for AgentFs {
             state.tape_writer = None;
         }
         // Commit a buffered write on clunk.
-        if matches!(f.node, Node::Input) && !f.write_buf.is_empty() {
+        if matches!(f.node, Node::Input) && f.wrote {
             // Each committed message is length-framed in io/input so consecutive
             // messages keep distinct boundaries in the stream itself (an agent
             // draining io/input reconstructs turns without a side channel): a
@@ -606,7 +626,7 @@ impl FileServer for AgentFs {
             state.io_events.append(record.as_bytes()).await;
             state.events.append(record.as_bytes()).await;
         } else if let Node::RequestField(id, field) = &f.node
-            && !f.write_buf.is_empty()
+            && f.wrote
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
             if let Some(r) = state.requests.get_mut(id) {
@@ -641,7 +661,7 @@ impl FileServer for AgentFs {
                 .append(format!("request:{id}\n").as_bytes())
                 .await;
         } else if let Node::ActionField(id, field) = &f.node
-            && !f.write_buf.is_empty()
+            && f.wrote
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
             if let Some(a) = state.actions.get_mut(id) {
