@@ -296,8 +296,19 @@ impl FileServer for MountFs {
             return Err(ErrorCode::NotFound);
         };
         if let Some(b) = entry.backing {
-            // Release the fid bound in the backing tree too, so it does not leak.
-            let _ = b.resolved.call(Request::Clunk { fid: b.backing_fid }).await;
+            // Release the fid bound in the backing tree too (the MountFs fid is
+            // already dropped above, so it never leaks even on error), and
+            // propagate the backing clunk result: on a commit-on-clunk endpoint the
+            // clunk *is* the commit, so a rejected document must surface, not be
+            // swallowed.
+            return match b
+                .resolved
+                .call(Request::Clunk { fid: b.backing_fid })
+                .await?
+            {
+                Response::Clunk => Ok(()),
+                _ => Err(ErrorCode::Io),
+            };
         }
         Ok(())
     }

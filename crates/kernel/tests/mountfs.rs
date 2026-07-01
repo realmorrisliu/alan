@@ -135,6 +135,20 @@ async fn a_nested_mount_appears_through_synthetic_parents() {
 }
 
 #[tokio::test]
+async fn clunk_propagates_a_backing_commit_error() {
+    // MemFs's `/submit` validates its document at clunk; a non-JSON body is
+    // rejected at commit. MountFs must surface that error, not swallow it, so a
+    // commit-on-clunk write through a mount can fail.
+    let fs = MountFs::new(ns());
+    fs.walk(Fid::ROOT, Fid(1), &["data".into(), "submit".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+    fs.write(Fid(1), 0, b"not json").await.unwrap();
+    assert_eq!(fs.clunk(Fid(1)).await, Err(ErrorCode::BadRequest));
+}
+
+#[tokio::test]
 async fn a_clunked_fid_is_released() {
     let fs = MountFs::new(ns());
     fs.walk(Fid::ROOT, Fid(1), &["data".into(), "greeting".into()])
