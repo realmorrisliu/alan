@@ -307,6 +307,100 @@ async fn two_wrappers_sharing_a_backing_server_do_not_collide_backing_fids() {
         .unwrap();
 }
 
+/// A read-only directory server whose root lists a fixed set of file names, so a
+/// union of two of them (with different names) proves listing merge.
+struct DirFs {
+    entries: Vec<String>,
+    fids: tokio::sync::Mutex<HashMap<Fid, bool>>, // fid -> is the root dir
+}
+
+impl DirFs {
+    fn transport(entries: &[&str]) -> InProcessTransport {
+        InProcessTransport::new(Arc::new(DirFs {
+            entries: entries.iter().map(|s| s.to_string()).collect(),
+            fids: tokio::sync::Mutex::new(HashMap::new()),
+        }))
+    }
+}
+
+#[async_trait::async_trait]
+impl FileServer for DirFs {
+    async fn walk(&self, _fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let (is_root, kind) = match names {
+            [] => (true, FileKind::Dir),
+            [n] if self.entries.contains(n) => (false, FileKind::File),
+            _ => return Err(ErrorCode::NotFound),
+        };
+        self.fids.lock().await.insert(newfid, is_root);
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Ok(Qid {
+            kind: FileKind::Dir,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let is_root = *self.fids.lock().await.get(&fid).unwrap_or(&false);
+        let bytes = if is_root {
+            self.entries.join("\n").into_bytes()
+        } else {
+            Vec::new()
+        };
+        let start = (offset as usize).min(bytes.len());
+        let end = bytes.len().min(start + count as usize);
+        Ok(bytes[start..end].to_vec())
+    }
+    async fn write(&self, _: Fid, _: Offset, _: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: String::new(),
+            qid: Qid {
+                kind: FileKind::Dir,
+                version: 0,
+                path: 0,
+            },
+            length: 0,
+            writable: false,
+        })
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids.lock().await.remove(&fid);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_union_mount_lists_all_contributors_merged() {
+    // Two servers mounted at the same prefix (a union, as `/bin` is assembled by
+    // bind). Listing must merge both contributors' entries, deduplicated.
+    let mut ns = Namespace::new();
+    ns.mount("/bin", DirFs::transport(&["ls", "cat"]), Access::ReadWrite);
+    ns.mount(
+        "/bin",
+        DirFs::transport(&["grep", "cat"]),
+        Access::ReadWrite,
+    );
+    let fs = MountFs::new(ns);
+
+    let mut entries = read_lines(&fs, &["bin"], Fid(1)).await;
+    entries.sort();
+    assert_eq!(entries, vec!["cat", "grep", "ls"]);
+}
+
 #[tokio::test]
 async fn a_backed_directory_lists_its_mount_point_children() {
     // A broad `/` mount (MemFs: greeting/clone/submit) plus a deeper `/mnt/llm`.

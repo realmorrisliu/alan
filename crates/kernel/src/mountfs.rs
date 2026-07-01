@@ -126,6 +126,50 @@ impl MountFs {
             .any(|prefix| prefix.len() > path.len() && prefix[..path.len()] == *path)
     }
 
+    /// Merge a directory listing across every union contributor at `path` plus the
+    /// synthetic mount-point children, deduplicated by name. Each contributor is
+    /// read through its own fresh backing fid (walk → open → read → clunk); a
+    /// contributor that does not resolve the path is skipped. Runs without the
+    /// state lock held (it only reads the immutable namespace).
+    async fn merged_dir_listing(&self, path: &[String]) -> Result<Vec<u8>, ErrorCode> {
+        let mut names: Vec<String> = Vec::new();
+        let push = |name: String, names: &mut Vec<String>| {
+            if !name.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+        };
+        for cand in self.ns.resolve_candidates(&join_path(path)) {
+            let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
+            if !matches!(
+                cand.call(Request::Walk {
+                    fid: Fid::ROOT,
+                    newfid: backing_fid,
+                    names: cand.rel.clone(),
+                })
+                .await,
+                Ok(Response::Walk { .. })
+            ) {
+                continue;
+            }
+            let _ = cand
+                .call(Request::Open {
+                    fid: backing_fid,
+                    mode: OpenMode::Read,
+                })
+                .await;
+            let bytes = read_all(&cand, backing_fid).await.unwrap_or_default();
+            let _ = cand.call(Request::Clunk { fid: backing_fid }).await;
+            let text = String::from_utf8_lossy(&bytes);
+            for line in text.lines() {
+                push(line.to_string(), &mut names);
+            }
+        }
+        for child in self.synthetic_children(path) {
+            push(child, &mut names);
+        }
+        Ok(names.join("\n").into_bytes())
+    }
+
     /// Resolve a fid to its leaf [`Target`] and release the state lock, so a leaf
     /// op forwards to the backing tree **without** holding the namespace lock — a
     /// tail parked on a stream's live edge must not freeze every other operation.
@@ -242,16 +286,16 @@ impl FileServer for MountFs {
                 is_dir,
                 path,
             } => {
-                // A backed directory that also has mounted descendants must list
-                // those mount points too, or a broad mount (e.g. `/`) would hide the
-                // deeper mounts (`/proc`, `/mnt/llm`) from its listing. Overlay the
-                // synthetic mount-point children onto the backing listing; a file is
-                // forwarded byte-for-byte.
+                // A directory listing must merge every contributor at this prefix
+                // (a union mount such as `/bin`) plus the synthetic mount-point
+                // children (deeper mounts under a broad mount), so neither a union
+                // sibling nor a nested mount is hidden. A single non-union directory
+                // with no mounted descendants, and every file, is forwarded
+                // byte-for-byte.
                 if is_dir {
-                    let extra = self.synthetic_children(&path);
-                    if !extra.is_empty() {
-                        let backing = read_all(&resolved, backing_fid).await?;
-                        return Ok(slice(overlay_listing(backing, extra), offset, count));
+                    let is_union = self.ns.resolve_candidates(&join_path(&path)).len() > 1;
+                    if is_union || !self.synthetic_children(&path).is_empty() {
+                        return Ok(slice(self.merged_dir_listing(&path).await?, offset, count));
                     }
                 }
                 match resolved
@@ -406,23 +450,6 @@ async fn read_all(resolved: &Resolved, fid: Fid) -> Result<Vec<u8>, ErrorCode> {
         out.extend_from_slice(&chunk);
     }
     Ok(out)
-}
-
-/// Overlay synthetic mount-point child names onto a backing directory listing,
-/// appending only names the backing tree does not already list (newline-joined).
-fn overlay_listing(backing: Vec<u8>, extra: Vec<String>) -> Vec<u8> {
-    let text = String::from_utf8_lossy(&backing);
-    let mut names: Vec<String> = text
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-    for name in extra {
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    names.join("\n").into_bytes()
 }
 
 /// Split an absolute path into its non-empty components. `/` → `[]`.
