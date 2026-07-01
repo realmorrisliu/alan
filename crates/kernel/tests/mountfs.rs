@@ -401,6 +401,90 @@ async fn a_union_mount_lists_all_contributors_merged() {
     assert_eq!(entries, vec!["cat", "grep", "ls"]);
 }
 
+/// A directory server whose reads fail with `Io`, to prove a union merge surfaces
+/// a contributor's operational failure instead of masking it as a partial listing.
+struct FailReadDirFs;
+
+#[async_trait::async_trait]
+impl FileServer for FailReadDirFs {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        match names {
+            [] => Ok(Qid {
+                kind: FileKind::Dir,
+                version: 0,
+                path: 0,
+            }),
+            _ => Err(ErrorCode::NotFound),
+        }
+    }
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Ok(Qid {
+            kind: FileKind::Dir,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn read(&self, _: Fid, _: Offset, _: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::Io)
+    }
+    async fn write(&self, _: Fid, _: Offset, _: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: String::new(),
+            qid: Qid {
+                kind: FileKind::Dir,
+                version: 0,
+                path: 0,
+            },
+            length: 0,
+            writable: false,
+        })
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_union_listing_surfaces_a_contributor_failure() {
+    // One contributor's read fails operationally (Io). The merge must surface it,
+    // not silently return only the other contributor's entries.
+    let mut ns = Namespace::new();
+    ns.mount("/bin", DirFs::transport(&["ls"]), Access::ReadWrite);
+    ns.mount(
+        "/bin",
+        InProcessTransport::new(Arc::new(FailReadDirFs)),
+        Access::ReadWrite,
+    );
+    let fs = MountFs::new(ns);
+
+    fs.walk(Fid::ROOT, Fid(1), &["bin".into()]).await.unwrap();
+    fs.open(Fid(1), OpenMode::Read).await.unwrap();
+    assert_eq!(fs.read(Fid(1), 0, 4096).await, Err(ErrorCode::Io));
+}
+
+#[tokio::test]
+async fn a_relative_walk_from_a_backing_file_is_rejected() {
+    // `/data/greeting` is a file. A non-empty walk descending from it must be
+    // NotDirectory, not a re-resolution that could traverse a non-directory.
+    let fs = MountFs::new(ns());
+    fs.walk(Fid::ROOT, Fid(1), &["data".into(), "greeting".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.walk(Fid(1), Fid(2), &["child".into()]).await,
+        Err(ErrorCode::NotDirectory)
+    );
+}
+
 #[tokio::test]
 async fn a_backed_directory_lists_its_mount_point_children() {
     // A broad `/` mount (MemFs: greeting/clone/submit) plus a deeper `/mnt/llm`.

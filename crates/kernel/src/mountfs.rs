@@ -140,25 +140,30 @@ impl MountFs {
         };
         for cand in self.ns.resolve_candidates(&join_path(path)) {
             let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
-            if !matches!(
-                cand.call(Request::Walk {
+            // A contributor that simply lacks this path (NotFound) is skipped; any
+            // other error (Io/RateLimited/NoAccess) is an operational failure and
+            // must surface, not be masked as a partial/empty listing.
+            match cand
+                .call(Request::Walk {
                     fid: Fid::ROOT,
                     newfid: backing_fid,
                     names: cand.rel.clone(),
                 })
-                .await,
-                Ok(Response::Walk { .. })
-            ) {
-                continue;
+                .await
+            {
+                Ok(Response::Walk { .. }) => {}
+                Err(ErrorCode::NotFound) => continue,
+                Err(e) => return Err(e),
+                Ok(_) => return Err(ErrorCode::Io),
             }
-            let _ = cand
-                .call(Request::Open {
-                    fid: backing_fid,
-                    mode: OpenMode::Read,
-                })
-                .await;
-            let bytes = read_all(&cand, backing_fid).await.unwrap_or_default();
+            // Read this contributor's listing, clunking on every path.
+            let listing = read_contributor_listing(&cand, backing_fid).await;
             let _ = cand.call(Request::Clunk { fid: backing_fid }).await;
+            let bytes = match listing {
+                Ok(bytes) => bytes,
+                Err(ErrorCode::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
             let text = String::from_utf8_lossy(&bytes);
             for line in text.lines() {
                 push(line.to_string(), &mut names);
@@ -196,6 +201,16 @@ impl FileServer for MountFs {
             return Err(ErrorCode::BadRequest);
         }
         let base = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+        // A non-empty walk descends into a child, so the base must be a directory.
+        // A backing *file* base is rejected here rather than re-resolving the
+        // absolute path (which could otherwise traverse a non-directory into a
+        // mounted descendant, e.g. a `/` file `mnt` walking into a `/mnt/llm` mount).
+        if !names.is_empty()
+            && let Some(b) = &base.backing
+            && !b.is_dir
+        {
+            return Err(ErrorCode::NotDirectory);
+        }
         let mut path = base.path.clone();
         path.extend(names.iter().cloned());
 
@@ -426,6 +441,22 @@ impl FileServer for MountFs {
         }
         Ok(())
     }
+}
+
+/// Open an already-walked contributor directory fid for read and return its full
+/// listing, propagating the open/read error (the caller clunks the fid).
+async fn read_contributor_listing(resolved: &Resolved, fid: Fid) -> Result<Vec<u8>, ErrorCode> {
+    match resolved
+        .call(Request::Open {
+            fid,
+            mode: OpenMode::Read,
+        })
+        .await?
+    {
+        Response::Open { .. } => {}
+        _ => return Err(ErrorCode::Io),
+    }
+    read_all(resolved, fid).await
 }
 
 /// Read a backing node's full contents by looping until a read returns empty
