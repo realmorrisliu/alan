@@ -342,6 +342,25 @@ async fn shell_resolves_paths_across_a_real_namespace() {
 }
 
 #[tokio::test]
+async fn write_surfaces_a_commit_on_clunk_rejection() {
+    // MemFs's `/submit` validates its document at clunk; a non-JSON body is
+    // rejected at commit, and the shell must surface that, not report success.
+    let shell = namespace_shell();
+    assert_eq!(
+        shell.write("/data/submit", b"not json").await,
+        Err(ErrorCode::BadRequest)
+    );
+}
+
+#[tokio::test]
+async fn spawn_surfaces_a_malformed_exec_spec() {
+    // /proc/clone commits the process at clunk; a malformed exec spec is discarded
+    // with a commit-time error, which spawn must propagate instead of a bogus pid.
+    let shell = namespace_shell();
+    assert_eq!(shell.spawn("not json").await, Err(ErrorCode::BadRequest));
+}
+
+#[tokio::test]
 async fn spawn_launches_a_process_through_proc_clone_across_the_mount() {
     // The aP-only shell launches a process through `/proc/clone` (a mount in the
     // namespace) with no side API, then reads its status back across the mount.

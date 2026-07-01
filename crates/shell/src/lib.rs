@@ -79,8 +79,19 @@ impl Shell {
         }
     }
 
-    /// Best-effort release: used on every exit path so a failed builtin never
-    /// leaks the fid it opened.
+    /// Release a fid, propagating a commit-time error. On a commit-on-clunk
+    /// endpoint (a document file, `/proc/clone`) the `Clunk` *is* the commit, so a
+    /// rejected/malformed document surfaces here — the success path must not
+    /// swallow it.
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        match self.fs.call(Request::Clunk { fid }).await? {
+            Response::Clunk => Ok(()),
+            _ => Err(ErrorCode::Io),
+        }
+    }
+
+    /// Best-effort release for the *cleanup* path: the builtin already failed, so a
+    /// clunk error is irrelevant and must not mask the original error.
     async fn clunk_quietly(&self, fid: Fid) {
         let _ = self.fs.call(Request::Clunk { fid }).await;
     }
@@ -181,12 +192,19 @@ impl Shell {
             .collect())
     }
 
-    /// `echo data > path` — write a document and commit it on clunk.
+    /// `echo data > path` — write a document and commit it on clunk. A commit-time
+    /// rejection (the server discards a malformed document at clunk) surfaces as an
+    /// error rather than a false success.
     pub async fn write(&self, path: &str, data: &[u8]) -> Result<(), ErrorCode> {
         let (fid, _) = self.walk_to(path).await?;
-        let result = self.write_body(fid, data).await;
-        self.clunk_quietly(fid).await;
-        result
+        match self.write_body(fid, data).await {
+            // The write reached the commit step: the clunk *is* the commit.
+            Ok(()) => self.clunk(fid).await,
+            Err(e) => {
+                self.clunk_quietly(fid).await;
+                Err(e)
+            }
+        }
     }
 
     async fn write_body(&self, fid: Fid, data: &[u8]) -> Result<(), ErrorCode> {
@@ -216,9 +234,18 @@ impl Shell {
     /// path is `/proc/clone`, not `/clone`. Returns the new pid.
     pub async fn spawn(&self, exec_spec: &str) -> Result<String, ErrorCode> {
         let (fid, _) = self.walk_to("/proc/clone").await?;
-        let result = self.spawn_body(fid, exec_spec).await;
-        self.clunk_quietly(fid).await;
-        result
+        match self.spawn_body(fid, exec_spec).await {
+            // Clunk commits the spawn: a malformed exec spec is rejected here, so a
+            // failed commit must fail spawn rather than return a bogus pid.
+            Ok(pid) => {
+                self.clunk(fid).await?;
+                Ok(pid)
+            }
+            Err(e) => {
+                self.clunk_quietly(fid).await;
+                Err(e)
+            }
+        }
     }
 
     async fn spawn_body(&self, fid: Fid, exec_spec: &str) -> Result<String, ErrorCode> {
