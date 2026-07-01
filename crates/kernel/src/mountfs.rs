@@ -32,6 +32,15 @@ struct Backing {
     backing_fid: Fid,
 }
 
+/// What a fid resolves to for a leaf operation, extracted from the fid table so
+/// the state lock is released *before* the (possibly blocking) backing call.
+enum Target {
+    /// A node in a backing tree: its resolved mount and bound fid.
+    Backing(Resolved, Fid),
+    /// A synthetic namespace directory at this path.
+    Synthetic(Vec<String>),
+}
+
 /// What a `MountFs` fid points at.
 struct Entry {
     /// The absolute path components this fid names (so a further walk can extend
@@ -107,6 +116,18 @@ impl MountFs {
             .iter()
             .any(|prefix| prefix.len() > path.len() && prefix[..path.len()] == *path)
     }
+
+    /// Resolve a fid to its leaf [`Target`] and release the state lock, so a leaf
+    /// op forwards to the backing tree **without** holding the namespace lock — a
+    /// tail parked on a stream's live edge must not freeze every other operation.
+    async fn target(&self, fid: Fid) -> Result<Target, ErrorCode> {
+        let state = self.state.lock().await;
+        let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+        Ok(match &entry.backing {
+            Some(b) => Target::Backing(b.resolved.clone(), b.backing_fid),
+            None => Target::Synthetic(entry.path.clone()),
+        })
+    }
 }
 
 #[async_trait]
@@ -168,91 +189,87 @@ impl FileServer for MountFs {
     }
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let state = self.state.lock().await;
-        let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        match &entry.backing {
-            Some(b) => match b
-                .resolved
-                .call(Request::Open {
-                    fid: b.backing_fid,
-                    mode,
-                })
-                .await?
-            {
-                Response::Open { qid } => Ok(qid),
-                _ => Err(ErrorCode::Io),
-            },
+        match self.target(fid).await? {
+            Target::Backing(resolved, backing_fid) => {
+                match resolved
+                    .call(Request::Open {
+                        fid: backing_fid,
+                        mode,
+                    })
+                    .await?
+                {
+                    Response::Open { qid } => Ok(qid),
+                    _ => Err(ErrorCode::Io),
+                }
+            }
             // A synthetic directory is read-only; a write intent is refused.
-            None => {
+            Target::Synthetic(path) => {
                 if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                     return Err(ErrorCode::NoAccess);
                 }
-                Ok(synthetic_qid(&entry.path))
+                Ok(synthetic_qid(&path))
             }
         }
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let state = self.state.lock().await;
-        let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        match &entry.backing {
-            Some(b) => match b
-                .resolved
-                .call(Request::Read {
-                    fid: b.backing_fid,
-                    offset,
-                    count,
-                })
-                .await?
-            {
-                Response::Read { data } => Ok(data),
-                _ => Err(ErrorCode::Io),
-            },
-            None => {
-                let listing = self.synthetic_children(&entry.path).join("\n").into_bytes();
+        match self.target(fid).await? {
+            // Forward with the state lock released: a stream read may block at the
+            // live edge, and holding the namespace lock across it would freeze every
+            // other operation (a tail would deadlock concurrent input).
+            Target::Backing(resolved, backing_fid) => {
+                match resolved
+                    .call(Request::Read {
+                        fid: backing_fid,
+                        offset,
+                        count,
+                    })
+                    .await?
+                {
+                    Response::Read { data } => Ok(data),
+                    _ => Err(ErrorCode::Io),
+                }
+            }
+            Target::Synthetic(path) => {
+                let listing = self.synthetic_children(&path).join("\n").into_bytes();
                 Ok(slice(listing, offset, count))
             }
         }
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let state = self.state.lock().await;
-        let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        match &entry.backing {
-            Some(b) => match b
-                .resolved
-                .call(Request::Write {
-                    fid: b.backing_fid,
-                    offset,
-                    data: data.to_vec(),
-                })
-                .await?
-            {
-                Response::Write { count } => Ok(count),
-                _ => Err(ErrorCode::Io),
-            },
+        match self.target(fid).await? {
+            Target::Backing(resolved, backing_fid) => {
+                match resolved
+                    .call(Request::Write {
+                        fid: backing_fid,
+                        offset,
+                        data: data.to_vec(),
+                    })
+                    .await?
+                {
+                    Response::Write { count } => Ok(count),
+                    _ => Err(ErrorCode::Io),
+                }
+            }
             // A synthetic directory is not writable.
-            None => Err(ErrorCode::IsDirectory),
+            Target::Synthetic(_) => Err(ErrorCode::IsDirectory),
         }
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let state = self.state.lock().await;
-        let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        match &entry.backing {
-            Some(b) => match b
-                .resolved
-                .call(Request::Stat { fid: b.backing_fid })
-                .await?
-            {
-                Response::Stat { stat } => Ok(stat),
-                _ => Err(ErrorCode::Io),
-            },
-            None => {
-                let length = self.synthetic_children(&entry.path).join("\n").len() as u64;
+        match self.target(fid).await? {
+            Target::Backing(resolved, backing_fid) => {
+                match resolved.call(Request::Stat { fid: backing_fid }).await? {
+                    Response::Stat { stat } => Ok(stat),
+                    _ => Err(ErrorCode::Io),
+                }
+            }
+            Target::Synthetic(path) => {
+                let length = self.synthetic_children(&path).join("\n").len() as u64;
                 Ok(Stat {
                     name: String::new(),
-                    qid: synthetic_qid(&entry.path),
+                    qid: synthetic_qid(&path),
                     length,
                     writable: false,
                 })
@@ -273,9 +290,12 @@ impl FileServer for MountFs {
     }
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let mut state = self.state.lock().await;
-        let entry = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
-        match entry.backing {
+        // Drop the entry under the lock, then forward without it held.
+        let backing = {
+            let mut state = self.state.lock().await;
+            state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?.backing
+        };
+        match backing {
             Some(b) => {
                 b.resolved
                     .call(Request::Remove { fid: b.backing_fid })
@@ -291,16 +311,19 @@ impl FileServer for MountFs {
             // The root is the pre-bound namespace anchor: never released.
             return Ok(());
         }
-        let mut state = self.state.lock().await;
-        let Some(entry) = state.fids.remove(&fid) else {
-            return Err(ErrorCode::NotFound);
+        // Drop the entry under the lock, then forward the backing clunk without the
+        // lock held (a commit-on-clunk commit must not serialize the namespace).
+        let backing = {
+            let mut state = self.state.lock().await;
+            let Some(entry) = state.fids.remove(&fid) else {
+                return Err(ErrorCode::NotFound);
+            };
+            entry.backing
         };
-        if let Some(b) = entry.backing {
-            // Release the fid bound in the backing tree too (the MountFs fid is
-            // already dropped above, so it never leaks even on error), and
-            // propagate the backing clunk result: on a commit-on-clunk endpoint the
-            // clunk *is* the commit, so a rejected document must surface, not be
-            // swallowed.
+        if let Some(b) = backing {
+            // The MountFs fid is already dropped (no leak even on error). Propagate
+            // the backing clunk result: on a commit-on-clunk endpoint the clunk *is*
+            // the commit, so a rejected document must surface, not be swallowed.
             return match b
                 .resolved
                 .call(Request::Clunk { fid: b.backing_fid })

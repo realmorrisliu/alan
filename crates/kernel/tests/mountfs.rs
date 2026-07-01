@@ -5,10 +5,13 @@
 //! mount's access is enforced); paths above the mounts are synthetic directories
 //! that list their child mount points.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use alan_ap::reference::MemFs;
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+};
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 
 fn memfs() -> InProcessTransport {
@@ -146,6 +149,138 @@ async fn clunk_propagates_a_backing_commit_error() {
     fs.open(Fid(1), OpenMode::Write).await.unwrap();
     fs.write(Fid(1), 0, b"not json").await.unwrap();
     assert_eq!(fs.clunk(Fid(1)).await, Err(ErrorCode::BadRequest));
+}
+
+/// A backing server with one stream file `out` (blocks at the live edge) under a
+/// directory root, used to prove a parked tail does not freeze the namespace.
+struct StreamFs {
+    stream: Stream,
+    fids: tokio::sync::Mutex<HashMap<Fid, bool>>, // fid -> is the `out` stream
+}
+
+impl StreamFs {
+    /// The server plus a direct handle to its stream, so a test can append to it
+    /// (unblocking a parked reader) without going back through the namespace.
+    fn new() -> (Self, Stream) {
+        let stream = Stream::new();
+        (
+            Self {
+                stream: stream.clone(),
+                fids: tokio::sync::Mutex::new(HashMap::new()),
+            },
+            stream,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl FileServer for StreamFs {
+    async fn walk(&self, _fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let (is_stream, kind) = match names {
+            [] => (false, FileKind::Dir),
+            [n] if n == "out" => (true, FileKind::Stream),
+            _ => return Err(ErrorCode::NotFound),
+        };
+        self.fids.lock().await.insert(newfid, is_stream);
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Ok(Qid {
+            kind: FileKind::Stream,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        if *self.fids.lock().await.get(&fid).unwrap_or(&false) {
+            Ok(self.stream.read(offset, count).await)
+        } else {
+            Err(ErrorCode::Unsupported)
+        }
+    }
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: String::new(),
+            qid: Qid {
+                kind: FileKind::Stream,
+                version: 0,
+                path: 0,
+            },
+            length: self.stream.len().await,
+            writable: false,
+        })
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids.lock().await.remove(&fid);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_parked_stream_read_does_not_freeze_the_namespace() {
+    use std::time::Duration;
+
+    // /s is a stream server (blocking live edge); /data is a MemFs. A read parked at
+    // /s/out must not hold the MountFs lock, or a concurrent op deadlocks — the M2
+    // "tail output while submitting input" workflow.
+    let (streamfs, stream) = StreamFs::new();
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/s",
+        InProcessTransport::new(Arc::new(streamfs)),
+        Access::ReadWrite,
+    );
+    ns.mount("/data", memfs(), Access::ReadWrite);
+    let fs = Arc::new(MountFs::new(ns));
+
+    // A tail parks at the live edge of /s/out.
+    let tailer = fs.clone();
+    let parked = tokio::spawn(async move {
+        tailer
+            .walk(Fid::ROOT, Fid(1), &["s".into(), "out".into()])
+            .await
+            .unwrap();
+        tailer.open(Fid(1), OpenMode::Read).await.unwrap();
+        tailer.read(Fid(1), 0, 64).await.unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !parked.is_finished(),
+        "the tail should be parked at the live edge"
+    );
+
+    // A concurrent op on the same MountFs must complete despite the parked read.
+    let concurrent = tokio::time::timeout(Duration::from_millis(500), async {
+        fs.walk(Fid::ROOT, Fid(2), &["data".into(), "greeting".into()])
+            .await
+            .unwrap();
+        fs.open(Fid(2), OpenMode::Read).await.unwrap();
+        fs.read(Fid(2), 0, 64).await.unwrap()
+    })
+    .await
+    .expect("a concurrent op must not be blocked by a parked stream read");
+    assert_eq!(concurrent, b"hi");
+
+    // Appending unblocks the parked tail.
+    stream.append(b"live").await;
+    let got = tokio::time::timeout(Duration::from_millis(500), parked)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, b"live");
 }
 
 #[tokio::test]
