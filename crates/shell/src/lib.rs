@@ -97,8 +97,10 @@ impl Shell {
     }
 
     /// Write the whole buffer, looping on short writes: a server may legally accept
-    /// only a prefix per call, so committing after one `Write` could truncate. No
-    /// forward progress is a protocol error rather than an infinite loop.
+    /// only a prefix per call, so committing after one `Write` could truncate. A
+    /// count of zero (no progress) or one larger than the bytes offered is a
+    /// protocol error — a buggy/hostile service must not spin the loop or crash the
+    /// shell by indexing past the buffer.
     async fn write_all(&self, fid: Fid, data: &[u8]) -> Result<(), ErrorCode> {
         let mut offset: Offset = 0;
         let mut remaining = data;
@@ -115,7 +117,7 @@ impl Shell {
                 Response::Write { count } => count as usize,
                 _ => return Err(ErrorCode::Io),
             };
-            if accepted == 0 {
+            if accepted == 0 || accepted > remaining.len() {
                 return Err(ErrorCode::Io);
             }
             offset += accepted as u64;
