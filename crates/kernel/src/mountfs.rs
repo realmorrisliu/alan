@@ -16,6 +16,7 @@
 //!   holds exactly as it does for a directly-mounted server.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Request, Response, Stat,
@@ -24,6 +25,13 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::namespace::{Namespace, Resolved};
+
+/// A process-global allocator for fids bound in backing trees. It must be unique
+/// across *every* `MountFs` — two wrappers over namespaces that share a backing
+/// server (child namespaces cloning the same `/proc` transport) would otherwise
+/// both start at 1 and send colliding `newfid`s into that shared server, so one
+/// wrapper's walk would be rejected while the other holds a live fid.
+static NEXT_BACKING: AtomicU64 = AtomicU64::new(1);
 
 /// A node reached inside a backing tree: the resolved mount (tree + access) and
 /// the fid bound in that tree, which every forwarded op addresses.
@@ -52,10 +60,6 @@ struct Entry {
 
 struct State {
     fids: HashMap<Fid, Entry>,
-    /// Monotonic allocator for fids bound in backing trees. A global counter keeps
-    /// them unique even across trees (each tree has its own space, but uniqueness
-    /// is harmless and simpler).
-    next_backing: u64,
 }
 
 /// The namespace-as-`FileServer`.
@@ -78,10 +82,7 @@ impl MountFs {
         );
         Self {
             ns,
-            state: Mutex::new(State {
-                fids,
-                next_backing: 1,
-            }),
+            state: Mutex::new(State { fids }),
         }
     }
 
@@ -144,35 +145,35 @@ impl FileServer for MountFs {
         // At or below a mount: forward the walk to the backing tree(s), trying each
         // union contributor (longest-prefix, most-recent-first) until one resolves.
         let candidates = self.ns.resolve_candidates(&join_path(&path));
-        if !candidates.is_empty() {
-            for resolved in candidates {
-                let backing_fid = Fid(state.next_backing);
-                let walked = resolved
-                    .call(Request::Walk {
-                        fid: Fid::ROOT,
-                        newfid: backing_fid,
-                        names: resolved.rel.clone(),
-                    })
-                    .await;
-                if let Ok(Response::Walk { qid }) = walked {
-                    state.next_backing += 1;
-                    state.fids.insert(
-                        newfid,
-                        Entry {
-                            path,
-                            backing: Some(Backing {
-                                resolved,
-                                backing_fid,
-                            }),
-                        },
-                    );
-                    return Ok(qid);
-                }
+        for resolved in candidates {
+            let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
+            let walked = resolved
+                .call(Request::Walk {
+                    fid: Fid::ROOT,
+                    newfid: backing_fid,
+                    names: resolved.rel.clone(),
+                })
+                .await;
+            if let Ok(Response::Walk { qid }) = walked {
+                state.fids.insert(
+                    newfid,
+                    Entry {
+                        path,
+                        backing: Some(Backing {
+                            resolved,
+                            backing_fid,
+                        }),
+                    },
+                );
+                return Ok(qid);
             }
-            return Err(ErrorCode::NotFound);
         }
 
-        // Above the mounts: a synthetic directory (its children are mount points).
+        // No backing tree resolved this path. Fall through to the synthetic check:
+        // an intermediate parent of a deeper mount (e.g. `/mnt` for `/mnt/llm`) is a
+        // synthetic directory even when a broader mount (like `/`) exists but does
+        // not contain that component — so a component-at-a-time walk still reaches
+        // the deeper mount.
         if path.is_empty() || self.is_synthetic_dir(&path) {
             let qid = synthetic_qid(&path);
             state.fids.insert(
@@ -290,6 +291,11 @@ impl FileServer for MountFs {
     }
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if fid == Fid::ROOT {
+            // The root is the pre-bound namespace anchor: never unbind it, or every
+            // later walk/open on this handle would fail with NotFound.
+            return Err(ErrorCode::Unsupported);
+        }
         // Drop the entry under the lock, then forward without it held.
         let backing = {
             let mut state = self.state.lock().await;

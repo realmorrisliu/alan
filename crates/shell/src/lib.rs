@@ -102,6 +102,23 @@ impl Shell {
     /// protocol error — a buggy/hostile service must not spin the loop or crash the
     /// shell by indexing past the buffer.
     async fn write_all(&self, fid: Fid, data: &[u8]) -> Result<(), ErrorCode> {
+        // An intentionally empty document must still reach the server as one
+        // zero-length write, so a commit-on-clunk endpoint marks the fid written
+        // and commits the empty value instead of silently dropping it.
+        if data.is_empty() {
+            return match self
+                .fs
+                .call(Request::Write {
+                    fid,
+                    offset: 0,
+                    data: Vec::new(),
+                })
+                .await?
+            {
+                Response::Write { .. } => Ok(()),
+                _ => Err(ErrorCode::Io),
+            };
+        }
         let mut offset: Offset = 0;
         let mut remaining = data;
         while !remaining.is_empty() {

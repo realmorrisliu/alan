@@ -284,6 +284,63 @@ async fn a_parked_stream_read_does_not_freeze_the_namespace() {
 }
 
 #[tokio::test]
+async fn two_wrappers_sharing_a_backing_server_do_not_collide_backing_fids() {
+    // Two MountFs over namespaces that share the SAME ProcFs transport (as child
+    // namespaces cloning /proc would). Backing fids must be unique across wrappers,
+    // or the second wrapper's walk reuses a live fid and the shared server rejects
+    // it with BadRequest.
+    let shared = InProcessTransport::new(Arc::new(ProcFs::new()));
+    let mut ns1 = Namespace::new();
+    ns1.mount("/proc", shared.clone(), Access::ReadWrite);
+    let mut ns2 = Namespace::new();
+    ns2.mount("/proc", shared.clone(), Access::ReadWrite);
+    let fs1 = MountFs::new(ns1);
+    let fs2 = MountFs::new(ns2);
+
+    // fs1 holds a live delegated fid on the shared ProcFs.
+    fs1.walk(Fid::ROOT, Fid(1), &["proc".into(), "clone".into()])
+        .await
+        .unwrap();
+    // fs2's first walk must not collide with it.
+    fs2.walk(Fid::ROOT, Fid(1), &["proc".into(), "clone".into()])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn remove_of_root_is_refused_and_preserves_the_handle() {
+    let fs = MountFs::new(ns());
+    assert_eq!(fs.remove(Fid::ROOT).await, Err(ErrorCode::Unsupported));
+    // The root anchor survives, so the handle still resolves absolute paths.
+    fs.walk(Fid::ROOT, Fid(1), &["data".into(), "greeting".into()])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_synthetic_parent_resolves_under_a_broad_mount() {
+    // A broad `/` mount (a MemFs with no `mnt` entry) plus a deeper `/mnt/llm`.
+    let mut ns = Namespace::new();
+    ns.mount("/", memfs(), Access::ReadWrite);
+    ns.mount("/mnt/llm", memfs(), Access::ReadWrite);
+    let fs = MountFs::new(ns);
+
+    // Walking to /mnt one component at a time must yield the synthetic parent of
+    // /mnt/llm, not NotFound from the broad mount lacking `mnt`.
+    assert_eq!(read_lines(&fs, &["mnt"], Fid(1)).await, vec!["llm"]);
+    // And the deeper mount is still reachable through it.
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &["mnt".into(), "llm".into(), "greeting".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Read).await.unwrap();
+    assert_eq!(fs.read(Fid(2), 0, 64).await.unwrap(), b"hi");
+}
+
+#[tokio::test]
 async fn a_clunked_fid_is_released() {
     let fs = MountFs::new(ns());
     fs.walk(Fid::ROOT, Fid(1), &["data".into(), "greeting".into()])

@@ -340,6 +340,55 @@ impl FileServer for LiarFs {
     }
 }
 
+/// A server whose `buf` file rejects every write, so a test can prove a write was
+/// actually issued (an empty document must still reach the server).
+struct RejectWriteFs;
+
+#[async_trait::async_trait]
+impl FileServer for RejectWriteFs {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        match names {
+            [n] if n == "buf" => Ok(qid(FileKind::File)),
+            _ => Err(ErrorCode::NotFound),
+        }
+    }
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Ok(qid(FileKind::File))
+    }
+    async fn read(&self, _: Fid, _: Offset, _: u32) -> Result<Vec<u8>, ErrorCode> {
+        Ok(Vec::new())
+    }
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::BadRequest)
+    }
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: String::new(),
+            qid: qid(FileKind::File),
+            length: 0,
+            writable: true,
+        })
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn write_of_empty_document_still_issues_a_write() {
+    // The server rejects every write. If the shell silently skipped the empty write
+    // it would return Ok (clunk succeeds); instead it must surface the rejection,
+    // proving an empty document reaches the server rather than being dropped.
+    let shell = Shell::new(InProcessTransport::new(Arc::new(RejectWriteFs)));
+    assert_eq!(shell.write("/buf", b"").await, Err(ErrorCode::BadRequest));
+}
+
 #[tokio::test]
 async fn write_rejects_an_over_reported_count() {
     let shell = Shell::new(InProcessTransport::new(Arc::new(LiarFs)));
