@@ -308,6 +308,21 @@ async fn two_wrappers_sharing_a_backing_server_do_not_collide_backing_fids() {
 }
 
 #[tokio::test]
+async fn a_backed_directory_lists_its_mount_point_children() {
+    // A broad `/` mount (MemFs: greeting/clone/submit) plus a deeper `/mnt/llm`.
+    // Listing `/` must show the backing entries AND the `mnt` mount point, or the
+    // deeper mount is reachable but invisible in its parent's listing.
+    let mut ns = Namespace::new();
+    ns.mount("/", memfs(), Access::ReadWrite);
+    ns.mount("/mnt/llm", memfs(), Access::ReadWrite);
+    let fs = MountFs::new(ns);
+
+    let mut entries = read_lines(&fs, &[], Fid(1)).await;
+    entries.sort();
+    assert_eq!(entries, vec!["clone", "greeting", "mnt", "submit"]);
+}
+
+#[tokio::test]
 async fn remove_of_root_is_refused_and_preserves_the_handle() {
     let fs = MountFs::new(ns());
     assert_eq!(fs.remove(Fid::ROOT).await, Err(ErrorCode::Unsupported));

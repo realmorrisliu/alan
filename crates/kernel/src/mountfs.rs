@@ -33,18 +33,26 @@ use crate::namespace::{Namespace, Resolved};
 /// wrapper's walk would be rejected while the other holds a live fid.
 static NEXT_BACKING: AtomicU64 = AtomicU64::new(1);
 
-/// A node reached inside a backing tree: the resolved mount (tree + access) and
-/// the fid bound in that tree, which every forwarded op addresses.
+/// A node reached inside a backing tree: the resolved mount (tree + access), the
+/// fid bound in that tree that every forwarded op addresses, and whether the node
+/// is a directory (so a listing can be overlaid with mount-point children).
 struct Backing {
     resolved: Resolved,
     backing_fid: Fid,
+    is_dir: bool,
 }
 
 /// What a fid resolves to for a leaf operation, extracted from the fid table so
 /// the state lock is released *before* the (possibly blocking) backing call.
 enum Target {
-    /// A node in a backing tree: its resolved mount and bound fid.
-    Backing(Resolved, Fid),
+    /// A node in a backing tree: its resolved mount, bound fid, whether it is a
+    /// directory, and its absolute path (to overlay mount-point children).
+    Backing {
+        resolved: Resolved,
+        backing_fid: Fid,
+        is_dir: bool,
+        path: Vec<String>,
+    },
     /// A synthetic namespace directory at this path.
     Synthetic(Vec<String>),
 }
@@ -125,7 +133,12 @@ impl MountFs {
         let state = self.state.lock().await;
         let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
         Ok(match &entry.backing {
-            Some(b) => Target::Backing(b.resolved.clone(), b.backing_fid),
+            Some(b) => Target::Backing {
+                resolved: b.resolved.clone(),
+                backing_fid: b.backing_fid,
+                is_dir: b.is_dir,
+                path: entry.path.clone(),
+            },
             None => Target::Synthetic(entry.path.clone()),
         })
     }
@@ -162,6 +175,7 @@ impl FileServer for MountFs {
                         backing: Some(Backing {
                             resolved,
                             backing_fid,
+                            is_dir: qid.kind == FileKind::Dir,
                         }),
                     },
                 );
@@ -191,7 +205,11 @@ impl FileServer for MountFs {
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         match self.target(fid).await? {
-            Target::Backing(resolved, backing_fid) => {
+            Target::Backing {
+                resolved,
+                backing_fid,
+                ..
+            } => {
                 match resolved
                     .call(Request::Open {
                         fid: backing_fid,
@@ -218,7 +236,24 @@ impl FileServer for MountFs {
             // Forward with the state lock released: a stream read may block at the
             // live edge, and holding the namespace lock across it would freeze every
             // other operation (a tail would deadlock concurrent input).
-            Target::Backing(resolved, backing_fid) => {
+            Target::Backing {
+                resolved,
+                backing_fid,
+                is_dir,
+                path,
+            } => {
+                // A backed directory that also has mounted descendants must list
+                // those mount points too, or a broad mount (e.g. `/`) would hide the
+                // deeper mounts (`/proc`, `/mnt/llm`) from its listing. Overlay the
+                // synthetic mount-point children onto the backing listing; a file is
+                // forwarded byte-for-byte.
+                if is_dir {
+                    let extra = self.synthetic_children(&path);
+                    if !extra.is_empty() {
+                        let backing = read_all(&resolved, backing_fid).await?;
+                        return Ok(slice(overlay_listing(backing, extra), offset, count));
+                    }
+                }
                 match resolved
                     .call(Request::Read {
                         fid: backing_fid,
@@ -240,7 +275,11 @@ impl FileServer for MountFs {
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         match self.target(fid).await? {
-            Target::Backing(resolved, backing_fid) => {
+            Target::Backing {
+                resolved,
+                backing_fid,
+                ..
+            } => {
                 match resolved
                     .call(Request::Write {
                         fid: backing_fid,
@@ -260,12 +299,14 @@ impl FileServer for MountFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         match self.target(fid).await? {
-            Target::Backing(resolved, backing_fid) => {
-                match resolved.call(Request::Stat { fid: backing_fid }).await? {
-                    Response::Stat { stat } => Ok(stat),
-                    _ => Err(ErrorCode::Io),
-                }
-            }
+            Target::Backing {
+                resolved,
+                backing_fid,
+                ..
+            } => match resolved.call(Request::Stat { fid: backing_fid }).await? {
+                Response::Stat { stat } => Ok(stat),
+                _ => Err(ErrorCode::Io),
+            },
             Target::Synthetic(path) => {
                 let length = self.synthetic_children(&path).join("\n").len() as u64;
                 Ok(Stat {
@@ -341,6 +382,47 @@ impl FileServer for MountFs {
         }
         Ok(())
     }
+}
+
+/// Read a backing node's full contents by looping until a read returns empty
+/// (used to get a whole directory listing before overlaying mount points).
+async fn read_all(resolved: &Resolved, fid: Fid) -> Result<Vec<u8>, ErrorCode> {
+    let mut out = Vec::new();
+    loop {
+        let chunk = match resolved
+            .call(Request::Read {
+                fid,
+                offset: out.len() as u64,
+                count: 4096,
+            })
+            .await?
+        {
+            Response::Read { data } => data,
+            _ => return Err(ErrorCode::Io),
+        };
+        if chunk.is_empty() {
+            break;
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+/// Overlay synthetic mount-point child names onto a backing directory listing,
+/// appending only names the backing tree does not already list (newline-joined).
+fn overlay_listing(backing: Vec<u8>, extra: Vec<String>) -> Vec<u8> {
+    let text = String::from_utf8_lossy(&backing);
+    let mut names: Vec<String> = text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    for name in extra {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.join("\n").into_bytes()
 }
 
 /// Split an absolute path into its non-empty components. `/` → `[]`.
