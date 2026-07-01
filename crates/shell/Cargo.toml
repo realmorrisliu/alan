@@ -1,0 +1,15 @@
+[package]
+name = "alan-shell"
+description = "Alan Shell — the aP-only client: generic file builtins (ls/cat/echo/tail/spawn) over the namespace, with no agent-specific commands. Depends only on alan-ap."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+
+[dev-dependencies]
+alan-kernel = { path = "../kernel" }
+async-trait.workspace = true
+tokio = { workspace = true }

@@ -9,6 +9,7 @@ members = [
     "crates/llm",
     "crates/agent-engine",
     "crates/agent-engine/skills/swebench/tooling",
+    "crates/shell",
     "crates/shell-core",
     "crates/shell-core-ffi",
     "crates/tools",
