@@ -117,6 +117,18 @@ impl Generation {
         self.version.fetch_add(1, Ordering::Relaxed);
         true
     }
+    /// Claim the single initial transition out of `Open` (to `Running` on commit,
+    /// or `Rejected` on a malformed request). Atomic compare-and-set: exactly one
+    /// caller wins, so two concurrent commits cannot both reach the provider.
+    fn claim(&self, to: GenStatus) -> bool {
+        let mut s = self.status.lock().unwrap();
+        if *s != GenStatus::Open {
+            return false;
+        }
+        *s = to;
+        self.version.fetch_add(1, Ordering::Relaxed);
+        true
+    }
 }
 
 /// What a fid points at within the llmfs tree.
@@ -314,10 +326,12 @@ impl FileServer for LlmFs {
             return Err(ErrorCode::NoAccess);
         }
 
-        // Clone-via-open allocates a fresh Generation; it mutates server state, so
-        // it requires write intent (an awareness-only open must not consume state).
+        // Clone-via-open allocates a fresh Generation *and* the caller must read the
+        // fid back to learn its id, so it requires ReadWrite: a read-only observer
+        // can't allocate, and a write-only open can't strand a Generation whose id
+        // it could never read.
         if let Node::Clone(conn) = &node {
-            if !matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            if !matches!(mode, OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
             let connection = state
@@ -501,7 +515,13 @@ impl FileServer for LlmFs {
                 return Err(ErrorCode::NotFound);
             };
             match f.node {
-                Node::GenData(id) => {
+                // Only a *write-opened* data fid commits a request; a walked or
+                // read-only data fid is just released. Otherwise an observer could
+                // clunk an empty data fid and wrongly reject the Generation the real
+                // writer is about to start.
+                Node::GenData(id)
+                    if matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) =>
+                {
                     let generation = state.gens.get(&id).cloned();
                     Some((f.write_buf, generation))
                 }
@@ -513,15 +533,7 @@ impl FileServer for LlmFs {
             return Ok(());
         };
 
-        // The commit is the single `open` → `running` transition: reject a second
-        // request into the same Generation (already running/terminal), and reject
-        // one that was aborted before commit.
-        if generation.status() != GenStatus::Open {
-            return Err(ErrorCode::BadRequest);
-        }
-
-        // An empty request is malformed, as is invalid JSON: mark the Generation
-        // rejected (with a terminal event) so an observer never waits forever.
+        // Parse the request first (pure): an empty or invalid document is malformed.
         let doc: Result<RequestDoc, ()> = if buf.is_empty() {
             Err(())
         } else {
@@ -530,11 +542,22 @@ impl FileServer for LlmFs {
         let doc = match doc {
             Ok(doc) => doc,
             Err(()) => {
-                self.fail(&generation, GenStatus::Rejected, "rejected")
-                    .await;
+                // Reject only if we still own the initial transition, so a malformed
+                // second commit cannot clobber a Generation a concurrent valid
+                // commit already started.
+                if generation.claim(GenStatus::Rejected) {
+                    generation.events.append(b"{\"rejected\":true}\n").await;
+                }
                 return Err(ErrorCode::BadRequest);
             }
         };
+
+        // Reserve the Generation *before* awaiting the provider: the single
+        // `open`→`running` transition. A concurrent data commit (or a post-abort
+        // revive) fails here, so only one request ever reaches the provider.
+        if !generation.claim(GenStatus::Running) {
+            return Err(ErrorCode::BadRequest);
+        }
 
         let mut request = GenerationRequest::new().with_user_message(doc.user);
         if let Some(system) = doc.system {
@@ -542,7 +565,7 @@ impl FileServer for LlmFs {
         }
 
         // Start the provider stream. A startup failure is terminal (error), not a
-        // Generation left `open` with an empty `events`.
+        // Generation left running with an empty `events`.
         let rx = {
             let mut provider = generation.connection.provider.lock().await;
             provider.generate_stream(request).await
@@ -556,7 +579,7 @@ impl FileServer for LlmFs {
         };
 
         // An abort that raced startup wins: do not begin streaming.
-        if !generation.advance(GenStatus::Running) {
+        if generation.status() == GenStatus::Aborted {
             return Ok(());
         }
 

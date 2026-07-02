@@ -312,19 +312,75 @@ async fn status_of(fs: &LlmFs, gen_id: &str, fid: Fid) -> String {
 }
 
 #[tokio::test]
-async fn clone_open_requires_write_intent() {
+async fn clone_open_requires_read_write() {
     let fs = llmfs();
+    // Clone-open allocates a Generation and must read its id back, so it requires
+    // ReadWrite: both read-only and write-only opens are refused.
+    for mode in [OpenMode::Read, OpenMode::Write] {
+        fs.walk(
+            Fid::ROOT,
+            Fid(1),
+            &["connections".into(), "default".into(), "clone".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs.open(Fid(1), mode).await, Err(ErrorCode::NoAccess));
+        fs.clunk(Fid(1)).await.ok();
+    }
+}
+
+#[tokio::test]
+async fn a_non_write_data_fid_clunk_does_not_reject_the_generation() {
+    let fs = llmfs();
+    let g = clone_gen(&fs, Fid(1)).await;
+    // An observer walks `data` and clunks it without a write-open: this must not
+    // commit an empty request or mark the Generation rejected.
     fs.walk(
         Fid::ROOT,
-        Fid(1),
-        &["connections".into(), "default".into(), "clone".into()],
+        Fid(2),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "data".into(),
+        ],
     )
     .await
     .unwrap();
-    assert_eq!(
-        fs.open(Fid(1), OpenMode::Read).await,
-        Err(ErrorCode::NoAccess)
-    );
+    fs.clunk(Fid(2)).await.unwrap();
+    assert_eq!(status_of(&fs, &g, Fid(3)).await, "open");
+    // The real writer can still start it.
+    commit_request(&fs, &g, Fid(4), br#"{"user":"hi"}"#)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn only_one_of_two_concurrent_data_commits_starts_the_generation() {
+    let fs = llmfs();
+    let g = clone_gen(&fs, Fid(1)).await;
+    // Two write-opened data fids for the same Generation, both buffered before
+    // either commits.
+    for fid in [Fid(2), Fid(3)] {
+        fs.walk(
+            Fid::ROOT,
+            fid,
+            &[
+                "connections".into(),
+                "default".into(),
+                g.clone(),
+                "data".into(),
+            ],
+        )
+        .await
+        .unwrap();
+        fs.open(fid, OpenMode::Write).await.unwrap();
+        fs.write(fid, 0, br#"{"user":"hi"}"#).await.unwrap();
+    }
+    // The first commit reserves the Generation; the second is refused, so only one
+    // request reaches the provider.
+    fs.clunk(Fid(2)).await.unwrap();
+    assert_eq!(fs.clunk(Fid(3)).await, Err(ErrorCode::BadRequest));
 }
 
 #[tokio::test]
