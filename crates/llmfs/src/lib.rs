@@ -292,19 +292,22 @@ impl LlmFs {
 #[async_trait]
 impl FileServer for LlmFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        // A fid handles one interaction: never rebind the root or a live fid, or
-        // a caller could drop a `data` fid mid-request and lose the buffered write.
-        {
-            let state = self.state.lock().unwrap();
-            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
-                return Err(ErrorCode::BadRequest);
-            }
+        // Never rebind the root. (Resolution below re-locks per step; the binding
+        // is checked-and-inserted atomically at the end.)
+        if newfid == Fid::ROOT {
+            return Err(ErrorCode::BadRequest);
         }
         let mut node = self.node_of(fid)?;
         for name in names {
             node = self.child(&node, name)?;
         }
+        // Check-and-insert under a single lock hold: two concurrent walks that
+        // chose the same `newfid` cannot both pass and clobber a live fid (e.g. a
+        // write-open `data` fid that already buffered a request).
         let mut state = self.state.lock().unwrap();
+        if state.fids.contains_key(&newfid) {
+            return Err(ErrorCode::BadRequest);
+        }
         let qid = state.qid(&node);
         state.fids.insert(newfid, LlmFid::at(node));
         Ok(qid)
