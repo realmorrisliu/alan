@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use alan_ap::InProcessTransport;
 
-use crate::{Access, MountFs, Namespace, ProcFs, SrvFs};
+use crate::{Access, Credentials, MountFs, Namespace, ProcFs, SrvFs};
 
 /// The minimal Alan Kernel root namespace.
 pub struct KernelRoot {
@@ -28,18 +28,25 @@ impl KernelRoot {
     /// Bring up the substrate-only root: `/proc`, `/srv`, and the namespace
     /// engine. No higher-level user-space tree is mounted here.
     pub fn new() -> Self {
-        let procfs = Arc::new(ProcFs::new());
+        let procfs = ProcFs::new();
         let srvfs = Arc::new(SrvFs::new());
 
         let mut namespace = Namespace::new();
         namespace.mount(
             "/proc",
-            InProcessTransport::new(procfs.clone()),
+            InProcessTransport::new(Arc::new(procfs.clone())),
             Access::ReadWrite,
         );
         namespace.mount(
             "/srv",
             InProcessTransport::new(srvfs.clone()),
+            Access::ReadWrite,
+        );
+        let procfs = Arc::new(procfs.for_spawner(None, namespace.clone(), Credentials::system()));
+        namespace.unmount("/proc");
+        namespace.mount(
+            "/proc",
+            InProcessTransport::new(procfs.clone()),
             Access::ReadWrite,
         );
 

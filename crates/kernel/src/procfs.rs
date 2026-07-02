@@ -29,7 +29,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -353,11 +355,26 @@ impl FileServer for ProcFs {
             let parent = self.spawn_context.parent;
             let credentials = self.spawn_context.credentials.clone();
             let spawn_namespace = self.spawn_context.namespace.clone();
+            let proc_template = self.clone();
             let slot = state
                 .table
                 .clone_begin_with_namespace(parent, credentials, |pid| {
-                    spawn_namespace
-                        .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string())
+                    let mut child_namespace = spawn_namespace
+                        .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
+                    if let Ok(proc_mount) = child_namespace.resolve("/proc") {
+                        let child_proc = proc_template.for_spawner(
+                            Some(pid),
+                            child_namespace.clone(),
+                            proc_template.spawn_context.credentials.clone(),
+                        );
+                        child_namespace.unmount("/proc");
+                        child_namespace.mount(
+                            "/proc",
+                            InProcessTransport::new(Arc::new(child_proc)),
+                            proc_mount.access,
+                        );
+                    }
+                    child_namespace
                 })
                 .ok_or(ErrorCode::Io)?;
             let f = state

@@ -5,11 +5,11 @@
 //! public), write the exec spec, and `clunk` to commit — so an aP-only client
 //! needs no side API to launch a process.
 
-use alan_ap::{ErrorCode, Fid, FileServer, OpenMode, Request};
+use alan_ap::{ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, Request, Response};
 use alan_kernel::{
     Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 fn proc() -> ProcFs {
     ProcFs::new()
@@ -70,6 +70,43 @@ impl ProcessRunner for EchoRunner {
     }
 }
 
+struct CaptureRunner {
+    invocations: Mutex<Vec<ProcessInvocation>>,
+}
+
+impl CaptureRunner {
+    fn new() -> Self {
+        Self {
+            invocations: Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn wait_for(&self, pid: Pid) -> ProcessInvocation {
+        for _ in 0..50 {
+            if let Some(invocation) = self
+                .invocations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|invocation| invocation.pid == pid)
+                .cloned()
+            {
+                return invocation;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("runner did not receive invocation for pid {}", pid.0);
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessRunner for CaptureRunner {
+    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
+        self.invocations.lock().unwrap().push(invocation);
+        ProcessOutcome::exited(0, Vec::new())
+    }
+}
+
 #[tokio::test]
 async fn empty_proc_lists_only_clone() {
     let fs = proc();
@@ -113,6 +150,84 @@ async fn spawn_via_clone_open_write_clunk_makes_a_public_process() {
     let status =
         String::from_utf8(read_at(&fs, &[&pid_name, "status"], Fid(13)).await.unwrap()).unwrap();
     assert_eq!(status.trim(), "running");
+}
+
+#[tokio::test]
+async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
+    let runner = Arc::new(CaptureRunner::new());
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(fs.for_spawner(
+            Some(parent_pid),
+            Namespace::new(),
+            Credentials::user("alan"),
+        ))),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(Some(parent_pid), namespace, Credentials::user("alan"));
+    let child = spawn(&spawner, Fid(20)).await;
+    let child_pid = Pid(child.parse::<u64>().unwrap());
+    let child_invocation = runner.wait_for(child_pid).await;
+    let proc_clone = child_invocation
+        .namespace
+        .resolve("/proc/clone")
+        .expect("child namespace exposes /proc/clone");
+
+    proc_clone
+        .call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(30),
+            names: proc_clone.rel.clone(),
+        })
+        .await
+        .unwrap();
+    proc_clone
+        .call(Request::Open {
+            fid: Fid(30),
+            mode: OpenMode::ReadWrite,
+        })
+        .await
+        .unwrap();
+    let grandchild = match proc_clone
+        .call(Request::Read {
+            fid: Fid(30),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap()
+    {
+        Response::Read { data } => String::from_utf8(data).unwrap(),
+        other => panic!("unexpected response: {other:?}"),
+    };
+    proc_clone
+        .call(Request::Write {
+            fid: Fid(30),
+            offset: 0,
+            data: br#"{"executable":"/bin/grandchild","args":[]}"#.to_vec(),
+        })
+        .await
+        .unwrap();
+    proc_clone
+        .call(Request::Clunk { fid: Fid(30) })
+        .await
+        .unwrap();
+
+    let recorded_parent = String::from_utf8(
+        read_at(&fs, &[&grandchild, "parent"], Fid(31))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        recorded_parent, child,
+        "grandchild spawned through child /proc must record the child as parent"
+    );
 }
 
 #[tokio::test]
