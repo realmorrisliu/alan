@@ -2403,6 +2403,182 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn linux_reified_runner_ready_for_smoke() -> bool {
+        let readiness = crate::tools::linux_reified_namespace_backend_readiness();
+        if readiness.selected_backend == SandboxBackendKind::LinuxReifiedNamespace {
+            return true;
+        }
+
+        eprintln!(
+            "skipping linux reified namespace smoke: selected_backend={} audit={:?}",
+            readiness.selected_backend.name(),
+            readiness.audit_fields()
+        );
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    fn run_linux_reified_smoke(plan: &ReifiedNamespacePlan) -> ExecResult {
+        let runner =
+            LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock);
+        runner.run(plan).unwrap_or_else(|err| {
+            panic!(
+                "linux reified namespace smoke failed to start: {err}; audit={:?}",
+                err.audit_fields
+            )
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_smoke_enforces_mount_visibility_and_access() {
+        if !linux_reified_runner_ready_for_smoke() {
+            return;
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let readonly = tempfile::tempdir().unwrap();
+        let secret_home = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("visible.txt"), "visible").unwrap();
+        std::fs::write(readonly.path().join("readonly.txt"), "readonly").unwrap();
+
+        let script = r#"
+set -eu
+secret_home="$1"
+test -f /mnt/project/visible.txt
+test "$(cat /mnt/project/visible.txt)" = visible
+printf changed > /mnt/project/writable.txt
+test "$(cat /mnt/project/writable.txt)" = changed
+test -f /mnt/docs/readonly.txt
+test "$(cat /mnt/docs/readonly.txt)" = readonly
+if sh -c 'printf blocked > /mnt/docs/blocked.txt'; then
+  exit 42
+fi
+test ! -e "$secret_home"
+"#;
+        let plan = ReifiedNamespacePlan::derive(ReifiedNamespacePlanInput::new(
+            vec![
+                ReifiedMountDeclaration::host(
+                    "/mnt/project",
+                    workspace.path(),
+                    ReifiedMountAccess::ReadWrite,
+                ),
+                ReifiedMountDeclaration::host(
+                    "/mnt/docs",
+                    readonly.path(),
+                    ReifiedMountAccess::ReadOnly,
+                ),
+            ],
+            workspace.path(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                script.to_string(),
+                "alan-reified-fs-smoke".to_string(),
+                secret_home.path().display().to_string(),
+            ],
+            NetworkPosture::Deny,
+        ))
+        .unwrap();
+
+        let result = run_linux_reified_smoke(&plan);
+
+        assert_eq!(
+            result.exit_code, 0,
+            "stdout={} stderr={}",
+            result.stdout, result.stderr
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("writable.txt")).unwrap(),
+            "changed"
+        );
+        assert!(
+            !readonly.path().join("blocked.txt").exists(),
+            "read-only mount accepted a write"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_smoke_denies_network_connections() {
+        if !linux_reified_runner_ready_for_smoke() {
+            return;
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_listener = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let accepted_by_thread = std::sync::Arc::clone(&accepted);
+        let stop_listener_by_thread = std::sync::Arc::clone(&stop_listener);
+        let listener_thread = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            while std::time::Instant::now() < deadline
+                && !stop_listener_by_thread.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                match listener.accept() {
+                    Ok((_stream, _addr)) => {
+                        accepted_by_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+                        return;
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+
+        let script = r#"
+set -u
+port="$1"
+if ! command -v bash >/tmp/bash-path; then
+  exit 77
+fi
+if ! command -v timeout >/tmp/timeout-path; then
+  exit 77
+fi
+if timeout 2 bash -c "cat < /dev/tcp/127.0.0.1/${port}" >/tmp/network-out 2>/tmp/network-err; then
+  exit 42
+fi
+exit 0
+"#;
+        let plan = ReifiedNamespacePlan::workspace_seed(
+            workspace.path(),
+            workspace.path(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                script.to_string(),
+                "alan-reified-network-smoke".to_string(),
+                port.to_string(),
+            ],
+            NetworkPosture::Deny,
+        )
+        .unwrap();
+
+        let result = run_linux_reified_smoke(&plan);
+        stop_listener.store(true, std::sync::atomic::Ordering::SeqCst);
+        listener_thread.join().unwrap();
+
+        assert!(
+            !accepted.load(std::sync::atomic::Ordering::SeqCst),
+            "network-denied reified command connected to the host listener"
+        );
+        if result.exit_code == 77 {
+            eprintln!("skipping denied-network smoke assertion: bash or timeout unavailable");
+            return;
+        }
+        assert_eq!(
+            result.exit_code, 0,
+            "stdout={} stderr={}",
+            result.stdout, result.stderr
+        );
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
         let workspace = tempfile::tempdir().unwrap();
