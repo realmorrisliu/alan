@@ -1,0 +1,15 @@
+[package]
+name = "alan-branchfs"
+description = "Branching execution file server for Alan OS."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+alan-knowledge = { path = "../knowledge" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }

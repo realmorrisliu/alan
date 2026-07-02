@@ -73,5 +73,9 @@
 
 ## 5. Follow-up (separate change)
 
-- [ ] 5.1 Speculative / branching agent execution over cheap forks (tree search
+- [x] 5.1 Speculative / branching agent execution over cheap forks (tree search
   across agent states).
+  Done 2026-07-03: covered as a separate Ring 3 follow-up by
+  `add-branching-execution-file-server`, which adds a headless `branchfs`
+  file-server boundary for creating, scoring, selecting, and discarding
+  checkpoint branches over cheap knowledge forks.
