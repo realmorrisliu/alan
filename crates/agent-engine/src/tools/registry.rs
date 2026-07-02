@@ -190,6 +190,11 @@ impl ToolRegistry {
         self.tool_factories.get(name).map(|factory| factory())
     }
 
+    /// Whether the catalog can materialize the named tool.
+    pub fn has_tool_factory(&self, name: &str) -> bool {
+        self.tool_factories.contains_key(name)
+    }
+
     /// Check if a tool exists
     pub fn has(&self, name: &str) -> bool {
         self.tools.contains_key(name)

@@ -1070,7 +1070,7 @@ where
         });
     }
 
-    llm_messages.extend(state.llm_client.project_messages(&sanitized_to_summarize));
+    llm_messages.extend(state.project_generation_messages(&sanitized_to_summarize));
 
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
@@ -1083,10 +1083,10 @@ where
             Some(2048),
         );
 
-        match tokio::select! {
-            _ = cancel.cancelled() => Err(anyhow::anyhow!("Compaction cancelled")),
-            result = state.llm_client.generate(generation_request) => result,
-        } {
+        match state
+            .generate_once_with_cancel(generation_request, cancel, "Compaction cancelled")
+            .await
+        {
             Ok(resp) => {
                 let text = resp.content.trim().to_string();
                 if trimmed_count > 0 {
@@ -1230,4 +1230,153 @@ where
         trimmed_count as u32,
         success_result,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use alan_agent_protocol::Event;
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace};
+    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+    use alan_llmfs::LlmFs;
+    use tokio::sync::mpsc;
+
+    use crate::{
+        config::Config,
+        runtime::{
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
+            TurnState, prompt_cache::PromptAssemblyCache,
+        },
+        session::Session,
+    };
+
+    struct RecordingProvider {
+        requests: Arc<Mutex<Vec<GenerationRequest>>>,
+        response: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RecordingProvider {
+        async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+            unimplemented!()
+        }
+
+        async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+            unimplemented!()
+        }
+
+        async fn generate_stream(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+            self.requests.lock().unwrap().push(request);
+            let (tx, rx) = mpsc::channel(4);
+            let response = self.response.clone();
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: Some(response),
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("stop".to_string()),
+                    })
+                    .await;
+            });
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "recording"
+        }
+    }
+
+    fn namespace_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+        let llmfs = Arc::new(LlmFs::new());
+        llmfs.register_connection("default", Box::new(provider));
+
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: RuntimeConfig {
+                compaction_trigger_messages: 1,
+                compaction_keep_last: 1,
+                ..RuntimeConfig::default()
+            },
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_generation_uses_namespace_llmfs() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut state = namespace_state_with_provider(RecordingProvider {
+            requests: Arc::clone(&requests),
+            response: "namespace compaction summary".to_string(),
+        });
+        state.core_config.memory.enabled = false;
+        state.session.add_user_message("first detail to compact");
+        state.session.add_assistant_message("first answer", None);
+        state.session.add_user_message("second detail to compact");
+        state.session.add_assistant_message("second answer", None);
+
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let outcome = maybe_compact_context_with_cancel(
+            &mut state,
+            &mut emit,
+            &CompactionRequest::manual(None),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CompactionOutcome::Applied { .. }));
+        assert_eq!(
+            state.session.tape.summary(),
+            Some("namespace compaction summary")
+        );
+        let recorded = requests.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].system_prompt.as_deref(),
+            Some(prompts::COMPACT_PROMPT)
+        );
+        assert!(
+            recorded[0]
+                .messages
+                .iter()
+                .any(|message| message.content.contains("first detail to compact"))
+        );
+    }
 }

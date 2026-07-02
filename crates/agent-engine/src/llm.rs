@@ -99,6 +99,7 @@ impl LlmClient {
             "google_gemini_generate_content" => ProviderType::GoogleGeminiGenerateContent,
             "chatgpt" => ProviderType::ChatgptResponses,
             "openai_responses" => ProviderType::OpenAiResponses,
+            "mock" => ProviderType::OpenAiResponses,
             "openai_chat_completions" => ProviderType::OpenAiChatCompletions,
             "openai_chat_completions_compatible" => ProviderType::OpenAiChatCompletionsCompatible,
             "openrouter" => ProviderType::OpenRouter,
@@ -558,8 +559,9 @@ mod tests {
         let mut client = LlmClient::new(mock);
 
         assert_eq!(client.provider_name(), "mock");
-        // Note: Mock provider is treated as OpenAI Chat Completions API-compatible by default
-        // since it doesn't match known providers.
+        // Mock provider uses the Responses projection/capability shape because
+        // runtime smoke tests default to the OpenAI Responses configuration.
+        assert!(client.is_openai_responses());
         assert!(!client.is_google_gemini_generate_content());
         assert!(!client.is_anthropic_messages());
 
@@ -923,11 +925,11 @@ mod tests {
     fn test_llm_client_selects_correct_projection() {
         use alan_llm::MockLlmProvider;
 
-        // Mock defaults to OpenAI Chat Completions API-compatible fallback.
+        // Mock defaults to OpenAI Responses for the runtime smoke path.
         let client = LlmClient::new(MockLlmProvider::new());
-        assert!(client.is_openai_chat_completions_compatible());
+        assert!(client.is_openai_responses());
 
-        // The compatible chat-completions path preserves thinking metadata when available.
+        // The Responses path preserves thinking metadata when available.
         let mut session = crate::session::Session::new();
         session.add_assistant_message("hi", Some("thinking..."));
         let messages = session.tape.messages();

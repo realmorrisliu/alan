@@ -10,8 +10,9 @@
 //! refinement; today `review()` runs on the caller-supplied client (the main
 //! model is the documented fallback).
 
+#[cfg(test)]
 use crate::llm::LlmClient;
-use alan_llm::{GenerationRequest, Message};
+use alan_llm::{GenerationRequest, GenerationResponse, Message};
 use serde::Deserialize;
 
 /// Default reviewer policy (user-overridable).
@@ -123,6 +124,7 @@ pub(crate) fn build_transcript(messages: &[crate::tape::Message]) -> String {
 /// (human fallback). `timeout_secs == 0` waits indefinitely, matching the normal
 /// generation path; otherwise a timeout maps to `Unavailable` so a hung reviewer
 /// provider can't hang the turn.
+#[cfg(test)]
 pub(crate) async fn review(
     client: &mut LlmClient,
     ctx: &ReviewContext<'_>,
@@ -146,6 +148,12 @@ pub(crate) async fn review(
             }
         }
     };
+    review_generation_result(generated)
+}
+
+pub(crate) fn review_generation_result(
+    generated: anyhow::Result<GenerationResponse>,
+) -> ReviewOutcome {
     match generated {
         Ok(response) => match parse_assessment(&response.content) {
             Ok((GuardianDecision::Allow, _)) => ReviewOutcome::Allow,

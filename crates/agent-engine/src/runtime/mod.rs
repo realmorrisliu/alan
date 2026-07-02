@@ -25,6 +25,10 @@ mod turn_state;
 mod turn_support;
 mod virtual_tools;
 
+pub use agent_loop::{
+    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
+    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+};
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest, global_child_run_registry,
@@ -36,7 +40,7 @@ pub use engine::{
 };
 
 // Re-export agent loop types for internal use
-pub(crate) use agent_loop::RuntimeLoopState;
+pub(crate) use agent_loop::{RuntimeEnvironment, RuntimeLoopState};
 pub(crate) use turn_state::TurnState;
 
 /// Configuration for the agent runtime

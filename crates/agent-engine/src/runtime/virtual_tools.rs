@@ -96,9 +96,13 @@ where
                     pending.details,
                     state.turn_state.active_skills(),
                 );
+                let request_id = state
+                    .write_namespace_confirmation_request(&pending)
+                    .await?
+                    .unwrap_or_else(|| pending.checkpoint_id.clone());
                 let pending_payload = json!({
                     "status": "pending_confirmation",
-                    "request_id": pending.checkpoint_id
+                    "request_id": request_id.clone()
                 });
                 emit(Event::ToolCallCompleted {
                     presentation: None,
@@ -115,21 +119,23 @@ where
                     pending_payload,
                     true,
                 );
-                state.turn_state.set_confirmation(pending.clone());
+                state
+                    .turn_state
+                    .set_confirmation_for_request(request_id.clone(), pending.clone());
                 emit(Event::Yield {
-                    request_id: pending.checkpoint_id,
+                    request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
                     payload: serde_json::to_value(ConfirmationYieldPayload {
-                        checkpoint_type: pending.checkpoint_type,
-                        summary: pending.summary,
-                        details: Some(pending.details),
+                        checkpoint_type: pending.checkpoint_type.clone(),
+                        summary: pending.summary.clone(),
+                        details: Some(pending.details.clone()),
                         default_option: pending
                             .options
                             .iter()
                             .find(|option| option.as_str() == "approve")
                             .cloned()
                             .or_else(|| pending.options.first().cloned()),
-                        options: pending.options,
+                        options: pending.options.clone(),
                         presentation_hints: vec![],
                     })
                     .unwrap_or_else(|_| json!({})),
@@ -176,9 +182,12 @@ where
             if let Some(request) =
                 parse_structured_user_input_request(&tool_call.id, tool_arguments)
             {
-                let request_id = request.request_id.clone();
+                let request_id = state
+                    .write_namespace_structured_input_request(&request)
+                    .await?
+                    .unwrap_or_else(|| request.request_id.clone());
                 let pending_payload =
-                    json!({"status": "pending_structured_input", "request_id": request_id});
+                    json!({"status": "pending_structured_input", "request_id": request_id.clone()});
                 emit(Event::ToolCallCompleted {
                     presentation: None,
                     id: tool_call.id.clone(),
@@ -194,15 +203,17 @@ where
                     pending_payload,
                     true,
                 );
-                state.turn_state.set_structured_input(request.clone());
+                state
+                    .turn_state
+                    .set_structured_input_for_request(request_id.clone(), request.clone());
                 emit(Event::Yield {
-                    request_id: request.request_id,
+                    request_id,
                     kind: alan_agent_protocol::YieldKind::StructuredInput,
                     payload: serde_json::to_value(structured_input_yield_payload(
                         &state.session.client_capabilities,
-                        request.title,
-                        request.prompt,
-                        request.questions,
+                        request.title.clone(),
+                        request.prompt.clone(),
+                        request.questions.clone(),
                     ))
                     .unwrap_or_else(|_| json!({})),
                 })
@@ -504,7 +515,7 @@ where
             &tool_call.name,
             tool_arguments,
             alan_agent_protocol::ToolCapability::Write,
-            state.tools.default_cwd().as_deref(),
+            state.default_tool_cwd().as_deref(),
             super::tool_policy::SandboxConfinement::detect(),
         ),
         allow_approved_tool_escalation_execution,
@@ -556,15 +567,21 @@ where
                 true,
                 Some(audit),
             );
-            state.turn_state.set_confirmation(pending.clone());
+            let request_id = state
+                .write_namespace_confirmation_request(&pending)
+                .await?
+                .unwrap_or_else(|| pending.checkpoint_id.clone());
+            state
+                .turn_state
+                .set_confirmation_for_request(request_id.clone(), pending.clone());
             emit(Event::Yield {
-                request_id: pending.checkpoint_id,
+                request_id,
                 kind: YieldKind::Confirmation,
                 payload: serde_json::to_value(ConfirmationYieldPayload {
-                    checkpoint_type: pending.checkpoint_type,
-                    summary: pending.summary,
-                    details: Some(pending.details),
-                    options: pending.options,
+                    checkpoint_type: pending.checkpoint_type.clone(),
+                    summary: pending.summary.clone(),
+                    details: Some(pending.details.clone()),
+                    options: pending.options.clone(),
                     default_option: Some("approve".to_string()),
                     presentation_hints: vec![AdaptivePresentationHint::Dangerous],
                 })
@@ -937,7 +954,7 @@ fn build_delegated_spawn_spec(
     target: alan_agent_protocol::SpawnTarget,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
     let inferred_workspace_root = bound_workspace_root(state);
-    let parent_default_cwd = state.tools.default_cwd();
+    let parent_default_cwd = state.default_tool_cwd();
     let workspace_root = normalize_delegated_workspace_root(
         request.workspace_root.as_deref(),
         parent_default_cwd.as_deref(),

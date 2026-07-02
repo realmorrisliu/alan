@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use alan_agent_protocol::{Event, InputMode, Op, Submission};
 use anyhow::Result;
@@ -11,6 +11,7 @@ use super::turn_support::cancel_current_task;
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
+const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub(super) struct TurnInputBroker {
@@ -139,38 +140,7 @@ where
 
     loop {
         let next_submission = if state.turn_state.has_pending_interaction() {
-            loop {
-                let Some(incoming) = broker.recv(cancel).await else {
-                    if cancel.is_cancelled() && state.turn_state.has_pending_interaction() {
-                        // Report and clear buffered in-turn submissions before cancel_current_task
-                        // clears turn_state, otherwise the drop count under-reports.
-                        emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
-                        cancel_current_task(state, emit).await?;
-                        return Ok(());
-                    }
-                    emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
-                    return Ok(());
-                };
-
-                if is_turn_resume_submission(&incoming.op) {
-                    break Some(incoming);
-                }
-
-                if is_brokered_input(&incoming.op)
-                    && state.turn_state.buffered_inband_user_input_count()
-                        >= MAX_BUFFERED_INBAND_USER_INPUTS
-                {
-                    emit(Event::Error {
-                        message: format!(
-                            "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                        ),
-                        recoverable: true,
-                    })
-                    .await;
-                    continue;
-                }
-                state.turn_state.push_buffered_inband_submission(incoming);
-            }
+            next_pending_interaction_submission(state, broker, emit, cancel).await?
         } else if let Some(buffered) = state.turn_state.pop_buffered_inband_submission() {
             Some(buffered)
         } else {
@@ -194,6 +164,76 @@ where
     }
 
     Ok(())
+}
+
+async fn next_pending_interaction_submission<E, F>(
+    state: &mut RuntimeLoopState,
+    broker: &TurnInputBroker,
+    emit: &mut E,
+    cancel: &CancellationToken,
+) -> Result<Option<Submission>>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    loop {
+        if let Some(submission) = namespace_pending_resume_submission(state).await? {
+            return Ok(Some(submission));
+        }
+
+        tokio::select! {
+            incoming = broker.recv(cancel) => {
+                let Some(incoming) = incoming else {
+                    if cancel.is_cancelled() && state.turn_state.has_pending_interaction() {
+                        // Report and clear buffered in-turn submissions before cancel_current_task
+                        // clears turn_state, otherwise the drop count under-reports.
+                        emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
+                        cancel_current_task(state, emit).await?;
+                        return Ok(None);
+                    }
+                    emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
+                    return Ok(None);
+                };
+
+                if is_turn_resume_submission(&incoming.op) {
+                    return Ok(Some(incoming));
+                }
+
+                if is_brokered_input(&incoming.op)
+                    && state.turn_state.buffered_inband_user_input_count()
+                        >= MAX_BUFFERED_INBAND_USER_INPUTS
+                {
+                    emit(Event::Error {
+                        message: format!(
+                            "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
+                        ),
+                        recoverable: true,
+                    })
+                    .await;
+                    continue;
+                }
+                state.turn_state.push_buffered_inband_submission(incoming);
+            }
+            _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {}
+        }
+    }
+}
+
+async fn namespace_pending_resume_submission(
+    state: &RuntimeLoopState,
+) -> Result<Option<Submission>> {
+    let namespace = state.namespace_environment();
+
+    for request_id in state.turn_state.pending_request_ids() {
+        if let Some(submission) = namespace
+            .resume_submission_from_answered_request(&request_id)
+            .await?
+        {
+            return Ok(Some(submission));
+        }
+    }
+
+    Ok(None)
 }
 
 async fn emit_dropped_in_turn_submissions<E, F>(
@@ -221,6 +261,12 @@ async fn emit_dropped_in_turn_submissions<E, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use alan_agentfs::AgentFs;
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace};
+    use alan_shell::Shell;
 
     #[test]
     fn test_turn_submission_classification() {
@@ -434,5 +480,96 @@ mod tests {
             Event::Error { message, recoverable }
                 if *recoverable && message.contains("Dropped 2 in-turn buffered submissions")
         )));
+    }
+
+    #[tokio::test]
+    async fn namespace_answered_request_unblocks_pending_interaction_wait() {
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment =
+            super::super::agent_loop::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        let request_id = environment
+            .write_request(super::super::agent_loop::NamespaceRequestRecord::new(
+                "structured_input",
+                "Provide the missing value",
+            ))
+            .await
+            .unwrap();
+        let mut turn_state = TurnState::default();
+        turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: request_id.clone(),
+            title: "Missing value".to_string(),
+            prompt: "Provide the missing value".to_string(),
+            questions: Vec::new(),
+        });
+
+        let mut state = RuntimeLoopState {
+            workspace_id: "namespace-pending-wait-test".to_string(),
+            workspace_root_dir: None,
+            session: crate::Session::new(),
+            current_submission_id: None,
+            environment: super::super::RuntimeEnvironment::namespace(environment),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: crate::Config::default(),
+            runtime_config: super::super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
+        };
+        let broker = TurnInputBroker::default();
+        let cancel = CancellationToken::new();
+        let mut events = Vec::new();
+        let mut emit = |event| {
+            events.push(event);
+            async {}
+        };
+
+        let response_path = format!("/agent/1/requests/{request_id}/response");
+        let waiter = next_pending_interaction_submission(&mut state, &broker, &mut emit, &cancel);
+        let writer = async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            shell
+                .write(
+                    &response_path,
+                    br#"{"answers":[{"question_id":"q1","value":"from agentfs"}]}"#,
+                )
+                .await
+                .unwrap();
+        };
+        let (submission, _) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(waiter, writer)
+        })
+        .await
+        .expect("namespace response should unblock pending wait");
+        let submission = submission
+            .unwrap()
+            .expect("answered request should become next submission");
+
+        match submission.op {
+            Op::Resume {
+                request_id: resumed_id,
+                content,
+            } => {
+                assert_eq!(resumed_id, request_id);
+                assert_eq!(
+                    content,
+                    vec![alan_agent_protocol::ContentPart::structured(
+                        serde_json::json!({
+                            "answers": [{"question_id": "q1", "value": "from agentfs"}]
+                        })
+                    )]
+                );
+            }
+            other => panic!("expected Op::Resume from namespace response, got {other:?}"),
+        }
+        assert!(events.is_empty());
     }
 }

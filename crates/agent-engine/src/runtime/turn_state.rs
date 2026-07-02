@@ -100,6 +100,10 @@ impl TurnState {
         !self.pending.is_empty()
     }
 
+    pub(crate) fn pending_request_ids(&self) -> Vec<String> {
+        self.pending_order.clone()
+    }
+
     pub(crate) fn clear(&mut self) {
         self.pending.clear();
         self.pending_tool_replay_batches.clear();
@@ -274,8 +278,17 @@ impl TurnState {
         self.compactions_this_turn
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_confirmation(&mut self, pending: PendingConfirmation) {
-        let key = pending.checkpoint_id.clone();
+        self.set_confirmation_for_request(pending.checkpoint_id.clone(), pending);
+    }
+
+    pub(crate) fn set_confirmation_for_request(
+        &mut self,
+        request_id: impl Into<String>,
+        pending: PendingConfirmation,
+    ) {
+        let key = request_id.into();
         self.pending
             .insert(key.clone(), PendingYield::Confirmation(pending));
         push_latest_key(&mut self.pending_order, key);
@@ -307,15 +320,33 @@ impl TurnState {
         self.pending_tool_replay_batches.remove(checkpoint_id)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_structured_input(&mut self, pending: PendingStructuredInputRequest) {
-        let key = pending.request_id.clone();
+        self.set_structured_input_for_request(pending.request_id.clone(), pending);
+    }
+
+    pub(crate) fn set_structured_input_for_request(
+        &mut self,
+        request_id: impl Into<String>,
+        pending: PendingStructuredInputRequest,
+    ) {
+        let key = request_id.into();
         self.pending
             .insert(key.clone(), PendingYield::StructuredInput(pending));
         push_latest_key(&mut self.pending_order, key);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_dynamic_tool_call(&mut self, pending: PendingDynamicToolCall) {
-        let key = pending.call_id.clone();
+        self.set_dynamic_tool_call_for_request(pending.call_id.clone(), pending);
+    }
+
+    pub(crate) fn set_dynamic_tool_call_for_request(
+        &mut self,
+        request_id: impl Into<String>,
+        pending: PendingDynamicToolCall,
+    ) {
+        let key = request_id.into();
         self.pending
             .insert(key.clone(), PendingYield::DynamicToolCall(pending));
         push_latest_key(&mut self.pending_order, key);
