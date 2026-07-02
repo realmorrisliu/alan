@@ -5,6 +5,12 @@
 > `alan-agent-adapter-contract`. The prior task list (building an `Agent Process`
 > kernel type, opaque ids, a Kernel Journal, ViewModels, and semantic-view
 > snapshots) is fully replaced; that work targeted the retired ontology.
+>
+> **Superseded for engine-native rewrite.** Remaining live wiring, `io/input`
+> resume, namespace overlay, LLM generation, tool execution, and direct agent-file
+> state-writing tasks are now owned by
+> `refactor-engine-namespace-native`. Keep this change as historical ADR-0024
+> migration context; do not implement new engine-runtime work here.
 
 ## Constraints (from ADR-0024)
 

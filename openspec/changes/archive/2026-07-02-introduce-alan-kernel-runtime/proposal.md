@@ -16,6 +16,12 @@ supersedes `add-agent-runtime-service-filesystem`**, whose AgentFS projection it
 now owns (via `alan-agent-adapter-contract`); that change is removed to avoid two
 owners of the same projection.
 
+As of `refactor-engine-namespace-native`, the remaining engine-native rewrite
+work (live namespace wiring, `io/input` resume, overlay usage, file-backed LLM
+generation, tools, and direct agent-file writes) is superseded by that change.
+This change remains historical context for the ADR-0024 migration and should not
+receive new engine-runtime implementation tasks.
+
 ## What Changes
 
 - Re-own the kernel ontology: the `alan-kernel-contract` capability is reduced to

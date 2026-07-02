@@ -153,6 +153,75 @@ agent-runtime tape/checkpoint commands (`compact`/`rollback`).
    from the call path.
 7. D5: assemble agent namespaces at spawn; tie capabilities to mounts.
 
+## Delivery Plan (re-planned 2026-07-02)
+
+### The finish line is structural, and the progress bar is a grep
+
+Done means **`RuntimeEnvironment::Legacy` is deleted from `agent_loop.rs`**.
+Until then the engine has two worlds, and everything that makes it the deepest
+crate (compaction, memory flush, guardrails, virtual tools, child agents) runs
+only in the Legacy one. Progress is therefore measured by the production
+call-site count of the legacy accessors, not by checkbox completion:
+
+- `.llm_client()` / `.llm_client_mut()` — 21 sites at re-plan time
+  (turn_executor 15, compaction 2, memory_flush 2, agent_loop 1,
+  tool_orchestrator 1) → 0.
+- `.tools()` / `.tools_mut()` — 18 sites (child_agents 6, tool_orchestrator 5,
+  response_guardrails 3, virtual_tools 2, turn_executor 1,
+  submission_handlers 1) → 0.
+
+### Three PR slices
+
+Per the stacked-PR review-cost lesson, the change lands as three independently
+reviewable slices, each of which deletes something:
+
+- **Slice A — generation + state native** (D1+D2+D4 completed for the full
+  loop, not just the M2 spine): all `.llm_client*()` sites migrate; auxiliary
+  generations (compaction, memory flush) go through `/mnt/llm`; the engine
+  writes `/agent/<pid>` state directly; `Legacy` loses `llm_client`. Invisible
+  to users; pure foundation.
+- **Slice B — tools as executables** (D3): all `.tools*()` sites migrate;
+  `ToolRegistry` and the `Legacy` variant are deleted. The child-agent
+  capability-cloning sites become child-namespace assembly (bridging into C).
+- **Slice C — capability assembly + overlay** (D5, plus the ctl-routing and
+  `/agent` overlay work absorbed from `introduce-alan-kernel-runtime` §7–§8).
+  This is the first slice where the north star is *visible*: an agent's world
+  narrows and widens with its mounts.
+
+### `namespace_native.rs` is scaffolding with a demolition date
+
+The M2 spine was proven in a standalone module (`runtime/namespace_native.rs`)
+sitting beside `agent_loop.rs`. That was the right way to prove the path, but
+this change's own proposal condemns exactly this shape as a permanent
+structure: a parallel second engine is the compatibility bridge the
+Architecture Progression Principle forbids. The module therefore **dissolves
+into `turn_executor`/`agent_loop` by the end of Slice A** — migration means
+moving the existing call sites onto namespace operations, not growing the side
+module until it rivals the loop.
+
+### Hidden dependency: provider projection must move behind the llmfs DTO
+
+The engine does not only call `generate_stream`. It calls
+`detect_provider(...)`, `llm_client().capabilities()`, and
+`llm_client().project_messages(...)` — provider-specific request shaping in
+engine code. ADR-0024 D2 places that mapping in the provider file server: the
+engine writes one neutral request document; `alan-llmfs` maps it to the
+provider-local wire format. This puts `add-llm-file-server` §5 (versioned wire
+DTO) and §3.1 (capability introspection files) on Slice A's critical path —
+they are no longer optional polish on the llmfs surface.
+
+### Ownership absorbed / deferred
+
+- Absorbed from `introduce-alan-kernel-runtime` (now archived as historical
+  ADR-0024 migration context): kernel-vs-machine ctl routing (§7.1 → tasks
+  §7.4), the `/agent` overlay and `/agent/root` resolution (§8 → tasks §7.3),
+  and `requests/<id>/response` resume delivery (§5.3 → tasks §5.4).
+- Deliberately deferred to a follow-on change: TUI file-client migration (its
+  §9) — out of blast radius here.
+- Parked until Slice B settles the tool-execution seam:
+  `refactor-sandbox-spec-input` (P1 of the namespace-driven sandbox track)
+  touches `tool_orchestrator`, which A/B actively rewrite.
+
 ## Open Questions
 
 - Does the engine hold one aP root handle (a federating namespace server) or

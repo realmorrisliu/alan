@@ -5,10 +5,13 @@ proposals out as their own OpenSpec changes. No application code lands here.
 
 ## 1. Spin out downstream changes
 
-- [ ] 1.1 Create change `refactor-sandbox-spec-input` (P1): replace
+- [x] 1.1 Create change `refactor-sandbox-spec-input` (P1): replace
   `Sandbox`'s `workspace_root: PathBuf` with `SandboxSpec { writable_roots,
   read_denylist, network }` seeded from a single-entry manifest (the workspace).
   Pure refactor, zero behavior change; welds the two-projection seam.
+  Created 2026-07-02; currently parked behind `refactor-engine-namespace-native`
+  Slice B (it touches `tool_orchestrator`, which the engine rewrite is actively
+  restructuring).
 - [ ] 1.2 Create change `add-host-dir-file-server` (P2): `HostDirFs` (host-backed
   aP `FileServer`) + `mount_host` declaration entry point that records
   `(host_path, access)` into the manifest + multi-entry projection in `alan`.
@@ -18,8 +21,8 @@ proposals out as their own OpenSpec changes. No application code lands here.
 
 ## 2. Carry the framing forward
 
-- [ ] 2.1 Ensure P1's proposal references this design's Decision D4 (layering) and
-  D6 (P1 = zero behavior change).
+- [x] 2.1 Ensure P1's proposal references this design's Decision D4 (layering) and
+  D6 (P1 = zero behavior change). Verified: P1's proposal Impact cites D4/D6.
 - [ ] 2.2 Ensure P2's proposal references D5 (mounts human-declared only at
   landing; workspace = seed entry).
 - [ ] 2.3 Keep the "honest isolation narrative" (write+network now, sensitive-read
