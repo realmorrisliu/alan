@@ -90,6 +90,7 @@ fn is_mutating(request: &Request) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unreachable;
 
+#[derive(Clone)]
 struct Mount {
     /// Absolute path components this tree is mounted at (`/mnt/llm` → `["mnt",
     /// "llm"]`; `/` → `[]`).
@@ -99,6 +100,7 @@ struct Mount {
 }
 
 /// A per-process namespace: an ordered mount table resolved by longest-prefix.
+#[derive(Clone)]
 pub struct Namespace {
     mounts: Vec<Mount>,
 }
@@ -177,6 +179,23 @@ impl Namespace {
             .iter()
             .map(|m| Mount {
                 prefix: m.prefix.clone(),
+                tree: m.tree.clone(),
+                access: m.access,
+            })
+            .collect();
+        Namespace { mounts }
+    }
+
+    pub(crate) fn child_with_path_substitution(&self, token: &str, replacement: &str) -> Namespace {
+        let mounts = self
+            .mounts
+            .iter()
+            .map(|m| Mount {
+                prefix: m
+                    .prefix
+                    .iter()
+                    .map(|component| component.replace(token, replacement))
+                    .collect(),
                 tree: m.tree.clone(),
                 access: m.access,
             })

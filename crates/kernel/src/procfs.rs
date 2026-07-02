@@ -21,19 +21,54 @@
 //! and `clunk`s to commit (commit-on-clunk; a malformed spec is rejected at
 //! clunk and the pending slot is discarded, leaking nothing).
 //!
-//! v1 limitation (ADR-0024 R1): the kernel runs in one address space and `/proc`
-//! does not yet thread the spawner's namespace through `clone`, so spawn uses
-//! system credentials and an empty child namespace and the capability-preserving
-//! amplification check lands when the namespace is plumbed in. This is the
-//! convention-vs-isolation gap R1 already records.
+//! v1 limitation (ADR-0024 R1): the kernel runs in one address space. A `/proc`
+//! view can now carry its spawner's parent, credentials, and namespace into
+//! `clone`, but the R1 capability boundary is still convention-enforced by
+//! namespace resolution in-process rather than hard OS isolation.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::{Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
+
+/// One committed process invocation handed to user-space execution.
+#[derive(Clone)]
+pub struct ProcessInvocation {
+    pub pid: Pid,
+    pub parent: Option<Pid>,
+    pub credentials: Credentials,
+    pub namespace: Namespace,
+    pub exec: ExecSpec,
+}
+
+/// The terminal result produced by a user-space process runner.
+pub struct ProcessOutcome {
+    pub output: Vec<u8>,
+    pub exit_code: i32,
+}
+
+impl ProcessOutcome {
+    pub fn exited(exit_code: i32, output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+            exit_code,
+        }
+    }
+}
+
+/// User-space execution hook for a committed process.
+///
+/// The kernel still only owns `/proc`, namespace state, process status, and the
+/// process output stream. The runner supplies the executable semantics layered
+/// above the substrate.
+#[async_trait]
+pub trait ProcessRunner: Send + Sync + 'static {
+    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome;
+}
 
 /// What a fid in `/proc` points at.
 #[derive(Clone)]
@@ -76,6 +111,7 @@ impl ProcFid {
 /// Upper bound on a buffered exec-spec document, so a huge/sparse write offset
 /// cannot make `/proc` allocate unbounded memory.
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
+const CHILD_PID_PLACEHOLDER: &str = "<child-pid>";
 
 struct State {
     table: ProcessTable,
@@ -85,9 +121,19 @@ struct State {
     outputs: HashMap<Pid, Stream>,
 }
 
+#[derive(Clone)]
+struct SpawnContext {
+    parent: Option<Pid>,
+    namespace: Namespace,
+    credentials: Credentials,
+}
+
 /// The `/proc` file server.
+#[derive(Clone)]
 pub struct ProcFs {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
+    spawn_context: SpawnContext,
+    runner: Option<Arc<dyn ProcessRunner>>,
 }
 
 impl Default for ProcFs {
@@ -99,11 +145,45 @@ impl Default for ProcFs {
 impl ProcFs {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 table: ProcessTable::new(),
                 fids: HashMap::new(),
                 outputs: HashMap::new(),
-            }),
+            })),
+            spawn_context: SpawnContext {
+                parent: None,
+                namespace: Namespace::new(),
+                credentials: Credentials::system(),
+            },
+            runner: None,
+        }
+    }
+
+    /// Attach the user-space runner that will execute committed processes for
+    /// this `/proc` view and any spawner views cloned from it.
+    pub fn with_runner(mut self, runner: Arc<dyn ProcessRunner>) -> Self {
+        self.runner = Some(runner);
+        self
+    }
+
+    /// Create a `/proc` view over the same process table with the spawn context
+    /// of a particular process. Opening `clone` through this view starts child
+    /// processes with the given parent, credentials, and a child copy of the
+    /// given namespace.
+    pub fn for_spawner(
+        &self,
+        parent: Option<Pid>,
+        namespace: Namespace,
+        credentials: Credentials,
+    ) -> Self {
+        Self {
+            state: self.state.clone(),
+            spawn_context: SpawnContext {
+                parent,
+                namespace,
+                credentials,
+            },
+            runner: self.runner.clone(),
         }
     }
 }
@@ -270,9 +350,15 @@ impl FileServer for ProcFs {
             if !matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
+            let parent = self.spawn_context.parent;
+            let credentials = self.spawn_context.credentials.clone();
+            let spawn_namespace = self.spawn_context.namespace.clone();
             let slot = state
                 .table
-                .clone_begin(None, Namespace::new(), Credentials::system())
+                .clone_begin_with_namespace(parent, credentials, |pid| {
+                    spawn_namespace
+                        .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string())
+                })
                 .ok_or(ErrorCode::Io)?;
             let f = state
                 .fids
@@ -397,28 +483,64 @@ impl FileServer for ProcFs {
         if fid == Fid::ROOT {
             return Ok(());
         }
-        let mut state = self.state.lock().await;
-        let Some(f) = state.fids.remove(&fid) else {
-            return Err(ErrorCode::NotFound);
-        };
-        // Commit-on-clunk: a clone fid commits its pending process here.
-        if let Some(pid) = f.clone_pid {
-            match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
-                Ok(exec) => {
-                    state.table.commit(pid, exec);
-                    state.outputs.insert(pid, Stream::new());
-                    Ok(())
+        let runner_launch = {
+            let mut state = self.state.lock().await;
+            let Some(f) = state.fids.remove(&fid) else {
+                return Err(ErrorCode::NotFound);
+            };
+            // Commit-on-clunk: a clone fid commits its pending process here.
+            if let Some(pid) = f.clone_pid {
+                match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
+                    Ok(exec) => {
+                        if let Some(namespace_manifest) = exec.namespace.as_ref() {
+                            let Some(pending_namespace) = state.table.pending_namespace(pid) else {
+                                state.table.discard(pid);
+                                return Err(ErrorCode::BadRequest);
+                            };
+                            if !namespace_manifest.matches_namespace(pending_namespace) {
+                                state.table.discard(pid);
+                                return Err(ErrorCode::BadRequest);
+                            }
+                        }
+                        let committed =
+                            state.table.commit(pid, exec).ok_or(ErrorCode::BadRequest)?;
+                        let process = state.table.get(committed).ok_or(ErrorCode::Io)?;
+                        let invocation = ProcessInvocation {
+                            pid: process.pid,
+                            parent: process.parent,
+                            credentials: process.credentials.clone(),
+                            namespace: process.namespace.clone(),
+                            exec: process.exec.clone(),
+                        };
+                        let output = Stream::new();
+                        state.outputs.insert(committed, output.clone());
+                        self.runner
+                            .clone()
+                            .map(|runner| (runner, output, invocation))
+                    }
+                    Err(_) => {
+                        // Reject at commit and discard the fid-private slot — it was
+                        // never public, so nothing leaks.
+                        state.table.discard(pid);
+                        return Err(ErrorCode::BadRequest);
+                    }
                 }
-                Err(_) => {
-                    // Reject at commit and discard the fid-private slot — it was
-                    // never public, so nothing leaks.
-                    state.table.discard(pid);
-                    Err(ErrorCode::BadRequest)
-                }
+            } else {
+                None
             }
-        } else {
-            Ok(())
+        };
+        if let Some((runner, output, invocation)) = runner_launch {
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                let outcome = runner.run(invocation.clone()).await;
+                if !outcome.output.is_empty() {
+                    output.append(&outcome.output).await;
+                }
+                let mut state = state.lock().await;
+                state.table.exit(invocation.pid, outcome.exit_code);
+            });
         }
+        Ok(())
     }
 }
 

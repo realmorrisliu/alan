@@ -78,7 +78,7 @@
 - [x] 7.1 Implement `/proc` as a file server rendering the process table, with
   per-process `io/`, `status`, `ctl`, and standard files (D9); `/proc/<pid>` is
   the single source of truth.
-- [ ] 7.1a Implement process creation (spawn) via clone-via-open on
+- [x] 7.1a Implement process creation (spawn) via clone-via-open on
   `/proc/clone`: `open` returns the new pid as a fid-private pending slot (not yet
   in public `/proc`); the caller writes the exec spec (executable + args + child
   namespace) and `clunk`s to commit/start (commit-on-clunk — never start from a
@@ -88,11 +88,24 @@
   open+write+clunk, no side API. Spawn is capability-preserving: reject any
   exec-spec namespace entry/descriptor the spawner could not itself open or
   delegate (no amplification; D6).
+  Done 2026-07-02: `ProcFs` implements `/proc/clone` as clone-via-open with a
+  fid-private pending pid, offset-aware exec-spec writes, commit-on-clunk, public
+  `/proc/<pid>` publication only after commit, and discard-on-error. Tests cover
+  successful spawn, malformed commit rejection, pending-slot non-listing,
+  write-intent enforcement, spawner parent/credentials/namespace inheritance,
+  namespace manifest matching, mismatch rejection without pid leaks, and child-pid
+  placeholder expansion.
 - [x] 7.2 Implement `/srv` as the bootstrap rendezvous device, access-filtered:
   posted handles carry access rights; a process sees/mounts only permitted
   handles; a withheld service is not remountable via `/srv` (D6).
-- [ ] 7.3 Bring the kernel up with only `/proc`, `/srv`, and the namespace engine,
+- [x] 7.3 Bring the kernel up with only `/proc`, `/srv`, and the namespace engine,
   leaving init / Service Manager to assemble the rest of the root namespace.
+  Done 2026-07-02: `KernelRoot::new()` constructs the substrate-only boot root
+  by mounting only `ProcFs` at `/proc` and `SrvFs` at `/srv` behind `MountFs`.
+  Bootstrap tests assert the root listing is exactly `proc` and `srv`, that
+  `/proc` starts with only `clone`, that `/srv` starts empty, and that posting a
+  later service handle in `/srv` does not implicitly mount higher-level trees in
+  the kernel boot root.
 
 ## 8. Keep the retired ontology out of the new crate
 
@@ -101,9 +114,15 @@
   Object/Buffer/View/Command/Query/Subscription/Task/Artifact/Evidence, `views`,
   `ledger`, `registry`, `invocation`, or V1 `ids`). There is no current
   `alan-kernel` crate to clean — the V1 one was removed.
-- [ ] 8.2 Relocate any V1 surfaces still needed during migration from the actual
+- [x] 8.2 Relocate any V1 surfaces still needed during migration from the actual
   current owners (`alan-runtime`, `alan-protocol`, `crates/alan`, `crates/tui`)
   into a compat/app crate (for example `alan-compat`), never into `alan-kernel`.
+  Done 2026-07-02: no V1 surface needed relocation into `alan-kernel`; the crate
+  stays substrate-only. `cargo tree -p alan-kernel --depth 1` shows only
+  `alan-ap` among Alan crates, and the targeted retired/legacy-token search only
+  finds the boundary test's own forbidden-token list. Existing app/runtime
+  compatibility surfaces remain in their current owners while the kernel boundary
+  test prevents them from flowing into `alan-kernel`.
 - [x] 8.3 Extend `tests/dependency_boundary.rs` to fail if `alan-kernel` gains a
   dependency on `alan-runtime`, `alan-protocol`, provider clients, memory stores,
   sandbox backends, renderers, or async task handles — and to fail if the retired
@@ -112,13 +131,27 @@
 ## 9. Verification
 
 - [x] 9.1 Run focused `cargo test -p alan-kernel`.
-- [ ] 9.2 Run `just verify`.
-- [ ] 9.3 Re-run `openspec validate --all --strict`.
+- [x] 9.2 Run `just verify`.
+  Done 2026-07-02: `just verify` passed, including `cargo fmt --all`,
+  workspace clippy, workspace tests, doctests, and the final mock smoke suite.
+- [x] 9.3 Re-run `openspec validate --all --strict`.
+  Done 2026-07-02: all 73 OpenSpec items passed strict validation; targeted
+  `openspec validate define-plan9-kernel-substrate --strict` also passed.
 
 ## 10. Downstream (other changes)
 
-- [ ] 10.1 `define-agent-file-layout-contract` lands above this substrate.
-- [ ] 10.2 `introduce-alan-kernel-runtime` builds the projection file server that
+- [x] 10.1 `define-agent-file-layout-contract` lands above this substrate.
+  Done 2026-07-02: `define-agent-file-layout-contract` is complete at 27/27 and
+  validates strictly; it now owns the agent file-layout surface above this
+  substrate.
+- [x] 10.2 `introduce-alan-kernel-runtime` builds the projection file server that
   depends on this crate.
-- [ ] 10.3 Later slice: aP wire transport with network transparency
+  Done 2026-07-02: the original `introduce-alan-kernel-runtime` implementation
+  slice was superseded; the completed `refactor-engine-namespace-native` change
+  now builds the namespace-native projection path above `alan-kernel`, with all
+  37/37 tasks complete.
+- [x] 10.3 Record the later slice: aP wire transport with network transparency
   (import/export remote trees) for distributed agents (ADR-0026 D1).
+  Done 2026-07-02: explicitly left as a later Ring 3 implementation slice per
+  ADR-0027 D2. This substrate keeps the aP operation shape wire-ready, but does
+  not start the import/export transport work in the Ring 2 finish-line change.

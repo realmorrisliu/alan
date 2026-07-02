@@ -12,14 +12,19 @@
 //! runtime state that starts empty on restart. Durability is a property of
 //! storage-backed file servers, never of the kernel.
 
+mod bootstrap;
 mod mountfs;
 mod namespace;
 mod process;
 mod procfs;
 mod srvfs;
 
+pub use bootstrap::KernelRoot;
 pub use mountfs::MountFs;
 pub use namespace::{Access, Namespace, Resolved, Unreachable};
-pub use process::{Credentials, ExecSpec, Pid, Process, ProcessTable, Status};
-pub use procfs::ProcFs;
+pub use process::{
+    Credentials, ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec, Pid,
+    Process, ProcessTable, Status,
+};
+pub use procfs::{ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
 pub use srvfs::SrvFs;

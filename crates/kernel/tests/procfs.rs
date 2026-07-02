@@ -5,8 +5,11 @@
 //! public), write the exec spec, and `clunk` to commit — so an aP-only client
 //! needs no side API to launch a process.
 
-use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
-use alan_kernel::ProcFs;
+use alan_ap::{ErrorCode, Fid, FileServer, OpenMode, Request};
+use alan_kernel::{
+    Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
+};
+use std::sync::Arc;
 
 fn proc() -> ProcFs {
     ProcFs::new()
@@ -14,14 +17,21 @@ fn proc() -> ProcFs {
 
 /// Spawn a process via clone-via-open using a distinct fid base; returns its pid.
 async fn spawn(fs: &ProcFs, clone_fid: Fid) -> String {
+    spawn_exec(fs, clone_fid, "/bin/agent", Vec::<String>::new()).await
+}
+
+async fn spawn_exec(fs: &ProcFs, clone_fid: Fid, executable: &str, args: Vec<String>) -> String {
     fs.walk(Fid::ROOT, clone_fid, &["clone".to_string()])
         .await
         .unwrap();
     fs.open(clone_fid, OpenMode::ReadWrite).await.unwrap();
     let pid = String::from_utf8(fs.read(clone_fid, 0, 64).await.unwrap()).unwrap();
-    fs.write(clone_fid, 0, br#"{"executable":"/bin/agent","args":[]}"#)
-        .await
-        .unwrap();
+    let exec = serde_json::json!({
+        "executable": executable,
+        "args": args,
+    })
+    .to_string();
+    fs.write(clone_fid, 0, exec.as_bytes()).await.unwrap();
     fs.clunk(clone_fid).await.unwrap();
     pid
 }
@@ -31,6 +41,33 @@ async fn read_at(fs: &ProcFs, names: &[&str], fid: Fid) -> Result<Vec<u8>, Error
     fs.walk(Fid::ROOT, fid, &names).await?;
     fs.open(fid, OpenMode::Read).await?;
     fs.read(fid, 0, 4096).await
+}
+
+struct EchoRunner;
+
+#[async_trait::async_trait]
+impl ProcessRunner for EchoRunner {
+    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
+        let Ok(resolved) = invocation.namespace.resolve(&invocation.exec.executable) else {
+            return ProcessOutcome::exited(127, b"executable is not mounted\n".to_vec());
+        };
+        let fid = Fid(50_000 + invocation.pid.0);
+        let reachable = resolved
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: resolved.rel.clone(),
+            })
+            .await
+            .is_ok();
+        let _ = resolved.call(Request::Clunk { fid }).await;
+        if !reachable {
+            return ProcessOutcome::exited(127, b"executable is not reachable\n".to_vec());
+        }
+        let mut output = invocation.exec.args.join(" ").into_bytes();
+        output.push(b'\n');
+        ProcessOutcome::exited(0, output)
+    }
 }
 
 #[tokio::test]
@@ -119,6 +156,50 @@ async fn proc_output_serves_the_stream() {
         r.is_err(),
         "reading io/output should block on the stream, not error"
     );
+}
+
+#[tokio::test]
+async fn registered_runner_writes_process_output_and_exit() {
+    let fs = ProcFs::new().with_runner(Arc::new(EchoRunner));
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/bin",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    let pid = spawn_exec(
+        &spawner,
+        Fid(10),
+        "/bin/greeting",
+        vec!["hello".into(), "tool".into()],
+    )
+    .await;
+
+    for attempt in 0..50 {
+        let status = String::from_utf8(
+            read_at(&fs, &[&pid, "status"], Fid(100 + attempt))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        if status.trim() == "exited" {
+            let output = String::from_utf8(
+                read_at(&fs, &[&pid, "io", "output"], Fid(200))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(output, "hello tool\n");
+            let exit =
+                String::from_utf8(read_at(&fs, &[&pid, "exit"], Fid(201)).await.unwrap()).unwrap();
+            assert_eq!(exit, "0");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("runner did not exit process {pid}");
 }
 
 // Spawning requires write intent: opening /proc/clone read-only is rejected, and
@@ -248,6 +329,188 @@ async fn proc_exposes_the_process_namespace() {
     read_at(&fs, &[&pid, "namespace"], Fid(12))
         .await
         .expect("namespace is readable");
+}
+
+#[tokio::test]
+async fn clone_uses_the_spawner_context_for_child_identity() {
+    let fs = proc();
+    let parent = spawn(&fs, Fid(10)).await;
+
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(
+        Some(Pid(parent.parse::<u64>().unwrap())),
+        namespace,
+        Credentials::user("alan"),
+    );
+
+    let child = spawn(&spawner, Fid(20)).await;
+
+    let recorded_parent =
+        String::from_utf8(read_at(&fs, &[&child, "parent"], Fid(21)).await.unwrap()).unwrap();
+    assert_eq!(recorded_parent, parent);
+
+    let credentials = String::from_utf8(
+        read_at(&fs, &[&child, "credentials"], Fid(22))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(credentials, "alan");
+
+    let namespace =
+        String::from_utf8(read_at(&fs, &[&child, "namespace"], Fid(23)).await.unwrap()).unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/data ro"),
+        "child namespace inherits the spawner namespace: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn clone_exec_namespace_manifest_must_match_spawner_namespace() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    namespace.mount(
+        "/scratch",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(30), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(30), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(30), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/scratch", "access": "rw"},
+                {"path": "/data", "access": "ro"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(30), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(30)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(31))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/data ro"),
+        "committed namespace includes /data: {namespace:?}"
+    );
+    assert!(
+        namespace.lines().any(|line| line == "/scratch rw"),
+        "committed namespace includes /scratch: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn clone_exec_namespace_manifest_mismatch_is_rejected_without_leaking_pid() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(40), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(40), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(40), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/data", "access": "rw"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(40), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(40)).await, Err(ErrorCode::BadRequest));
+
+    let listing = String::from_utf8(read_at(&fs, &[], Fid(41)).await.unwrap()).unwrap();
+    assert!(
+        !listing.lines().any(|line| line == pid_name),
+        "rejected manifest leaks nothing into public /proc"
+    );
+}
+
+#[tokio::test]
+async fn clone_expands_child_pid_placeholder_before_manifest_validation() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/agent/<child-pid>",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/mnt/llm/connections/default",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(50), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(50), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(50), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": format!("/agent/{pid_name}"), "access": "rw"},
+                {"path": "/mnt/llm/connections/default", "access": "rw"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(50), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(50)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(51))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace
+            .lines()
+            .any(|line| line == format!("/agent/{pid_name} rw")),
+        "child pid placeholder is expanded in the committed namespace: {namespace:?}"
+    );
+    assert!(
+        !namespace.lines().any(|line| line.contains("<child-pid>")),
+        "placeholder must not leak into the public namespace file: {namespace:?}"
+    );
 }
 
 // §5.1 — qid versions bump when content changes, so a cached qid/version goes
