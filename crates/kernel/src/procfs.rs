@@ -35,7 +35,7 @@ use alan_ap::{
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
+use crate::{Access, Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
 
 /// One committed process invocation handed to user-space execution.
 #[derive(Clone)]
@@ -134,6 +134,7 @@ struct SpawnContext {
 #[derive(Clone)]
 pub struct ProcFs {
     state: Arc<Mutex<State>>,
+    root_node: Node,
     spawn_context: SpawnContext,
     runner: Option<Arc<dyn ProcessRunner>>,
 }
@@ -152,6 +153,7 @@ impl ProcFs {
                 fids: HashMap::new(),
                 outputs: HashMap::new(),
             })),
+            root_node: Node::Root,
             spawn_context: SpawnContext {
                 parent: None,
                 namespace: Namespace::new(),
@@ -180,6 +182,7 @@ impl ProcFs {
     ) -> Self {
         Self {
             state: self.state.clone(),
+            root_node: self.root_node.clone(),
             spawn_context: SpawnContext {
                 parent,
                 namespace,
@@ -188,12 +191,25 @@ impl ProcFs {
             runner: self.runner.clone(),
         }
     }
+
+    /// Create a view whose root is the `clone` file for a delegated
+    /// `/proc/clone` mount.
+    pub fn clone_file_for_spawner(
+        &self,
+        parent: Option<Pid>,
+        namespace: Namespace,
+        credentials: Credentials,
+    ) -> Self {
+        let mut view = self.for_spawner(parent, namespace, credentials);
+        view.root_node = Node::Clone;
+        view
+    }
 }
 
 impl State {
-    fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
+    fn node_of(&self, fid: Fid, root_node: &Node) -> Result<Node, ErrorCode> {
         if fid == Fid::ROOT {
-            return Ok(Node::Root);
+            return Ok(root_node.clone());
         }
         self.fids
             .get(&fid)
@@ -322,7 +338,7 @@ impl FileServer for ProcFs {
         if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let mut node = state.node_of(fid)?;
+        let mut node = state.node_of(fid, &self.root_node)?;
         for name in names {
             node = state.child(&node, name)?;
         }
@@ -336,10 +352,10 @@ impl FileServer for ProcFs {
         // without a redundant empty walk, matching SrvFs and the reference server.
         if fid == Fid::ROOT {
             let state = self.state.lock().await;
-            return Ok(state.qid(&Node::Root));
+            return Ok(state.qid(&self.root_node));
         }
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let node = state.node_of(fid, &self.root_node)?;
         // Reopening a live fid before clunk is rejected, so a retried open cannot
         // overwrite a pending clone slot (leaking it) or downgrade write intent.
         if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
@@ -361,7 +377,7 @@ impl FileServer for ProcFs {
                 .clone_begin_with_namespace(parent, credentials, |pid| {
                     let mut child_namespace = spawn_namespace
                         .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
-                    if let Ok(proc_mount) = child_namespace.resolve("/proc") {
+                    if let Some(proc_access) = mount_access_at(&child_namespace, "/proc") {
                         let child_proc = proc_template.for_spawner(
                             Some(pid),
                             child_namespace.clone(),
@@ -371,7 +387,20 @@ impl FileServer for ProcFs {
                         child_namespace.mount(
                             "/proc",
                             InProcessTransport::new(Arc::new(child_proc)),
-                            proc_mount.access,
+                            proc_access,
+                        );
+                    }
+                    if let Some(clone_access) = mount_access_at(&child_namespace, "/proc/clone") {
+                        let child_clone = proc_template.clone_file_for_spawner(
+                            Some(pid),
+                            child_namespace.clone(),
+                            proc_template.spawn_context.credentials.clone(),
+                        );
+                        child_namespace.unmount("/proc/clone");
+                        child_namespace.mount(
+                            "/proc/clone",
+                            InProcessTransport::new(Arc::new(child_clone)),
+                            clone_access,
                         );
                     }
                     child_namespace
@@ -402,7 +431,7 @@ impl FileServer for ProcFs {
             {
                 return Ok(slice(pid.0.to_string().into_bytes(), offset, count));
             }
-            let node = state.node_of(fid)?;
+            let node = state.node_of(fid, &self.root_node)?;
             match node {
                 Node::Output(pid) => state
                     .outputs
@@ -417,7 +446,7 @@ impl FileServer for ProcFs {
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let node = state.node_of(fid, &self.root_node)?;
         // Write surfaces require write authority established at open.
         let has_write_intent = state
             .fids
@@ -462,7 +491,7 @@ impl FileServer for ProcFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let node = state.node_of(fid, &self.root_node)?;
         // Report the readable byte length so clients can size reads; write-only
         // surfaces (clone/ctl) are 0, and a process output is its retained length.
         let length = match &node {
@@ -559,6 +588,13 @@ impl FileServer for ProcFs {
         }
         Ok(())
     }
+}
+
+fn mount_access_at(namespace: &Namespace, path: &str) -> Option<Access> {
+    namespace
+        .union_at(path)
+        .last()
+        .map(|resolved| resolved.access)
 }
 
 /// A node's stable identity: file kind and a server-unique qid path. The qid

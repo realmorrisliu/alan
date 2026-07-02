@@ -231,6 +231,88 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
 }
 
 #[tokio::test]
+async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
+    let runner = Arc::new(CaptureRunner::new());
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/proc/clone",
+        InProcessTransport::new(Arc::new(fs.clone_file_for_spawner(
+            Some(parent_pid),
+            Namespace::new(),
+            Credentials::user("alan"),
+        ))),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(Some(parent_pid), namespace, Credentials::user("alan"));
+    let child = spawn(&spawner, Fid(20)).await;
+    let child_pid = Pid(child.parse::<u64>().unwrap());
+    let child_invocation = runner.wait_for(child_pid).await;
+    assert!(
+        child_invocation.namespace.resolve("/proc").is_err(),
+        "delegating /proc/clone must not grant the whole /proc tree"
+    );
+    let proc_clone = child_invocation
+        .namespace
+        .resolve("/proc/clone")
+        .expect("child namespace keeps delegated /proc/clone");
+
+    proc_clone
+        .call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(40),
+            names: proc_clone.rel.clone(),
+        })
+        .await
+        .unwrap();
+    proc_clone
+        .call(Request::Open {
+            fid: Fid(40),
+            mode: OpenMode::ReadWrite,
+        })
+        .await
+        .unwrap();
+    let grandchild = match proc_clone
+        .call(Request::Read {
+            fid: Fid(40),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap()
+    {
+        Response::Read { data } => String::from_utf8(data).unwrap(),
+        other => panic!("unexpected response: {other:?}"),
+    };
+    proc_clone
+        .call(Request::Write {
+            fid: Fid(40),
+            offset: 0,
+            data: br#"{"executable":"/bin/grandchild","args":[]}"#.to_vec(),
+        })
+        .await
+        .unwrap();
+    proc_clone
+        .call(Request::Clunk { fid: Fid(40) })
+        .await
+        .unwrap();
+
+    let recorded_parent = String::from_utf8(
+        read_at(&fs, &[&grandchild, "parent"], Fid(41))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        recorded_parent, child,
+        "grandchild spawned through delegated child /proc/clone must record the child as parent"
+    );
+}
+
+#[tokio::test]
 async fn a_malformed_exec_spec_is_rejected_at_clunk_and_leaks_nothing() {
     let fs = proc();
 
