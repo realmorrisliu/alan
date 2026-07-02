@@ -16,3 +16,5 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 alan-llm = { workspace = true, features = ["mock"] }
+anyhow.workspace = true
+async-trait.workspace = true

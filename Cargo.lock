@@ -192,6 +192,7 @@ version = "0.1.0"
 dependencies = [
  "alan-ap",
  "alan-llm",
+ "anyhow",
  "async-trait",
  "serde",
  "serde_json",

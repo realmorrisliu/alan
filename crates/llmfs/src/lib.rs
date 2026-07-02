@@ -13,19 +13,34 @@
 //! provider introspection, connection management, the versioned wire DTO,
 //! metering/rate-limiting/cost — stays deferred so the "core" does not absorb a
 //! whole product surface).
+//!
+//! A Generation moves through a small lifecycle: `open` (allocated, awaiting the
+//! request) → `running` (provider streaming) → a terminal state (`done`,
+//! `error`, `rejected`, or `aborted`). Every path that ends a Generation writes a
+//! terminal record to `events` and a terminal `status`, so a consumer tailing
+//! `events` at the live edge never blocks forever.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
-use alan_llm::{GenerationRequest, LlmProvider};
+use alan_llm::{GenerationRequest, LlmProvider, StreamChunk};
 use async_trait::async_trait;
 use serde::Deserialize;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
+
+/// Cap on a buffered request document, so a hostile writer cannot exhaust the
+/// server before the commit-time validation runs.
+const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 
 /// The neutral request document written to a Generation's `data` file. Minimal
-/// for this slice; the full versioned wire DTO is deferred.
+/// for this slice; the full versioned wire DTO is deferred. Unknown fields are
+/// rejected so an unsupported request (e.g. `tools`, `temperature`) fails at the
+/// commit boundary instead of silently running a different prompt.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequestDoc {
     #[serde(default)]
     system: Option<String>,
@@ -38,11 +53,70 @@ struct Connection {
     provider: AsyncMutex<Box<dyn LlmProvider>>,
 }
 
-/// One Generation's projected surfaces.
+/// A Generation's lifecycle status.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GenStatus {
+    Open,
+    Running,
+    Done,
+    Error,
+    Rejected,
+    Aborted,
+}
+
+impl GenStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            GenStatus::Open => "open",
+            GenStatus::Running => "running",
+            GenStatus::Done => "done",
+            GenStatus::Error => "error",
+            GenStatus::Rejected => "rejected",
+            GenStatus::Aborted => "aborted",
+        }
+    }
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            GenStatus::Done | GenStatus::Error | GenStatus::Rejected | GenStatus::Aborted
+        )
+    }
+}
+
+/// One Generation's projected surfaces and lifecycle.
 struct Generation {
-    connection: String,
+    /// The connection captured at allocation, so a later `register_connection`
+    /// replacing the name cannot reroute this Generation's request.
+    connection: Arc<Connection>,
+    /// The connection name, for directory membership under `connections/<conn>`.
+    connection_name: String,
     events: Stream,
-    status: StdMutex<&'static str>,
+    status: StdMutex<GenStatus>,
+    /// qid version, bumped on every status change so a cached `status`/dir qid
+    /// goes stale.
+    version: AtomicU32,
+    /// Signals the drain task to stop promptly on abort.
+    abort: Arc<Notify>,
+}
+
+impl Generation {
+    fn status(&self) -> GenStatus {
+        *self.status.lock().unwrap()
+    }
+    fn connection_name(&self) -> String {
+        self.connection_name.clone()
+    }
+    /// Move to a terminal (or running) status unless already terminal, bumping the
+    /// version. Returns whether the transition happened.
+    fn advance(&self, to: GenStatus) -> bool {
+        let mut s = self.status.lock().unwrap();
+        if s.is_terminal() {
+            return false;
+        }
+        *s = to;
+        self.version.fetch_add(1, Ordering::Relaxed);
+        true
+    }
 }
 
 /// What a fid points at within the llmfs tree.
@@ -61,6 +135,8 @@ enum Node {
 
 struct LlmFid {
     node: Node,
+    /// The open mode, once opened. `None` means walked-but-not-opened.
+    mode: Option<OpenMode>,
     /// For a fid that opened a `clone` file: the allocated Generation id.
     clone_gen: Option<String>,
     /// Buffered request document for a `data` fid (commit-on-clunk).
@@ -71,6 +147,7 @@ impl LlmFid {
     fn at(node: Node) -> Self {
         Self {
             node,
+            mode: None,
             clone_gen: None,
             write_buf: Vec::new(),
         }
@@ -82,6 +159,34 @@ struct State {
     gens: HashMap<String, Arc<Generation>>,
     fids: HashMap<Fid, LlmFid>,
     next_gen: u64,
+    /// Version of directory listings (`connections/`, a connection's contents),
+    /// bumped when a Generation is allocated so cached directory qids go stale.
+    listing_version: u32,
+}
+
+impl State {
+    /// The qid for a node, with its server-unique path and current version.
+    fn qid(&self, node: &Node) -> Qid {
+        let (kind, key) = node_identity(node);
+        let version = match node {
+            Node::Gen(id)
+            | Node::GenData(id)
+            | Node::GenEvents(id)
+            | Node::GenCtl(id)
+            | Node::GenStatus(id) => self
+                .gens
+                .get(id)
+                .map(|g| g.version.load(Ordering::Relaxed))
+                .unwrap_or(0),
+            Node::ConnectionsDir | Node::Connection(_) => self.listing_version,
+            Node::Root | Node::Clone(_) => 0,
+        };
+        Qid {
+            kind,
+            version,
+            path: hash_path(&key),
+        }
+    }
 }
 
 /// The LLM file server.
@@ -103,6 +208,7 @@ impl LlmFs {
                 gens: HashMap::new(),
                 fids: HashMap::new(),
                 next_gen: 0,
+                listing_version: 0,
             }),
         }
     }
@@ -142,7 +248,11 @@ impl LlmFs {
             Node::Connection(conn) => {
                 if name == "clone" {
                     Ok(Node::Clone(conn.clone()))
-                } else if state.gens.get(name).is_some_and(|g| &g.connection == conn) {
+                } else if state
+                    .gens
+                    .get(name)
+                    .is_some_and(|g| &g.connection_name() == conn)
+                {
                     Ok(Node::Gen(name.to_string()))
                 } else {
                     Err(ErrorCode::NotFound)
@@ -163,59 +273,103 @@ impl LlmFs {
 #[async_trait]
 impl FileServer for LlmFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        // A fid handles one interaction: never rebind the root or a live fid, or
+        // a caller could drop a `data` fid mid-request and lose the buffered write.
+        {
+            let state = self.state.lock().unwrap();
+            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+                return Err(ErrorCode::BadRequest);
+            }
+        }
         let mut node = self.node_of(fid)?;
         for name in names {
             node = self.child(&node, name)?;
         }
-        let qid = qid_of(&node);
-        self.state
-            .lock()
-            .unwrap()
-            .fids
-            .insert(newfid, LlmFid::at(node));
+        let mut state = self.state.lock().unwrap();
+        let qid = state.qid(&node);
+        state.fids.insert(newfid, LlmFid::at(node));
         Ok(qid)
     }
 
-    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let node = self.node_of(fid)?;
-        // Clone-via-open: allocate a fresh Generation under the connection.
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        let mut state = self.state.lock().unwrap();
+        // A fid opens once: a second open would allocate a second Generation on a
+        // clone file or re-establish intent, so reject it.
+        if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
+            return Err(ErrorCode::BadRequest);
+        }
+        let node = if fid == Fid::ROOT {
+            Node::Root
+        } else {
+            state
+                .fids
+                .get(&fid)
+                .map(|f| f.node.clone())
+                .ok_or(ErrorCode::NotFound)?
+        };
+
+        // Dial-time access check: a write-intent open on a read-only node, or a
+        // read/awareness-only open of the write-only surfaces, fails here.
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
+            return Err(ErrorCode::NoAccess);
+        }
+
+        // Clone-via-open allocates a fresh Generation; it mutates server state, so
+        // it requires write intent (an awareness-only open must not consume state).
         if let Node::Clone(conn) = &node {
-            let mut state = self.state.lock().unwrap();
+            if !matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+                return Err(ErrorCode::NoAccess);
+            }
+            let connection = state
+                .connections
+                .get(conn)
+                .cloned()
+                .ok_or(ErrorCode::NotFound)?;
             let id = format!("g{}", state.next_gen);
             state.next_gen += 1;
+            state.listing_version += 1;
             state.gens.insert(
                 id.clone(),
                 Arc::new(Generation {
-                    connection: conn.clone(),
+                    connection,
+                    connection_name: conn.clone(),
                     events: Stream::new(),
-                    status: StdMutex::new("open"),
+                    status: StdMutex::new(GenStatus::Open),
+                    version: AtomicU32::new(0),
+                    abort: Arc::new(Notify::new()),
                 }),
             );
             if let Some(f) = state.fids.get_mut(&fid) {
                 f.clone_gen = Some(id);
             }
         }
-        Ok(qid_of(&node))
+
+        let qid = state.qid(&node);
+        if let Some(f) = state.fids.get_mut(&fid) {
+            f.mode = Some(mode);
+        }
+        Ok(qid)
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        // An opened clone fid reads back the allocated Generation id.
+        // Reads need read authority from a successful read-open (ROOT is the
+        // pre-bound anchor and is always readable).
         let (node, clone_gen) = {
             let state = self.state.lock().unwrap();
-            let f = state.fids.get(&fid);
-            (
-                f.map(|f| f.node.clone()).or(if fid == Fid::ROOT {
-                    Some(Node::Root)
-                } else {
-                    None
-                }),
-                f.and_then(|f| f.clone_gen.clone()),
-            )
+            if fid == Fid::ROOT {
+                (Node::Root, None)
+            } else {
+                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
+                    return Err(ErrorCode::NoAccess);
+                }
+                (f.node.clone(), f.clone_gen.clone())
+            }
         };
+        // An opened clone fid reads back the allocated Generation id.
         if let Some(id) = clone_gen {
             return Ok(slice(id.into_bytes(), offset, count));
         }
-        let node = node.ok_or(ErrorCode::NotFound)?;
 
         // Stream node: clone the Stream out, then read without holding the lock.
         if let Node::GenEvents(id) = &node {
@@ -235,41 +389,88 @@ impl FileServer for LlmFs {
         Ok(slice(bytes, offset, count))
     }
 
-    async fn write(&self, fid: Fid, _offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let node = self.node_of(fid)?;
-        match node {
-            // Request document: buffer until clunk (commit-on-clunk).
-            Node::GenData(_) => {
-                let mut state = self.state.lock().unwrap();
-                state
-                    .fids
-                    .get_mut(&fid)
-                    .ok_or(ErrorCode::NotFound)?
-                    .write_buf
-                    .extend_from_slice(data);
-                Ok(data.len() as u32)
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        // Phase 1, under the lock: check write intent, resolve the node, and either
+        // buffer a `data` write or extract the Generation for a `ctl` command. The
+        // lock is released before any await (a `MutexGuard` is not `Send`, and the
+        // ctl path appends to `events`).
+        let generation = {
+            let mut state = self.state.lock().unwrap();
+            let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
+                return Err(ErrorCode::NoAccess);
             }
-            Node::GenCtl(id) => {
-                if data == b"abort" {
-                    let state = self.state.lock().unwrap();
-                    if let Some(g) = state.gens.get(&id) {
-                        *g.status.lock().unwrap() = "aborted";
+            match f.node.clone() {
+                // Request document: buffer at the caller's offset until clunk
+                // (commit-on-clunk), honoring out-of-order/retried writes.
+                Node::GenData(_) => {
+                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+                    if end > MAX_DOC_BYTES {
+                        return Err(ErrorCode::BadRequest);
                     }
-                    Ok(data.len() as u32)
-                } else {
-                    Err(ErrorCode::BadRequest)
+                    let buf = &mut state
+                        .fids
+                        .get_mut(&fid)
+                        .ok_or(ErrorCode::NotFound)?
+                        .write_buf;
+                    if buf.len() < end {
+                        buf.resize(end, 0);
+                    }
+                    buf[start..end].copy_from_slice(data);
+                    return Ok(data.len() as u32);
                 }
+                Node::GenCtl(id) => {
+                    // Accept newline-terminated commands (`echo abort > ctl`).
+                    if String::from_utf8_lossy(data).trim() != "abort" {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    state.gens.get(&id).cloned().ok_or(ErrorCode::NotFound)?
+                }
+                _ => return Err(ErrorCode::Unsupported),
             }
-            _ => Err(ErrorCode::Unsupported),
+        };
+
+        // Abort is valid only for a non-terminal Generation; aborting a finished or
+        // rejected one would rewrite a settled status.
+        if !generation.advance(GenStatus::Aborted) {
+            return Err(ErrorCode::BadRequest);
         }
+        // A terminal record so a watcher tailing `events` unblocks, and a signal so
+        // a running drain task stops promptly.
+        generation.events.append(b"{\"aborted\":true}\n").await;
+        generation.abort.notify_waiters();
+        Ok(data.len() as u32)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let node = self.node_of(fid)?;
+        // Resolve the qid and length under the lock; for the `events` stream, clone
+        // it out and await its length *without* the lock held.
+        let (qid, len) = {
+            let state = self.state.lock().unwrap();
+            let qid = state.qid(&node);
+            let len = match &node {
+                Node::GenEvents(id) => match state.gens.get(id) {
+                    Some(g) => Len::Events(g.events.clone()),
+                    None => Len::Now(0),
+                },
+                other => Len::Now(
+                    computed_bytes(&state, other)
+                        .map(|b| b.len() as u64)
+                        .unwrap_or(0),
+                ),
+            };
+            (qid, len)
+        };
+        let length = match len {
+            Len::Now(n) => n,
+            Len::Events(s) => s.len().await,
+        };
         Ok(Stat {
             name: String::new(),
-            qid: qid_of(&node),
-            length: 0,
+            qid,
+            length,
             writable: is_writable(&node),
         })
     }
@@ -292,59 +493,108 @@ impl FileServer for LlmFs {
         if fid == Fid::ROOT {
             return Ok(());
         }
-        // Take the fid; if it was a `data` write, commit-on-clunk starts the
-        // Generation. Collect what we need, then release the state lock before
-        // awaiting the provider.
+        // Take the fid; a `data` write commits the request on clunk. Collect what
+        // we need, then release the state lock before awaiting the provider.
         let commit = {
             let mut state = self.state.lock().unwrap();
             let Some(f) = state.fids.remove(&fid) else {
                 return Err(ErrorCode::NotFound);
             };
             match f.node {
-                Node::GenData(id) if !f.write_buf.is_empty() => {
+                Node::GenData(id) => {
                     let generation = state.gens.get(&id).cloned();
-                    let conn = generation
-                        .as_ref()
-                        .and_then(|g| state.connections.get(&g.connection).cloned());
-                    Some((f.write_buf, generation, conn))
+                    Some((f.write_buf, generation))
                 }
                 _ => None,
             }
         };
 
-        let Some((buf, Some(generation), Some(conn))) = commit else {
+        let Some((buf, Some(generation))) = commit else {
             return Ok(());
         };
 
-        // Parse the request document; a malformed document is a commit-time error.
-        let doc: RequestDoc = serde_json::from_slice(&buf).map_err(|_| ErrorCode::BadRequest)?;
+        // The commit is the single `open` → `running` transition: reject a second
+        // request into the same Generation (already running/terminal), and reject
+        // one that was aborted before commit.
+        if generation.status() != GenStatus::Open {
+            return Err(ErrorCode::BadRequest);
+        }
+
+        // An empty request is malformed, as is invalid JSON: mark the Generation
+        // rejected (with a terminal event) so an observer never waits forever.
+        let doc: Result<RequestDoc, ()> = if buf.is_empty() {
+            Err(())
+        } else {
+            serde_json::from_slice(&buf).map_err(|_| ())
+        };
+        let doc = match doc {
+            Ok(doc) => doc,
+            Err(()) => {
+                self.fail(&generation, GenStatus::Rejected, "rejected")
+                    .await;
+                return Err(ErrorCode::BadRequest);
+            }
+        };
+
         let mut request = GenerationRequest::new().with_user_message(doc.user);
         if let Some(system) = doc.system {
             request = request.with_system_prompt(system);
         }
 
-        let mut rx = {
-            let mut provider = conn.provider.lock().await;
-            provider
-                .generate_stream(request)
-                .await
-                .map_err(|_| ErrorCode::Io)?
+        // Start the provider stream. A startup failure is terminal (error), not a
+        // Generation left `open` with an empty `events`.
+        let rx = {
+            let mut provider = generation.connection.provider.lock().await;
+            provider.generate_stream(request).await
         };
-        *generation.status.lock().unwrap() = "running";
+        let mut rx = match rx {
+            Ok(rx) => rx,
+            Err(_) => {
+                self.fail(&generation, GenStatus::Error, "error").await;
+                return Err(ErrorCode::Io);
+            }
+        };
+
+        // An abort that raced startup wins: do not begin streaming.
+        if !generation.advance(GenStatus::Running) {
+            return Ok(());
+        }
 
         // Drain the provider stream into the Generation's events file.
         let events = generation.events.clone();
-        let generation = generation.clone();
+        let abort = generation.abort.clone();
+        let drain_gen = generation.clone();
         tokio::spawn(async move {
-            while let Some(chunk) = rx.recv().await {
-                if let Some(text) = chunk.text {
-                    let record = serde_json::json!({ "text": text }).to_string();
-                    events.append(format!("{record}\n").as_bytes()).await;
-                }
-                if chunk.is_finished {
-                    events.append(b"{\"done\":true}\n").await;
-                    *generation.status.lock().unwrap() = "done";
-                    break;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = abort.notified() => break, // aborted: status/record already set
+                    chunk = rx.recv() => match chunk {
+                        Some(chunk) => {
+                            // Catch an abort whose notify raced before this task
+                            // parked on `notified()`: stop without appending more.
+                            if drain_gen.status() == GenStatus::Aborted {
+                                break;
+                            }
+                            if let Some(record) = chunk_record(&chunk) {
+                                events.append(format!("{record}\n").as_bytes()).await;
+                            }
+                            if chunk.is_finished {
+                                events.append(b"{\"done\":true}\n").await;
+                                drain_gen.advance(GenStatus::Done);
+                                break;
+                            }
+                        }
+                        None => {
+                            // The provider stream closed before a finished chunk:
+                            // convert it to a terminal error so a tailing reader
+                            // does not block at the live edge forever.
+                            if drain_gen.advance(GenStatus::Error) {
+                                events.append(b"{\"error\":\"stream closed\"}\n").await;
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -353,41 +603,141 @@ impl FileServer for LlmFs {
 }
 
 impl LlmFs {
+    /// Record a terminal failure (rejected/error) on a Generation before returning
+    /// the commit error, so an observer of `status`/`events` sees a terminal state.
+    async fn fail(&self, generation: &Generation, status: GenStatus, tag: &str) {
+        if generation.advance(status) {
+            generation
+                .events
+                .append(format!("{{\"{tag}\":true}}\n").as_bytes())
+                .await;
+        }
+    }
+
     fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         let state = self.state.lock().unwrap();
-        let bytes = match node {
-            Node::Root => b"connections".to_vec(),
-            Node::ConnectionsDir => {
-                let mut names: Vec<_> = state.connections.keys().cloned().collect();
-                names.sort();
-                names.join("\n").into_bytes()
-            }
-            Node::Connection(_) => b"clone".to_vec(),
-            Node::Gen(_) => b"data\nevents\nctl\nstatus".to_vec(),
-            Node::GenStatus(id) => {
-                let g = state.gens.get(id).ok_or(ErrorCode::NotFound)?;
-                format!("{}\n", g.status.lock().unwrap()).into_bytes()
-            }
-            // clone, data, ctl, events are open/write/stream surfaces, not read here.
-            _ => return Err(ErrorCode::Unsupported),
-        };
-        Ok(bytes)
+        computed_bytes(&state, node)
     }
 }
 
-fn qid_of(node: &Node) -> Qid {
-    let (kind, path) = match node {
-        Node::Root | Node::ConnectionsDir | Node::Connection(_) | Node::Gen(_) => {
-            (FileKind::Dir, 0)
+/// The stat length for a node: for `events` the caller awaits `Stream::len`; every
+/// other surface has a synchronously-computable length.
+enum Len {
+    Now(u64),
+    Events(Stream),
+}
+
+/// Render a readable node's bytes from already-locked state (so both `read` and
+/// `stat`'s length use one definition).
+fn computed_bytes(state: &State, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+    let bytes = match node {
+        Node::Root => b"connections".to_vec(),
+        Node::ConnectionsDir => {
+            let mut names: Vec<_> = state.connections.keys().cloned().collect();
+            names.sort();
+            names.join("\n").into_bytes()
         }
-        Node::Clone(_) => (FileKind::Clone, 1),
-        Node::GenEvents(_) => (FileKind::Stream, 2),
-        Node::GenData(_) | Node::GenCtl(_) | Node::GenStatus(_) => (FileKind::File, 3),
+        // A connection lists `clone` plus its allocated Generation ids, so a
+        // permitted observer can discover live/finished Generations as files.
+        Node::Connection(conn) => {
+            let mut names = vec!["clone".to_string()];
+            let mut ids: Vec<_> = state
+                .gens
+                .iter()
+                .filter(|(_, g)| &g.connection_name() == conn)
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.sort();
+            names.extend(ids);
+            names.join("\n").into_bytes()
+        }
+        Node::Gen(_) => b"data\nevents\nctl\nstatus".to_vec(),
+        Node::GenStatus(id) => {
+            let g = state.gens.get(id).ok_or(ErrorCode::NotFound)?;
+            format!("{}\n", g.status().as_str()).into_bytes()
+        }
+        // clone, data, ctl, events are open/write/stream surfaces, not read here.
+        _ => return Err(ErrorCode::Unsupported),
     };
-    Qid {
-        kind,
-        version: 0,
-        path,
+    Ok(bytes)
+}
+
+/// The kind and a server-unique identity key for a node (so distinct connections
+/// and Generations get distinct qids).
+fn node_identity(node: &Node) -> (FileKind, String) {
+    match node {
+        Node::Root => (FileKind::Dir, "/".to_string()),
+        Node::ConnectionsDir => (FileKind::Dir, "connections".to_string()),
+        Node::Connection(c) => (FileKind::Dir, format!("connections/{c}")),
+        Node::Clone(c) => (FileKind::Clone, format!("connections/{c}/clone")),
+        Node::Gen(id) => (FileKind::Dir, format!("gen/{id}")),
+        Node::GenData(id) => (FileKind::File, format!("gen/{id}/data")),
+        Node::GenEvents(id) => (FileKind::Stream, format!("gen/{id}/events")),
+        Node::GenCtl(id) => (FileKind::File, format!("gen/{id}/ctl")),
+        Node::GenStatus(id) => (FileKind::File, format!("gen/{id}/status")),
+    }
+}
+
+fn hash_path(key: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    h.finish()
+}
+
+/// Build one `events` record from the meaningful fields of a stream chunk, so a
+/// non-text chunk (thinking, usage, finish metadata, tool-call delta) is not
+/// dropped. Returns `None` for a chunk with nothing to record.
+fn chunk_record(chunk: &StreamChunk) -> Option<String> {
+    let mut map = serde_json::Map::new();
+    let put = |m: &mut serde_json::Map<String, serde_json::Value>, k: &str, v: &Option<String>| {
+        if let Some(s) = v {
+            m.insert(k.to_string(), serde_json::Value::String(s.clone()));
+        }
+    };
+    put(&mut map, "text", &chunk.text);
+    put(&mut map, "thinking", &chunk.thinking);
+    put(&mut map, "thinking_signature", &chunk.thinking_signature);
+    put(&mut map, "redacted_thinking", &chunk.redacted_thinking);
+    put(&mut map, "finish_reason", &chunk.finish_reason);
+    put(
+        &mut map,
+        "provider_response_id",
+        &chunk.provider_response_id,
+    );
+    put(
+        &mut map,
+        "provider_response_status",
+        &chunk.provider_response_status,
+    );
+    if let Some(seq) = chunk.sequence_number {
+        map.insert("sequence_number".to_string(), seq.into());
+    }
+    if let Some(u) = &chunk.usage {
+        map.insert(
+            "usage".to_string(),
+            serde_json::json!({
+                "prompt_tokens": u.prompt_tokens,
+                "completion_tokens": u.completion_tokens,
+                "total_tokens": u.total_tokens,
+            }),
+        );
+    }
+    if let Some(tc) = &chunk.tool_call_delta {
+        map.insert(
+            "tool_call".to_string(),
+            serde_json::json!({
+                "index": tc.index,
+                "id": tc.id,
+                "name": tc.name,
+                "arguments_delta": tc.arguments_delta,
+                "arguments": tc.arguments,
+            }),
+        );
+    }
+    if map.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(map).to_string())
     }
 }
 
