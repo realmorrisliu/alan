@@ -267,7 +267,7 @@ async fn connection_profiles_appear_and_disappear_as_endpoints() {
             .unwrap();
     assert_eq!(provider.trim(), "openai_responses");
 
-    fs.unregister_connection("work");
+    fs.unregister_connection("work").await;
     let connections = String::from_utf8(read_all(&fs, &["connections"], Fid(5)).await).unwrap();
     assert_eq!(connections, "");
     assert_eq!(
@@ -982,6 +982,15 @@ async fn stat_reports_real_status_length() {
 async fn status_exposes_progress_tokens_and_cost() {
     let fs = llmfs_with(UsageProvider);
     let g = clone_gen(&fs, Fid(1)).await;
+    fs.walk(
+        Fid::ROOT,
+        Fid(5),
+        &["connections".into(), "default".into(), "meter".into()],
+    )
+    .await
+    .unwrap();
+    let meter_v0 = fs.stat(Fid(5)).await.unwrap().qid.version;
+
     commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
         .await
         .unwrap();
@@ -1002,9 +1011,14 @@ async fn status_exposes_progress_tokens_and_cost() {
     assert_eq!(status["cost"]["currency"], "USD");
     assert_eq!(status["cost"]["amount_microusd"], 0);
     assert_eq!(status["cost"]["metered"], false);
+    let meter_v1 = fs.stat(Fid(5)).await.unwrap().qid.version;
+    assert_ne!(
+        meter_v0, meter_v1,
+        "meter qid version changes when usage updates token totals"
+    );
 
     let meter: serde_json::Value =
-        serde_json::from_slice(&read_all(&fs, &["connections", "default", "meter"], Fid(5)).await)
+        serde_json::from_slice(&read_all(&fs, &["connections", "default", "meter"], Fid(6)).await)
             .unwrap();
     assert_eq!(meter["meter"]["generation_starts"], 1);
     assert_eq!(meter["meter"]["total_tokens"], 18);
@@ -1189,6 +1203,50 @@ async fn a_running_generation_can_be_aborted() {
     fs.open(Fid(3), OpenMode::Write).await.unwrap();
     fs.write(Fid(3), 0, b"abort").await.unwrap();
     assert_eq!(status_of(&fs, &g, Fid(4)).await, "aborted");
+}
+
+#[tokio::test]
+async fn unregister_connection_aborts_active_generations() {
+    let fs = llmfs_with(HangingProvider);
+    let g = clone_gen(&fs, Fid(1)).await;
+    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(3),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "events".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(3), OpenMode::Read).await.unwrap();
+    fs.unregister_connection("default").await;
+
+    let events = String::from_utf8(fs.read(Fid(3), 0, 65536).await.unwrap()).unwrap();
+    assert!(
+        events.contains("\"aborted\""),
+        "unregister appends a terminal aborted event: {events:?}"
+    );
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(4), &["connections".into(), "default".into()])
+            .await,
+        Err(ErrorCode::NotFound),
+        "the connection endpoint is removed"
+    );
+
+    fs.register_connection("default", Box::new(MockLlmProvider::new()));
+    let listing =
+        String::from_utf8(read_all(&fs, &["connections", "default"], Fid(5)).await).unwrap();
+    assert!(
+        !listing.lines().any(|line| line == g),
+        "old aborted generation must not reappear under a re-registered connection: {listing:?}"
+    );
 }
 
 #[tokio::test]

@@ -381,6 +381,7 @@ struct Connection {
     generation_starts: AtomicU64,
     total_tokens: AtomicU64,
     total_cost_microusd: AtomicU64,
+    meter_version: AtomicU32,
 }
 
 /// Agent-visible metadata for a callable Connection.
@@ -435,13 +436,22 @@ impl Connection {
                 .compare_exchange(current, current + 1, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                self.meter_version.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
         }
     }
 
     fn record_token_delta(&self, delta: u64) {
+        if delta == 0 {
+            return;
+        }
         self.total_tokens.fetch_add(delta, Ordering::Relaxed);
+        self.meter_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn meter_version(&self) -> u32 {
+        self.meter_version.load(Ordering::Relaxed)
     }
 
     fn meter_doc(&self, connection: &str) -> String {
@@ -540,6 +550,7 @@ impl Generation {
             .record_token_delta(next_total.saturating_sub(previous_total));
         self.version.fetch_add(1, Ordering::Relaxed);
     }
+
     /// Move to a terminal (or running) status unless already terminal, bumping the
     /// version. Returns whether the transition happened.
     fn advance(&self, to: GenStatus) -> bool {
@@ -592,6 +603,9 @@ struct LlmFid {
     node: Node,
     /// The open mode, once opened. `None` means walked-but-not-opened.
     mode: Option<OpenMode>,
+    /// For an opened `events` fid: keep the stream reachable even if the owning
+    /// Generation is later removed from the connection listing.
+    events: Option<Stream>,
     /// For a fid that opened a `clone` file: the allocated Generation id.
     clone_gen: Option<String>,
     /// Buffered request document for a `data` fid (commit-on-clunk).
@@ -603,6 +617,7 @@ impl LlmFid {
         Self {
             node,
             mode: None,
+            events: None,
             clone_gen: None,
             write_buf: Vec::new(),
         }
@@ -637,8 +652,12 @@ impl State {
             | Node::Connection(_)
             | Node::ConnectionProvider(_)
             | Node::ConnectionProfile(_)
-            | Node::ConnectionMeter(_)
             | Node::ConnectionCapabilities(_) => self.listing_version,
+            Node::ConnectionMeter(conn) => self
+                .connections
+                .get(conn)
+                .map(|connection| connection.meter_version())
+                .unwrap_or(self.listing_version),
             Node::Root
             | Node::ProvidersDir
             | Node::Provider(_)
@@ -731,15 +750,41 @@ impl LlmFs {
         );
     }
 
-    pub fn unregister_connection(&self, name: &str) {
-        let mut state = self.state.lock().unwrap();
-        if state.connections.remove(name).is_none() {
-            return;
+    pub async fn unregister_connection(&self, name: &str) {
+        let active = {
+            let mut state = self.state.lock().unwrap();
+            if state.connections.remove(name).is_none() {
+                return;
+            }
+            let mut terminal = Vec::new();
+            let mut active = Vec::new();
+            for (id, generation) in &state.gens {
+                if generation.connection_name() != name {
+                    continue;
+                }
+                if generation.status().is_terminal() {
+                    terminal.push(id.clone());
+                } else {
+                    active.push((id.clone(), generation.clone()));
+                }
+            }
+            for id in terminal {
+                state.gens.remove(&id);
+            }
+            state.listing_version += 1;
+            active
+        };
+
+        for (_, generation) in &active {
+            let _ = abort_generation(generation).await;
         }
-        state
-            .gens
-            .retain(|_, generation| generation.connection_name() != name);
-        state.listing_version += 1;
+        if !active.is_empty() {
+            let mut state = self.state.lock().unwrap();
+            for (id, _) in active {
+                state.gens.remove(&id);
+            }
+            state.listing_version += 1;
+        }
     }
 
     fn register_connection_inner(
@@ -765,6 +810,7 @@ impl LlmFs {
                 generation_starts: AtomicU64::new(0),
                 total_tokens: AtomicU64::new(0),
                 total_cost_microusd: AtomicU64::new(0),
+                meter_version: AtomicU32::new(0),
             }),
         );
         // The `connections/` listing changed: bump its qid version so a cached
@@ -925,9 +971,22 @@ impl FileServer for LlmFs {
             reap_terminal_generations(&mut state, conn);
         }
 
+        let opened_events = if let Node::GenEvents(id) = &node {
+            Some(
+                state
+                    .gens
+                    .get(id)
+                    .ok_or(ErrorCode::NotFound)?
+                    .events
+                    .clone(),
+            )
+        } else {
+            None
+        };
         let qid = state.qid(&node);
         if let Some(f) = state.fids.get_mut(&fid) {
             f.mode = Some(mode);
+            f.events = opened_events;
         }
         Ok(qid)
     }
@@ -935,16 +994,16 @@ impl FileServer for LlmFs {
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
         // Reads need read authority from a successful read-open (ROOT is the
         // pre-bound anchor and is always readable).
-        let (node, clone_gen) = {
+        let (node, clone_gen, opened_events) = {
             let state = self.state.lock().unwrap();
             if fid == Fid::ROOT {
-                (Node::Root, None)
+                (Node::Root, None, None)
             } else {
                 let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
                 if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
-                (f.node.clone(), f.clone_gen.clone())
+                (f.node.clone(), f.clone_gen.clone(), f.events.clone())
             }
         };
         // An opened clone fid reads back the allocated Generation id.
@@ -954,7 +1013,9 @@ impl FileServer for LlmFs {
 
         // Stream node: clone the Stream out, then read without holding the lock.
         if let Node::GenEvents(id) = &node {
-            let events = {
+            let events = if let Some(events) = opened_events {
+                events
+            } else {
                 let state = self.state.lock().unwrap();
                 state
                     .gens
@@ -1012,24 +1073,7 @@ impl FileServer for LlmFs {
             }
         };
 
-        // Finalize under the per-Generation lock so this abort and the drain task
-        // cannot interleave: once aborted, no further chunk or `done` record is
-        // written. Aborting a terminal Generation is refused (settled status).
-        {
-            let _guard = generation.finalize.lock().await;
-            if generation.status().is_terminal() {
-                return Err(ErrorCode::BadRequest);
-            }
-            generation
-                .events
-                .append(&event_line(WireStreamEventV1::aborted()))
-                .await;
-            generation.advance(GenStatus::Aborted);
-        }
-        // Wake a running drain task (or a pending provider startup) so it stops
-        // promptly. `notify_one` stores a permit if no waiter is parked yet, so an
-        // abort that arrives before the drain reaches `notified()` is not lost.
-        generation.abort.notify_one();
+        abort_generation(&generation).await?;
         Ok(data.len() as u32)
     }
 
@@ -1369,6 +1413,28 @@ fn reap_terminal_generations(state: &mut State, connection: &str) {
         state.gens.remove(&id);
         state.listing_version += 1;
     }
+}
+
+async fn abort_generation(generation: &Generation) -> Result<(), ErrorCode> {
+    // Finalize under the per-Generation lock so this abort and the drain task
+    // cannot interleave: once aborted, no further chunk or `done` record is
+    // written. Aborting a terminal Generation is refused (settled status).
+    {
+        let _guard = generation.finalize.lock().await;
+        if generation.status().is_terminal() {
+            return Err(ErrorCode::BadRequest);
+        }
+        generation
+            .events
+            .append(&event_line(WireStreamEventV1::aborted()))
+            .await;
+        generation.advance(GenStatus::Aborted);
+    }
+    // Wake a running drain task (or a pending provider startup) so it stops
+    // promptly. `notify_one` stores a permit if no waiter is parked yet, so an
+    // abort that arrives before the drain reaches `notified()` is not lost.
+    generation.abort.notify_one();
+    Ok(())
 }
 
 /// The kind and a server-unique identity key for a node (so distinct connections
