@@ -6,11 +6,18 @@
 
 mod context;
 mod registry;
+mod reified_namespace;
 mod sandbox;
 mod sandbox_backend;
 
 pub use context::{ToolContext, ToolExecutionBinding};
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
+pub use reified_namespace::{
+    DEFAULT_SCRATCH_TMP_NAMESPACE_PATH, DEFAULT_WORKSPACE_NAMESPACE_PATH,
+    ReifiedExecutionSubstrateMount, ReifiedHostMount, ReifiedMountAccess, ReifiedMountDeclaration,
+    ReifiedMountSource, ReifiedNamespacePlan, ReifiedNamespacePlanError, ReifiedNamespacePlanInput,
+    ReifiedScratchTmpMount, default_execution_substrate,
+};
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,
