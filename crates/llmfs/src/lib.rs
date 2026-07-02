@@ -636,8 +636,22 @@ impl FileServer for LlmFs {
                                 events.append(format!("{record}\n").as_bytes()).await;
                             }
                             if chunk.is_finished {
-                                events.append(b"{\"done\":true}\n").await;
-                                drain_gen.advance(GenStatus::Done);
+                                // A finished chunk carrying a `stream_error` reason is
+                                // an upstream failure, not success: map it to a
+                                // terminal error, not `done`.
+                                let errored = chunk
+                                    .finish_reason
+                                    .as_deref()
+                                    .is_some_and(|r| r.starts_with("stream_error"));
+                                if errored {
+                                    let reason = chunk.finish_reason.clone().unwrap_or_default();
+                                    let record = serde_json::json!({ "error": reason }).to_string();
+                                    events.append(format!("{record}\n").as_bytes()).await;
+                                    drain_gen.advance(GenStatus::Error);
+                                } else {
+                                    events.append(b"{\"done\":true}\n").await;
+                                    drain_gen.advance(GenStatus::Done);
+                                }
                                 break;
                             }
                         }

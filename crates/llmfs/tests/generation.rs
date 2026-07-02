@@ -841,3 +841,76 @@ async fn abort_during_provider_startup_cancels_it() {
     assert_eq!(r, Ok(()));
     assert_eq!(status_of(&fs, &g, Fid(4)).await, "aborted");
 }
+
+/// Emits some text then a *finished* chunk whose finish_reason is `stream_error`
+/// (an upstream failure after partial output), like the real adapters.
+struct StreamErrorProvider;
+
+#[async_trait::async_trait]
+impl LlmProvider for StreamErrorProvider {
+    async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        unimplemented!()
+    }
+    async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+        unimplemented!()
+    }
+    async fn generate_stream(
+        &mut self,
+        _: GenerationRequest,
+    ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+        let (tx, rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            let _ = tx.send(text_chunk("partial", false)).await;
+            let mut err = text_chunk("", true);
+            err.text = None;
+            err.finish_reason = Some("stream_error".to_string());
+            let _ = tx.send(err).await;
+        });
+        Ok(rx)
+    }
+    fn provider_name(&self) -> &'static str {
+        "stream-error"
+    }
+}
+
+#[tokio::test]
+async fn a_stream_error_finish_reason_is_terminal_error_not_done() {
+    let fs = llmfs_with(StreamErrorProvider);
+    let g = clone_gen(&fs, Fid(1)).await;
+    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+        .await
+        .unwrap();
+    // Tail events to a terminal record.
+    fs.walk(
+        Fid::ROOT,
+        Fid(3),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "events".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(3), OpenMode::Read).await.unwrap();
+    let mut acc = String::new();
+    let mut offset = 0u64;
+    loop {
+        let chunk =
+            tokio::time::timeout(Duration::from_millis(500), fs.read(Fid(3), offset, 65536))
+                .await
+                .expect("events stalled")
+                .unwrap();
+        offset += chunk.len() as u64;
+        acc.push_str(&String::from_utf8_lossy(&chunk));
+        if acc.contains("error") {
+            break;
+        }
+    }
+    assert!(
+        !acc.contains("\"done\""),
+        "a stream error must not record done: {acc:?}"
+    );
+    assert_eq!(status_of(&fs, &g, Fid(4)).await, "error");
+}
