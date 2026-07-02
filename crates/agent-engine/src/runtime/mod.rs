@@ -26,8 +26,10 @@ mod turn_support;
 mod virtual_tools;
 
 pub use agent_loop::{
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
+    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceRuntimeEnvironment,
+    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceTurnRuntimeConfig,
 };
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,

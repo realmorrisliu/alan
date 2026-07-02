@@ -220,6 +220,14 @@ impl ProcessTable {
         self.versions.get(pid.0)
     }
 
+    /// Bump a committed process's file generation after externally visible
+    /// metadata changes.
+    pub fn bump_generation(&mut self, pid: Pid) {
+        if self.processes.contains_key(&pid) {
+            self.versions.bump(pid.0);
+        }
+    }
+
     fn alloc_pid(&mut self) -> Pid {
         let pid = Pid(self.next);
         self.next += 1;

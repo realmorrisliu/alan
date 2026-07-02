@@ -15,7 +15,7 @@ use alan_ap::reference::MemFs;
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
 };
-use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+use alan_kernel::{Access, LiveNamespace, MountFs, Namespace, ProcFs};
 use tokio::sync::Notify;
 
 fn memfs() -> InProcessTransport {
@@ -28,6 +28,13 @@ fn procfs() -> InProcessTransport {
 
 fn createfs() -> InProcessTransport {
     InProcessTransport::new(Arc::new(CreateFs::default()))
+}
+
+fn static_filefs(content: &'static [u8]) -> InProcessTransport {
+    InProcessTransport::new(Arc::new(StaticFileFs {
+        content,
+        fids: tokio::sync::Mutex::new(HashMap::new()),
+    }))
 }
 
 /// A namespace with `/proc` (ProcFs) and `/data` (MemFs), both read-write.
@@ -48,6 +55,13 @@ async fn read_lines(fs: &MountFs, path: &[&str], fid: Fid) -> Vec<String> {
         .lines()
         .map(str::to_string)
         .collect()
+}
+
+async fn read_file(fs: &MountFs, path: &[&str], fid: Fid) -> Vec<u8> {
+    let names: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+    fs.walk(Fid::ROOT, fid, &names).await.unwrap();
+    fs.open(fid, OpenMode::Read).await.unwrap();
+    fs.read(fid, 0, 4096).await.unwrap()
 }
 
 #[derive(Clone)]
@@ -236,6 +250,84 @@ impl FileServer for CreateFs {
     }
 }
 
+/// A tiny read-only server with one file at `value`.
+struct StaticFileFs {
+    content: &'static [u8],
+    fids: tokio::sync::Mutex<HashMap<Fid, bool>>, // fid -> is `value`
+}
+
+#[async_trait::async_trait]
+impl FileServer for StaticFileFs {
+    async fn walk(&self, _fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let (is_value, kind) = match names {
+            [] => (false, FileKind::Dir),
+            [name] if name == "value" => (true, FileKind::File),
+            _ => return Err(ErrorCode::NotFound),
+        };
+        self.fids.lock().await.insert(newfid, is_value);
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+            return Err(ErrorCode::NoAccess);
+        }
+        let kind = if *self.fids.lock().await.get(&fid).unwrap_or(&false) {
+            FileKind::File
+        } else {
+            FileKind::Dir
+        };
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        if !*self.fids.lock().await.get(&fid).unwrap_or(&false) {
+            return Ok(b"value".to_vec());
+        }
+        let start = (offset as usize).min(self.content.len());
+        let end = self.content.len().min(start + count as usize);
+        Ok(self.content[start..end].to_vec())
+    }
+
+    async fn write(&self, _: Fid, _: Offset, _: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: String::new(),
+            qid: Qid {
+                kind: FileKind::File,
+                version: 0,
+                path: 0,
+            },
+            length: self.content.len() as u64,
+            writable: false,
+        })
+    }
+
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids.lock().await.remove(&fid);
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn root_lists_its_mount_points_as_a_synthetic_directory() {
     let fs = MountFs::new(ns());
@@ -419,6 +511,100 @@ async fn a_nested_mount_appears_through_synthetic_parents() {
     .unwrap();
     fs.open(Fid(3), OpenMode::Read).await.unwrap();
     assert_eq!(fs.read(Fid(3), 0, 64).await.unwrap(), b"hi");
+}
+
+#[tokio::test]
+async fn live_namespace_mount_is_visible_to_future_walks() {
+    let live = LiveNamespace::new(Namespace::new());
+    let fs = MountFs::from_live_namespace(live.clone());
+
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(1), &["mnt".into(), "project".into()])
+            .await,
+        Err(ErrorCode::NotFound)
+    );
+
+    live.mount("/mnt/project", static_filefs(b"mounted"), Access::ReadWrite);
+
+    assert_eq!(
+        read_file(&fs, &["mnt", "project", "value"], Fid(2)).await,
+        b"mounted"
+    );
+    assert_eq!(read_lines(&fs, &["mnt"], Fid(3)).await, vec!["project"]);
+}
+
+#[tokio::test]
+async fn live_namespace_mutation_bumps_synthetic_directory_qids() {
+    let live = LiveNamespace::new(Namespace::new());
+    let fs = MountFs::from_live_namespace(live.clone());
+
+    live.mount("/mnt/old", static_filefs(b"old"), Access::ReadWrite);
+    let before_walk = fs.walk(Fid::ROOT, Fid(1), &["mnt".into()]).await.unwrap();
+    let before_stat = fs.stat(Fid(1)).await.unwrap();
+    assert_eq!(before_walk.version, live.generation());
+    assert_eq!(before_stat.qid.version, live.generation());
+
+    live.mount("/mnt/project", static_filefs(b"new"), Access::ReadWrite);
+
+    let after_stat = fs.stat(Fid(1)).await.unwrap();
+    assert_ne!(after_stat.qid.version, before_stat.qid.version);
+    assert_eq!(after_stat.qid.version, live.generation());
+    let mut entries = read_lines(&fs, &["mnt"], Fid(2)).await;
+    entries.sort();
+    assert_eq!(entries, vec!["old", "project"]);
+}
+
+#[tokio::test]
+async fn live_namespace_replace_mount_does_not_accumulate_duplicate_descriptions() {
+    let live = LiveNamespace::new(Namespace::new());
+    let fs = MountFs::from_live_namespace(live.clone());
+
+    live.replace_mount("/mnt/project", static_filefs(b"old"), Access::ReadWrite);
+    live.replace_mount("/mnt/project", static_filefs(b"new"), Access::ReadOnly);
+
+    assert_eq!(
+        live.describe(),
+        vec![("/mnt/project".to_string(), Access::ReadOnly)]
+    );
+    assert_eq!(
+        read_file(&fs, &["mnt", "project", "value"], Fid(1)).await,
+        b"new"
+    );
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &["mnt".into(), "project".into(), "value".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs.open(Fid(2), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+}
+
+#[tokio::test]
+async fn live_namespace_replacement_preserves_already_open_fids() {
+    let live = LiveNamespace::new(Namespace::new());
+    let fs = MountFs::from_live_namespace(live.clone());
+
+    live.replace_mount("/mnt/project", static_filefs(b"old"), Access::ReadWrite);
+    fs.walk(
+        Fid::ROOT,
+        Fid(1),
+        &["mnt".into(), "project".into(), "value".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(1), OpenMode::Read).await.unwrap();
+
+    live.replace_mount("/mnt/project", static_filefs(b"new"), Access::ReadWrite);
+
+    assert_eq!(fs.read(Fid(1), 0, 4096).await.unwrap(), b"old");
+    assert_eq!(
+        read_file(&fs, &["mnt", "project", "value"], Fid(2)).await,
+        b"new"
+    );
 }
 
 #[tokio::test]

@@ -11,7 +11,10 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::{
+    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceMountApplication, NormalizedToolCall,
+    RuntimeLoopState,
+};
 use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
@@ -514,10 +517,27 @@ fn handle_mount_escalation_resolution(
     };
     let approved = choice_str == "approve";
     let grant = parse_mount_grant_request(&mount_request);
+    let namespace_application = if approved {
+        grant
+            .as_ref()
+            .map(|grant| {
+                state
+                    .namespace_environment()
+                    .apply_approved_mount_grant(&grant.approved_mount_grant())
+            })
+            .unwrap_or_else(|| {
+                NamespaceMountApplication::unavailable("missing approved mount grant details")
+            })
+    } else {
+        NamespaceMountApplication {
+            namespace_applied: false,
+            namespace_error: None,
+        }
+    };
     let tool_sandbox_projection_changed = approved
         && grant
             .as_ref()
-            .is_some_and(|grant| grant.access == "read_write")
+            .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
         && grant.as_ref().is_some_and(|grant| {
             state
                 .tool_catalog
@@ -526,7 +546,7 @@ fn handle_mount_escalation_resolution(
     let tool_sandbox_applied = approved
         && grant
             .as_ref()
-            .is_some_and(|grant| grant.access == "read_write")
+            .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
         && state
             .tool_catalog
             .default_sandbox_writable_roots()
@@ -541,7 +561,8 @@ fn handle_mount_escalation_resolution(
         "status": status,
         "approved": approved,
         "live_applied": false,
-        "namespace_applied": false,
+        "namespace_applied": namespace_application.namespace_applied,
+        "namespace_error": namespace_application.namespace_error,
         "tool_sandbox_applied": tool_sandbox_applied,
         "tool_sandbox_projection_changed": tool_sandbox_projection_changed,
         "checkpoint_id": pending.checkpoint_id.clone(),
@@ -615,7 +636,8 @@ fn host_mount_grant_event_payload(
         "checkpoint_id": result.get("checkpoint_id").and_then(serde_json::Value::as_str),
         "approved": true,
         "live_applied": false,
-        "namespace_applied": false,
+        "namespace_applied": result.get("namespace_applied").and_then(serde_json::Value::as_bool),
+        "namespace_error": result.get("namespace_error").and_then(serde_json::Value::as_str),
         "tool_sandbox_applied": result.get("tool_sandbox_applied").and_then(serde_json::Value::as_bool),
         "tool_sandbox_projection_changed": result.get("tool_sandbox_projection_changed").and_then(serde_json::Value::as_bool),
         "tool_call_id": details.get("tool_call_id").and_then(serde_json::Value::as_str),
@@ -623,19 +645,41 @@ fn host_mount_grant_event_payload(
 }
 
 struct MountGrantDetails {
+    namespace_path: String,
     host_path: std::path::PathBuf,
-    access: String,
+    access: ApprovedMountGrantAccess,
+    reason: String,
+}
+
+impl MountGrantDetails {
+    fn approved_mount_grant(&self) -> ApprovedMountGrant {
+        ApprovedMountGrant::new(
+            self.namespace_path.clone(),
+            self.host_path.clone(),
+            self.access,
+            self.reason.clone(),
+        )
+    }
 }
 
 fn parse_mount_grant_request(request: &serde_json::Value) -> Option<MountGrantDetails> {
+    let namespace_path = request.get("namespace_path")?.as_str()?.trim();
     let host_path = request.get("host_path")?.as_str()?.trim();
     let access = request.get("access")?.as_str()?.trim();
-    if host_path.is_empty() || access.is_empty() {
+    let reason = request.get("reason")?.as_str()?.trim();
+    if namespace_path.is_empty() || host_path.is_empty() || reason.is_empty() {
         return None;
     }
+    let access = match access {
+        "read_only" => ApprovedMountGrantAccess::ReadOnly,
+        "read_write" => ApprovedMountGrantAccess::ReadWrite,
+        _ => return None,
+    };
     Some(MountGrantDetails {
+        namespace_path: namespace_path.to_string(),
         host_path: std::path::PathBuf::from(host_path),
-        access: access.to_string(),
+        access,
+        reason: reason.to_string(),
     })
 }
 
@@ -672,13 +716,16 @@ fn parse_replay_tool_call_from_confirmation_details(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::{
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
-        runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, TurnState},
+        runtime::{
+            MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment,
+            TurnState,
+        },
         session::Session,
         tape::ContentPart,
         tools::ToolRegistry,
@@ -687,6 +734,35 @@ mod tests {
     use alan_kernel::{Access, MountFs, Namespace, ProcFs};
     use alan_shell::Shell;
     use tempfile::TempDir;
+
+    #[derive(Debug, Default)]
+    struct RecordingMountGrantApplicator {
+        grants: Mutex<Vec<ApprovedMountGrant>>,
+        fail_with: Option<&'static str>,
+    }
+
+    impl RecordingMountGrantApplicator {
+        fn failing(message: &'static str) -> Self {
+            Self {
+                grants: Mutex::new(Vec::new()),
+                fail_with: Some(message),
+            }
+        }
+
+        fn grants(&self) -> Vec<ApprovedMountGrant> {
+            self.grants.lock().unwrap().clone()
+        }
+    }
+
+    impl MountGrantApplicator for RecordingMountGrantApplicator {
+        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()> {
+            self.grants.lock().unwrap().push(grant.clone());
+            if let Some(message) = self.fail_with {
+                anyhow::bail!(message);
+            }
+            Ok(())
+        }
+    }
 
     fn namespace_environment_for_test() -> RuntimeEnvironment {
         let mut namespace = Namespace::new();
@@ -699,6 +775,22 @@ mod tests {
         RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
             root, "/agent/1", "default",
         ))
+    }
+
+    fn namespace_environment_with_mount_applicator_for_test(
+        applicator: Arc<dyn MountGrantApplicator>,
+    ) -> RuntimeEnvironment {
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        RuntimeEnvironment::namespace(
+            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+                .with_mount_grant_applicator(applicator),
+        )
     }
 
     async fn namespace_environment_with_live_process_for_test() -> (RuntimeEnvironment, Shell) {
@@ -1109,6 +1201,10 @@ mod tests {
         assert_eq!(tool_result["tool_sandbox_applied"], true);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(tool_result["namespace_applied"], false);
+        assert_eq!(
+            tool_result["namespace_error"],
+            "live namespace mount applicator unavailable"
+        );
         assert_eq!(tool_result["live_applied"], false);
         assert_eq!(
             tool_result["mount_request"]["namespace_path"],
@@ -1143,9 +1239,144 @@ mod tests {
         assert_eq!(grant.payload["approved"], true);
         assert_eq!(grant.payload["live_applied"], false);
         assert_eq!(grant.payload["namespace_applied"], false);
+        assert_eq!(
+            grant.payload["namespace_error"],
+            "live namespace mount applicator unavailable"
+        );
         assert_eq!(grant.payload["tool_sandbox_applied"], true);
         assert_eq!(grant.payload["tool_sandbox_projection_changed"], true);
         assert_eq!(grant.payload["tool_call_id"], "call_mount");
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_applies_namespace_with_applicator() {
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
+        let mut state = create_test_state();
+        state.environment =
+            namespace_environment_with_mount_applicator_for_test(applicator.clone());
+        state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_write",
+                "Need to edit project files",
+            ));
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "mount_escalation_call_mount".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["namespace_applied"], true);
+        assert_eq!(tool_result["namespace_error"], serde_json::Value::Null);
+        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        let grants = applicator.grants();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].namespace_path, "/mnt/project");
+        assert_eq!(grants[0].host_path, approved_host.path());
+        assert_eq!(grants[0].access, ApprovedMountGrantAccess::ReadWrite);
+        assert_eq!(grants[0].reason, "Need to edit project files");
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_read_only_applies_namespace_only() {
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
+        let mut state = create_test_state();
+        state.environment =
+            namespace_environment_with_mount_applicator_for_test(applicator.clone());
+        state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_only",
+                "Need to inspect project files",
+            ));
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "mount_escalation_call_mount".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["namespace_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(
+            state.tool_catalog.default_sandbox_writable_roots(),
+            vec![workspace.path().to_path_buf()]
+        );
+        let grants = applicator.grants();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].access, ApprovedMountGrantAccess::ReadOnly);
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_reports_namespace_apply_failure() {
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::failing("mount failed"));
+        let mut state = create_test_state();
+        state.environment =
+            namespace_environment_with_mount_applicator_for_test(applicator.clone());
+        state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_write",
+                "Need to edit project files",
+            ));
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "mount_escalation_call_mount".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["namespace_applied"], false);
+        assert_eq!(tool_result["namespace_error"], "mount failed");
+        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        let grants = applicator.grants();
+        assert_eq!(grants.len(), 1);
     }
 
     #[tokio::test]

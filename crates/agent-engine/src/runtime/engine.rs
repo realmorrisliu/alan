@@ -124,6 +124,7 @@ enum RuntimeEnvironmentBootstrap {
     NamespaceRoot {
         llm_client: LlmClient,
         tools: crate::tools::ToolRegistry,
+        mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     },
 }
 
@@ -131,8 +132,13 @@ impl RuntimeEnvironmentBootstrap {
     async fn into_environment(self) -> Result<RuntimeEnvironment> {
         match self {
             Self::Ready(environment) => Ok(environment),
-            Self::NamespaceRoot { llm_client, tools } => {
-                build_root_namespace_environment(llm_client, tools).await
+            Self::NamespaceRoot {
+                llm_client,
+                tools,
+                mount_grant_applicator_factory,
+            } => {
+                build_root_namespace_environment(llm_client, tools, mount_grant_applicator_factory)
+                    .await
             }
         }
     }
@@ -842,6 +848,8 @@ pub struct WorkspaceRuntimeConfig {
     pub agent_home_paths: Option<crate::AlanHomePaths>,
     /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
     pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
+    /// Optional host factory for applying approved mount grants to the live namespace.
+    pub mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 }
 
 impl Default for WorkspaceRuntimeConfig {
@@ -862,6 +870,7 @@ impl Default for WorkspaceRuntimeConfig {
             default_cwd_override: None,
             agent_home_paths: None,
             chatgpt_auth_storage_path: None,
+            mount_grant_applicator_factory: None,
         }
     }
 }
@@ -884,6 +893,7 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
             default_cwd_override: None,
             agent_home_paths: None,
             chatgpt_auth_storage_path: None,
+            mount_grant_applicator_factory: None,
         }
     }
 }
@@ -906,6 +916,7 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
             default_cwd_override: None,
             agent_home_paths: None,
             chatgpt_auth_storage_path: None,
+            mount_grant_applicator_factory: None,
         }
     }
 }
@@ -1143,6 +1154,7 @@ pub fn effective_core_config_for_runtime(
 async fn build_root_namespace_environment(
     llm_client: LlmClient,
     tools: crate::tools::ToolRegistry,
+    mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 ) -> Result<RuntimeEnvironment> {
     let tool_definitions = tools.get_tool_definitions();
     let tool_names = tools
@@ -1178,7 +1190,8 @@ async fn build_root_namespace_environment(
         );
     }
 
-    let root_pid = spawn_root_agent_process(&procfs, process_namespace.clone()).await?;
+    let live_namespace = alan_kernel::LiveNamespace::new(process_namespace);
+    let root_pid = spawn_root_agent_process(&procfs, live_namespace.clone()).await?;
     agent_root
         .bind_process(root_pid.clone(), agentfs.clone())
         .await;
@@ -1189,23 +1202,35 @@ async fn build_root_namespace_environment(
             .parse::<u64>()
             .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
     );
-    let procfs_with_runner = procfs.with_runner(Arc::new(RuntimeToolProcessRunner::new(tools)));
-    let process_procfs = procfs_with_runner.for_spawner(
+    let procfs_with_runner = procfs
+        .clone()
+        .with_runner(Arc::new(RuntimeToolProcessRunner::new(tools)));
+    procfs
+        .bind_live_namespace(root_pid_value, live_namespace.clone())
+        .await;
+    let process_procfs = procfs_with_runner.for_live_spawner(
         Some(root_pid_value),
-        process_namespace.clone(),
+        live_namespace.clone(),
         alan_kernel::Credentials::user("root-agent"),
     );
-    process_namespace.mount(
+    live_namespace.mount(
         "/proc",
         InProcessTransport::new(Arc::new(process_procfs)),
         alan_kernel::Access::ReadWrite,
     );
-    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(process_namespace)));
-    let namespace =
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
+        live_namespace.clone(),
+    )));
+    let namespace_environment =
         super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
             .with_shared_services(InProcessTransport::new(srvfs), route_tree);
+    let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
+        namespace_environment.with_mount_grant_applicator_factory(factory, live_namespace)
+    } else {
+        namespace_environment
+    };
     Ok(RuntimeEnvironment::namespace_with_tool_definitions(
-        namespace,
+        namespace_environment,
         tool_definitions,
     ))
 }
@@ -1262,9 +1287,9 @@ async fn mount_routefs_standard_handles(
 
 async fn spawn_root_agent_process(
     procfs: &alan_kernel::ProcFs,
-    process_namespace: alan_kernel::Namespace,
+    process_namespace: alan_kernel::LiveNamespace,
 ) -> Result<String> {
-    let spawner_procfs = procfs.for_spawner(
+    let spawner_procfs = procfs.for_live_spawner(
         None,
         process_namespace.clone(),
         alan_kernel::Credentials::user("service-manager"),
@@ -1289,7 +1314,7 @@ async fn spawn_root_agent_process(
         executable: "/bin/alan-agent".to_string(),
         args: Vec::new(),
         namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
-            &process_namespace,
+            &process_namespace.snapshot(),
         )),
     };
     let exec_bytes = serde_json::to_vec(&exec).context("serialize root agent exec spec")?;
@@ -1347,9 +1372,14 @@ pub fn spawn_with_llm_client_and_tools(
 
     let generation_capabilities = llm_client.capabilities();
     let host_tools = tools.clone();
+    let mount_grant_applicator_factory = config.mount_grant_applicator_factory.clone();
     spawn_with_prepared_runtime_environment(
         config,
-        RuntimeEnvironmentBootstrap::NamespaceRoot { llm_client, tools },
+        RuntimeEnvironmentBootstrap::NamespaceRoot {
+            llm_client,
+            tools,
+            mount_grant_applicator_factory,
+        },
         host_tools,
         generation_capabilities,
     )
@@ -1957,6 +1987,7 @@ mod tests {
         let environment = build_root_namespace_environment(
             LlmClient::new(MockLlmProvider::new()),
             crate::tools::ToolRegistry::new(),
+            None,
         )
         .await
         .unwrap();

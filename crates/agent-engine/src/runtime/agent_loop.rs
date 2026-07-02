@@ -7,8 +7,10 @@ mod namespace_environment;
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub use namespace_environment::{
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
+    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceRuntimeEnvironment,
+    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceTurnRuntimeConfig,
 };
 
 use alan_agent_protocol::{Event, Submission, ToolCapability};
