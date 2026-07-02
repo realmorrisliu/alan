@@ -409,8 +409,34 @@ async fn writing_requires_a_write_open() {
     )
     .await
     .unwrap();
-    fs.open(Fid(2), OpenMode::Read).await.unwrap();
+    // Walked but not opened for write: a write is refused.
     assert_eq!(fs.write(Fid(2), 0, b"{}").await, Err(ErrorCode::NoAccess));
+}
+
+#[tokio::test]
+async fn read_open_of_a_write_only_file_is_refused() {
+    let fs = llmfs();
+    let g = clone_gen(&fs, Fid(1)).await;
+    // `data` and `ctl` are write-only sinks: a read-intent open fails at dial time.
+    for leaf in ["data", "ctl"] {
+        fs.walk(
+            Fid::ROOT,
+            Fid(2),
+            &[
+                "connections".into(),
+                "default".into(),
+                g.clone(),
+                leaf.into(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs.open(Fid(2), OpenMode::Read).await,
+            Err(ErrorCode::NoAccess)
+        );
+        fs.clunk(Fid(2)).await.ok();
+    }
 }
 
 #[tokio::test]

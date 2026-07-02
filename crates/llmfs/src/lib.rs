@@ -97,6 +97,10 @@ struct Generation {
     version: AtomicU32,
     /// Signals the drain task to stop promptly on abort.
     abort: Arc<Notify>,
+    /// Serializes every `events` append and terminal transition, so a `ctl` abort
+    /// and the drain task cannot interleave — no chunk or `done` record is ever
+    /// written after the Generation is aborted.
+    finalize: AsyncMutex<()>,
 }
 
 impl Generation {
@@ -320,9 +324,14 @@ impl FileServer for LlmFs {
                 .ok_or(ErrorCode::NotFound)?
         };
 
-        // Dial-time access check: a write-intent open on a read-only node, or a
-        // read/awareness-only open of the write-only surfaces, fails here.
+        // Dial-time access check: an intent the node cannot service fails here, not
+        // later as `Unsupported` on read/write. A write intent needs a writable
+        // node; a read intent needs a readable node (`data`/`ctl` are write-only
+        // sinks with no readable surface).
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
+            return Err(ErrorCode::NoAccess);
+        }
+        if matches!(mode, OpenMode::Read | OpenMode::ReadWrite) && !is_readable(&node) {
             return Err(ErrorCode::NoAccess);
         }
 
@@ -351,6 +360,7 @@ impl FileServer for LlmFs {
                     status: StdMutex::new(GenStatus::Open),
                     version: AtomicU32::new(0),
                     abort: Arc::new(Notify::new()),
+                    finalize: AsyncMutex::new(()),
                 }),
             );
             if let Some(f) = state.fids.get_mut(&fid) {
@@ -445,14 +455,19 @@ impl FileServer for LlmFs {
             }
         };
 
-        // Abort is valid only for a non-terminal Generation; aborting a finished or
-        // rejected one would rewrite a settled status.
-        if !generation.advance(GenStatus::Aborted) {
-            return Err(ErrorCode::BadRequest);
+        // Finalize under the per-Generation lock so this abort and the drain task
+        // cannot interleave: once aborted, no further chunk or `done` record is
+        // written. Aborting a terminal Generation is refused (settled status).
+        {
+            let _guard = generation.finalize.lock().await;
+            if generation.status().is_terminal() {
+                return Err(ErrorCode::BadRequest);
+            }
+            generation.events.append(b"{\"aborted\":true}\n").await;
+            generation.advance(GenStatus::Aborted);
         }
-        // A terminal record so a watcher tailing `events` unblocks, and a signal so
-        // a running drain task stops promptly.
-        generation.events.append(b"{\"aborted\":true}\n").await;
+        // Wake a running drain task so it stops promptly (belt-and-suspenders: it
+        // also re-checks the terminal status under the same lock).
         generation.abort.notify_waiters();
         Ok(data.len() as u32)
     }
@@ -542,9 +557,11 @@ impl FileServer for LlmFs {
         let doc = match doc {
             Ok(doc) => doc,
             Err(()) => {
-                // Reject only if we still own the initial transition, so a malformed
-                // second commit cannot clobber a Generation a concurrent valid
-                // commit already started.
+                // Reject only if we still own the initial transition (under the
+                // finalize lock, so a racing abort can't also append a terminal
+                // record): a malformed second commit cannot clobber a Generation a
+                // concurrent valid commit already started.
+                let _guard = generation.finalize.lock().await;
                 if generation.claim(GenStatus::Rejected) {
                     generation.events.append(b"{\"rejected\":true}\n").await;
                 }
@@ -594,10 +611,12 @@ impl FileServer for LlmFs {
                     _ = abort.notified() => break, // aborted: status/record already set
                     chunk = rx.recv() => match chunk {
                         Some(chunk) => {
-                            // Catch an abort whose notify raced before this task
-                            // parked on `notified()`: stop without appending more.
-                            if drain_gen.status() == GenStatus::Aborted {
-                                break;
+                            // Serialize with `ctl` abort: hold the finalize lock while
+                            // checking status and appending, so a concurrent abort
+                            // cannot let a chunk or `done` slip in after it.
+                            let _guard = drain_gen.finalize.lock().await;
+                            if drain_gen.status().is_terminal() {
+                                break; // aborted (or already finished) while we waited
                             }
                             if let Some(record) = chunk_record(&chunk) {
                                 events.append(format!("{record}\n").as_bytes()).await;
@@ -612,6 +631,7 @@ impl FileServer for LlmFs {
                             // The provider stream closed before a finished chunk:
                             // convert it to a terminal error so a tailing reader
                             // does not block at the live edge forever.
+                            let _guard = drain_gen.finalize.lock().await;
                             if drain_gen.advance(GenStatus::Error) {
                                 events.append(b"{\"error\":\"stream closed\"}\n").await;
                             }
@@ -629,6 +649,9 @@ impl LlmFs {
     /// Record a terminal failure (rejected/error) on a Generation before returning
     /// the commit error, so an observer of `status`/`events` sees a terminal state.
     async fn fail(&self, generation: &Generation, status: GenStatus, tag: &str) {
+        // Under the finalize lock so a racing abort can't also append a terminal
+        // record: only the winner of the status transition writes one.
+        let _guard = generation.finalize.lock().await;
         if generation.advance(status) {
             generation
                 .events
@@ -766,6 +789,12 @@ fn chunk_record(chunk: &StreamChunk) -> Option<String> {
 
 fn is_writable(node: &Node) -> bool {
     matches!(node, Node::Clone(_) | Node::GenData(_) | Node::GenCtl(_))
+}
+
+/// Whether a node has a readable surface. `data` and `ctl` are write-only sinks;
+/// `clone` is readable (the caller reads the allocated id back).
+fn is_readable(node: &Node) -> bool {
+    !matches!(node, Node::GenData(_) | Node::GenCtl(_))
 }
 
 fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
