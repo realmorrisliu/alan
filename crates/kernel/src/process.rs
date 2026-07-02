@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use alan_ap::VersionTable;
 
-use crate::Namespace;
+use crate::{Access, Namespace};
 
 /// A process identity. Ephemeral: never reused as a durable reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -49,11 +49,103 @@ impl Credentials {
 /// What a process runs: an executable path and its arguments. The executable is
 /// a command file bound into the namespace (`/bin/...`), not an RPC method. It
 /// deserializes from the exec-spec document written to `/proc/clone` (§7.1a).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExecSpec {
     pub executable: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub namespace: Option<ExecNamespaceManifest>,
+}
+
+/// The namespace mount set the spawner expects a `/proc/clone` commit to use.
+///
+/// The kernel still receives the actual namespace from the spawner context; this
+/// manifest is a commit-time check that the exec document and inherited pending
+/// namespace describe the same or a narrower capability set.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct ExecNamespaceManifest {
+    #[serde(default)]
+    pub mounts: Vec<ExecNamespaceMount>,
+}
+
+impl ExecNamespaceManifest {
+    /// Build the inspectable manifest for a kernel namespace.
+    pub fn from_namespace(namespace: &Namespace) -> Self {
+        let mounts = namespace
+            .describe()
+            .into_iter()
+            .map(|(path, access)| ExecNamespaceMount::new(path, access.into()))
+            .collect::<Vec<_>>();
+        Self { mounts }.normalized()
+    }
+
+    pub(crate) fn namespace_subset_from(&self, namespace: &Namespace) -> Option<Namespace> {
+        namespace.restrict_to_mounts(&self.normalized_access_mounts())
+    }
+
+    fn normalized_access_mounts(&self) -> Vec<(String, Access)> {
+        self.normalized()
+            .mounts
+            .into_iter()
+            .map(|mount| (mount.path, mount.access.into()))
+            .collect()
+    }
+
+    fn normalized(&self) -> Self {
+        let mut mounts = self.mounts.clone();
+        mounts.sort_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then_with(|| left.access.cmp(&right.access))
+        });
+        Self { mounts }
+    }
+}
+
+/// One mount declaration in an exec namespace manifest.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct ExecNamespaceMount {
+    pub path: String,
+    pub access: ExecNamespaceAccess,
+}
+
+impl ExecNamespaceMount {
+    pub fn new(path: impl Into<String>, access: ExecNamespaceAccess) -> Self {
+        Self {
+            path: path.into(),
+            access,
+        }
+    }
+}
+
+/// The access rights rendered in `/proc/<pid>/namespace`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
+pub enum ExecNamespaceAccess {
+    #[serde(rename = "ro")]
+    ReadOnly,
+    #[serde(rename = "rw")]
+    ReadWrite,
+}
+
+impl From<Access> for ExecNamespaceAccess {
+    fn from(access: Access) -> Self {
+        match access {
+            Access::ReadOnly => Self::ReadOnly,
+            Access::ReadWrite => Self::ReadWrite,
+        }
+    }
+}
+
+impl From<ExecNamespaceAccess> for Access {
+    fn from(access: ExecNamespaceAccess) -> Self {
+        match access {
+            ExecNamespaceAccess::ReadOnly => Self::ReadOnly,
+            ExecNamespaceAccess::ReadWrite => Self::ReadWrite,
+        }
+    }
 }
 
 /// A process's lifecycle state.
@@ -143,7 +235,17 @@ impl ProcessTable {
         namespace: Namespace,
         credentials: Credentials,
     ) -> Option<Pid> {
+        self.clone_begin_with_namespace(parent, credentials, |_| namespace)
+    }
+
+    pub fn clone_begin_with_namespace(
+        &mut self,
+        parent: Option<Pid>,
+        credentials: Credentials,
+        build_namespace: impl FnOnce(Pid) -> Namespace,
+    ) -> Option<Pid> {
         let pid = self.alloc_pid();
+        let namespace = build_namespace(pid);
         self.pending.insert(
             pid,
             Pending {
@@ -180,6 +282,18 @@ impl ProcessTable {
     /// nothing leaks and no `/proc` watcher observed it.
     pub fn discard(&mut self, slot: Pid) {
         self.pending.remove(&slot);
+    }
+
+    /// Borrow the namespace of a pending clone slot before it is committed.
+    pub fn pending_namespace(&self, slot: Pid) -> Option<&Namespace> {
+        self.pending.get(&slot).map(|pending| &pending.namespace)
+    }
+
+    /// Replace a pending slot's namespace before commit. Used when an exec
+    /// manifest deliberately narrows the inherited namespace.
+    pub fn replace_pending_namespace(&mut self, slot: Pid, namespace: Namespace) -> Option<()> {
+        self.pending.get_mut(&slot)?.namespace = namespace;
+        Some(())
     }
 
     /// Record a process's termination. Terminal state is recorded once: a later

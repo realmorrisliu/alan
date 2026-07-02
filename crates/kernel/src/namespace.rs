@@ -90,6 +90,7 @@ fn is_mutating(request: &Request) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unreachable;
 
+#[derive(Clone)]
 struct Mount {
     /// Absolute path components this tree is mounted at (`/mnt/llm` → `["mnt",
     /// "llm"]`; `/` → `[]`).
@@ -99,6 +100,7 @@ struct Mount {
 }
 
 /// A per-process namespace: an ordered mount table resolved by longest-prefix.
+#[derive(Clone)]
 pub struct Namespace {
     mounts: Vec<Mount>,
 }
@@ -184,6 +186,23 @@ impl Namespace {
         Namespace { mounts }
     }
 
+    pub(crate) fn child_with_path_substitution(&self, token: &str, replacement: &str) -> Namespace {
+        let mounts = self
+            .mounts
+            .iter()
+            .map(|m| Mount {
+                prefix: m
+                    .prefix
+                    .iter()
+                    .map(|component| component.replace(token, replacement))
+                    .collect(),
+                tree: m.tree.clone(),
+                access: m.access,
+            })
+            .collect();
+        Namespace { mounts }
+    }
+
     /// Resolve an absolute path to its backing tree and the components to walk
     /// within it. The mount with the longest matching prefix wins; among equal
     /// prefixes, the most recent mount wins. An unmounted path is [`Unreachable`].
@@ -215,15 +234,38 @@ impl Namespace {
     pub fn describe(&self) -> Vec<(String, Access)> {
         self.mounts
             .iter()
-            .map(|m| {
-                let path = if m.prefix.is_empty() {
-                    "/".to_string()
-                } else {
-                    format!("/{}", m.prefix.join("/"))
-                };
-                (path, m.access)
-            })
+            .map(|m| (mount_path(&m.prefix), m.access))
             .collect()
+    }
+
+    pub(crate) fn restrict_to_mounts(&self, requested: &[(String, Access)]) -> Option<Namespace> {
+        let mut explicit_access = vec![None; self.mounts.len()];
+        for (requested_path, requested_access) in requested {
+            let requested_prefix = split_path(requested_path);
+            let (index, _) = self.mounts.iter().enumerate().find(|(index, mount)| {
+                explicit_access[*index].is_none()
+                    && mount.prefix == requested_prefix
+                    && satisfies_access(mount.access, *requested_access)
+            })?;
+            explicit_access[index] = Some(*requested_access);
+        }
+
+        if has_unsafe_omitted_descendant(&self.mounts, &explicit_access) {
+            return None;
+        }
+
+        let mut mounts = Vec::new();
+        for (index, mount) in self.mounts.iter().enumerate() {
+            let Some(requested_access) = explicit_access[index]
+                .or_else(|| preserved_overmount_access(&self.mounts, &explicit_access, index))
+            else {
+                continue;
+            };
+            let mut restricted = mount.clone();
+            restricted.access = requested_access;
+            mounts.push(restricted);
+        }
+        Some(Namespace { mounts })
     }
 
     /// The union contributors at the **longest** matching prefix for `path`,
@@ -265,6 +307,87 @@ fn split_path(path: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+fn mount_path(prefix: &[String]) -> String {
+    if prefix.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", prefix.join("/"))
+    }
+}
+
+fn satisfies_access(granted: Access, requested: Access) -> bool {
+    matches!(
+        (granted, requested),
+        (Access::ReadWrite, Access::ReadWrite | Access::ReadOnly)
+            | (Access::ReadOnly, Access::ReadOnly)
+    )
+}
+
+fn preserved_overmount_access(
+    mounts: &[Mount],
+    explicit_access: &[Option<Access>],
+    index: usize,
+) -> Option<Access> {
+    let access_ceiling = nearest_explicit_ancestor_access(mounts, explicit_access, index)?;
+    omitted_descendant_is_restrictive(mounts, index, access_ceiling)
+        .then_some(restrict_access(mounts[index].access, access_ceiling))
+}
+
+fn has_unsafe_omitted_descendant(mounts: &[Mount], explicit_access: &[Option<Access>]) -> bool {
+    mounts.iter().enumerate().any(|(index, _)| {
+        if explicit_access[index].is_some() {
+            return false;
+        }
+        nearest_explicit_ancestor_access(mounts, explicit_access, index).is_some_and(
+            |access_ceiling| !omitted_descendant_is_restrictive(mounts, index, access_ceiling),
+        )
+    })
+}
+
+fn nearest_explicit_ancestor_access(
+    mounts: &[Mount],
+    explicit_access: &[Option<Access>],
+    index: usize,
+) -> Option<Access> {
+    let descendant = &mounts[index];
+    let mut best: Option<(usize, Access)> = None;
+    for (ancestor_index, access) in explicit_access.iter().enumerate() {
+        let Some(access) = access else {
+            continue;
+        };
+        let ancestor = &mounts[ancestor_index];
+        if ancestor.prefix.len() < descendant.prefix.len()
+            && is_prefix(&ancestor.prefix, &descendant.prefix)
+        {
+            match best {
+                Some((best_len, _)) if best_len >= ancestor.prefix.len() => {}
+                _ => best = Some((ancestor.prefix.len(), *access)),
+            }
+        }
+    }
+    best.map(|(_, access)| access)
+}
+
+fn omitted_descendant_is_restrictive(
+    mounts: &[Mount],
+    index: usize,
+    access_ceiling: Access,
+) -> bool {
+    let restricted = restrict_access(mounts[index].access, access_ceiling);
+    is_stricter_access(restricted, access_ceiling)
+}
+
+fn restrict_access(granted: Access, ceiling: Access) -> Access {
+    match (granted, ceiling) {
+        (Access::ReadOnly, _) | (_, Access::ReadOnly) => Access::ReadOnly,
+        (Access::ReadWrite, Access::ReadWrite) => Access::ReadWrite,
+    }
+}
+
+fn is_stricter_access(access: Access, ceiling: Access) -> bool {
+    matches!((access, ceiling), (Access::ReadOnly, Access::ReadWrite))
 }
 
 /// Whether `prefix` is a path-prefix of `components`.

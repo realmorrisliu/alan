@@ -10,6 +10,7 @@ fn exec(bin: &str) -> ExecSpec {
     ExecSpec {
         executable: bin.to_string(),
         args: vec![],
+        namespace: None,
     }
 }
 

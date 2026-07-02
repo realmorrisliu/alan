@@ -21,19 +21,57 @@
 //! and `clunk`s to commit (commit-on-clunk; a malformed spec is rejected at
 //! clunk and the pending slot is discarded, leaking nothing).
 //!
-//! v1 limitation (ADR-0024 R1): the kernel runs in one address space and `/proc`
-//! does not yet thread the spawner's namespace through `clone`, so spawn uses
-//! system credentials and an empty child namespace and the capability-preserving
-//! amplification check lands when the namespace is plumbed in. This is the
-//! convention-vs-isolation gap R1 already records.
+//! v1 limitation (ADR-0024 R1): the kernel runs in one address space. A `/proc`
+//! view can now carry its spawner's parent, credentials, and namespace into
+//! `clone`, but the R1 capability boundary is still convention-enforced by
+//! namespace resolution in-process rather than hard OS isolation.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
+use crate::{Access, Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
+
+/// One committed process invocation handed to user-space execution.
+#[derive(Clone)]
+pub struct ProcessInvocation {
+    pub pid: Pid,
+    pub parent: Option<Pid>,
+    pub credentials: Credentials,
+    pub namespace: Namespace,
+    pub exec: ExecSpec,
+}
+
+/// The terminal result produced by a user-space process runner.
+pub struct ProcessOutcome {
+    pub output: Vec<u8>,
+    pub exit_code: i32,
+}
+
+impl ProcessOutcome {
+    pub fn exited(exit_code: i32, output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+            exit_code,
+        }
+    }
+}
+
+/// User-space execution hook for a committed process.
+///
+/// The kernel still only owns `/proc`, namespace state, process status, and the
+/// process output stream. The runner supplies the executable semantics layered
+/// above the substrate.
+#[async_trait]
+pub trait ProcessRunner: Send + Sync + 'static {
+    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome;
+}
 
 /// What a fid in `/proc` points at.
 #[derive(Clone)]
@@ -62,6 +100,12 @@ struct ProcFid {
     write_buf: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ProcFidKey {
+    view_id: u64,
+    fid: Fid,
+}
+
 impl ProcFid {
     fn at(node: Node) -> Self {
         Self {
@@ -76,18 +120,32 @@ impl ProcFid {
 /// Upper bound on a buffered exec-spec document, so a huge/sparse write offset
 /// cannot make `/proc` allocate unbounded memory.
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
+const CHILD_PID_PLACEHOLDER: &str = "<child-pid>";
+static NEXT_PROCFS_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 struct State {
     table: ProcessTable,
-    fids: HashMap<Fid, ProcFid>,
+    fids: HashMap<ProcFidKey, ProcFid>,
     /// One output stream per committed process (the kernel owns the file; the
     /// process's execution, in user space, writes to it).
     outputs: HashMap<Pid, Stream>,
 }
 
+#[derive(Clone)]
+struct SpawnContext {
+    parent: Option<Pid>,
+    namespace: Namespace,
+    credentials: Credentials,
+}
+
 /// The `/proc` file server.
+#[derive(Clone)]
 pub struct ProcFs {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
+    view_id: u64,
+    root_node: Node,
+    spawn_context: SpawnContext,
+    runner: Option<Arc<dyn ProcessRunner>>,
 }
 
 impl Default for ProcFs {
@@ -99,22 +157,119 @@ impl Default for ProcFs {
 impl ProcFs {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 table: ProcessTable::new(),
                 fids: HashMap::new(),
                 outputs: HashMap::new(),
-            }),
+            })),
+            view_id: next_view_id(),
+            root_node: Node::Root,
+            spawn_context: SpawnContext {
+                parent: None,
+                namespace: Namespace::new(),
+                credentials: Credentials::system(),
+            },
+            runner: None,
+        }
+    }
+
+    /// Attach the user-space runner that will execute committed processes for
+    /// this `/proc` view and any spawner views cloned from it.
+    pub fn with_runner(mut self, runner: Arc<dyn ProcessRunner>) -> Self {
+        self.runner = Some(runner);
+        self
+    }
+
+    /// Create a `/proc` view over the same process table with the spawn context
+    /// of a particular process. Opening `clone` through this view starts child
+    /// processes with the given parent, credentials, and a child copy of the
+    /// given namespace.
+    pub fn for_spawner(
+        &self,
+        parent: Option<Pid>,
+        namespace: Namespace,
+        credentials: Credentials,
+    ) -> Self {
+        Self {
+            state: self.state.clone(),
+            view_id: next_view_id(),
+            root_node: Node::Root,
+            spawn_context: SpawnContext {
+                parent,
+                namespace,
+                credentials,
+            },
+            runner: self.runner.clone(),
+        }
+    }
+
+    /// Create a view whose root is the `clone` file for a delegated
+    /// `/proc/clone` mount.
+    pub fn clone_file_for_spawner(
+        &self,
+        parent: Option<Pid>,
+        namespace: Namespace,
+        credentials: Credentials,
+    ) -> Self {
+        let mut view = self.for_spawner(parent, namespace, credentials);
+        view.root_node = Node::Clone;
+        view
+    }
+
+    fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
+        let mut child_namespace = self
+            .spawn_context
+            .namespace
+            .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
+        self.rebind_proc_spawners(&mut child_namespace, pid);
+        child_namespace
+    }
+
+    fn rebind_proc_spawners(&self, namespace: &mut Namespace, pid: Pid) {
+        if let Some(proc_access) = mount_access_at(namespace, "/proc") {
+            let child_proc = self.for_spawner(
+                Some(pid),
+                namespace.clone(),
+                self.spawn_context.credentials.clone(),
+            );
+            namespace.unmount("/proc");
+            namespace.mount(
+                "/proc",
+                InProcessTransport::new(Arc::new(child_proc)),
+                proc_access,
+            );
+        }
+        if let Some(clone_access) = mount_access_at(namespace, "/proc/clone") {
+            let child_clone = self.clone_file_for_spawner(
+                Some(pid),
+                namespace.clone(),
+                self.spawn_context.credentials.clone(),
+            );
+            namespace.unmount("/proc/clone");
+            namespace.mount(
+                "/proc/clone",
+                InProcessTransport::new(Arc::new(child_clone)),
+                clone_access,
+            );
+        }
+    }
+
+    fn fid_key(&self, fid: Fid) -> ProcFidKey {
+        ProcFidKey {
+            view_id: self.view_id,
+            fid,
         }
     }
 }
 
 impl State {
-    fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
+    fn node_of(&self, key: ProcFidKey, root_node: &Node) -> Result<Node, ErrorCode> {
+        let fid = key.fid;
         if fid == Fid::ROOT {
-            return Ok(Node::Root);
+            return Ok(root_node.clone());
         }
         self.fids
-            .get(&fid)
+            .get(&key)
             .map(|f| f.node.clone())
             .ok_or(ErrorCode::NotFound)
     }
@@ -234,33 +389,35 @@ impl State {
 impl FileServer for ProcFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
         let mut state = self.state.lock().await;
+        let fid_key = self.fid_key(fid);
+        let newfid_key = self.fid_key(newfid);
         // A fid is a handle to one interaction: never rebind the reserved root or
         // an already-live fid, or a retry/collision would clobber another fid's
         // state (e.g. drop a pending clone pid, leaking the slot).
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+        if newfid == Fid::ROOT || state.fids.contains_key(&newfid_key) {
             return Err(ErrorCode::BadRequest);
         }
-        let mut node = state.node_of(fid)?;
+        let mut node = state.node_of(fid_key, &self.root_node)?;
         for name in names {
             node = state.child(&node, name)?;
         }
         let qid = state.qid(&node);
-        state.fids.insert(newfid, ProcFid::at(node));
+        state.fids.insert(newfid_key, ProcFid::at(node));
         Ok(qid)
     }
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         // The pre-bound root fid is openable directly (to read the listing)
         // without a redundant empty walk, matching SrvFs and the reference server.
-        if fid == Fid::ROOT {
-            let state = self.state.lock().await;
-            return Ok(state.qid(&Node::Root));
-        }
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let fid_key = self.fid_key(fid);
+        let node = state.node_of(fid_key, &self.root_node)?;
+        if fid == Fid::ROOT && !matches!(node, Node::Clone) {
+            return Ok(state.qid(&node));
+        }
         // Reopening a live fid before clunk is rejected, so a retried open cannot
         // overwrite a pending clone slot (leaking it) or downgrade write intent.
-        if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
+        if state.fids.get(&fid_key).is_some_and(|f| f.mode.is_some()) {
             return Err(ErrorCode::BadRequest);
         }
         // Clone-via-open: spawning requires write intent (you write the exec
@@ -270,19 +427,24 @@ impl FileServer for ProcFs {
             if !matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
+            let parent = self.spawn_context.parent;
+            let credentials = self.spawn_context.credentials.clone();
+            let proc_template = self.clone();
             let slot = state
                 .table
-                .clone_begin(None, Namespace::new(), Credentials::system())
+                .clone_begin_with_namespace(parent, credentials, |pid| {
+                    proc_template.child_namespace_for_spawn(pid)
+                })
                 .ok_or(ErrorCode::Io)?;
             let f = state
                 .fids
-                .entry(fid)
+                .entry(fid_key)
                 .or_insert_with(|| ProcFid::at(Node::Clone));
             f.clone_pid = Some(slot);
             f.mode = Some(mode);
             return Ok(state.qid(&node));
         }
-        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+        let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
         Ok(state.qid(&node))
     }
@@ -293,13 +455,14 @@ impl FileServer for ProcFs {
         // the whole `/proc`).
         let output = {
             let state = self.state.lock().await;
+            let fid_key = self.fid_key(fid);
             // An opened clone fid reads back its pending pid (the allocated name).
-            if let Some(f) = state.fids.get(&fid)
+            if let Some(f) = state.fids.get(&fid_key)
                 && let Some(pid) = f.clone_pid
             {
                 return Ok(slice(pid.0.to_string().into_bytes(), offset, count));
             }
-            let node = state.node_of(fid)?;
+            let node = state.node_of(fid_key, &self.root_node)?;
             match node {
                 Node::Output(pid) => state
                     .outputs
@@ -314,11 +477,12 @@ impl FileServer for ProcFs {
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let fid_key = self.fid_key(fid);
+        let node = state.node_of(fid_key, &self.root_node)?;
         // Write surfaces require write authority established at open.
         let has_write_intent = state
             .fids
-            .get(&fid)
+            .get(&fid_key)
             .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
         match node {
             // Exec-spec document for a clone fid: buffer at the given offset until
@@ -327,7 +491,7 @@ impl FileServer for ProcFs {
                 if !has_write_intent {
                     return Err(ErrorCode::NoAccess);
                 }
-                let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
                 if f.clone_pid.is_none() {
                     return Err(ErrorCode::BadRequest);
                 }
@@ -359,7 +523,7 @@ impl FileServer for ProcFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let node = state.node_of(self.fid_key(fid), &self.root_node)?;
         // Report the readable byte length so clients can size reads; write-only
         // surfaces (clone/ctl) are 0, and a process output is its retained length.
         let length = match &node {
@@ -394,32 +558,87 @@ impl FileServer for ProcFs {
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        if fid == Fid::ROOT {
+        if fid == Fid::ROOT && !matches!(self.root_node, Node::Clone) {
             return Ok(());
         }
-        let mut state = self.state.lock().await;
-        let Some(f) = state.fids.remove(&fid) else {
-            return Err(ErrorCode::NotFound);
-        };
-        // Commit-on-clunk: a clone fid commits its pending process here.
-        if let Some(pid) = f.clone_pid {
-            match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
-                Ok(exec) => {
-                    state.table.commit(pid, exec);
-                    state.outputs.insert(pid, Stream::new());
-                    Ok(())
+        let runner_launch = {
+            let mut state = self.state.lock().await;
+            let Some(f) = state.fids.remove(&self.fid_key(fid)) else {
+                return Err(ErrorCode::NotFound);
+            };
+            // Commit-on-clunk: a clone fid commits its pending process here.
+            if let Some(pid) = f.clone_pid {
+                match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
+                    Ok(exec) => {
+                        if let Some(namespace_manifest) = exec.namespace.as_ref() {
+                            let Some(mut narrowed_namespace) = ({
+                                let Some(pending_namespace) = state.table.pending_namespace(pid)
+                                else {
+                                    state.table.discard(pid);
+                                    return Err(ErrorCode::BadRequest);
+                                };
+                                namespace_manifest.namespace_subset_from(pending_namespace)
+                            }) else {
+                                state.table.discard(pid);
+                                return Err(ErrorCode::BadRequest);
+                            };
+                            self.rebind_proc_spawners(&mut narrowed_namespace, pid);
+                            if state
+                                .table
+                                .replace_pending_namespace(pid, narrowed_namespace)
+                                .is_none()
+                            {
+                                state.table.discard(pid);
+                                return Err(ErrorCode::BadRequest);
+                            }
+                        }
+                        let committed =
+                            state.table.commit(pid, exec).ok_or(ErrorCode::BadRequest)?;
+                        let process = state.table.get(committed).ok_or(ErrorCode::Io)?;
+                        let invocation = ProcessInvocation {
+                            pid: process.pid,
+                            parent: process.parent,
+                            credentials: process.credentials.clone(),
+                            namespace: process.namespace.clone(),
+                            exec: process.exec.clone(),
+                        };
+                        let output = Stream::new();
+                        state.outputs.insert(committed, output.clone());
+                        self.runner
+                            .clone()
+                            .map(|runner| (runner, output, invocation))
+                    }
+                    Err(_) => {
+                        // Reject at commit and discard the fid-private slot — it was
+                        // never public, so nothing leaks.
+                        state.table.discard(pid);
+                        return Err(ErrorCode::BadRequest);
+                    }
                 }
-                Err(_) => {
-                    // Reject at commit and discard the fid-private slot — it was
-                    // never public, so nothing leaks.
-                    state.table.discard(pid);
-                    Err(ErrorCode::BadRequest)
-                }
+            } else {
+                None
             }
-        } else {
-            Ok(())
+        };
+        if let Some((runner, output, invocation)) = runner_launch {
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                let outcome = runner.run(invocation.clone()).await;
+                if !outcome.output.is_empty() {
+                    output.append(&outcome.output).await;
+                }
+                let mut state = state.lock().await;
+                state.table.exit(invocation.pid, outcome.exit_code);
+            });
         }
+        Ok(())
     }
+}
+
+fn mount_access_at(namespace: &Namespace, path: &str) -> Option<Access> {
+    namespace
+        .union_at(path)
+        .last()
+        .map(|resolved| resolved.access)
 }
 
 /// A node's stable identity: file kind and a server-unique qid path. The qid
@@ -449,6 +668,10 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
 
 fn is_writable(node: &Node) -> bool {
     matches!(node, Node::Clone | Node::Ctl(_))
+}
+
+fn next_view_id() -> u64 {
+    NEXT_PROCFS_VIEW_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 fn parse_pid(name: &str) -> Option<Pid> {

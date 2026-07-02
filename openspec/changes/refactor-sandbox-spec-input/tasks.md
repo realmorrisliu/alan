@@ -1,5 +1,13 @@
 # Tasks
 
+> **Parked (2026-07-02).** Sequenced behind `refactor-engine-namespace-native`
+> Slice B: this refactor migrates constructors in `runtime::tool_orchestrator`,
+> which the engine-native rewrite is actively restructuring (tools become
+> `/bin` executables spawned via `/proc/clone`). Land it after Slice B settles
+> the tool-execution seam so the `SandboxSpec` projection welds onto the final
+> spawn path, not the `ToolRegistry` one. The design itself (SandboxSpec as a
+> value projected from the mount manifest) is unaffected.
+
 Pure refactor, zero behavior change. Every step must keep existing sandbox tests
 green; the golden-profile test (1.4) is the proof of no behavior change.
 
