@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
@@ -99,6 +100,12 @@ struct ProcFid {
     write_buf: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ProcFidKey {
+    view_id: u64,
+    fid: Fid,
+}
+
 impl ProcFid {
     fn at(node: Node) -> Self {
         Self {
@@ -114,10 +121,11 @@ impl ProcFid {
 /// cannot make `/proc` allocate unbounded memory.
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
 const CHILD_PID_PLACEHOLDER: &str = "<child-pid>";
+static NEXT_PROCFS_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 struct State {
     table: ProcessTable,
-    fids: HashMap<Fid, ProcFid>,
+    fids: HashMap<ProcFidKey, ProcFid>,
     /// One output stream per committed process (the kernel owns the file; the
     /// process's execution, in user space, writes to it).
     outputs: HashMap<Pid, Stream>,
@@ -134,6 +142,7 @@ struct SpawnContext {
 #[derive(Clone)]
 pub struct ProcFs {
     state: Arc<Mutex<State>>,
+    view_id: u64,
     root_node: Node,
     spawn_context: SpawnContext,
     runner: Option<Arc<dyn ProcessRunner>>,
@@ -153,6 +162,7 @@ impl ProcFs {
                 fids: HashMap::new(),
                 outputs: HashMap::new(),
             })),
+            view_id: next_view_id(),
             root_node: Node::Root,
             spawn_context: SpawnContext {
                 parent: None,
@@ -182,7 +192,8 @@ impl ProcFs {
     ) -> Self {
         Self {
             state: self.state.clone(),
-            root_node: self.root_node.clone(),
+            view_id: next_view_id(),
+            root_node: Node::Root,
             spawn_context: SpawnContext {
                 parent,
                 namespace,
@@ -242,15 +253,23 @@ impl ProcFs {
             );
         }
     }
+
+    fn fid_key(&self, fid: Fid) -> ProcFidKey {
+        ProcFidKey {
+            view_id: self.view_id,
+            fid,
+        }
+    }
 }
 
 impl State {
-    fn node_of(&self, fid: Fid, root_node: &Node) -> Result<Node, ErrorCode> {
+    fn node_of(&self, key: ProcFidKey, root_node: &Node) -> Result<Node, ErrorCode> {
+        let fid = key.fid;
         if fid == Fid::ROOT {
             return Ok(root_node.clone());
         }
         self.fids
-            .get(&fid)
+            .get(&key)
             .map(|f| f.node.clone())
             .ok_or(ErrorCode::NotFound)
     }
@@ -370,18 +389,20 @@ impl State {
 impl FileServer for ProcFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
         let mut state = self.state.lock().await;
+        let fid_key = self.fid_key(fid);
+        let newfid_key = self.fid_key(newfid);
         // A fid is a handle to one interaction: never rebind the reserved root or
         // an already-live fid, or a retry/collision would clobber another fid's
         // state (e.g. drop a pending clone pid, leaking the slot).
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+        if newfid == Fid::ROOT || state.fids.contains_key(&newfid_key) {
             return Err(ErrorCode::BadRequest);
         }
-        let mut node = state.node_of(fid, &self.root_node)?;
+        let mut node = state.node_of(fid_key, &self.root_node)?;
         for name in names {
             node = state.child(&node, name)?;
         }
         let qid = state.qid(&node);
-        state.fids.insert(newfid, ProcFid::at(node));
+        state.fids.insert(newfid_key, ProcFid::at(node));
         Ok(qid)
     }
 
@@ -389,13 +410,14 @@ impl FileServer for ProcFs {
         // The pre-bound root fid is openable directly (to read the listing)
         // without a redundant empty walk, matching SrvFs and the reference server.
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid, &self.root_node)?;
+        let fid_key = self.fid_key(fid);
+        let node = state.node_of(fid_key, &self.root_node)?;
         if fid == Fid::ROOT && !matches!(node, Node::Clone) {
             return Ok(state.qid(&node));
         }
         // Reopening a live fid before clunk is rejected, so a retried open cannot
         // overwrite a pending clone slot (leaking it) or downgrade write intent.
-        if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
+        if state.fids.get(&fid_key).is_some_and(|f| f.mode.is_some()) {
             return Err(ErrorCode::BadRequest);
         }
         // Clone-via-open: spawning requires write intent (you write the exec
@@ -416,13 +438,13 @@ impl FileServer for ProcFs {
                 .ok_or(ErrorCode::Io)?;
             let f = state
                 .fids
-                .entry(fid)
+                .entry(fid_key)
                 .or_insert_with(|| ProcFid::at(Node::Clone));
             f.clone_pid = Some(slot);
             f.mode = Some(mode);
             return Ok(state.qid(&node));
         }
-        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+        let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
         Ok(state.qid(&node))
     }
@@ -433,13 +455,14 @@ impl FileServer for ProcFs {
         // the whole `/proc`).
         let output = {
             let state = self.state.lock().await;
+            let fid_key = self.fid_key(fid);
             // An opened clone fid reads back its pending pid (the allocated name).
-            if let Some(f) = state.fids.get(&fid)
+            if let Some(f) = state.fids.get(&fid_key)
                 && let Some(pid) = f.clone_pid
             {
                 return Ok(slice(pid.0.to_string().into_bytes(), offset, count));
             }
-            let node = state.node_of(fid, &self.root_node)?;
+            let node = state.node_of(fid_key, &self.root_node)?;
             match node {
                 Node::Output(pid) => state
                     .outputs
@@ -454,11 +477,12 @@ impl FileServer for ProcFs {
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid, &self.root_node)?;
+        let fid_key = self.fid_key(fid);
+        let node = state.node_of(fid_key, &self.root_node)?;
         // Write surfaces require write authority established at open.
         let has_write_intent = state
             .fids
-            .get(&fid)
+            .get(&fid_key)
             .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
         match node {
             // Exec-spec document for a clone fid: buffer at the given offset until
@@ -467,7 +491,7 @@ impl FileServer for ProcFs {
                 if !has_write_intent {
                     return Err(ErrorCode::NoAccess);
                 }
-                let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
                 if f.clone_pid.is_none() {
                     return Err(ErrorCode::BadRequest);
                 }
@@ -499,7 +523,7 @@ impl FileServer for ProcFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let state = self.state.lock().await;
-        let node = state.node_of(fid, &self.root_node)?;
+        let node = state.node_of(self.fid_key(fid), &self.root_node)?;
         // Report the readable byte length so clients can size reads; write-only
         // surfaces (clone/ctl) are 0, and a process output is its retained length.
         let length = match &node {
@@ -539,7 +563,7 @@ impl FileServer for ProcFs {
         }
         let runner_launch = {
             let mut state = self.state.lock().await;
-            let Some(f) = state.fids.remove(&fid) else {
+            let Some(f) = state.fids.remove(&self.fid_key(fid)) else {
                 return Err(ErrorCode::NotFound);
             };
             // Commit-on-clunk: a clone fid commits its pending process here.
@@ -644,6 +668,10 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
 
 fn is_writable(node: &Node) -> bool {
     matches!(node, Node::Clone | Node::Ctl(_))
+}
+
+fn next_view_id() -> u64 {
+    NEXT_PROCFS_VIEW_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 fn parse_pid(name: &str) -> Option<Pid> {

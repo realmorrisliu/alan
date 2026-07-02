@@ -244,12 +244,14 @@ impl Namespace {
         for mount in &self.mounts {
             let path = mount_path(&mount.prefix);
             let Some(position) = remaining.iter().position(|(requested_path, access)| {
-                requested_path == &path && *access == mount.access
+                requested_path == &path && satisfies_access(mount.access, *access)
             }) else {
                 continue;
             };
-            remaining.remove(position);
-            mounts.push(mount.clone());
+            let (_, requested_access) = remaining.remove(position);
+            let mut restricted = mount.clone();
+            restricted.access = requested_access;
+            mounts.push(restricted);
         }
         if remaining.is_empty() {
             Some(Namespace { mounts })
@@ -305,6 +307,14 @@ fn mount_path(prefix: &[String]) -> String {
     } else {
         format!("/{}", prefix.join("/"))
     }
+}
+
+fn satisfies_access(granted: Access, requested: Access) -> bool {
+    matches!(
+        (granted, requested),
+        (Access::ReadWrite, Access::ReadWrite | Access::ReadOnly)
+            | (Access::ReadOnly, Access::ReadOnly)
+    )
 }
 
 /// Whether `prefix` is a path-prefix of `components`.

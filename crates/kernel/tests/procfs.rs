@@ -343,6 +343,57 @@ async fn delegated_proc_clone_root_open_allocates_a_pending_pid() {
 }
 
 #[tokio::test]
+async fn delegated_proc_clone_root_open_does_not_pollute_other_proc_roots() {
+    let fs = proc();
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+    let proc_clone = fs.clone_file_for_spawner(
+        Some(parent_pid),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+
+    proc_clone
+        .open(Fid::ROOT, OpenMode::ReadWrite)
+        .await
+        .unwrap();
+    let pending = String::from_utf8(proc_clone.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap();
+    let listing = String::from_utf8(read_at(&fs, &[], Fid(43)).await.unwrap()).unwrap();
+    assert!(
+        listing.lines().any(|line| line == "clone"),
+        "normal /proc root remains a listing while delegated clone root is open: {listing:?}"
+    );
+    assert!(
+        !listing.lines().any(|line| line == pending),
+        "pending clone pid must stay scoped to the delegated clone view"
+    );
+}
+
+#[tokio::test]
+async fn for_spawner_from_clone_view_resets_the_root_to_proc() {
+    let fs = proc();
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+    let proc_clone = fs.clone_file_for_spawner(
+        Some(parent_pid),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+    let proc_view = proc_clone.for_spawner(
+        Some(parent_pid),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+
+    proc_view.open(Fid::ROOT, OpenMode::Read).await.unwrap();
+    let listing = String::from_utf8(proc_view.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap();
+    assert!(
+        listing.lines().any(|line| line == "clone"),
+        "for_spawner must produce a full /proc view, not another clone-file view"
+    );
+}
+
+#[tokio::test]
 async fn a_malformed_exec_spec_is_rejected_at_clunk_and_leaks_nothing() {
     let fs = proc();
 
@@ -697,6 +748,52 @@ async fn clone_exec_namespace_manifest_may_restrict_to_a_spawner_subset() {
     assert!(
         !namespace.lines().any(|line| line == "/scratch rw"),
         "committed namespace drops inherited mounts omitted from the manifest: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn clone_exec_namespace_manifest_may_downgrade_rw_mounts_to_read_only() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/scratch",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(37), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(37), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(37), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/scratch", "access": "ro"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(37), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(37)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(38))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/scratch ro"),
+        "committed namespace downgrades RW authority to requested RO: {namespace:?}"
+    );
+    assert!(
+        !namespace.lines().any(|line| line == "/scratch rw"),
+        "committed namespace must not retain write authority after RO downgrade: {namespace:?}"
     );
 }
 
