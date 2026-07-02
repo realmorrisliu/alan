@@ -1288,7 +1288,8 @@ fn workspace_routing_preflight(
     capability: ToolCapability,
 ) -> Option<(Value, String, alan_agent_protocol::ToolDecisionAudit)> {
     let workspace_root = bound_workspace_root(state)?;
-    let sandbox = crate::tools::Sandbox::new(workspace_root.clone());
+    let sandbox =
+        crate::tools::Sandbox::from_spec(crate::tools::SandboxSpec::seed(workspace_root.clone()));
     let current_cwd = state
         .default_tool_cwd()
         .unwrap_or_else(|| workspace_root.clone());

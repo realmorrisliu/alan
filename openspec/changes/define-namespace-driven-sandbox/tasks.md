@@ -11,9 +11,11 @@ proposals out as their own OpenSpec changes. No application code lands here.
   Pure refactor, zero behavior change; welds the two-projection seam.
   Created 2026-07-02; implemented after `refactor-engine-namespace-native`
   Slice B settled the tool-execution seam.
-- [ ] 1.2 Create change `add-host-dir-file-server` (P2): `HostDirFs` (host-backed
+- [x] 1.2 Create change `add-host-dir-file-server` (P2): `HostDirFs` (host-backed
   aP `FileServer`) + `mount_host` declaration entry point that records
   `(host_path, access)` into the manifest + multi-entry projection in `alan`.
+  Created 2026-07-02; first implementation slice adds `alan-hostfs`,
+  composition-root host mount declarations, and `SandboxSpec` projection.
 - [ ] 1.3 Create change(s) for P3+ hardening: macOS Seatbelt sensitive-read
   denylist; agent-requestable `mount` via `PolicyEngine` escalation; (later,
   separately) Linux reification for full read isolation.
@@ -22,9 +24,9 @@ proposals out as their own OpenSpec changes. No application code lands here.
 
 - [x] 2.1 Ensure P1's proposal references this design's Decision D4 (layering) and
   D6 (P1 = zero behavior change). Verified: P1's proposal Impact cites D4/D6.
-- [ ] 2.2 Ensure P2's proposal references D5 (mounts human-declared only at
+- [x] 2.2 Ensure P2's proposal references D5 (mounts human-declared only at
   landing; workspace = seed entry).
-- [ ] 2.3 Keep the "honest isolation narrative" (write+network now, sensitive-read
+- [x] 2.3 Keep the "honest isolation narrative" (write+network now, sensitive-read
   macOS next, full read isolation with reification) consistent across P1/P2/P3
   proposal and user-facing docs.
 

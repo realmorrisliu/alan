@@ -14,8 +14,11 @@ path = "src/main.rs"
 
 [dependencies]
 alan-auth.workspace = true
+alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
 alan-agent-engine.workspace = true
+alan-hostfs.workspace = true
+alan-kernel = { path = "../kernel" }
 alan-swebench-tooling.workspace = true
 alan-tools.workspace = true
 alan-terminal-ui.workspace = true

@@ -1,0 +1,193 @@
+//! Host mount declaration and projection helpers.
+//!
+//! This is the composition-root layer for host directories: a declaration is
+//! applied to the Alan OS namespace and projected into `SandboxSpec` here, while
+//! `alan-kernel` remains host-path agnostic.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use alan_agent_engine::tools::{NetworkPosture, SandboxSpec};
+use alan_ap::InProcessTransport;
+use alan_hostfs::{HostDirAccess, HostDirFs};
+use alan_kernel::{Access, Namespace};
+use anyhow::{Context, Result};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMountDeclaration {
+    pub namespace_path: String,
+    pub host_path: PathBuf,
+    pub access: Access,
+}
+
+impl HostMountDeclaration {
+    pub fn new(namespace_path: impl Into<String>, host_path: PathBuf, access: Access) -> Self {
+        Self {
+            namespace_path: namespace_path.into(),
+            host_path,
+            access,
+        }
+    }
+
+    fn hostfs_access(&self) -> HostDirAccess {
+        match self.access {
+            Access::ReadOnly => HostDirAccess::ReadOnly,
+            Access::ReadWrite => HostDirAccess::ReadWrite,
+        }
+    }
+}
+
+pub fn apply_host_mount_declarations(
+    namespace: &mut Namespace,
+    declarations: &[HostMountDeclaration],
+) -> Result<()> {
+    for declaration in declarations {
+        let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
+            .with_context(|| {
+                format!(
+                    "failed to mount host directory {} at {}",
+                    declaration.host_path.display(),
+                    declaration.namespace_path
+                )
+            })?;
+        namespace.mount(
+            &declaration.namespace_path,
+            InProcessTransport::new(Arc::new(hostfs)),
+            declaration.access,
+        );
+    }
+    Ok(())
+}
+
+pub fn sandbox_spec_from_host_mounts(
+    workspace_root: PathBuf,
+    declarations: &[HostMountDeclaration],
+) -> Result<SandboxSpec> {
+    let mut spec = SandboxSpec {
+        writable_roots: vec![workspace_root],
+        read_denylist: Vec::new(),
+        network: NetworkPosture::Deny,
+    };
+    for declaration in declarations {
+        if declaration.access != Access::ReadWrite {
+            continue;
+        }
+        let host_path = canonical_host_path(&declaration.host_path).with_context(|| {
+            format!(
+                "failed to project writable host mount {}",
+                declaration.host_path.display()
+            )
+        })?;
+        if !spec.writable_roots.contains(&host_path) {
+            spec.writable_roots.push(host_path);
+        }
+    }
+    Ok(spec)
+}
+
+fn canonical_host_path(path: &Path) -> Result<PathBuf> {
+    Ok(std::fs::canonicalize(path)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alan_ap::{Fid, FileKind, OpenMode, Request, Response};
+    use alan_kernel::MountFs;
+
+    #[tokio::test]
+    async fn writable_host_mount_is_reachable_and_projected() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let declaration =
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite);
+        let mut namespace = Namespace::new();
+        apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+
+        assert_file_bytes(&root, Fid(1), &["mnt", "project", "notes.txt"], b"hello").await;
+
+        let spec =
+            sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &[declaration]).unwrap();
+        assert_eq!(spec.writable_roots[0], workspace.path());
+        assert!(
+            spec.writable_roots
+                .contains(&std::fs::canonicalize(host.path()).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_host_mount_is_reachable_but_not_projected_as_writable() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("manual.txt"), "read me").unwrap();
+        let declaration =
+            HostMountDeclaration::new("/mnt/docs", host.path().to_path_buf(), Access::ReadOnly);
+        let mut namespace = Namespace::new();
+        apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+
+        assert_file_bytes(&root, Fid(1), &["mnt", "docs", "manual.txt"], b"read me").await;
+        let opened = root
+            .call(Request::Open {
+                fid: Fid(1),
+                mode: OpenMode::Write,
+            })
+            .await;
+        assert_eq!(opened.unwrap_err(), alan_ap::ErrorCode::NoAccess);
+
+        let spec =
+            sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &[declaration]).unwrap();
+        let host_path = std::fs::canonicalize(host.path()).unwrap();
+        assert_eq!(spec.writable_roots, vec![workspace.path().to_path_buf()]);
+        assert!(!spec.writable_roots.contains(&host_path));
+    }
+
+    #[test]
+    fn empty_declarations_project_only_workspace_seed() {
+        let workspace = PathBuf::from("/workspace");
+        let spec = sandbox_spec_from_host_mounts(workspace.clone(), &[]).unwrap();
+        assert_eq!(spec.writable_roots, vec![workspace]);
+        assert!(spec.read_denylist.is_empty());
+        assert_eq!(spec.network, NetworkPosture::Deny);
+    }
+
+    async fn assert_file_bytes(
+        root: &InProcessTransport,
+        fid: Fid,
+        path: &[&str],
+        expected: &[u8],
+    ) {
+        let response = root
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: path.iter().map(|name| (*name).to_string()).collect(),
+            })
+            .await
+            .unwrap();
+        let Response::Walk { qid } = response else {
+            panic!("unexpected walk response");
+        };
+        assert_eq!(qid.kind, FileKind::File);
+        root.call(Request::Open {
+            fid,
+            mode: OpenMode::Read,
+        })
+        .await
+        .unwrap();
+        let response = root
+            .call(Request::Read {
+                fid,
+                offset: 0,
+                count: 1024,
+            })
+            .await
+            .unwrap();
+        let Response::Read { data } = response else {
+            panic!("unexpected read response");
+        };
+        assert_eq!(data, expected);
+    }
+}
