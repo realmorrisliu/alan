@@ -240,6 +240,9 @@ impl LlmFs {
                 provider: AsyncMutex::new(provider),
             }),
         );
+        // The `connections/` listing changed: bump its qid version so a cached
+        // directory listing goes stale and the new endpoint is seen.
+        state.listing_version += 1;
     }
 
     fn node_of(&self, fid: Fid) -> Result<Node, ErrorCode> {
@@ -466,9 +469,10 @@ impl FileServer for LlmFs {
             generation.events.append(b"{\"aborted\":true}\n").await;
             generation.advance(GenStatus::Aborted);
         }
-        // Wake a running drain task so it stops promptly (belt-and-suspenders: it
-        // also re-checks the terminal status under the same lock).
-        generation.abort.notify_waiters();
+        // Wake a running drain task (or a pending provider startup) so it stops
+        // promptly. `notify_one` stores a permit if no waiter is parked yet, so an
+        // abort that arrives before the drain reaches `notified()` is not lost.
+        generation.abort.notify_one();
         Ok(data.len() as u32)
     }
 
@@ -581,11 +585,21 @@ impl FileServer for LlmFs {
             request = request.with_system_prompt(system);
         }
 
-        // Start the provider stream. A startup failure is terminal (error), not a
-        // Generation left running with an empty `events`.
+        // Start the provider stream, but race it against an abort: a `ctl` abort
+        // during startup drops the in-flight `generate_stream` future (cancelling
+        // the provider request) instead of paying for a stream nobody will read. A
+        // startup failure is terminal (error).
         let rx = {
             let mut provider = generation.connection.provider.lock().await;
-            provider.generate_stream(request).await
+            tokio::select! {
+                biased;
+                _ = generation.abort.notified() => {
+                    // Aborted during startup: ctl already recorded the terminal
+                    // state; drop the provider future and do not stream.
+                    return Ok(());
+                }
+                result = provider.generate_stream(request) => result,
+            }
         };
         let mut rx = match rx {
             Ok(rx) => rx,
@@ -595,7 +609,7 @@ impl FileServer for LlmFs {
             }
         };
 
-        // An abort that raced startup wins: do not begin streaming.
+        // An abort that landed just as startup finished also wins.
         if generation.status() == GenStatus::Aborted {
             return Ok(());
         }
@@ -763,8 +777,10 @@ fn chunk_record(chunk: &StreamChunk) -> Option<String> {
             "usage".to_string(),
             serde_json::json!({
                 "prompt_tokens": u.prompt_tokens,
+                "cached_prompt_tokens": u.cached_prompt_tokens,
                 "completion_tokens": u.completion_tokens,
                 "total_tokens": u.total_tokens,
+                "reasoning_tokens": u.reasoning_tokens,
             }),
         );
     }

@@ -4,6 +4,7 @@
 //! request document to `data` (committed on clunk), and reads the streamed token
 //! records from `events`. Backed by the mock provider — no real API key.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
@@ -761,4 +762,82 @@ async fn a_startup_failure_is_terminal() {
         Err(ErrorCode::Io)
     );
     assert_eq!(status_of(&fs, &g, Fid(3)).await, "error");
+}
+
+/// A provider whose `generate_stream` startup takes a while before returning a
+/// receiver, so a test can abort *during* startup.
+struct SlowStartupProvider;
+
+#[async_trait::async_trait]
+impl LlmProvider for SlowStartupProvider {
+    async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        unimplemented!()
+    }
+    async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+        unimplemented!()
+    }
+    async fn generate_stream(
+        &mut self,
+        _: GenerationRequest,
+    ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let (tx, rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            let _ = tx.send(text_chunk("late", true)).await;
+        });
+        Ok(rx)
+    }
+    fn provider_name(&self) -> &'static str {
+        "slow-startup"
+    }
+}
+
+#[tokio::test]
+async fn abort_during_provider_startup_cancels_it() {
+    let fs = Arc::new(llmfs_with(SlowStartupProvider));
+    let g = clone_gen(&fs, Fid(1)).await;
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "data".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+
+    // Commit in a task: it parks awaiting the slow provider startup.
+    let committer = fs.clone();
+    let commit = tokio::spawn(async move { committer.clunk(Fid(2)).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Abort while startup is still in flight.
+    fs.walk(
+        Fid::ROOT,
+        Fid(3),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "ctl".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(3), OpenMode::Write).await.unwrap();
+    fs.write(Fid(3), 0, b"abort").await.unwrap();
+
+    // The commit returns promptly (the provider future is dropped), well before
+    // the 5s startup would finish, and the Generation is aborted.
+    let r = tokio::time::timeout(Duration::from_millis(500), commit)
+        .await
+        .expect("commit did not cancel on abort")
+        .unwrap();
+    assert_eq!(r, Ok(()));
+    assert_eq!(status_of(&fs, &g, Fid(4)).await, "aborted");
 }
