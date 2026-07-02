@@ -1133,13 +1133,6 @@ impl FileServer for LlmFs {
             }
         };
 
-        // Reserve the Generation *before* awaiting the provider: the single
-        // `open`→`running` transition. A concurrent data commit (or a post-abort
-        // revive) fails here, so only one request ever reaches the provider.
-        if !generation.claim(GenStatus::Running) {
-            return Err(ErrorCode::BadRequest);
-        }
-
         let request = match doc.into_generation_request() {
             Ok(request) => request,
             Err(()) => {
@@ -1153,6 +1146,13 @@ impl FileServer for LlmFs {
                 return Err(ErrorCode::BadRequest);
             }
         };
+
+        // Reserve the Generation *before* awaiting the provider: the single
+        // `open`→`running` transition. A concurrent data commit (or a post-abort
+        // revive) fails here, so only one request ever reaches the provider.
+        if !generation.claim(GenStatus::Running) {
+            return Err(ErrorCode::BadRequest);
+        }
 
         // Start the provider stream, but race it against an abort: a `ctl` abort
         // during startup drops the in-flight `generate_stream` future (cancelling

@@ -829,6 +829,33 @@ async fn an_empty_request_is_rejected() {
 }
 
 #[tokio::test]
+async fn invalid_v1_request_is_rejected_before_running() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let fs = llmfs_with(RecordingProvider {
+        requests: Arc::clone(&requests),
+    });
+    let g = clone_gen(&fs, Fid(1)).await;
+
+    assert_eq!(
+        commit_request(&fs, &g, Fid(2), br#"{"version":1,"messages":[]}"#).await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(status_of(&fs, &g, Fid(3)).await, "rejected");
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "invalid v1 documents must not reach the provider"
+    );
+
+    let events =
+        String::from_utf8(read_all(&fs, &["connections", "default", &g, "events"], Fid(4)).await)
+            .unwrap();
+    assert!(
+        events.contains("\"rejected\""),
+        "invalid v1 documents append a rejected event: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn unknown_request_fields_are_rejected() {
     let fs = llmfs();
     let g = clone_gen(&fs, Fid(1)).await;

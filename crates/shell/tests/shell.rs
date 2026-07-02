@@ -551,7 +551,6 @@ async fn m2_stdio_driver_talks_to_agentfs_llmfs_agent_with_generic_builtins() {
     llmfs.register_connection("default", Box::new(mock));
 
     let procfs = Arc::new(ProcFs::new());
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(procfs.clone()));
     let mut ns = Namespace::new();
     ns.mount(
         "/proc",
@@ -559,8 +558,8 @@ async fn m2_stdio_driver_talks_to_agentfs_llmfs_agent_with_generic_builtins() {
         Access::ReadWrite,
     );
     ns.mount(
-        "/agent",
-        InProcessTransport::new(agent_root.clone()),
+        "/agent/root",
+        InProcessTransport::new(agentfs),
         Access::ReadWrite,
     );
     ns.mount(
@@ -574,10 +573,12 @@ async fn m2_stdio_driver_talks_to_agentfs_llmfs_agent_with_generic_builtins() {
         .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
         .await
         .unwrap();
-    agent_root.bind_process(pid.clone(), agentfs).await;
-    agent_root.set_root_process(pid.clone()).await;
+    assert_eq!(
+        shell.cat(&format!("/proc/{pid}/status")).await.unwrap(),
+        b"running\n"
+    );
 
-    let agent_root_path = format!("/agent/{pid}");
+    let agent_root_path = "/agent/root".to_string();
     let agent_task = tokio::spawn(run_one_file_agent_turn(
         root.clone(),
         agent_root_path.clone(),
