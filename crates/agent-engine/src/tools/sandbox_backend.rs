@@ -16,6 +16,7 @@
 //! tooling is present, otherwise the path-guard fallback (under which bash must
 //! not auto-run — the policy escalates it).
 
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 /// Available sandbox enforcement backends, in order of strength.
@@ -23,6 +24,8 @@ use std::path::{Component, Path, PathBuf};
 pub enum SandboxBackendKind {
     /// macOS Seatbelt (`sandbox-exec`).
     Seatbelt,
+    /// Linux user/mount namespace reification (full read isolation).
+    LinuxReifiedNamespace,
     /// Linux Landlock (filesystem) paired with seccomp/namespace (network).
     Landlock,
     /// Best-effort in-process workspace path guard (no OS enforcement).
@@ -34,6 +37,7 @@ impl SandboxBackendKind {
     pub const fn name(self) -> &'static str {
         match self {
             SandboxBackendKind::Seatbelt => "seatbelt",
+            SandboxBackendKind::LinuxReifiedNamespace => "linux_reified_namespace",
             SandboxBackendKind::Landlock => "landlock",
             SandboxBackendKind::WorkspacePathGuard => "workspace_path_guard",
         }
@@ -43,7 +47,9 @@ impl SandboxBackendKind {
     pub const fn is_os_enforced(self) -> bool {
         matches!(
             self,
-            SandboxBackendKind::Seatbelt | SandboxBackendKind::Landlock
+            SandboxBackendKind::Seatbelt
+                | SandboxBackendKind::LinuxReifiedNamespace
+                | SandboxBackendKind::Landlock
         )
     }
 
@@ -66,8 +72,436 @@ impl SandboxBackendKind {
     /// writes by approved code (git porcelain, a reviewer-approved test runner)
     /// are trusted — see the residual-gap audit.
     pub const fn permits_autonomous_bash(self) -> bool {
-        matches!(self, SandboxBackendKind::Seatbelt)
+        matches!(
+            self,
+            SandboxBackendKind::Seatbelt | SandboxBackendKind::LinuxReifiedNamespace
+        )
     }
+}
+
+/// Availability state for a single Linux reification requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxReificationCapability {
+    available: bool,
+    reason: Option<String>,
+}
+
+impl LinuxReificationCapability {
+    /// Mark the capability as available.
+    pub fn available() -> Self {
+        Self {
+            available: true,
+            reason: None,
+        }
+    }
+
+    /// Mark the capability as unavailable with an auditable reason.
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            available: false,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether this requirement is currently available.
+    pub const fn is_available(&self) -> bool {
+        self.available
+    }
+
+    /// The unavailable reason, when present.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    fn audit_value(&self) -> String {
+        match (self.available, self.reason()) {
+            (true, _) => "available".to_string(),
+            (false, Some(reason)) => format!("unavailable({reason})"),
+            (false, None) => "unavailable".to_string(),
+        }
+    }
+}
+
+/// Overall status for the Linux reified namespace backend probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxReificationStatus {
+    /// All required filesystem and network requirements are available.
+    Available,
+    /// Filesystem reification can be attempted, but network confinement is missing.
+    Degraded,
+    /// One or more required namespace or mount requirements are missing.
+    Unavailable,
+}
+
+impl LinuxReificationStatus {
+    /// Stable audit label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            LinuxReificationStatus::Available => "available",
+            LinuxReificationStatus::Degraded => "degraded",
+            LinuxReificationStatus::Unavailable => "unavailable",
+        }
+    }
+}
+
+impl fmt::Display for LinuxReificationStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Capability report for the Linux reified namespace backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxReificationCapabilityReport {
+    /// Linux host requirement.
+    pub linux_host: LinuxReificationCapability,
+    /// Unprivileged user namespace creation.
+    pub user_namespace: LinuxReificationCapability,
+    /// Mount namespace creation.
+    pub mount_namespace: LinuxReificationCapability,
+    /// Bind-mount support inside the new namespace.
+    pub bind_mount: LinuxReificationCapability,
+    /// Read-only remount support for bound paths.
+    pub read_only_remount: LinuxReificationCapability,
+    /// Private scratch/tmp mount support.
+    pub scratch_tmp_mount: LinuxReificationCapability,
+    /// Network confinement support for network-denied commands.
+    pub network_confinement: LinuxReificationCapability,
+}
+
+impl LinuxReificationCapabilityReport {
+    /// Build a report from explicit requirement states.
+    pub fn new(
+        linux_host: LinuxReificationCapability,
+        user_namespace: LinuxReificationCapability,
+        mount_namespace: LinuxReificationCapability,
+        bind_mount: LinuxReificationCapability,
+        read_only_remount: LinuxReificationCapability,
+        scratch_tmp_mount: LinuxReificationCapability,
+        network_confinement: LinuxReificationCapability,
+    ) -> Self {
+        Self {
+            linux_host,
+            user_namespace,
+            mount_namespace,
+            bind_mount,
+            read_only_remount,
+            scratch_tmp_mount,
+            network_confinement,
+        }
+    }
+
+    /// Stable backend name reported in audit metadata.
+    pub const fn backend_name(&self) -> &'static str {
+        SandboxBackendKind::LinuxReifiedNamespace.name()
+    }
+
+    /// Overall probe status.
+    pub fn status(&self) -> LinuxReificationStatus {
+        let fs_requirements_available = self.linux_host.is_available()
+            && self.user_namespace.is_available()
+            && self.mount_namespace.is_available()
+            && self.bind_mount.is_available()
+            && self.read_only_remount.is_available()
+            && self.scratch_tmp_mount.is_available();
+
+        if fs_requirements_available && self.network_confinement.is_available() {
+            LinuxReificationStatus::Available
+        } else if fs_requirements_available {
+            LinuxReificationStatus::Degraded
+        } else {
+            LinuxReificationStatus::Unavailable
+        }
+    }
+
+    /// Whether the backend is selectable for network-denied native subprocesses.
+    pub fn is_selectable(&self) -> bool {
+        matches!(self.status(), LinuxReificationStatus::Available)
+    }
+
+    /// List all missing requirements and their reasons.
+    pub fn unavailable_reasons(&self) -> Vec<String> {
+        self.capabilities()
+            .into_iter()
+            .filter(|(_, capability)| !capability.is_available())
+            .map(|(name, capability)| {
+                let reason = capability.reason().unwrap_or("no reason reported");
+                format!("{name}: {reason}")
+            })
+            .collect()
+    }
+
+    /// Stable key/value fields for audit snapshots and diagnostics.
+    pub fn audit_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("backend", self.backend_name().to_string()),
+            ("status", self.status().to_string()),
+        ];
+        fields.extend(
+            self.capabilities()
+                .into_iter()
+                .map(|(name, capability)| (name, capability.audit_value())),
+        );
+        fields
+    }
+
+    fn capabilities(&self) -> [(&'static str, &LinuxReificationCapability); 7] {
+        [
+            ("linux_host", &self.linux_host),
+            ("user_namespace", &self.user_namespace),
+            ("mount_namespace", &self.mount_namespace),
+            ("bind_mount", &self.bind_mount),
+            ("read_only_remount", &self.read_only_remount),
+            ("scratch_tmp_mount", &self.scratch_tmp_mount),
+            ("network_confinement", &self.network_confinement),
+        ]
+    }
+}
+
+impl fmt::Display for LinuxReificationCapabilityReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let capabilities = self
+            .capabilities()
+            .into_iter()
+            .map(|(name, capability)| format!("{name}={}", capability.audit_value()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(
+            formatter,
+            "{}: {} ({capabilities})",
+            self.backend_name(),
+            self.status()
+        )
+    }
+}
+
+/// Probe Linux reified namespace support.
+///
+/// This is intentionally separate from `detect_backend()`: the backend state is
+/// auditable now, but selection remains on the existing Seatbelt/Landlock/path
+/// guard chain until a runner is implemented and smoke-gated.
+pub fn probe_linux_reification() -> LinuxReificationCapabilityReport {
+    probe_linux_reification_for_host()
+}
+
+/// Choose the best Linux backend when reification is considered.
+///
+/// `detect_backend()` does not call this yet; it is the pure fallback ordering
+/// used by the probe tests and the later opt-in selection slice.
+pub fn preferred_linux_backend_with_reification(
+    report: &LinuxReificationCapabilityReport,
+    landlock_is_available: bool,
+) -> SandboxBackendKind {
+    if report.is_selectable() {
+        SandboxBackendKind::LinuxReifiedNamespace
+    } else if landlock_is_available {
+        SandboxBackendKind::Landlock
+    } else {
+        SandboxBackendKind::WorkspacePathGuard
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
+    let reason = "not a linux host";
+    LinuxReificationCapabilityReport::new(
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+        LinuxReificationCapability::unavailable(reason),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
+    let linux_host = LinuxReificationCapability::available();
+    let user_namespace = run_linux_probe(
+        "user namespace",
+        linux_unshare_command(&["--user", "--map-root-user"]),
+    );
+    let mount_namespace = if user_namespace.is_available() {
+        run_linux_probe(
+            "mount namespace",
+            linux_unshare_command(&["--user", "--map-root-user", "--mount"]),
+        )
+    } else {
+        LinuxReificationCapability::unavailable("requires available user namespace")
+    };
+
+    let bind_mount = if mount_namespace.is_available() {
+        run_mount_probe(
+            "bind mount",
+            "mount --make-rprivate / 2>/dev/null || true; \
+             mount --bind \"$1\" \"$2\"; \
+             test -f \"$2/probe-file\"",
+        )
+    } else {
+        LinuxReificationCapability::unavailable("requires available mount namespace")
+    };
+
+    let read_only_remount = if mount_namespace.is_available() {
+        run_mount_probe(
+            "read-only remount",
+            "mount --make-rprivate / 2>/dev/null || true; \
+             mount --bind \"$1\" \"$2\"; \
+             mount -o remount,bind,ro \"$2\"; \
+             if sh -c 'printf x > \"$1/probe-file\"' sh \"$2\" 2>/dev/null; then exit 1; fi",
+        )
+    } else {
+        LinuxReificationCapability::unavailable("requires available mount namespace")
+    };
+
+    let scratch_tmp_mount = if mount_namespace.is_available() {
+        run_scratch_tmp_probe()
+    } else {
+        LinuxReificationCapability::unavailable("requires available mount namespace")
+    };
+
+    let network_confinement = if landlock_supports_network() {
+        LinuxReificationCapability::available()
+    } else {
+        LinuxReificationCapability::unavailable("Landlock network confinement unavailable")
+    };
+
+    LinuxReificationCapabilityReport::new(
+        linux_host,
+        user_namespace,
+        mount_namespace,
+        bind_mount,
+        read_only_remount,
+        scratch_tmp_mount,
+        network_confinement,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_unshare_command(flags: &[&str]) -> std::process::Command {
+    let mut command = std::process::Command::new("unshare");
+    command.args(flags).arg("true");
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn run_mount_probe(label: &str, script: &str) -> LinuxReificationCapability {
+    let probe_root = match create_linux_probe_tree(label) {
+        Ok(probe_root) => probe_root,
+        Err(reason) => return LinuxReificationCapability::unavailable(reason),
+    };
+
+    let command = linux_unshare_shell_command(
+        script,
+        &[probe_root.source.as_path(), probe_root.target.as_path()],
+    );
+    run_linux_probe(label, command)
+}
+
+#[cfg(target_os = "linux")]
+fn run_scratch_tmp_probe() -> LinuxReificationCapability {
+    let probe_root = match create_linux_probe_tree("scratch tmp mount") {
+        Ok(probe_root) => probe_root,
+        Err(reason) => return LinuxReificationCapability::unavailable(reason),
+    };
+
+    let command = linux_unshare_shell_command(
+        "mount --make-rprivate / 2>/dev/null || true; \
+         mount -t tmpfs tmpfs \"$1\" && \
+         printf ok > \"$1/probe-file\" && \
+         test -f \"$1/probe-file\"",
+        &[probe_root.scratch.as_path()],
+    );
+    run_linux_probe("scratch tmp mount", command)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_unshare_shell_command(script: &str, args: &[&Path]) -> std::process::Command {
+    let mut command = std::process::Command::new("unshare");
+    command
+        .args(["--user", "--map-root-user", "--mount", "sh", "-c", script])
+        .arg("alan-linux-reification-probe")
+        .args(args);
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_probe(label: &str, mut command: std::process::Command) -> LinuxReificationCapability {
+    match command.output() {
+        Ok(output) if output.status.success() => LinuxReificationCapability::available(),
+        Ok(output) => LinuxReificationCapability::unavailable(format!(
+            "{label} probe failed: {}",
+            linux_probe_failure(&output)
+        )),
+        Err(err) => {
+            LinuxReificationCapability::unavailable(format!("{label} probe failed to start: {err}"))
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_probe_failure(output: &std::process::Output) -> String {
+    let status = output
+        .status
+        .code()
+        .map(|code| format!("exit {code}"))
+        .unwrap_or_else(|| "terminated by signal".to_string());
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        status
+    } else {
+        format!("{status}: {stderr}")
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxProbeTree {
+    root: PathBuf,
+    source: PathBuf,
+    target: PathBuf,
+    scratch: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxProbeTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn create_linux_probe_tree(label: &str) -> Result<LinuxProbeTree, String> {
+    let normalized_label = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let root = std::env::temp_dir().join(format!(
+        "alan-linux-reification-{normalized_label}-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let source = root.join("source");
+    let target = root.join("target");
+    let scratch = root.join("scratch");
+    std::fs::create_dir_all(&source)
+        .and_then(|()| std::fs::create_dir_all(&target))
+        .and_then(|()| std::fs::create_dir_all(&scratch))
+        .map_err(|err| format!("{label} probe setup failed: {err}"))?;
+    std::fs::write(source.join("probe-file"), b"probe")
+        .map_err(|err| format!("{label} probe setup failed: {err}"))?;
+
+    Ok(LinuxProbeTree {
+        root,
+        source,
+        target,
+        scratch,
+    })
 }
 
 /// Whether an OS-enforced sandbox backend is active on this host. The policy
@@ -293,6 +727,8 @@ pub fn confines_network() -> bool {
     match detect_backend() {
         // Seatbelt profile denies `network*`.
         SandboxBackendKind::Seatbelt => true,
+        // Reified namespace selection requires network confinement.
+        SandboxBackendKind::LinuxReifiedNamespace => true,
         // Landlock confines network only on kernels exposing ABI v4 net access.
         SandboxBackendKind::Landlock => landlock_supports_network(),
         SandboxBackendKind::WorkspacePathGuard => false,
@@ -362,6 +798,7 @@ mod tests {
     #[test]
     fn os_backends_are_enforced_and_allow_unattended() {
         assert!(SandboxBackendKind::Seatbelt.is_os_enforced());
+        assert!(SandboxBackendKind::LinuxReifiedNamespace.is_os_enforced());
         assert!(SandboxBackendKind::Landlock.is_os_enforced());
         assert!(SandboxBackendKind::Seatbelt.allows_unattended_bash_and_network());
     }
@@ -377,6 +814,10 @@ mod tests {
     #[test]
     fn backend_names_are_stable() {
         assert_eq!(SandboxBackendKind::Seatbelt.name(), "seatbelt");
+        assert_eq!(
+            SandboxBackendKind::LinuxReifiedNamespace.name(),
+            "linux_reified_namespace"
+        );
         assert_eq!(SandboxBackendKind::Landlock.name(), "landlock");
         assert_eq!(
             SandboxBackendKind::WorkspacePathGuard.name(),
@@ -595,6 +1036,136 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn detect_backend_does_not_select_linux_reified_namespace_yet() {
+        assert_ne!(detect_backend(), SandboxBackendKind::LinuxReifiedNamespace);
+    }
+
+    #[test]
+    fn linux_reification_report_formats_audit_fields() {
+        let report = LinuxReificationCapabilityReport::new(
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            unavailable_capability("Landlock network confinement unavailable"),
+        );
+
+        assert_eq!(report.backend_name(), "linux_reified_namespace");
+        assert_eq!(report.status(), LinuxReificationStatus::Degraded);
+        assert_eq!(
+            report.audit_fields(),
+            vec![
+                ("backend", "linux_reified_namespace".to_string()),
+                ("status", "degraded".to_string()),
+                ("linux_host", "available".to_string()),
+                ("user_namespace", "available".to_string()),
+                ("mount_namespace", "available".to_string()),
+                ("bind_mount", "available".to_string()),
+                ("read_only_remount", "available".to_string()),
+                ("scratch_tmp_mount", "available".to_string()),
+                (
+                    "network_confinement",
+                    "unavailable(Landlock network confinement unavailable)".to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            report.to_string(),
+            "linux_reified_namespace: degraded (linux_host=available, \
+             user_namespace=available, mount_namespace=available, bind_mount=available, \
+             read_only_remount=available, scratch_tmp_mount=available, \
+             network_confinement=unavailable(Landlock network confinement unavailable))"
+        );
+    }
+
+    #[test]
+    fn linux_reification_report_lists_unavailable_reasons() {
+        let report = LinuxReificationCapabilityReport::new(
+            unavailable_capability("not a linux host"),
+            unavailable_capability("not a linux host"),
+            unavailable_capability("requires available user namespace"),
+            unavailable_capability("requires available mount namespace"),
+            available_capability(),
+            available_capability(),
+            unavailable_capability("Landlock network confinement unavailable"),
+        );
+
+        assert_eq!(
+            report.unavailable_reasons(),
+            vec![
+                "linux_host: not a linux host".to_string(),
+                "user_namespace: not a linux host".to_string(),
+                "mount_namespace: requires available user namespace".to_string(),
+                "bind_mount: requires available mount namespace".to_string(),
+                "network_confinement: Landlock network confinement unavailable".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn linux_reification_probe_reports_non_linux_unavailable() {
+        let report = probe_linux_reification();
+
+        assert_eq!(report.status(), LinuxReificationStatus::Unavailable);
+        assert_eq!(
+            report.unavailable_reasons(),
+            vec![
+                "linux_host: not a linux host".to_string(),
+                "user_namespace: not a linux host".to_string(),
+                "mount_namespace: not a linux host".to_string(),
+                "bind_mount: not a linux host".to_string(),
+                "read_only_remount: not a linux host".to_string(),
+                "scratch_tmp_mount: not a linux host".to_string(),
+                "network_confinement: not a linux host".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_reification_fallback_prefers_safe_backends() {
+        let complete = complete_linux_reification_report();
+        assert_eq!(
+            preferred_linux_backend_with_reification(&complete, true),
+            SandboxBackendKind::LinuxReifiedNamespace
+        );
+
+        let incomplete = LinuxReificationCapabilityReport::new(
+            available_capability(),
+            unavailable_capability("user namespaces disabled"),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification(&incomplete, true),
+            SandboxBackendKind::Landlock
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification(&incomplete, false),
+            SandboxBackendKind::WorkspacePathGuard
+        );
+
+        let degraded = LinuxReificationCapabilityReport::new(
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            unavailable_capability("network confinement unavailable"),
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification(&degraded, true),
+            SandboxBackendKind::Landlock
+        );
+    }
+
     fn pre_refactor_single_workspace_profile(workspace_root: &Path, allow_network: bool) -> String {
         let canonical_root = canonical_string(workspace_root);
         let root = sbpl_quote(&canonical_root);
@@ -627,6 +1198,26 @@ mod tests {
              (deny file-write*)\n\
              {write_allows}\n\
              (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
+        )
+    }
+
+    fn available_capability() -> LinuxReificationCapability {
+        LinuxReificationCapability::available()
+    }
+
+    fn unavailable_capability(reason: &str) -> LinuxReificationCapability {
+        LinuxReificationCapability::unavailable(reason)
+    }
+
+    fn complete_linux_reification_report() -> LinuxReificationCapabilityReport {
+        LinuxReificationCapabilityReport::new(
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
+            available_capability(),
         )
     }
 }

@@ -416,7 +416,7 @@ impl Sandbox {
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
-        let mut command = self.build_confined_command(cmd, allow_network);
+        let mut command = self.build_confined_command(cmd, allow_network)?;
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -446,9 +446,13 @@ impl Sandbox {
     /// available. On macOS with Seatbelt this wraps the shell in `sandbox-exec`
     /// with a workspace-write/no-network profile; otherwise it runs the shell
     /// directly under the best-effort path guard.
-    fn build_confined_command(&self, cmd: &str, allow_network: bool) -> tokio::process::Command {
+    fn build_confined_command(
+        &self,
+        cmd: &str,
+        allow_network: bool,
+    ) -> Result<tokio::process::Command> {
         // Defense in depth: start the shell with pathname expansion disabled.
-        match self.active_backend() {
+        let command = match self.active_backend() {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
                 let profile = super::sandbox_backend::seatbelt_profile(
                     &self.spec.writable_roots,
@@ -464,6 +468,11 @@ impl Sandbox {
                     .arg("-c")
                     .arg(cmd);
                 command
+            }
+            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace => {
+                return Err(anyhow!(
+                    "linux_reified_namespace backend is detectable but no runner is installed yet"
+                ));
             }
             #[cfg(target_os = "linux")]
             super::sandbox_backend::SandboxBackendKind::Landlock => {
@@ -490,7 +499,8 @@ impl Sandbox {
                 command.arg("-f").arg("-c").arg(cmd);
                 command
             }
-        }
+        };
+        Ok(command)
     }
 
     /// List directory contents

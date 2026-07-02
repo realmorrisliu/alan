@@ -1,11 +1,11 @@
 ## 1. Capability Probe And Backend Reporting
 
-- [ ] 1.1 Add a Linux reification capability probe that reports user namespace,
+- [x] 1.1 Add a Linux reification capability probe that reports user namespace,
   mount namespace, bind mount, read-only remount, scratch/tmp mount, and network
   confinement support.
-- [ ] 1.2 Add a distinct `linux_reified_namespace` backend state/name and audit
+- [x] 1.2 Add a distinct `linux_reified_namespace` backend state/name and audit
   fields without selecting it by default.
-- [ ] 1.3 Add unit tests for capability-report formatting, unavailable reasons,
+- [x] 1.3 Add unit tests for capability-report formatting, unavailable reasons,
   and safe fallback ordering to Landlock/path guard.
 
 ## 2. Reified Namespace Plan Model

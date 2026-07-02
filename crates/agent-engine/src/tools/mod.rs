@@ -13,6 +13,7 @@ pub use context::{ToolContext, ToolExecutionBinding};
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
+    LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,
     SandboxBackendKind, active_backend_name, confines_network, detect_backend, os_backend_active,
-    seatbelt_profile,
+    preferred_linux_backend_with_reification, probe_linux_reification, seatbelt_profile,
 };
