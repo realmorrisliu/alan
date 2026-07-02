@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use alan_agent_engine::tools::{NetworkPosture, SandboxSpec};
+use alan_agent_engine::tools::SandboxSpec;
 use alan_ap::InProcessTransport;
 use alan_hostfs::{HostDirAccess, HostDirFs};
 use alan_kernel::{Access, Namespace};
@@ -77,11 +77,7 @@ pub fn sandbox_spec_from_host_mounts(
     validate_non_overlapping_declarations(declarations)?;
     let mut effective_writable_roots = vec![canonical_host_path_or_original(&workspace_root)];
     let writable_host_roots = canonical_read_write_mount_roots(declarations)?;
-    let mut spec = SandboxSpec {
-        writable_roots: vec![workspace_root],
-        read_denylist: Vec::new(),
-        network: NetworkPosture::Deny,
-    };
+    let mut spec = SandboxSpec::seed(workspace_root);
     for host_path in writable_host_roots {
         if !spec.writable_roots.contains(&host_path) {
             spec.writable_roots.push(host_path.clone());
@@ -201,6 +197,7 @@ fn host_paths_overlap(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_agent_engine::tools::NetworkPosture;
     use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Request, Response};
     use alan_kernel::MountFs;
 
@@ -236,6 +233,10 @@ mod tests {
         assert!(
             spec.writable_roots
                 .contains(&std::fs::canonicalize(host.path()).unwrap())
+        );
+        assert_eq!(
+            spec.read_denylist,
+            SandboxSpec::seed(workspace.path().to_path_buf()).read_denylist
         );
     }
 
@@ -385,7 +386,10 @@ mod tests {
         let workspace = PathBuf::from("/workspace");
         let spec = sandbox_spec_from_host_mounts(workspace.clone(), &[]).unwrap();
         assert_eq!(spec.writable_roots, vec![workspace]);
-        assert!(spec.read_denylist.is_empty());
+        assert_eq!(
+            spec.read_denylist,
+            SandboxSpec::default_sensitive_read_denylist()
+        );
         assert_eq!(spec.network, NetworkPosture::Deny);
     }
 

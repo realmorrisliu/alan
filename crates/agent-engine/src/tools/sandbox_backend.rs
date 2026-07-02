@@ -16,7 +16,7 @@
 //! tooling is present, otherwise the path-guard fallback (under which bash must
 //! not auto-run — the policy escalates it).
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,13 +156,12 @@ pub fn seatbelt_profile(
         .map(|path| format!("(allow file-write* (subpath {path}))"))
         .collect::<Vec<_>>()
         .join("\n");
+    let read_denylist = read_denylist_excluding_writable_roots(read_denylist, writable_roots);
     let read_denies = read_denylist
         .iter()
         .map(|path| {
-            format!(
-                "(deny file-read* (subpath {}))\n",
-                sbpl_quote(&canonical_string(path))
-            )
+            let path = sbpl_quote(&canonical_string(path));
+            format!("(deny file-read* (literal {path}) (subpath {path}))\n")
         })
         .collect::<String>();
     // NOTE: we do NOT kernel-deny the protected subpaths (`.git`/`.alan`/
@@ -187,6 +186,27 @@ pub fn seatbelt_profile(
          {write_allows}\n\
          (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
     )
+}
+
+pub(crate) fn read_denylist_excluding_writable_roots(
+    read_denylist: &[PathBuf],
+    writable_roots: &[PathBuf],
+) -> Vec<PathBuf> {
+    read_denylist
+        .iter()
+        .filter(|deny_path| !read_deny_matches_any_writable_root(deny_path, writable_roots))
+        .cloned()
+        .collect()
+}
+
+fn read_deny_matches_any_writable_root(deny_path: &Path, writable_roots: &[PathBuf]) -> bool {
+    let deny_variants = comparable_path_variants(deny_path);
+    writable_roots.iter().any(|writable_root| {
+        let writable_variants = comparable_path_variants(writable_root);
+        deny_variants
+            .iter()
+            .any(|deny| writable_variants.iter().any(|writable| writable == deny))
+    })
 }
 
 /// Apply a Landlock ruleset to the current (child) process: allow reads
@@ -308,6 +328,32 @@ fn canonical_string(path: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
+fn comparable_path_variants(path: &Path) -> Vec<PathBuf> {
+    let mut variants = vec![lexically_normalize_path(path)];
+    if let Ok(canonical) = std::fs::canonicalize(path)
+        && !variants.contains(&canonical)
+    {
+        variants.push(canonical);
+    }
+    variants
+}
+
+fn lexically_normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,9 +417,38 @@ mod tests {
     #[test]
     fn seatbelt_profile_emits_read_denies_when_configured() {
         let writable_roots = vec![PathBuf::from("/work/space")];
-        let read_denylist = vec![PathBuf::from("/secret")];
+        let read_denylist = vec![PathBuf::from("/secret"), PathBuf::from("/home/me/.netrc")];
         let profile = seatbelt_profile(&writable_roots, &read_denylist, false);
-        assert!(profile.contains("(deny file-read* (subpath \"/secret\"))"));
+        assert!(profile.contains("(deny file-read* (literal \"/secret\") (subpath \"/secret\"))"));
+        assert!(profile.contains(
+            "(deny file-read* (literal \"/home/me/.netrc\") (subpath \"/home/me/.netrc\"))"
+        ));
+    }
+
+    #[test]
+    fn seatbelt_profile_omits_exact_writable_root_read_denies() {
+        let writable_roots = vec![PathBuf::from("/Users/alice/.alan")];
+        let read_denylist = vec![
+            PathBuf::from("/Users/alice"),
+            PathBuf::from("/Users/alice/.alan"),
+            PathBuf::from("/Users/alice/.alan-dev"),
+            PathBuf::from("/Users/alice/.ssh"),
+        ];
+        let profile = seatbelt_profile(&writable_roots, &read_denylist, false);
+
+        assert!(profile.contains("(deny file-read* (literal \"/Users/alice\")"));
+        assert!(!profile.contains("(deny file-read* (literal \"/Users/alice/.alan\")"));
+        assert!(profile.contains("(deny file-read* (literal \"/Users/alice/.alan-dev\")"));
+        assert!(profile.contains("(deny file-read* (literal \"/Users/alice/.ssh\")"));
+    }
+
+    #[test]
+    fn seatbelt_profile_preserves_parent_read_denies_for_nested_writable_roots() {
+        let writable_roots = vec![PathBuf::from("/Users/alice/.ssh/project")];
+        let read_denylist = vec![PathBuf::from("/Users/alice/.ssh")];
+        let profile = seatbelt_profile(&writable_roots, &read_denylist, false);
+
+        assert!(profile.contains("(deny file-read* (literal \"/Users/alice/.ssh\")"));
     }
 
     #[test]
