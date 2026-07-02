@@ -5,10 +5,19 @@
 //! plan that can be tested on any host.
 
 #[cfg(target_os = "linux")]
+use std::io::Read;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+#[cfg(target_os = "linux")]
+use std::thread::JoinHandle;
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 use thiserror::Error;
 
@@ -285,6 +294,7 @@ pub fn default_execution_substrate() -> Vec<ReifiedExecutionSubstrateMount> {
         ("/usr/lib64", "/usr/lib64"),
         ("/etc/ssl", "/etc/ssl"),
         ("/etc/hosts", "/etc/hosts"),
+        ("/etc/resolv.conf", "/etc/resolv.conf"),
     ]
     .into_iter()
     .map(|(namespace_path, host_path)| {
@@ -354,11 +364,20 @@ impl LinuxReifiedNamespaceRunner {
     pub const fn fallback_backend(&self) -> SandboxBackendKind {
         self.fallback_backend
     }
+
+    /// Run the command and terminate the Linux runner process group if the timeout expires.
+    pub fn run_with_timeout(
+        &self,
+        plan: &ReifiedNamespacePlan,
+        timeout: Option<Duration>,
+    ) -> Result<ExecResult, ReifiedNamespaceRunError> {
+        self.run_inner(plan, timeout)
+    }
 }
 
 impl ReifiedNamespaceRunner for LinuxReifiedNamespaceRunner {
     fn run(&self, plan: &ReifiedNamespacePlan) -> Result<ExecResult, ReifiedNamespaceRunError> {
-        self.run_inner(plan)
+        self.run_with_timeout(plan, None)
     }
 }
 
@@ -403,6 +422,92 @@ impl ReifiedNamespaceCommandSpec {
         command.env_clear();
         command.env("PATH", TRUSTED_LINUX_SETUP_PATH);
         command
+    }
+}
+
+/// Smoke-check the actual Linux reified namespace runner.
+#[cfg(target_os = "linux")]
+pub(crate) fn smoke_linux_reified_namespace_runner() -> LinuxReificationCapability {
+    match smoke_linux_reified_namespace_runner_inner() {
+        Ok(()) => LinuxReificationCapability::available(),
+        Err(reason) => LinuxReificationCapability::unavailable(reason),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
+    let workspace = ReifiedSmokeWorkspace::create()
+        .map_err(|err| format!("create runner smoke workspace failed: {err}"))?;
+    let runner = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock);
+
+    let deny_plan = ReifiedNamespacePlan::workspace_seed(
+        workspace.root.as_path(),
+        workspace.root.as_path(),
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "test -d /mnt/workspace && test ! -e /home".to_string(),
+        ],
+        NetworkPosture::Deny,
+    )
+    .map_err(|err| format!("build runner smoke plan failed: {err}"))?;
+    run_linux_reified_smoke_plan(&runner, &deny_plan, "network-denied")?;
+
+    let allow_script = if Path::new("/etc/resolv.conf").exists() {
+        "test -f /etc/resolv.conf"
+    } else {
+        "true"
+    };
+    let allow_plan = ReifiedNamespacePlan::workspace_seed(
+        workspace.root.as_path(),
+        workspace.root.as_path(),
+        vec!["sh".to_string(), "-c".to_string(), allow_script.to_string()],
+        NetworkPosture::Allow,
+    )
+    .map_err(|err| format!("build runner network-allow smoke plan failed: {err}"))?;
+    run_linux_reified_smoke_plan(&runner, &allow_plan, "network-allow")
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_reified_smoke_plan(
+    runner: &LinuxReifiedNamespaceRunner,
+    plan: &ReifiedNamespacePlan,
+    label: &str,
+) -> Result<(), String> {
+    match runner.run(plan) {
+        Ok(result) if result.exit_code == 0 => Ok(()),
+        Ok(result) => Err(format!(
+            "runner {label} smoke command failed: exit_code={} stderr={}",
+            result.exit_code,
+            result.stderr.trim()
+        )),
+        Err(err) => Err(format!("runner {label} smoke unavailable: {}", err.reason)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct ReifiedSmokeWorkspace {
+    root: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl ReifiedSmokeWorkspace {
+    fn create() -> std::io::Result<Self> {
+        let root = std::env::temp_dir().join(format!(
+            "alan-reified-smoke-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root)?;
+        Ok(Self { root })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ReifiedSmokeWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 
@@ -457,6 +562,9 @@ while [ "$substrate_count" -gt 0 ]; do
 done
 
 "$mount_bin" --bind /dev/null "${root}/dev/null" || fail "bind /dev/null"
+"$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
+"$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
+"$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
 
 scratch_tmp="$1"; shift
 scratch_destination="${root}${scratch_tmp}"
@@ -510,6 +618,7 @@ impl LinuxReifiedNamespaceRunner {
     fn run_inner(
         &self,
         _plan: &ReifiedNamespacePlan,
+        _timeout: Option<Duration>,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
         Err(ReifiedNamespaceRunError::new(
             "linux reified namespace runner is only available on Linux",
@@ -532,6 +641,7 @@ impl LinuxReifiedNamespaceRunner {
     fn run_inner(
         &self,
         plan: &ReifiedNamespacePlan,
+        timeout: Option<Duration>,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
         if plan.argv.is_empty() {
             return Err(self.error("argv must not be empty", Vec::new()));
@@ -562,10 +672,14 @@ impl LinuxReifiedNamespaceRunner {
             .map_err(|err| self.error(format!("create reified root failed: {err}"), Vec::new()))?;
         let command_spec = build_linux_reified_namespace_command(plan, &temp_root)
             .map_err(|err| self.error(err, Vec::new()))?;
-        let output = command_spec
-            .command()
-            .output()
-            .map_err(|err| self.error(format!("failed to start unshare: {err}"), Vec::new()))?;
+        let output = run_linux_reified_command(command_spec.command(), timeout).map_err(|err| {
+            let reason = if err.kind() == std::io::ErrorKind::TimedOut {
+                err.to_string()
+            } else {
+                format!("failed to run unshare: {err}")
+            };
+            self.error(reason, command_spec.audit_fields())
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -601,6 +715,86 @@ impl LinuxReifiedNamespaceRunner {
         ]);
         ReifiedNamespaceRunError::new(reason, self.fallback_backend, audit_fields)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_reified_command(
+    mut command: Command,
+    timeout: Option<Duration>,
+) -> std::io::Result<Output> {
+    let Some(limit) = timeout else {
+        return command.output();
+    };
+
+    run_linux_reified_command_with_timeout(command, limit)
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_reified_command_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> std::io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.process_group(0);
+    let mut child = command.spawn()?;
+    let stdout_reader = child.stdout.take().map(read_child_pipe);
+    let stderr_reader = child.stderr.take().map(read_child_pipe);
+
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = kill_child_process_group(&mut child);
+            let _ = child.wait();
+            let _ = join_child_pipe(stdout_reader);
+            let _ = join_child_pipe(stderr_reader);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("Command execution timed out after {}s", timeout.as_secs()),
+            ));
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        std::thread::sleep(remaining.min(Duration::from_millis(20)));
+    };
+
+    Ok(Output {
+        status,
+        stdout: join_child_pipe(stdout_reader)?,
+        stderr: join_child_pipe(stderr_reader)?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_child_pipe<R>(mut pipe: R) -> JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        pipe.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn join_child_pipe(
+    handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+) -> std::io::Result<Vec<u8>> {
+    let Some(handle) = handle else {
+        return Ok(Vec::new());
+    };
+    handle
+        .join()
+        .map_err(|_| std::io::Error::other("child output reader panicked"))?
+}
+
+#[cfg(target_os = "linux")]
+fn kill_child_process_group(child: &mut std::process::Child) -> std::io::Result<()> {
+    let pgid = -(child.id() as libc::pid_t);
+    let result = unsafe { libc::kill(pgid, libc::SIGKILL) };
+    if result == 0 { Ok(()) } else { child.kill() }
 }
 
 #[cfg(any(test, target_os = "linux"))]
@@ -855,7 +1049,7 @@ fn temp_parent_is_exposed_to_writable_mount(parent: &Path, mounts: &[ReifiedHost
 fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|err| format!("create root failed: {err}"))?;
 
-    prepare_dev_null_destination(root)?;
+    prepare_standard_device_destinations(root)?;
     for mount in &plan.declared_host_mounts {
         prepare_mount_destination(root, &mount.namespace_path, &mount.host_path, true)?;
     }
@@ -869,13 +1063,15 @@ fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), 
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_dev_null_destination(root: &Path) -> Result<(), String> {
+fn prepare_standard_device_destinations(root: &Path) -> Result<(), String> {
     let dev_dir = root.join("dev");
     std::fs::create_dir_all(&dev_dir)
         .map_err(|err| format!("create /dev mountpoint parent failed: {err}"))?;
-    let dev_null = dev_dir.join("null");
-    std::fs::File::create(&dev_null)
-        .map_err(|err| format!("create /dev/null mountpoint failed: {err}"))?;
+    for name in ["null", "stdin", "stdout", "stderr"] {
+        let destination = dev_dir.join(name);
+        std::fs::File::create(&destination)
+            .map_err(|err| format!("create /dev/{name} mountpoint failed: {err}"))?;
+    }
     Ok(())
 }
 
@@ -1238,6 +1434,16 @@ mod tests {
             PathBuf::from("/run/alan-tmp")
         );
         assert_eq!(plan.network, NetworkPosture::Allow);
+    }
+
+    #[test]
+    fn default_execution_substrate_includes_dns_resolver_config() {
+        let substrate = default_execution_substrate();
+
+        assert!(substrate.iter().any(|mount| {
+            mount.namespace_path == Path::new("/etc/resolv.conf")
+                && mount.host_path == Path::new("/etc/resolv.conf")
+        }));
     }
 
     #[test]
@@ -1786,6 +1992,32 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn linux_runner_timeout_kills_child_process_group() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let marker = temp_dir.path().join("leaked-after-timeout");
+        let output = run_linux_reified_command(
+            ReifiedNamespaceCommandSpec {
+                program: "/bin/sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    format!("(sleep 2; printf leaked > {}) & wait", marker.display()),
+                ],
+            }
+            .command(),
+            Some(Duration::from_millis(50)),
+        );
+
+        let error = output.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !marker.exists(),
+            "timeout should kill the shell and its sleeping child"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
         let workspace = tempfile::tempdir().unwrap();
         let docs = tempfile::tempdir().unwrap();
@@ -1847,6 +2079,9 @@ mod tests {
         assert!(script.contains("\"$mount_bin\" --make-rprivate / || fail \"make root private\""));
         assert!(!script.contains("--make-rprivate / 2>/dev/null || true"));
         assert!(script.contains("\"$mount_bin\" --bind /dev/null \"${root}/dev/null\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/0 \"${root}/dev/stdin\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/1 \"${root}/dev/stdout\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/2 \"${root}/dev/stderr\""));
         assert!(script.contains("\"$mount_bin\" --bind \"$host_path\" \"$destination\""));
         assert!(script.contains("\"$chroot_bin\" \"$root\" \"$namespace_shell\""));
         assert!(!script.contains("chroot \"$root\""));
@@ -1862,6 +2097,9 @@ mod tests {
         assert!(command.args.contains(&"/usr/bin/mount".to_string()));
         assert!(command.args.contains(&"/usr/sbin/chroot".to_string()));
         assert!(command.args.contains(&"/usr/bin/setpriv".to_string()));
+        assert!(temp_root.root.join("dev/stdin").exists());
+        assert!(temp_root.root.join("dev/stdout").exists());
+        assert!(temp_root.root.join("dev/stderr").exists());
     }
 
     #[cfg(target_os = "linux")]

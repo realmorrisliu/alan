@@ -560,6 +560,7 @@ where
                 "reason": routing_audit.reason,
                 "capability": routing_audit.capability,
                 "sandbox_backend": routing_audit.sandbox_backend,
+                "path_mode": routing_audit.path_mode,
             }),
         );
         emit(Event::Error {
@@ -622,6 +623,7 @@ where
             "reason": policy_audit.reason,
             "capability": policy_audit.capability,
             "sandbox_backend": policy_audit.sandbox_backend,
+            "path_mode": policy_audit.path_mode,
         }),
     );
 
@@ -1326,6 +1328,7 @@ fn workspace_routing_preflight(
         reason: payload["error"].as_str().map(ToString::to_string),
         capability: capability_label(capability).to_string(),
         sandbox_backend: crate::tools::active_backend_name().to_string(),
+        path_mode: Some(crate::tools::active_backend_path_mode().to_string()),
     };
     Some((payload, preview, audit))
 }

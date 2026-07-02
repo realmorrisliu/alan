@@ -63,7 +63,7 @@ pub enum NetworkPosture {
 }
 
 impl NetworkPosture {
-    const fn allows_network(self) -> bool {
+    pub(crate) const fn allows_network(self) -> bool {
         matches!(self, Self::Allow)
     }
 }
@@ -416,7 +416,17 @@ impl Sandbox {
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
-        let mut command = self.build_confined_command(cmd, allow_network)?;
+        let backend = self.active_backend();
+        if matches!(
+            backend,
+            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+        ) {
+            return self
+                .exec_reified_namespace(cmd, cwd, timeout, allow_network)
+                .await;
+        }
+
+        let mut command = self.build_confined_command(cmd, allow_network, backend)?;
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -450,9 +460,10 @@ impl Sandbox {
         &self,
         cmd: &str,
         allow_network: bool,
+        backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
         // Defense in depth: start the shell with pathname expansion disabled.
-        let command = match self.active_backend() {
+        let command = match backend {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
                 let profile = super::sandbox_backend::seatbelt_profile(
                     &self.spec.writable_roots,
@@ -501,6 +512,79 @@ impl Sandbox {
             }
         };
         Ok(command)
+    }
+
+    async fn exec_reified_namespace(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        allow_network: bool,
+    ) -> Result<ExecResult> {
+        let plan = self.reified_namespace_plan_for_command(cmd, cwd, allow_network)?;
+        let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
+            super::sandbox_backend::detect_projection_backend(),
+        );
+        let run = move || {
+            runner
+                .run_with_timeout(&plan, timeout)
+                .map_err(anyhow::Error::from)
+        };
+        tokio::task::spawn_blocking(run)
+            .await
+            .map_err(|err| anyhow!("reified namespace runner task failed: {err}"))?
+    }
+
+    fn reified_namespace_plan_for_command(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        allow_network: bool,
+    ) -> Result<super::reified_namespace::ReifiedNamespacePlan> {
+        let cwd = if cwd.is_absolute() {
+            cwd.to_path_buf()
+        } else {
+            self.workspace_root().join(cwd)
+        };
+        let network = if allow_network {
+            NetworkPosture::Allow
+        } else {
+            NetworkPosture::Deny
+        };
+        super::reified_namespace::ReifiedNamespacePlan::derive(
+            super::reified_namespace::ReifiedNamespacePlanInput::new(
+                self.reified_mount_declarations(),
+                cwd,
+                vec![
+                    "sh".to_string(),
+                    "-f".to_string(),
+                    "-c".to_string(),
+                    cmd.to_string(),
+                ],
+                network,
+            ),
+        )
+        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))
+    }
+
+    fn reified_mount_declarations(&self) -> Vec<super::reified_namespace::ReifiedMountDeclaration> {
+        self.spec
+            .writable_roots
+            .iter()
+            .enumerate()
+            .map(|(index, root)| {
+                let namespace_path = if index == 0 {
+                    super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH.to_string()
+                } else {
+                    format!("/mnt/writable-{index}")
+                };
+                super::reified_namespace::ReifiedMountDeclaration::host(
+                    namespace_path,
+                    root.clone(),
+                    super::reified_namespace::ReifiedMountAccess::ReadWrite,
+                )
+            })
+            .collect()
     }
 
     /// List directory contents
@@ -610,16 +694,20 @@ impl Sandbox {
             if is_allowed_absolute_command_path(Path::new(literal)) {
                 continue;
             }
+            let literal_path = Path::new(literal);
+            let validation_path = self
+                .reified_namespace_path_to_host(literal_path)
+                .unwrap_or_else(|| literal_path.to_path_buf());
             // Containment applies in every mode: the OS sandbox does not confine
             // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
             // must still be rejected by the parser.
-            if !self.is_in_workspace(Path::new(literal)) {
+            if !self.is_in_workspace(&validation_path) {
                 return Err(anyhow!(
                     "Command contains absolute path outside workspace: {}",
                     literal
                 ));
             }
-            self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
+            self.ensure_path_not_protected(&validation_path, "process path reference")?;
         }
 
         Ok(())
@@ -786,14 +874,17 @@ impl Sandbox {
             if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
                 return Ok(());
             }
-            if !self.is_in_workspace(&candidate) {
+            let validation_path = self
+                .reified_namespace_path_to_host(&candidate)
+                .unwrap_or(candidate);
+            if !self.is_in_workspace(&validation_path) {
                 return Err(anyhow!(
                     "Command references path outside workspace: {}",
                     token
                 ));
             }
-            self.ensure_path_not_protected(&candidate, "process path reference")?;
-            self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
+            self.ensure_path_not_protected(&validation_path, "process path reference")?;
+            self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
         }
 
         Ok(())
@@ -819,15 +910,43 @@ impl Sandbox {
         if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
             return Ok(());
         }
-        if !self.is_in_workspace(&candidate) {
+        let validation_path = self
+            .reified_namespace_path_to_host(&candidate)
+            .unwrap_or(candidate);
+        if !self.is_in_workspace(&validation_path) {
             return Err(anyhow!(
                 "Command references path outside workspace: {}",
                 token
             ));
         }
-        self.ensure_path_not_protected(&candidate, "process path reference")?;
-        self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
+        self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
         Ok(())
+    }
+
+    fn reified_namespace_path_to_host(&self, path: &Path) -> Option<PathBuf> {
+        if !matches!(
+            self.active_backend(),
+            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+        ) || !path.is_absolute()
+        {
+            return None;
+        }
+
+        for (index, root) in self.spec.writable_roots.iter().enumerate() {
+            let namespace_path = if index == 0 {
+                PathBuf::from(super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH)
+            } else {
+                PathBuf::from(format!("/mnt/writable-{index}"))
+            };
+            if path == namespace_path {
+                return Some(root.clone());
+            }
+            if let Ok(suffix) = path.strip_prefix(&namespace_path) {
+                return Some(root.join(suffix));
+            }
+        }
+        None
     }
 }
 

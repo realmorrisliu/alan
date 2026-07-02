@@ -90,6 +90,7 @@ dependencies = [
  "include_dir",
  "jsonschema",
  "landlock",
+ "libc",
  "pin-utils",
  "rand 0.10.1",
  "regex",

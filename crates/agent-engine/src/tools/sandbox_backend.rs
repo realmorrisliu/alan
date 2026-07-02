@@ -20,6 +20,7 @@ use std::fmt;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +43,16 @@ impl SandboxBackendKind {
             SandboxBackendKind::LinuxReifiedNamespace => "linux_reified_namespace",
             SandboxBackendKind::Landlock => "landlock",
             SandboxBackendKind::WorkspacePathGuard => "workspace_path_guard",
+        }
+    }
+
+    /// Whether native subprocess paths are host-projected or namespace-reified.
+    pub const fn path_mode(self) -> &'static str {
+        match self {
+            SandboxBackendKind::LinuxReifiedNamespace => "reified_namespace_paths",
+            SandboxBackendKind::Seatbelt
+            | SandboxBackendKind::Landlock
+            | SandboxBackendKind::WorkspacePathGuard => "projected_host_paths",
         }
     }
 
@@ -171,6 +182,27 @@ pub struct LinuxReificationCapabilityReport {
     pub network_confinement: LinuxReificationCapability,
 }
 
+/// Selection readiness for the Linux reified namespace backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxReifiedNamespaceBackendReadiness {
+    pub capability_report: LinuxReificationCapabilityReport,
+    pub runner_smoke: LinuxReificationCapability,
+    pub selected_backend: SandboxBackendKind,
+}
+
+impl LinuxReifiedNamespaceBackendReadiness {
+    /// Stable fields for startup/debug audits.
+    pub fn audit_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = self.capability_report.audit_fields();
+        fields.extend([
+            ("runner_smoke", self.runner_smoke.audit_value()),
+            ("selected_backend", self.selected_backend.name().to_string()),
+            ("path_mode", self.selected_backend.path_mode().to_string()),
+        ]);
+        fields
+    }
+}
+
 impl LinuxReificationCapabilityReport {
     /// Build a report from explicit requirement states.
     pub fn new(
@@ -294,12 +326,69 @@ pub fn preferred_linux_backend_with_reification(
     report: &LinuxReificationCapabilityReport,
     landlock_is_available: bool,
 ) -> SandboxBackendKind {
-    if report.is_selectable() {
+    preferred_linux_backend_with_reification_and_runner(
+        report,
+        &LinuxReificationCapability::available(),
+        landlock_is_available,
+    )
+}
+
+/// Choose a Linux backend from capability and runner-smoke evidence.
+pub fn preferred_linux_backend_with_reification_and_runner(
+    report: &LinuxReificationCapabilityReport,
+    runner_smoke: &LinuxReificationCapability,
+    landlock_is_available: bool,
+) -> SandboxBackendKind {
+    if report.is_selectable() && runner_smoke.is_available() {
         SandboxBackendKind::LinuxReifiedNamespace
     } else if landlock_is_available {
         SandboxBackendKind::Landlock
     } else {
         SandboxBackendKind::WorkspacePathGuard
+    }
+}
+
+/// Cached readiness for selecting the Linux reified namespace backend.
+pub fn linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    static READINESS: OnceLock<LinuxReifiedNamespaceBackendReadiness> = OnceLock::new();
+    READINESS
+        .get_or_init(probe_linux_reified_namespace_backend_readiness)
+        .clone()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    let capability_report = probe_linux_reification();
+    let runner_smoke = LinuxReificationCapability::unavailable("not a linux host");
+    let selected_backend = preferred_linux_backend_with_reification_and_runner(
+        &capability_report,
+        &runner_smoke,
+        false,
+    );
+    LinuxReifiedNamespaceBackendReadiness {
+        capability_report,
+        runner_smoke,
+        selected_backend,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    let capability_report = probe_linux_reification();
+    let runner_smoke = if capability_report.is_selectable() {
+        super::reified_namespace::smoke_linux_reified_namespace_runner()
+    } else {
+        LinuxReificationCapability::unavailable("capability probe did not select reification")
+    };
+    let selected_backend = preferred_linux_backend_with_reification_and_runner(
+        &capability_report,
+        &runner_smoke,
+        landlock_available(),
+    );
+    LinuxReifiedNamespaceBackendReadiness {
+        capability_report,
+        runner_smoke,
+        selected_backend,
     }
 }
 
@@ -569,6 +658,22 @@ pub fn active_backend_name() -> &'static str {
     detect_backend().name()
 }
 
+/// Path semantics for the active execution backend.
+pub fn active_backend_path_mode() -> &'static str {
+    detect_backend().path_mode()
+}
+
+/// Detect the strongest projection backend, ignoring Linux reification.
+pub fn detect_projection_backend() -> SandboxBackendKind {
+    if cfg!(target_os = "macos") && seatbelt_available() {
+        SandboxBackendKind::Seatbelt
+    } else if cfg!(target_os = "linux") && landlock_available() {
+        SandboxBackendKind::Landlock
+    } else {
+        SandboxBackendKind::WorkspacePathGuard
+    }
+}
+
 /// Detect the strongest available backend for the host.
 ///
 /// Conservative by design: returns an OS backend only when its tooling is
@@ -576,8 +681,8 @@ pub fn active_backend_name() -> &'static str {
 pub fn detect_backend() -> SandboxBackendKind {
     if cfg!(target_os = "macos") && seatbelt_available() {
         SandboxBackendKind::Seatbelt
-    } else if cfg!(target_os = "linux") && landlock_available() {
-        SandboxBackendKind::Landlock
+    } else if cfg!(target_os = "linux") {
+        linux_reified_namespace_backend_readiness().selected_backend
     } else {
         SandboxBackendKind::WorkspacePathGuard
     }
@@ -879,6 +984,26 @@ mod tests {
     }
 
     #[test]
+    fn backend_path_modes_are_stable() {
+        assert_eq!(
+            SandboxBackendKind::Seatbelt.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::Landlock.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::WorkspacePathGuard.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::LinuxReifiedNamespace.path_mode(),
+            "reified_namespace_paths"
+        );
+    }
+
+    #[test]
     fn seatbelt_profile_confines_writes_and_denies_network() {
         let writable_roots = vec![PathBuf::from("/work/space")];
         let profile = seatbelt_profile(&writable_roots, &[], false);
@@ -1084,14 +1209,25 @@ mod tests {
         assert!(matches!(
             kind,
             SandboxBackendKind::Seatbelt
+                | SandboxBackendKind::LinuxReifiedNamespace
                 | SandboxBackendKind::Landlock
                 | SandboxBackendKind::WorkspacePathGuard
         ));
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
-    fn detect_backend_does_not_select_linux_reified_namespace_yet() {
+    fn detect_backend_does_not_select_linux_reified_namespace_on_non_linux() {
         assert_ne!(detect_backend(), SandboxBackendKind::LinuxReifiedNamespace);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detect_backend_matches_linux_reified_namespace_readiness() {
+        assert_eq!(
+            detect_backend(),
+            linux_reified_namespace_backend_readiness().selected_backend
+        );
     }
 
     #[test]
@@ -1217,6 +1353,47 @@ mod tests {
             preferred_linux_backend_with_reification(&degraded, true),
             SandboxBackendKind::Landlock
         );
+    }
+
+    #[test]
+    fn linux_reification_selection_requires_runner_smoke() {
+        let complete = complete_linux_reification_report();
+        let runner_smoke = unavailable_capability("runner smoke failed");
+
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(&complete, &runner_smoke, true),
+            SandboxBackendKind::Landlock
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(&complete, &runner_smoke, false),
+            SandboxBackendKind::WorkspacePathGuard
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(
+                &complete,
+                &available_capability(),
+                true
+            ),
+            SandboxBackendKind::LinuxReifiedNamespace
+        );
+    }
+
+    #[test]
+    fn linux_reification_readiness_audit_names_selected_backend_and_path_mode() {
+        let readiness = LinuxReifiedNamespaceBackendReadiness {
+            capability_report: complete_linux_reification_report(),
+            runner_smoke: unavailable_capability("runner smoke failed"),
+            selected_backend: SandboxBackendKind::Landlock,
+        };
+
+        let fields = readiness.audit_fields();
+
+        assert!(fields.contains(&(
+            "runner_smoke",
+            "unavailable(runner smoke failed)".to_string()
+        )));
+        assert!(fields.contains(&("selected_backend", "landlock".to_string())));
+        assert!(fields.contains(&("path_mode", "projected_host_paths".to_string())));
     }
 
     fn pre_refactor_single_workspace_profile(workspace_root: &Path, allow_network: bool) -> String {

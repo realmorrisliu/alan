@@ -2416,6 +2416,99 @@ async fn test_landlock_keeps_shape_parser_for_opaque_writers() {
     assert!(result.is_err(), "opaque writer not rejected under Landlock");
 }
 
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn test_reified_backend_fails_closed_without_non_linux_runner() {
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "touch created-by-ambient-shell.txt",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await;
+
+    assert!(result.is_err(), "reified backend should fail closed");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("only available on Linux")
+    );
+    assert!(!temp.path().join("created-by-ambient-shell.txt").exists());
+}
+
+#[tokio::test]
+async fn test_reified_backend_accepts_namespace_workspace_paths_for_validation() {
+    let temp = TempDir::new().unwrap();
+    tokio::fs::write(temp.path().join("Cargo.toml"), "[package]\n")
+        .await
+        .unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "cat /mnt/workspace/Cargo.toml > /dev/null",
+            temp.path(),
+            Some(std::time::Duration::from_millis(50)),
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+
+    if let Err(err) = result {
+        let message = err.to_string();
+        assert!(
+            !message.contains("outside workspace"),
+            "reified namespace path was not translated for validation: {message}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_reified_backend_translates_namespace_paths_for_protected_checks() {
+    let temp = TempDir::new().unwrap();
+    tokio::fs::create_dir_all(temp.path().join(".git"))
+        .await
+        .unwrap();
+    tokio::fs::write(temp.path().join(".git/config"), "[core]\n")
+        .await
+        .unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "cat /mnt/workspace/.git/config",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "protected namespace path should be blocked"
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("protected subpath"),
+        "reified namespace path should be translated before protected checks"
+    );
+}
+
 #[tokio::test]
 async fn test_os_backend_still_blocks_out_of_workspace_reads() {
     // Seatbelt denies writes/network but permits reads, so the parser must still

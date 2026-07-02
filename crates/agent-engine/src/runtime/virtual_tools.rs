@@ -501,6 +501,7 @@ where
                 "reason": audit.reason,
                 "capability": audit.capability,
                 "sandbox_backend": audit.sandbox_backend,
+                "path_mode": audit.path_mode,
             }),
         );
         emit(Event::Error {
@@ -545,6 +546,7 @@ where
         reason: Some("host mount grants require approval".to_string()),
         capability: decision_audit.capability.clone(),
         sandbox_backend: decision_audit.sandbox_backend.clone(),
+        path_mode: decision_audit.path_mode.clone(),
     };
     state.session.record_event(
         "tool_policy_decision",
@@ -557,6 +559,7 @@ where
             "reason": escalation_audit.reason,
             "capability": escalation_audit.capability,
             "sandbox_backend": escalation_audit.sandbox_backend,
+            "path_mode": escalation_audit.path_mode,
             "original_action": decision_audit.action,
         }),
     );
@@ -573,6 +576,7 @@ where
             "reason": escalation_audit.reason,
             "capability": escalation_audit.capability,
             "sandbox_backend": escalation_audit.sandbox_backend,
+            "path_mode": escalation_audit.path_mode,
         },
         "live_applied": false,
     });
@@ -910,6 +914,7 @@ fn runtime_virtual_tool_audit(reason: &str) -> alan_agent_protocol::ToolDecision
         reason: Some(reason.to_string()),
         capability: "write".to_string(),
         sandbox_backend: crate::tools::active_backend_name().to_string(),
+        path_mode: Some(crate::tools::active_backend_path_mode().to_string()),
     }
 }
 
@@ -958,6 +963,7 @@ where
             "reason": policy_audit.reason,
             "capability": policy_audit.capability,
             "sandbox_backend": policy_audit.sandbox_backend,
+            "path_mode": policy_audit.path_mode,
         }),
     );
 

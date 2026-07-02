@@ -23,6 +23,9 @@ pub use reified_namespace::{
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,
-    SandboxBackendKind, active_backend_name, confines_network, detect_backend, os_backend_active,
-    preferred_linux_backend_with_reification, probe_linux_reification, seatbelt_profile,
+    LinuxReifiedNamespaceBackendReadiness, SandboxBackendKind, active_backend_name,
+    active_backend_path_mode, confines_network, detect_backend, detect_projection_backend,
+    linux_reified_namespace_backend_readiness, os_backend_active,
+    preferred_linux_backend_with_reification, preferred_linux_backend_with_reification_and_runner,
+    probe_linux_reification, seatbelt_profile,
 };
