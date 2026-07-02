@@ -849,7 +849,7 @@ async fn clone_exec_namespace_manifest_preserves_restrictive_overmounts() {
 }
 
 #[tokio::test]
-async fn clone_exec_namespace_manifest_drops_omitted_nonrestrictive_descendants() {
+async fn clone_exec_namespace_manifest_rejects_omitted_nonrestrictive_descendants() {
     let fs = proc();
     let mut namespace = Namespace::new();
     namespace.mount(
@@ -881,21 +881,54 @@ async fn clone_exec_namespace_manifest_drops_omitted_nonrestrictive_descendants(
     })
     .to_string();
     spawner.write(Fid(41), 0, exec.as_bytes()).await.unwrap();
-    assert_eq!(spawner.clunk(Fid(41)).await, Ok(()));
+    assert_eq!(spawner.clunk(Fid(41)).await, Err(ErrorCode::BadRequest));
 
-    let namespace = String::from_utf8(
-        read_at(&fs, &[&pid_name, "namespace"], Fid(42))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
+    let listing = String::from_utf8(read_at(&fs, &[], Fid(42)).await.unwrap()).unwrap();
     assert!(
-        namespace.lines().any(|line| line == "/mnt rw"),
-        "committed namespace keeps the requested broad mount: {namespace:?}"
+        !listing.lines().any(|line| line == pid_name),
+        "rejected manifest leaks nothing into public /proc"
     );
+}
+
+#[tokio::test]
+async fn clone_exec_namespace_manifest_rejects_omitted_same_access_masks() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    namespace.mount(
+        "/data/secrets",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(43), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(43), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(43), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/data", "access": "ro"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(43), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(43)).await, Err(ErrorCode::BadRequest));
+
+    let listing = String::from_utf8(read_at(&fs, &[], Fid(44)).await.unwrap()).unwrap();
     assert!(
-        !namespace.lines().any(|line| line == "/mnt/llm rw"),
-        "omitted descendants with the same authority must not be retained: {namespace:?}"
+        !listing.lines().any(|line| line == pid_name),
+        "same-access overmount masks must be requested explicitly or the manifest is rejected"
     );
 }
 

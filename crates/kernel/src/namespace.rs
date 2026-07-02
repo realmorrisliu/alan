@@ -250,6 +250,10 @@ impl Namespace {
             explicit_access[index] = Some(*requested_access);
         }
 
+        if has_unsafe_omitted_descendant(&self.mounts, &explicit_access) {
+            return None;
+        }
+
         let mut mounts = Vec::new();
         for (index, mount) in self.mounts.iter().enumerate() {
             let Some(requested_access) = explicit_access[index]
@@ -326,14 +330,36 @@ fn preserved_overmount_access(
     explicit_access: &[Option<Access>],
     index: usize,
 ) -> Option<Access> {
-    let mount = &mounts[index];
+    let access_ceiling = nearest_explicit_ancestor_access(mounts, explicit_access, index)?;
+    omitted_descendant_is_restrictive(mounts, index, access_ceiling)
+        .then_some(restrict_access(mounts[index].access, access_ceiling))
+}
+
+fn has_unsafe_omitted_descendant(mounts: &[Mount], explicit_access: &[Option<Access>]) -> bool {
+    mounts.iter().enumerate().any(|(index, _)| {
+        if explicit_access[index].is_some() {
+            return false;
+        }
+        nearest_explicit_ancestor_access(mounts, explicit_access, index).is_some_and(
+            |access_ceiling| !omitted_descendant_is_restrictive(mounts, index, access_ceiling),
+        )
+    })
+}
+
+fn nearest_explicit_ancestor_access(
+    mounts: &[Mount],
+    explicit_access: &[Option<Access>],
+    index: usize,
+) -> Option<Access> {
+    let descendant = &mounts[index];
     let mut best: Option<(usize, Access)> = None;
     for (ancestor_index, access) in explicit_access.iter().enumerate() {
         let Some(access) = access else {
             continue;
         };
         let ancestor = &mounts[ancestor_index];
-        if ancestor.prefix.len() < mount.prefix.len() && is_prefix(&ancestor.prefix, &mount.prefix)
+        if ancestor.prefix.len() < descendant.prefix.len()
+            && is_prefix(&ancestor.prefix, &descendant.prefix)
         {
             match best {
                 Some((best_len, _)) if best_len >= ancestor.prefix.len() => {}
@@ -341,10 +367,16 @@ fn preserved_overmount_access(
             }
         }
     }
-    best.and_then(|(_, access_ceiling)| {
-        let restricted = restrict_access(mount.access, access_ceiling);
-        is_stricter_access(restricted, access_ceiling).then_some(restricted)
-    })
+    best.map(|(_, access)| access)
+}
+
+fn omitted_descendant_is_restrictive(
+    mounts: &[Mount],
+    index: usize,
+    access_ceiling: Access,
+) -> bool {
+    let restricted = restrict_access(mounts[index].access, access_ceiling);
+    is_stricter_access(restricted, access_ceiling)
 }
 
 fn restrict_access(granted: Access, ceiling: Access) -> Access {
