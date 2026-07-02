@@ -14,11 +14,14 @@ resources through directory conventions and `ctl` files.
 - Define `ctl`-based control and `/agent` as an overlay over `/proc`.
 - Define the LLM-stream consumer model and namespace-assembled requests.
 - Define requests/responses as files and the durable home tree.
+- Define the reference boundary for LLM provider, memory, tool, and skill file
+  servers consumed by the agent layout.
 
 **Non-Goals:**
 
-- Specify the LLM provider, memory, tool, or skill file servers themselves
-  (separate changes); this contract only references how an agent consumes them.
+- Specify the full LLM provider, memory, tool, or skill file-server protocols
+  (separate changes); this contract only names their mount boundaries and how an
+  agent consumes them.
 - Specify wire formats for any provider (provider-local per ADR-0024 D2).
 - Re-introduce any retired noun (Session, Workspace, AgentInstance,
   Subscription, Context Grant, Result Contract).
@@ -38,6 +41,9 @@ Implements [ADR-0024](../../../docs/adr/0024-plan9-kernel-model.md):
   vs ephemeral is decided by where the home is mounted.
 - D8 (agent-facing) → dynamic containers (`requests/`, `actions/`) expose an
   events stream watched by blocking read.
+- ADR-0025 D3 → external capability trees are reached through named file-server
+  mounts: `/mnt/llm`, `/mnt/mem`, `/bin` plus `/lib/exec` and `/man/1`, and
+  `/lib/skill` plus `/man/skill`.
 
 ## Risks / Trade-offs
 
@@ -56,3 +62,6 @@ Implements [ADR-0024](../../../docs/adr/0024-plan9-kernel-model.md):
 2. Map existing session / tape / yield / tool-call behavior onto this layout in
    the agent-runtime implementation change (a separate change), keeping current
    transport as compatibility only.
+3. Keep the detailed LLM, memory, tool, and skill protocols in their owning
+   OpenSpec capabilities while this contract remains the shared consumer
+   boundary.

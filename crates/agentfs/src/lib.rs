@@ -26,16 +26,24 @@
 //!
 //! It depends on `alan-ap` only — no `alan-agent-protocol`/`EventEnvelope` on the
 //! live path (that alphabet remains only as legacy compatibility transport, ADR-
-//! 0025 D4). The engine wiring that drives these writes from a running session is
-//! a follow-on slice; here the surfaces are exercised directly over aP.
+//! 0025 D4). [`AgentRootFs`] is the thin `/agent` view over these per-agent file
+//! servers: it derives visible pids from `/proc` and forwards `/agent/<pid>` or
+//! `/agent/root` to the corresponding [`AgentFs`] backing tree.
+
+mod conformance;
+mod root;
 
 use std::collections::{BTreeMap, HashMap};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
 };
+use alan_knowledge::{ContentHash, KnowledgeError, KnowledgeStore, RootAccess};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+
+pub use conformance::{AgentConformanceChecker, ConformanceIssue, ConformanceReport};
+pub use root::AgentRootFs;
 
 /// Cap on a buffered document write (request/action field), so a hostile offset
 /// cannot allocate unbounded memory.
@@ -50,6 +58,8 @@ const MACHINE_CTL_HELP: &str = "\
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
 ";
+
+const TAPE_ROOT_NAME: &str = "machine/tape";
 
 #[derive(Default)]
 struct Request {
@@ -84,6 +94,9 @@ struct State {
     request_events: Stream,
     action_events: Stream,
     tape: Stream,
+    knowledge: KnowledgeStore,
+    tape_blocks: Vec<ContentHash>,
+    tape_root: ContentHash,
     requests: BTreeMap<String, Request>,
     actions: BTreeMap<String, Action>,
     /// Agent run-state (machine/status): read-only over aP, transitioned only by
@@ -141,6 +154,8 @@ enum Node {
     /// (agent-file-layout-contract). Generic process control (interrupt/cancel)
     /// is the kernel's `/proc/<pid>/ctl`, not here.
     MachineCtl,
+    CheckpointsDir,
+    CurrentCheckpoint,
     Events,
     RequestsDir,
     RequestsClone,
@@ -169,6 +184,7 @@ impl Default for AgentFs {
 
 impl AgentFs {
     pub fn new() -> Self {
+        let (knowledge, tape_root) = initial_tape_knowledge();
         Self {
             state: Mutex::new(State {
                 input: Stream::new(),
@@ -178,6 +194,9 @@ impl AgentFs {
                 request_events: Stream::new(),
                 action_events: Stream::new(),
                 tape: Stream::new(),
+                knowledge,
+                tape_blocks: Vec::new(),
+                tape_root,
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
                 status: "running".to_string(),
@@ -188,6 +207,25 @@ impl AgentFs {
                 fids: HashMap::new(),
             }),
         }
+    }
+
+    /// Current content-addressed checkpoint root for `machine/tape`.
+    pub async fn current_tape_checkpoint(&self) -> ContentHash {
+        self.state.lock().await.tape_root.clone()
+    }
+
+    /// Verify and materialize the current `machine/tape` checkpoint root.
+    pub async fn materialize_tape_checkpoint(&self) -> Result<Vec<u8>, ErrorCode> {
+        self.state.lock().await.materialized_tape()
+    }
+
+    /// Verify the current `machine/tape` root without materializing bytes.
+    pub async fn verify_tape_checkpoint(&self) -> Result<(), ErrorCode> {
+        let state = self.state.lock().await;
+        state
+            .knowledge
+            .verify_root_hash(&state.tape_root)
+            .map_err(map_knowledge_error)
     }
 }
 
@@ -240,6 +278,11 @@ impl State {
                 "tape" => Ok(Node::Tape),
                 "status" => Ok(Node::Status),
                 "ctl" => Ok(Node::MachineCtl),
+                "checkpoints" => Ok(Node::CheckpointsDir),
+                _ => Err(ErrorCode::NotFound),
+            },
+            Node::CheckpointsDir => match name {
+                "current" => Ok(Node::CurrentCheckpoint),
                 _ => Err(ErrorCode::NotFound),
             },
             Node::RequestsDir => match name {
@@ -283,7 +326,9 @@ impl State {
             Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
-            Node::MachineDir => b"tape\nstatus\nctl".to_vec(),
+            Node::MachineDir => b"tape\nstatus\nctl\ncheckpoints".to_vec(),
+            Node::CheckpointsDir => b"current".to_vec(),
+            Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
             Node::Status => self.status.clone().into_bytes(),
             // machine/ctl exposes its accepted commands in-band, so a
             // namespace-native client discovers them by reading the file rather
@@ -345,6 +390,31 @@ impl State {
             Node::ActionsEvents => Some(self.action_events.clone()),
             _ => None,
         }
+    }
+
+    fn append_tape_block(&mut self, data: &[u8]) -> Result<(), ErrorCode> {
+        let block = self.knowledge.put_block(data);
+        self.tape_blocks.push(block);
+        let root = self
+            .knowledge
+            .checkpoint_from_blocks(self.tape_blocks.clone())
+            .map_err(map_knowledge_error)?;
+        self.knowledge
+            .bind_root(TAPE_ROOT_NAME, root.clone(), RootAccess::ReadWrite)
+            .map_err(map_knowledge_error)?;
+        self.tape_root = root;
+        self.bump(&Node::CurrentCheckpoint);
+        Ok(())
+    }
+
+    fn materialized_tape(&self) -> Result<Vec<u8>, ErrorCode> {
+        let root = self
+            .knowledge
+            .root(TAPE_ROOT_NAME)
+            .map_err(map_knowledge_error)?;
+        self.knowledge
+            .read_bound_root(&root)
+            .map_err(map_knowledge_error)
     }
 }
 
@@ -470,7 +540,7 @@ impl FileServer for AgentFs {
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let (node, clone_id, stream) = {
+        let (node, clone_id, stream, tape_snapshot) = {
             let state = self.state.lock().await;
             // Reading needs read authority from a successful read-open (ROOT, the
             // pre-bound anchor, is always readable). A released/unknown fid is
@@ -484,11 +554,24 @@ impl FileServer for AgentFs {
             let clone_id = state.fids.get(&fid).and_then(|f| f.clone_id.clone());
             let node = state.node_of(fid)?;
             let stream = state.stream_for(&node);
-            (node, clone_id, stream)
+            let tape_snapshot = if matches!(node, Node::Tape) {
+                Some(state.materialized_tape()?)
+            } else {
+                None
+            };
+            (node, clone_id, stream, tape_snapshot)
         };
         // A clone fid reads back the allocated id.
         if let Some(id) = clone_id {
             return Ok(slice(id.into_bytes(), offset, count));
+        }
+        if let Some(bytes) = tape_snapshot {
+            if (offset as usize) < bytes.len() {
+                return Ok(slice(bytes, offset, count));
+            }
+            if let Some(stream) = stream {
+                return Ok(stream.read(offset, count).await);
+            }
         }
         if let Some(stream) = stream {
             return Ok(stream.read(offset, count).await);
@@ -518,6 +601,9 @@ impl FileServer for AgentFs {
                 } else {
                     format!("tape:{}\n", data.len())
                 };
+                if matches!(node, Node::Tape) {
+                    state.append_tape_block(data)?;
+                }
                 stream.append(data).await;
                 if is_output {
                     state.io_events.append(record.as_bytes()).await;
@@ -567,11 +653,11 @@ impl FileServer for AgentFs {
         let length = match &node {
             Node::Output
             | Node::Input
-            | Node::Tape
             | Node::Events
             | Node::IoEvents
             | Node::RequestsEvents
             | Node::ActionsEvents => state.stream_for(&node).expect("stream").len().await,
+            Node::Tape => state.materialized_tape()?.len() as u64,
             other => state
                 .computed_bytes(other)
                 .map(|b| b.len() as u64)
@@ -702,6 +788,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::Root => (FileKind::Dir, "/".to_string()),
         Node::IoDir => (FileKind::Dir, "io".into()),
         Node::MachineDir => (FileKind::Dir, "machine".into()),
+        Node::CheckpointsDir => (FileKind::Dir, "machine/checkpoints".into()),
         Node::RequestsDir => (FileKind::Dir, "requests".into()),
         Node::ActionsDir => (FileKind::Dir, "actions".into()),
         Node::ContextDir => (FileKind::Dir, "context".into()),
@@ -719,6 +806,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::Events => (FileKind::Stream, "events".into()),
         Node::Status => (FileKind::File, "machine/status".into()),
         Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
+        Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
     };
@@ -756,6 +844,27 @@ fn is_writable(node: &Node) -> bool {
         // read-only too (agent-file-layout-contract).
         Node::RequestField(_, field) => *field != "status",
         _ => false,
+    }
+}
+
+fn initial_tape_knowledge() -> (KnowledgeStore, ContentHash) {
+    let mut knowledge = KnowledgeStore::new();
+    let root = knowledge
+        .checkpoint_from_blocks(Vec::<ContentHash>::new())
+        .expect("empty tape checkpoint can be created");
+    knowledge
+        .bind_root(TAPE_ROOT_NAME, root.clone(), RootAccess::ReadWrite)
+        .expect("empty tape checkpoint can be bound");
+    (knowledge, root)
+}
+
+fn map_knowledge_error(error: KnowledgeError) -> ErrorCode {
+    match error {
+        KnowledgeError::NoAccess => ErrorCode::NoAccess,
+        KnowledgeError::MissingBlock(_)
+        | KnowledgeError::MissingNode(_)
+        | KnowledgeError::UnknownRoot(_) => ErrorCode::NotFound,
+        KnowledgeError::HashMismatch(_) | KnowledgeError::Cycle(_) => ErrorCode::Io,
     }
 }
 

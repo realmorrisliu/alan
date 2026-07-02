@@ -47,23 +47,56 @@
 
 ## 3. Conformance test-kit
 
-- [ ] 3.1 Provide a conformance checker that, given a process directory, verifies
+- [x] 3.1 Provide a conformance checker that, given a process directory, verifies
   the generic process layout (`io/input`, `io/output`, `io/events`, `status`,
   `ctl`) and, for agents, the full superset (`requests/`, `actions/`, `machine/`,
   `context/`, `children/`, and the top-level aggregate `events` stream). This
   gives the convention teeth without a kernel type.
-- [ ] 3.2 Verify dynamic containers (`requests/`, `actions/`) expose an `events`
+  Done 2026-07-02: `alan-agentfs` now exports `AgentConformanceChecker`, an
+  aP-only checker over an arbitrary `InProcessTransport`. It verifies the
+  generic process files plus the agent superset under a supplied process path,
+  so agent-ness is tested by walking files rather than consulting a kernel type.
+  Coverage runs it against the current `/agent/<pid>` overlay.
+- [x] 3.2 Verify dynamic containers (`requests/`, `actions/`) expose an `events`
   stream observable by blocking read (D8).
-- [ ] 3.3 Verify `/agent` resolves as an overlay over `/proc` and that `/agent/root`
+  Done 2026-07-02: the checker opens `requests/events` and `actions/events`,
+  records the current stream offset, clone-opens a child in the corresponding
+  container, and proves the events stream unblocks with new bytes. This is
+  covered by `conformance_checker_verifies_dynamic_container_event_streams`.
+- [x] 3.3 Verify `/agent` resolves as an overlay over `/proc` and that `/agent/root`
   follows the current root pid while durable identity stays the home path (D4/D7).
-- [ ] 3.4 Make the checker runnable by any third-party runtime against its own
+  Done 2026-07-02: `AgentRootFs` now unions proc-owned generic files
+  (`status`, `ctl`, `parent`, `credentials`, `exit`, `namespace`) into
+  `/agent/<pid>` while keeping agent-owned surfaces (`io`, `machine`,
+  `requests`, `actions`, `context`, `children`, `events`) backed by AgentFS.
+  The checker proves `/agent/root` has the same conforming surface as the
+  current root pid.
+- [x] 3.4 Make the checker runnable by any third-party runtime against its own
   exported tree, so conformance — not a kernel flag — is what makes a runtime's
   agents operable.
+  Done 2026-07-02: the checker API takes only an aP transport and paths; it has
+  no dependency on `alan-kernel`, `alan-agent-engine`, or Alan process types.
+  Any third-party runtime that exports a compatible aP tree can run the same
+  checker against its own process directory.
 
 ## 4. Follow-up (separate changes)
 
-- [ ] 4.1 Map current session / tape / yield / tool-call behavior onto this
+- [x] 4.1 Map current session / tape / yield / tool-call behavior onto this
   layout in `introduce-alan-kernel-runtime` (the projection file server) and run
   the conformance test-kit against it.
-- [ ] 4.2 Specify the LLM provider, memory, tool, and skill file servers that
+  Done 2026-07-02: the superseding `refactor-engine-namespace-native` path maps
+  session IO, tape, yielded requests, and tool/action records onto AgentFS. The
+  namespace-native M2 test now runs through the real `/agent` overlay (not a
+  direct `/agent/1` mount), then runs `AgentConformanceChecker` against the live
+  process tree. The request/action file test also runs against the overlay and
+  verifies the same conformance after writing `requests/<id>/` and
+  `actions/<id>/` state.
+- [x] 4.2 Specify the LLM provider, memory, tool, and skill file servers that
   this contract references.
+  Done 2026-07-02: the contract now names the referenced external file-server
+  boundaries: `alan-llmfs` at `/srv/llm` and `/mnt/llm`, Memory Stores through
+  `/srv/mem` handles and `/mnt/mem` mounts/descriptors, Tools through `/bin`
+  plus `/lib/exec/<tool>/manifest` and `/man/1`, and Skills through
+  `/lib/skill/<name>` plus `/man/skill/<name>`. It also states that the agent
+  layout consumes these surfaces by namespace/descriptors while their detailed
+  protocols remain owned by separate OpenSpec capabilities.

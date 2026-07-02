@@ -1,0 +1,13 @@
+[package]
+name = "alan-memfs"
+description = "Memory Store file server backed by Alan content-addressed knowledge checkpoints."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+alan-knowledge.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true }

@@ -5,6 +5,8 @@ members = [
     "crates/agentfs",
     "crates/auth",
     "crates/kernel",
+    "crates/knowledge",
+    "crates/memfs",
     "crates/agent-protocol",
     "crates/llm",
     "crates/llmfs",
@@ -116,6 +118,8 @@ alan-auth = { path = "crates/auth" }
 alan-agent-protocol = { path = "crates/agent-protocol" }
 alan-llm = { path = "crates/llm" }
 alan-agent-engine = { path = "crates/agent-engine" }
+alan-knowledge = { path = "crates/knowledge" }
+alan-memfs = { path = "crates/memfs" }
 alan-swebench-tooling = { path = "crates/agent-engine/skills/swebench/tooling" }
 alan-shell-core = { path = "crates/shell-core" }
 alan-shell-core-ffi = { path = "crates/shell-core-ffi" }

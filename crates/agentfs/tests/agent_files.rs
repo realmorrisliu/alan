@@ -124,6 +124,32 @@ async fn tape_is_append_only_and_readable() {
 }
 
 #[tokio::test]
+async fn machine_tape_is_backed_by_a_content_addressed_checkpoint() {
+    let fs = AgentFs::new();
+    let empty_root = fs.current_tape_checkpoint().await;
+
+    write_doc(&fs, &["machine", "tape"], Fid(1), b"turn-1\n")
+        .await
+        .unwrap();
+    write_doc(&fs, &["machine", "tape"], Fid(2), b"turn-2\n")
+        .await
+        .unwrap();
+
+    let file_view = read_text(&fs, &["machine", "tape"], Fid(3)).await;
+    assert_eq!(file_view, "turn-1\nturn-2\n");
+    assert_eq!(
+        fs.materialize_tape_checkpoint().await.unwrap(),
+        file_view.as_bytes()
+    );
+    fs.verify_tape_checkpoint().await.unwrap();
+
+    let checkpoint = read_text(&fs, &["machine", "checkpoints", "current"], Fid(4)).await;
+    let current_root = fs.current_tape_checkpoint().await;
+    assert_ne!(current_root, empty_root);
+    assert_eq!(checkpoint.trim(), current_root.as_str());
+}
+
+#[tokio::test]
 async fn a_yield_is_a_request_opened_by_the_agent_and_answered_by_a_consumer() {
     let fs = AgentFs::new();
 
@@ -575,6 +601,94 @@ async fn machine_ctl_carries_runtime_tape_commands() {
         .unwrap();
     fs.open(Fid(5), OpenMode::Write).await.unwrap();
     assert_eq!(fs.write(Fid(5), 0, b"").await, Err(ErrorCode::BadRequest));
+}
+
+#[tokio::test]
+async fn ordinary_data_writes_do_not_invoke_control_semantics() {
+    let fs = AgentFs::new();
+
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let request_id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+
+    fs.walk(Fid::ROOT, Fid(2), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap();
+    let action_id = String::from_utf8(fs.read(Fid(2), 0, 64).await.unwrap()).unwrap();
+
+    write_doc(&fs, &["io", "output"], Fid(3), b"assistant text")
+        .await
+        .unwrap();
+    write_doc(
+        &fs,
+        &["machine", "tape"],
+        Fid(4),
+        b"{\"role\":\"assistant\"}\n",
+    )
+    .await
+    .unwrap();
+    write_doc(
+        &fs,
+        &["requests", &request_id, "prompt"],
+        Fid(5),
+        b"need input",
+    )
+    .await
+    .unwrap();
+    write_doc(
+        &fs,
+        &["actions", &action_id, "status"],
+        Fid(6),
+        b"completed",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["machine", "status"], Fid(7)).await,
+        "running"
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", &request_id, "status"], Fid(8)).await,
+        "pending"
+    );
+    assert_eq!(
+        read_text(&fs, &["actions", &action_id, "status"], Fid(9)).await,
+        "completed"
+    );
+
+    let events = read_text(&fs, &["events"], Fid(10)).await;
+    assert!(
+        events.contains("output:"),
+        "output write recorded: {events:?}"
+    );
+    assert!(events.contains("tape:"), "tape write recorded: {events:?}");
+    assert!(
+        events.contains(&format!("request:{request_id}")),
+        "request write recorded in aggregate stream: {events:?}"
+    );
+    assert!(
+        events.contains(&format!("action:{action_id}")),
+        "action write recorded in aggregate stream: {events:?}"
+    );
+    assert!(
+        !events.contains("ctl:"),
+        "ordinary data writes must not be interpreted as control commands: {events:?}"
+    );
+
+    let request_events = read_text(&fs, &["requests", "events"], Fid(11)).await;
+    assert!(
+        request_events.contains(&format!("{request_id}:prompt")),
+        "request prompt write recorded: {request_events:?}"
+    );
+    let action_events = read_text(&fs, &["actions", "events"], Fid(12)).await;
+    assert!(
+        action_events.contains(&format!("{action_id}:status")),
+        "action status write recorded: {action_events:?}"
+    );
 }
 
 #[tokio::test]

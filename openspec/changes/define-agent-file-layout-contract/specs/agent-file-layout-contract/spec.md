@@ -183,6 +183,52 @@ the request's tool list.
   model-callable tools
 - **AND** there is no separate tool registry granting tools outside the namespace
 
+### Requirement: Referenced capability file servers have explicit mount boundaries
+Alan OS SHALL treat the LLM provider, Memory Store, Tool, and Skill capabilities
+referenced by this contract as external file-server surfaces, not fields on the
+agent runtime. The referenced surfaces are:
+
+- LLM provider access: `alan-llmfs` posts `/srv/llm` and serves `/mnt/llm`;
+  Providers are introspection surfaces under `/mnt/llm/providers/<provider>`,
+  while callable Connections live under `/mnt/llm/connections/<connection>`.
+- Memory Stores: storage-backed Memory Store file servers post handles such as
+  `/srv/mem` and are mounted for process use under `/mnt/mem` or passed as
+  narrower descriptors/binds. They own memory authority; memory kinds describe
+  usage, not ownership.
+- Tools: Tool file servers contribute executable command files unioned into
+  `/bin`, with machine-readable manifests at `/lib/exec/<tool>/manifest` and
+  manuals under `/man/1`.
+- Skills: package file servers expose manual-like Skill packages under
+  `/lib/skill/<name>` and documentation under `/man/skill/<name>`. Skills are
+  passed by descriptor and do not execute or grant authority by themselves.
+
+The agent file layout MAY project references to these surfaces, but it SHALL NOT
+own their global registries, provider wire formats, memory authority, tool
+catalog implementation, or skill package resolution. Those detailed protocols
+belong to their own OpenSpec capabilities.
+
+#### Scenario: A spawner assembles an agent's capabilities
+- **WHEN** an agent process is spawned
+- **THEN** the spawner binds only the selected LLM Connection, Memory Store
+  descriptors, Tool command files, and Skill package descriptors into the
+  process namespace
+- **AND** any unbound provider, store, tool, or skill is structurally absent from
+  the agent's world rather than denied by a side-channel API
+
+#### Scenario: Memory is read or written
+- **WHEN** an agent recalls, flushes, or promotes memory
+- **THEN** it does so through a Memory Store path or descriptor in its namespace
+- **AND** the agent runtime does not use a global memory registry outside the
+  namespace to grant authority
+
+#### Scenario: Tool and Skill packages are both present
+- **WHEN** a Skill package includes instructions and package-local executables
+- **THEN** the Skill contributes knowledge through its descriptor, while any
+  executable effect is available to the agent only if a Tool command is bound
+  into `/bin` or another explicit execution path
+- **AND** a Skill package does not become an executable Tool merely by being
+  discovered
+
 ### Requirement: Requests and actions are files with events
 Alan OS SHALL represent agent yield, confirmation, approval, credential,
 selection, and structured-input requests as file trees under `requests/<id>/`,

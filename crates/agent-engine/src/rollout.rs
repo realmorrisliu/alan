@@ -378,6 +378,8 @@ pub struct CheckpointRecord {
     pub checkpoint_type: String,
     pub summary: String,
     pub choice: Option<String>, // approved, modified, rejected
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_root: Option<String>,
     pub timestamp: String,
 }
 
@@ -386,6 +388,23 @@ pub struct EventRecord {
     pub event_type: String,
     pub payload: serde_json::Value,
     pub timestamp: String,
+}
+
+fn checkpoint_record(
+    checkpoint_id: &str,
+    checkpoint_type: &str,
+    summary: &str,
+    choice: Option<&str>,
+    knowledge_root: Option<&str>,
+) -> CheckpointRecord {
+    CheckpointRecord {
+        checkpoint_id: checkpoint_id.to_string(),
+        checkpoint_type: checkpoint_type.to_string(),
+        summary: summary.to_string(),
+        choice: choice.map(str::to_string),
+        knowledge_root: knowledge_root.map(str::to_string),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    }
 }
 
 /// Commands for the background writer task
@@ -912,13 +931,34 @@ impl RolloutRecorder {
         summary: &str,
         choice: Option<&str>,
     ) -> Result<()> {
-        let item = RolloutItem::Checkpoint(CheckpointRecord {
-            checkpoint_id: checkpoint_id.to_string(),
-            checkpoint_type: checkpoint_type.to_string(),
-            summary: summary.to_string(),
-            choice: choice.map(|s| s.to_string()),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
+        let item = RolloutItem::Checkpoint(checkpoint_record(
+            checkpoint_id,
+            checkpoint_type,
+            summary,
+            choice,
+            None,
+        ));
+        self.record(item).await?;
+        self.flush().await?; // Important events are flushed immediately
+        Ok(())
+    }
+
+    /// Record a checkpoint with the content-addressed knowledge root it names.
+    pub async fn record_checkpoint_with_knowledge_root(
+        &self,
+        checkpoint_id: &str,
+        checkpoint_type: &str,
+        summary: &str,
+        choice: Option<&str>,
+        knowledge_root: &str,
+    ) -> Result<()> {
+        let item = RolloutItem::Checkpoint(checkpoint_record(
+            checkpoint_id,
+            checkpoint_type,
+            summary,
+            choice,
+            Some(knowledge_root),
+        ));
         self.record(item).await?;
         self.flush().await?; // Important events are flushed immediately
         Ok(())
@@ -932,13 +972,35 @@ impl RolloutRecorder {
         summary: &str,
         choice: Option<&str>,
     ) -> Result<()> {
-        let item = RolloutItem::Checkpoint(CheckpointRecord {
-            checkpoint_id: checkpoint_id.to_string(),
-            checkpoint_type: checkpoint_type.to_string(),
-            summary: summary.to_string(),
-            choice: choice.map(|s| s.to_string()),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
+        let item = RolloutItem::Checkpoint(checkpoint_record(
+            checkpoint_id,
+            checkpoint_type,
+            summary,
+            choice,
+            None,
+        ));
+        self.record_nowait(item)?;
+        self.flush_nowait()?;
+        Ok(())
+    }
+
+    /// Record a checkpoint with a content-addressed knowledge root without
+    /// waiting on IO completion.
+    pub fn record_checkpoint_with_knowledge_root_nowait(
+        &self,
+        checkpoint_id: &str,
+        checkpoint_type: &str,
+        summary: &str,
+        choice: Option<&str>,
+        knowledge_root: &str,
+    ) -> Result<()> {
+        let item = RolloutItem::Checkpoint(checkpoint_record(
+            checkpoint_id,
+            checkpoint_type,
+            summary,
+            choice,
+            Some(knowledge_root),
+        ));
         self.record_nowait(item)?;
         self.flush_nowait()?;
         Ok(())
@@ -1245,6 +1307,41 @@ mod tests {
             restored.thinking_content().as_deref(),
             Some("internal reasoning")
         );
+    }
+
+    #[tokio::test]
+    async fn test_record_checkpoint_persists_knowledge_root() {
+        let temp_dir = TempDir::new().unwrap();
+        let recorder = RolloutRecorder::new_in_dir(
+            "test-root-checkpoint",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+
+        recorder
+            .record_checkpoint_with_knowledge_root(
+                "turn-1",
+                "turn_completed",
+                "turn completed",
+                None,
+                "sha256:abc123",
+            )
+            .await
+            .unwrap();
+
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
+        let checkpoint = items.into_iter().find_map(|item| match item {
+            RolloutItem::Checkpoint(checkpoint) => Some(checkpoint),
+            _ => None,
+        });
+
+        let checkpoint = checkpoint.expect("checkpoint should be persisted");
+        assert_eq!(checkpoint.checkpoint_id, "turn-1");
+        assert_eq!(checkpoint.knowledge_root.as_deref(), Some("sha256:abc123"));
     }
 
     #[tokio::test]
@@ -1882,16 +1979,22 @@ this is not valid json
             checkpoint_type: "supplier_list".to_string(),
             summary: "Found 5 suppliers".to_string(),
             choice: Some("approved".to_string()),
+            knowledge_root: Some("sha256:abc123".to_string()),
             timestamp: "2026-01-29T14:35:00Z".to_string(),
         };
 
         let json = serde_json::to_string(&cp).unwrap();
         assert!(json.contains("cp-123"));
         assert!(json.contains("approved"));
+        assert!(json.contains("sha256:abc123"));
 
         let deserialized: CheckpointRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.checkpoint_id, "cp-123");
         assert_eq!(deserialized.choice, Some("approved".to_string()));
+        assert_eq!(
+            deserialized.knowledge_root.as_deref(),
+            Some("sha256:abc123")
+        );
     }
 
     #[test]
@@ -1901,15 +2004,21 @@ this is not valid json
             checkpoint_type: "requirements".to_string(),
             summary: "Requirements gathered".to_string(),
             choice: None,
+            knowledge_root: None,
             timestamp: "2026-01-29T14:36:00Z".to_string(),
         };
 
         let json = serde_json::to_string(&cp).unwrap();
         assert!(json.contains("cp-456"));
         assert!(json.contains("null"));
+        assert!(
+            !json.contains("knowledge_root"),
+            "missing root stays omitted for legacy-compatible checkpoints: {json}"
+        );
 
         let deserialized: CheckpointRecord = serde_json::from_str(&json).unwrap();
         assert!(deserialized.choice.is_none());
+        assert!(deserialized.knowledge_root.is_none());
     }
 
     #[test]
