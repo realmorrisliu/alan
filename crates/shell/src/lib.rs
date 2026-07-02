@@ -10,11 +10,15 @@
 //! (`/proc`, `/agent`, `/mnt/llm`) through one transport — in v1 the kernel's
 //! namespace presented as one aP server (`alan-kernel::MountFs`).
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, InProcessTransport, Offset, OpenMode, Qid, Request, Response,
 };
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 /// A process-global fid allocator. aP fid state lives in the server keyed only by
 /// [`Fid`], so two shells over the same transport (two tabs on one namespace) must
@@ -23,6 +27,7 @@ use alan_ap::{
 static NEXT_FID: AtomicU64 = AtomicU64::new(1);
 
 /// The shell's view of one mounted namespace, addressed by absolute path.
+#[derive(Clone)]
 pub struct Shell {
     fs: InProcessTransport,
 }
@@ -272,6 +277,256 @@ impl Shell {
         let pid = String::from_utf8(self.read_at(fid, 0, 64).await?).map_err(|_| ErrorCode::Io)?;
         self.write_all(fid, exec_spec.as_bytes()).await?;
         Ok(pid)
+    }
+}
+
+/// Error returned by the line-oriented stdio driver.
+#[derive(Debug)]
+pub enum DriverError {
+    /// The underlying aP file operation failed.
+    Protocol(ErrorCode),
+    /// Reading stdin or writing stdout failed.
+    Io(std::io::Error),
+}
+
+impl fmt::Display for DriverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Protocol(code) => write!(f, "aP operation failed: {code:?}"),
+            Self::Io(err) => write!(f, "stdio failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for DriverError {}
+
+impl From<ErrorCode> for DriverError {
+    fn from(value: ErrorCode) -> Self {
+        Self::Protocol(value)
+    }
+}
+
+impl From<std::io::Error> for DriverError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+enum LineCommand {
+    Ls(String),
+    Cat(String),
+    Echo { path: String, data: Vec<u8> },
+    Write { path: String, data: Vec<u8> },
+    Tail(String),
+    Spawn(String),
+    Exit,
+    Empty,
+}
+
+/// Minimal line-oriented shell driver.
+///
+/// The driver is intentionally only a composition layer over generic builtins:
+/// it parses text commands into `ls`, `cat`, `echo >`, `write`, `tail`, and
+/// `spawn` calls. It contains no agent-specific command or attach mode; talking
+/// to an agent is still just `tail /agent/<pid>/io/output` plus
+/// `echo ... > /agent/<pid>/io/input`.
+pub struct StdioDriver {
+    shell: Shell,
+}
+
+impl StdioDriver {
+    /// Build a line driver over an aP-only [`Shell`].
+    pub fn new(shell: Shell) -> Self {
+        Self { shell }
+    }
+
+    /// Run the read-eval-print loop over caller-provided async stdin/stdout.
+    ///
+    /// `tail` commands start independent tasks that forward bytes to the same
+    /// stdout writer while this loop keeps accepting input. The first rich
+    /// renderer can later give those streams separate panes; this driver keeps
+    /// the M1/M2 proof deliberately line-oriented.
+    pub async fn run<R, W>(&self, input: R, mut output: W) -> Result<(), DriverError>
+    where
+        R: AsyncBufRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let mut lines = input.lines();
+        let (tail_tx, mut tail_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut tail_tasks: Vec<JoinHandle<()>> = Vec::new();
+
+        loop {
+            tokio::select! {
+                line = lines.next_line() => {
+                    let Some(line) = line? else { break; };
+                    if self
+                        .handle_line(&line, &mut output, &tail_tx, &mut tail_tasks)
+                        .await?
+                    {
+                        break;
+                    }
+                }
+                Some(bytes) = tail_rx.recv(), if !tail_tasks.is_empty() => {
+                    output.write_all(&bytes).await?;
+                    output.flush().await?;
+                }
+            }
+        }
+
+        while let Ok(bytes) = tail_rx.try_recv() {
+            output.write_all(&bytes).await?;
+        }
+        output.flush().await?;
+        for task in tail_tasks {
+            task.abort();
+        }
+        Ok(())
+    }
+
+    async fn handle_line<W>(
+        &self,
+        line: &str,
+        output: &mut W,
+        tail_tx: &mpsc::UnboundedSender<Vec<u8>>,
+        tail_tasks: &mut Vec<JoinHandle<()>>,
+    ) -> Result<bool, DriverError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let command = match parse_line(line) {
+            Ok(command) => command,
+            Err(message) => {
+                output
+                    .write_all(format!("error: {message}\n").as_bytes())
+                    .await?;
+                output.flush().await?;
+                return Ok(false);
+            }
+        };
+
+        match command {
+            LineCommand::Empty => {}
+            LineCommand::Exit => return Ok(true),
+            LineCommand::Ls(path) => match self.shell.ls(&path).await {
+                Ok(entries) => {
+                    for entry in entries {
+                        output.write_all(entry.as_bytes()).await?;
+                        output.write_all(b"\n").await?;
+                    }
+                }
+                Err(err) => write_protocol_error(output, err).await?,
+            },
+            LineCommand::Cat(path) => match self.shell.cat(&path).await {
+                Ok(bytes) => output.write_all(&bytes).await?,
+                Err(err) => write_protocol_error(output, err).await?,
+            },
+            LineCommand::Echo { path, data } | LineCommand::Write { path, data } => {
+                if let Err(err) = self.shell.write(&path, &data).await {
+                    write_protocol_error(output, err).await?;
+                }
+            }
+            LineCommand::Tail(path) => {
+                let shell = self.shell.clone();
+                let tx = tail_tx.clone();
+                tail_tasks.push(tokio::spawn(async move {
+                    let mut tail = match shell.tail(&path).await {
+                        Ok(tail) => tail,
+                        Err(err) => {
+                            let _ = tx.send(format!("error: {err:?}\n").into_bytes());
+                            return;
+                        }
+                    };
+                    loop {
+                        match tail.read(4096).await {
+                            Ok(bytes) if bytes.is_empty() => break,
+                            Ok(bytes) => {
+                                if tx.send(bytes).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                let _ = tx.send(format!("error: {err:?}\n").into_bytes());
+                                break;
+                            }
+                        }
+                    }
+                    let _ = tail.close().await;
+                }));
+            }
+            LineCommand::Spawn(exec_spec) => match self.shell.spawn(&exec_spec).await {
+                Ok(pid) => {
+                    output.write_all(pid.trim().as_bytes()).await?;
+                    output.write_all(b"\n").await?;
+                }
+                Err(err) => write_protocol_error(output, err).await?,
+            },
+        }
+        output.flush().await?;
+        Ok(false)
+    }
+}
+
+async fn write_protocol_error<W>(output: &mut W, err: ErrorCode) -> Result<(), DriverError>
+where
+    W: AsyncWrite + Unpin,
+{
+    output
+        .write_all(format!("error: {err:?}\n").as_bytes())
+        .await?;
+    Ok(())
+}
+
+fn parse_line(line: &str) -> Result<LineCommand, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(LineCommand::Empty);
+    }
+    if matches!(trimmed, "exit" | "quit") {
+        return Ok(LineCommand::Exit);
+    }
+    if let Some(path) = trimmed.strip_prefix("ls ") {
+        return Ok(LineCommand::Ls(non_empty_path(path)?));
+    }
+    if let Some(path) = trimmed.strip_prefix("cat ") {
+        return Ok(LineCommand::Cat(non_empty_path(path)?));
+    }
+    if let Some(path) = trimmed.strip_prefix("tail ") {
+        return Ok(LineCommand::Tail(non_empty_path(path)?));
+    }
+    if let Some(exec_spec) = trimmed.strip_prefix("spawn ") {
+        let exec_spec = exec_spec.trim();
+        if exec_spec.is_empty() {
+            return Err("spawn requires an exec spec".to_string());
+        }
+        return Ok(LineCommand::Spawn(exec_spec.to_string()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("write ") {
+        let Some((path, data)) = rest.trim().split_once(' ') else {
+            return Err("write requires a path and data".to_string());
+        };
+        return Ok(LineCommand::Write {
+            path: non_empty_path(path)?,
+            data: data.as_bytes().to_vec(),
+        });
+    }
+    if let Some(rest) = trimmed.strip_prefix("echo ") {
+        let Some((data, path)) = rest.rsplit_once('>') else {
+            return Err("echo syntax is: echo <data> > <path>".to_string());
+        };
+        return Ok(LineCommand::Echo {
+            path: non_empty_path(path)?,
+            data: data.trim_end().as_bytes().to_vec(),
+        });
+    }
+    Err(format!("unknown command: {trimmed}"))
+}
+
+fn non_empty_path(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        Err("path is required".to_string())
+    } else {
+        Ok(path.to_string())
     }
 }
 

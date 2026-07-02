@@ -8,13 +8,20 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use alan_ap::reference::MemFs;
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Request,
+    Response, Stat, Stream,
 };
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
-use alan_shell::Shell;
+use alan_llm::{GenerationResponse, MockLlmProvider};
+use alan_shell::{Shell, StdioDriver};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+
+static NEXT_TEST_FID: AtomicU64 = AtomicU64::new(500_000);
 
 /// A tiny read-write echo server: a `buf` byte file and a `stream` stream file
 /// under a directory root. Each node reports its true [`FileKind`], so the shell's
@@ -195,8 +202,6 @@ async fn cat_snapshots_a_stream_without_blocking_at_the_live_edge() {
 
 #[tokio::test]
 async fn tail_follows_multiple_appends() {
-    use std::time::Duration;
-
     let transport = EchoFs::transport();
     let shell = Arc::new(Shell::new(transport));
 
@@ -227,6 +232,60 @@ async fn tail_follows_multiple_appends() {
         second, b"second",
         "the tail keeps reading past the first chunk"
     );
+}
+
+#[tokio::test]
+async fn stdio_driver_runs_line_commands() {
+    let shell = Shell::new(EchoFs::transport());
+    let output = run_stdio_script(
+        shell,
+        b"ls /\necho hello from stdio > /buf\ncat /buf\nexit\n",
+    )
+    .await;
+
+    assert!(
+        output.contains("buf\n"),
+        "ls output should include buf: {output:?}"
+    );
+    assert!(
+        output.contains("stream\n"),
+        "ls output should include stream: {output:?}"
+    );
+    assert!(
+        output.contains("hello from stdio"),
+        "cat should print data written by echo: {output:?}"
+    );
+}
+
+#[tokio::test]
+async fn stdio_driver_tails_stream_while_accepting_input() {
+    let shell = Shell::new(EchoFs::transport());
+    let driver = StdioDriver::new(shell);
+    let (mut client, server) = tokio::io::duplex(4096);
+    let (server_read, server_write) = tokio::io::split(server);
+
+    let driver_task = tokio::spawn(async move {
+        driver
+            .run(BufReader::new(server_read), server_write)
+            .await
+            .expect("stdio driver should run");
+    });
+
+    client.write_all(b"tail /stream\n").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    client
+        .write_all(b"echo streamed while typing > /stream\n")
+        .await
+        .unwrap();
+
+    let output = read_until(&mut client, "streamed while typing").await;
+    assert!(
+        output.contains("streamed while typing"),
+        "tail output should print while the driver still accepts input: {output:?}"
+    );
+
+    client.write_all(b"exit\n").await.unwrap();
+    driver_task.await.unwrap();
 }
 
 /// A server whose writable `buf` file accepts at most 3 bytes per `write`, to
@@ -470,4 +529,247 @@ async fn spawn_launches_a_process_through_proc_clone_across_the_mount() {
         shell.cat(&format!("/proc/{pid}/status")).await.unwrap(),
         b"running\n"
     );
+}
+
+#[tokio::test]
+async fn m2_stdio_driver_talks_to_agentfs_llmfs_agent_with_generic_builtins() {
+    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    let mock = MockLlmProvider::new().with_response(GenerationResponse {
+        content: "north star response".to_string(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: Vec::new(),
+        tool_calls: Vec::new(),
+        usage: None,
+        finish_reason: Some("stop".to_string()),
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: Vec::new(),
+    });
+    let recorded = mock.clone();
+    llmfs.register_connection("default", Box::new(mock));
+
+    let procfs = Arc::new(ProcFs::new());
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(procfs.clone()));
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/proc",
+        InProcessTransport::new(procfs.clone()),
+        Access::ReadWrite,
+    );
+    ns.mount(
+        "/agent",
+        InProcessTransport::new(agent_root.clone()),
+        Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root.bind_process(pid.clone(), agentfs).await;
+    agent_root.set_root_process(pid.clone()).await;
+
+    let agent_root_path = format!("/agent/{pid}");
+    let agent_task = tokio::spawn(run_one_file_agent_turn(
+        root.clone(),
+        agent_root_path.clone(),
+    ));
+
+    let driver = StdioDriver::new(shell);
+    let (mut client, server) = tokio::io::duplex(4096);
+    let (server_read, server_write) = tokio::io::split(server);
+    let driver_task = tokio::spawn(async move {
+        driver
+            .run(BufReader::new(server_read), server_write)
+            .await
+            .expect("stdio driver should run");
+    });
+
+    client
+        .write_all(format!("tail {agent_root_path}/io/output\n").as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    client
+        .write_all(format!("echo hello through files > {agent_root_path}/io/input\n").as_bytes())
+        .await
+        .unwrap();
+
+    let output = read_until(&mut client, "north star response").await;
+    assert!(
+        output.contains("north star response"),
+        "agent response should stream back through shell tail: {output:?}"
+    );
+
+    client.write_all(b"exit\n").await.unwrap();
+    driver_task.await.unwrap();
+    agent_task.await.unwrap();
+
+    let requests = recorded.recorded_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].messages[0].content, "hello through files");
+}
+
+async fn run_one_file_agent_turn(root: InProcessTransport, agent_root_path: String) {
+    let shell = Shell::new(root.clone());
+    let mut input = shell
+        .tail(&format!("{agent_root_path}/io/input"))
+        .await
+        .expect("agent should tail io/input");
+    let frame = input.read(4096).await.expect("read input frame");
+    input.close().await.expect("close input tail");
+    let message = parse_agent_input_frame(&frame);
+    let response = generate_once(root, &message).await;
+    shell
+        .write(&format!("{agent_root_path}/io/output"), response.as_bytes())
+        .await
+        .expect("agent should write io/output");
+}
+
+async fn generate_once(root: InProcessTransport, message: &str) -> String {
+    let shell = Shell::new(root.clone());
+    let gen_id = open_llm_generation(&root, "/mnt/llm/connections/default/clone").await;
+    let data_path = format!("/mnt/llm/connections/default/{gen_id}/data");
+    let request = serde_json::json!({
+        "version": 1,
+        "messages": [
+            {"role": "user", "content": message}
+        ],
+        "tools": []
+    });
+    shell
+        .write(&data_path, request.to_string().as_bytes())
+        .await
+        .expect("commit llm request");
+
+    let events_path = format!("/mnt/llm/connections/default/{gen_id}/events");
+    let mut events = shell.tail(&events_path).await.expect("tail llm events");
+    let mut pending = String::new();
+    let mut response = String::new();
+    loop {
+        let bytes = events.read(4096).await.expect("read llm event");
+        if bytes.is_empty() {
+            break;
+        }
+        pending.push_str(std::str::from_utf8(&bytes).expect("llm events are utf8"));
+        while let Some(newline) = pending.find('\n') {
+            let line = pending[..newline].to_string();
+            pending.drain(..=newline);
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(&line).expect("json event");
+            if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
+                response.push_str(text);
+            }
+            if value.get("done").and_then(|v| v.as_bool()) == Some(true) {
+                events.close().await.expect("close llm events");
+                return response;
+            }
+        }
+    }
+    events.close().await.expect("close llm events");
+    response
+}
+
+async fn open_llm_generation(root: &InProcessTransport, path: &str) -> String {
+    let fid = Fid(NEXT_TEST_FID.fetch_add(1, Ordering::Relaxed));
+    root.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: fid,
+        names: path_names(path),
+    })
+    .await
+    .expect("walk llm clone");
+    root.call(Request::Open {
+        fid,
+        mode: OpenMode::ReadWrite,
+    })
+    .await
+    .expect("open llm clone");
+    let gen_id = match root
+        .call(Request::Read {
+            fid,
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .expect("read llm generation id")
+    {
+        Response::Read { data } => String::from_utf8(data).expect("generation id utf8"),
+        other => panic!("unexpected llm clone read response: {other:?}"),
+    };
+    root.call(Request::Clunk { fid })
+        .await
+        .expect("clunk llm clone");
+    gen_id
+}
+
+fn parse_agent_input_frame(frame: &[u8]) -> String {
+    let newline = frame
+        .iter()
+        .position(|b| *b == b'\n')
+        .expect("framed input has length prefix");
+    let len: usize = std::str::from_utf8(&frame[..newline])
+        .expect("length prefix utf8")
+        .parse()
+        .expect("length prefix parses");
+    let start = newline + 1;
+    let end = start + len;
+    String::from_utf8(frame[start..end].to_vec()).expect("message utf8")
+}
+
+fn path_names(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+async fn run_stdio_script(shell: Shell, script: &[u8]) -> String {
+    let driver = StdioDriver::new(shell);
+    let (client, server) = tokio::io::duplex(4096);
+    let (mut client_read, mut client_write) = tokio::io::split(client);
+    let (server_read, server_write) = tokio::io::split(server);
+    let driver_task = tokio::spawn(async move {
+        driver
+            .run(BufReader::new(server_read), server_write)
+            .await
+            .expect("stdio driver should run");
+    });
+    client_write.write_all(script).await.unwrap();
+    drop(client_write);
+    let mut out = Vec::new();
+    client_read.read_to_end(&mut out).await.unwrap();
+    driver_task.await.unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+async fn read_until<R>(reader: &mut R, needle: &str) -> String
+where
+    R: AsyncRead + Unpin,
+{
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut out = Vec::new();
+        let mut buf = [0; 256];
+        loop {
+            let n = reader.read(&mut buf).await.expect("read driver output");
+            assert!(n > 0, "driver output closed before {needle:?}");
+            out.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&out).to_string();
+            if text.contains(needle) {
+                return text;
+            }
+        }
+    })
+    .await
+    .expect("timed out reading driver output")
 }
