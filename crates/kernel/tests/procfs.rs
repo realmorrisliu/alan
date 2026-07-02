@@ -849,6 +849,57 @@ async fn clone_exec_namespace_manifest_preserves_restrictive_overmounts() {
 }
 
 #[tokio::test]
+async fn clone_exec_namespace_manifest_drops_omitted_nonrestrictive_descendants() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/mnt",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/mnt/llm",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(41), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(41), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(41), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/mnt", "access": "rw"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(41), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(41)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(42))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/mnt rw"),
+        "committed namespace keeps the requested broad mount: {namespace:?}"
+    );
+    assert!(
+        !namespace.lines().any(|line| line == "/mnt/llm rw"),
+        "omitted descendants with the same authority must not be retained: {namespace:?}"
+    );
+}
+
+#[tokio::test]
 async fn restricted_manifest_rebinds_delegated_proc_clone_to_the_restricted_namespace() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());

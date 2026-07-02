@@ -341,7 +341,10 @@ fn preserved_overmount_access(
             }
         }
     }
-    best.map(|(_, access_ceiling)| restrict_access(mount.access, access_ceiling))
+    best.and_then(|(_, access_ceiling)| {
+        let restricted = restrict_access(mount.access, access_ceiling);
+        is_stricter_access(restricted, access_ceiling).then_some(restricted)
+    })
 }
 
 fn restrict_access(granted: Access, ceiling: Access) -> Access {
@@ -349,6 +352,10 @@ fn restrict_access(granted: Access, ceiling: Access) -> Access {
         (Access::ReadOnly, _) | (_, Access::ReadOnly) => Access::ReadOnly,
         (Access::ReadWrite, Access::ReadWrite) => Access::ReadWrite,
     }
+}
+
+fn is_stricter_access(access: Access, ceiling: Access) -> bool {
+    matches!((access, ceiling), (Access::ReadOnly, Access::ReadWrite))
 }
 
 /// Whether `prefix` is a path-prefix of `components`.
