@@ -37,10 +37,43 @@ pub struct ExecResult {
     pub exit_code: i32,
 }
 
+/// Default network posture for commands run inside a sandbox.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkPosture {
+    #[default]
+    Deny,
+    Allow,
+}
+
+impl NetworkPosture {
+    const fn allows_network(self) -> bool {
+        matches!(self, Self::Allow)
+    }
+}
+
+/// Projected OS-sandbox confinement input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxSpec {
+    pub writable_roots: Vec<PathBuf>,
+    pub read_denylist: Vec<PathBuf>,
+    pub network: NetworkPosture,
+}
+
+impl SandboxSpec {
+    /// Build the current single-workspace seed spec.
+    pub fn seed(workspace_root: PathBuf) -> Self {
+        Self {
+            writable_roots: vec![workspace_root],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        }
+    }
+}
+
 /// Simple workspace-only sandbox
 #[derive(Clone)]
 pub struct Sandbox {
-    workspace_root: PathBuf,
+    spec: SandboxSpec,
     /// Forces a specific backend instead of host detection (tests only).
     backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
 }
@@ -48,8 +81,17 @@ pub struct Sandbox {
 impl Sandbox {
     /// Create a new sandbox restricted to the given workspace
     pub fn new(workspace_root: PathBuf) -> Self {
+        Self::from_spec(SandboxSpec::seed(workspace_root))
+    }
+
+    /// Create a new sandbox from a projected confinement spec.
+    pub fn from_spec(spec: SandboxSpec) -> Self {
+        assert!(
+            !spec.writable_roots.is_empty(),
+            "SandboxSpec requires at least one writable root"
+        );
         Self {
-            workspace_root,
+            spec,
             backend_override: None,
         }
     }
@@ -61,10 +103,27 @@ impl Sandbox {
         workspace_root: PathBuf,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Self {
+        Self::from_spec_with_backend(SandboxSpec::seed(workspace_root), backend)
+    }
+
+    /// Construct a spec-based sandbox pinned to a specific backend (tests only).
+    #[cfg(test)]
+    pub fn from_spec_with_backend(
+        spec: SandboxSpec,
+        backend: super::sandbox_backend::SandboxBackendKind,
+    ) -> Self {
+        assert!(
+            !spec.writable_roots.is_empty(),
+            "SandboxSpec requires at least one writable root"
+        );
         Self {
-            workspace_root,
+            spec,
             backend_override: Some(backend),
         }
+    }
+
+    fn workspace_root(&self) -> &Path {
+        &self.spec.writable_roots[0]
     }
 
     /// The backend in effect (override for tests, else host detection).
@@ -98,7 +157,7 @@ impl Sandbox {
             return Some(format!(
                 "Working directory outside workspace: {} (workspace: {})",
                 cwd.display(),
-                self.workspace_root.display()
+                self.workspace_root().display()
             ));
         }
 
@@ -117,13 +176,13 @@ impl Sandbox {
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root.join(path)
+            self.workspace_root().join(path)
         };
 
         // Get canonical workspace (may fail if doesn't exist)
         let canonical_workspace = self
-            .canonicalize(&self.workspace_root)
-            .unwrap_or_else(|_| dunce::simplified(&self.workspace_root).to_path_buf());
+            .canonicalize(self.workspace_root())
+            .unwrap_or_else(|_| dunce::simplified(self.workspace_root()).to_path_buf());
 
         // For existing paths, use canonical path
         if absolute_path.exists() {
@@ -157,7 +216,7 @@ impl Sandbox {
             return Err(anyhow!(
                 "Path outside workspace: {} (workspace: {})",
                 path.display(),
-                self.workspace_root.display()
+                self.workspace_root().display()
             ));
         }
 
@@ -178,7 +237,7 @@ impl Sandbox {
             return Err(anyhow!(
                 "Path outside workspace: {} (workspace: {})",
                 path.display(),
-                self.workspace_root.display()
+                self.workspace_root().display()
             ));
         }
         self.ensure_path_not_protected(path, "write")?;
@@ -223,7 +282,7 @@ impl Sandbox {
             return Err(anyhow!(
                 "Working directory outside workspace: {} (workspace: {})",
                 cwd.display(),
-                self.workspace_root.display()
+                self.workspace_root().display()
             ));
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
@@ -254,10 +313,11 @@ impl Sandbox {
         // If it is classified as a network capability, run it with the sandbox's
         // network restriction lifted (still filesystem-confined) so an approved
         // network call actually runs instead of failing under a deny-all profile.
-        let allow_network = matches!(
-            capability,
-            Some(alan_agent_protocol::ToolCapability::Network)
-        );
+        let allow_network = self.spec.network.allows_network()
+            || matches!(
+                capability,
+                Some(alan_agent_protocol::ToolCapability::Network)
+            );
         let mut command = self.build_confined_command(cmd, allow_network);
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
@@ -292,8 +352,11 @@ impl Sandbox {
         // Defense in depth: start the shell with pathname expansion disabled.
         match self.active_backend() {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
-                let profile =
-                    super::sandbox_backend::seatbelt_profile(&self.workspace_root, allow_network);
+                let profile = super::sandbox_backend::seatbelt_profile(
+                    &self.spec.writable_roots,
+                    &self.spec.read_denylist,
+                    allow_network,
+                );
                 let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
                 command
                     .arg("-p")
@@ -307,14 +370,19 @@ impl Sandbox {
             #[cfg(target_os = "linux")]
             super::sandbox_backend::SandboxBackendKind::Landlock => {
                 use std::os::unix::process::CommandExt;
-                let workspace_root = self.workspace_root.clone();
+                let writable_roots = self.spec.writable_roots.clone();
+                let read_denylist = self.spec.read_denylist.clone();
                 let mut command = std::process::Command::new("sh");
                 command.arg("-f").arg("-c").arg(cmd);
                 // SAFETY: pre_exec runs in the forked child before exec; it only
                 // applies a Landlock ruleset (no shared-state mutation).
                 unsafe {
                     command.pre_exec(move || {
-                        super::sandbox_backend::apply_landlock(&workspace_root, allow_network)
+                        super::sandbox_backend::apply_landlock(
+                            &writable_roots,
+                            &read_denylist,
+                            allow_network,
+                        )
                     });
                 }
                 tokio::process::Command::from(command)
@@ -333,7 +401,7 @@ impl Sandbox {
             return Err(anyhow!(
                 "Path outside workspace: {} (workspace: {})",
                 path.display(),
-                self.workspace_root.display()
+                self.workspace_root().display()
             ));
         }
 
@@ -487,9 +555,9 @@ impl Sandbox {
 
     fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
         let canonical_workspace = self
-            .canonicalize(&self.workspace_root)
-            .unwrap_or_else(|_| lexically_normalize_path(&self.workspace_root));
-        let normalized_workspace = lexically_normalize_path(&self.workspace_root);
+            .canonicalize(self.workspace_root())
+            .unwrap_or_else(|_| lexically_normalize_path(self.workspace_root()));
+        let normalized_workspace = lexically_normalize_path(self.workspace_root());
         let resolved_path = self.resolved_path_with_existing_parents(path);
         let relative = resolved_path
             .strip_prefix(&canonical_workspace)
@@ -514,7 +582,7 @@ impl Sandbox {
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root.join(path)
+            self.workspace_root().join(path)
         };
         if absolute_path.exists() {
             self.canonicalize(&absolute_path)
@@ -528,7 +596,7 @@ impl Sandbox {
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root.join(path)
+            self.workspace_root().join(path)
         };
         if absolute_path.exists() {
             return self.normalized_path(&absolute_path);
