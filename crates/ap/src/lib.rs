@@ -19,11 +19,16 @@ mod version;
 mod wire;
 
 pub use server::{
-    FileServer, InProcessTransport, ProcessEvent, ProcessEventSink, ProcessEventSource,
-    ProcessInputEventSink, ProcessInputEventSource, ProcessIoEventKind, ProcessIoEventSink,
-    ProcessIoEventSource, ProcessOutputEventSink, ProcessOutputEventSource,
+    FileServer, ImportedFileServer, InProcessTransport, ProcessEvent, ProcessEventSink,
+    ProcessEventSource, ProcessInputEventSink, ProcessInputEventSource, ProcessIoEventKind,
+    ProcessIoEventSink, ProcessIoEventSource, ProcessOutputEventSink, ProcessOutputEventSource,
+    WireTransportClient, export_file_server,
 };
 pub use stream::Stream;
 pub use types::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};
 pub use version::VersionTable;
-pub use wire::{Request, Response};
+pub use wire::{
+    Request, Response, WireError, WireRequestFrame, WireResponseFrame, decode_request_frame,
+    decode_response_frame, encode_request_frame, encode_response_frame, read_request_frame,
+    read_response_frame, write_request_frame, write_response_frame,
+};

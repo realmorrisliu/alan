@@ -10,8 +10,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio::sync::Mutex;
 
-use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat};
+use crate::wire::{
+    read_request_frame, read_response_frame, write_request_frame, write_response_frame,
+};
+use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat, WireError};
 
 /// A file server: the backing implementation of one mountable tree.
 ///
@@ -195,6 +200,181 @@ impl InProcessTransport {
                 .map(|qid| Response::Create { qid }),
             Request::Remove { fid } => s.remove(fid).await.map(|()| Response::Remove),
             Request::Clunk { fid } => s.clunk(fid).await.map(|()| Response::Clunk),
+        }
+    }
+}
+
+/// Export a [`FileServer`] over the aP byte transport.
+///
+/// The loop is intentionally simple in v1: one connection carries a serialized
+/// sequence of request frames and response-result frames. Multiplexing can be
+/// added above this without changing the [`FileServer`] contract.
+pub async fn export_file_server<R, W>(
+    server: Arc<dyn FileServer>,
+    mut reader: R,
+    mut writer: W,
+) -> Result<(), WireError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let transport = InProcessTransport::new(server);
+    while let Some(request) = read_request_frame(&mut reader).await? {
+        let result = transport.call(request).await;
+        write_response_frame(&mut writer, &result).await?;
+    }
+    Ok(())
+}
+
+/// Client side of one aP wire connection.
+pub struct WireTransportClient<R, W> {
+    reader: R,
+    writer: W,
+}
+
+impl<R, W> WireTransportClient<R, W>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    pub fn new(reader: R, writer: W) -> Self {
+        Self { reader, writer }
+    }
+
+    /// Send one request and return the exact remote operation result.
+    pub async fn call_result(
+        &mut self,
+        request: Request,
+    ) -> Result<Result<Response, ErrorCode>, WireError> {
+        write_request_frame(&mut self.writer, &request).await?;
+        read_response_frame(&mut self.reader)
+            .await?
+            .ok_or(WireError::Closed)
+    }
+
+    /// Send one request and map transport failures back into aP error space.
+    pub async fn call(&mut self, request: Request) -> Result<Response, ErrorCode> {
+        self.call_result(request)
+            .await
+            .map_err(|error| error.to_error_code())?
+    }
+}
+
+/// A remote aP tree imported as a normal [`FileServer`].
+///
+/// V1 serializes requests through one connection. This preserves aP semantics and
+/// keeps request IDs out of the first wire slice; a later transport can add
+/// multiplexing without changing clients.
+pub struct ImportedFileServer<R, W> {
+    client: Mutex<WireTransportClient<R, W>>,
+}
+
+impl<R, W> ImportedFileServer<R, W>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    pub fn new(reader: R, writer: W) -> Self {
+        Self {
+            client: Mutex::new(WireTransportClient::new(reader, writer)),
+        }
+    }
+
+    async fn remote_call(&self, request: Request) -> Result<Response, ErrorCode> {
+        self.client.lock().await.call(request).await
+    }
+}
+
+#[async_trait]
+impl<R, W> FileServer for ImportedFileServer<R, W>
+where
+    R: AsyncBufRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        match self
+            .remote_call(Request::Walk {
+                fid,
+                newfid,
+                names: names.to_vec(),
+            })
+            .await?
+        {
+            Response::Walk { qid } => Ok(qid),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        match self.remote_call(Request::Open { fid, mode }).await? {
+            Response::Open { qid } => Ok(qid),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        match self
+            .remote_call(Request::Read { fid, offset, count })
+            .await?
+        {
+            Response::Read { data } => Ok(data),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        match self
+            .remote_call(Request::Write {
+                fid,
+                offset,
+                data: data.to_vec(),
+            })
+            .await?
+        {
+            Response::Write { count } => Ok(count),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        match self.remote_call(Request::Stat { fid }).await? {
+            Response::Stat { stat } => Ok(stat),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        match self
+            .remote_call(Request::Create {
+                fid,
+                newfid,
+                name: name.to_string(),
+                kind,
+            })
+            .await?
+        {
+            Response::Create { qid } => Ok(qid),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        match self.remote_call(Request::Remove { fid }).await? {
+            Response::Remove => Ok(()),
+            _ => Err(ErrorCode::BadRequest),
+        }
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        match self.remote_call(Request::Clunk { fid }).await? {
+            Response::Clunk => Ok(()),
+            _ => Err(ErrorCode::BadRequest),
         }
     }
 }
