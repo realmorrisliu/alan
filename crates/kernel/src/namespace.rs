@@ -239,25 +239,29 @@ impl Namespace {
     }
 
     pub(crate) fn restrict_to_mounts(&self, requested: &[(String, Access)]) -> Option<Namespace> {
-        let mut remaining = requested.to_vec();
+        let mut explicit_access = vec![None; self.mounts.len()];
+        for (requested_path, requested_access) in requested {
+            let requested_prefix = split_path(requested_path);
+            let (index, _) = self.mounts.iter().enumerate().find(|(index, mount)| {
+                explicit_access[*index].is_none()
+                    && mount.prefix == requested_prefix
+                    && satisfies_access(mount.access, *requested_access)
+            })?;
+            explicit_access[index] = Some(*requested_access);
+        }
+
         let mut mounts = Vec::new();
-        for mount in &self.mounts {
-            let path = mount_path(&mount.prefix);
-            let Some(position) = remaining.iter().position(|(requested_path, access)| {
-                requested_path == &path && satisfies_access(mount.access, *access)
-            }) else {
+        for (index, mount) in self.mounts.iter().enumerate() {
+            let Some(requested_access) = explicit_access[index]
+                .or_else(|| preserved_overmount_access(&self.mounts, &explicit_access, index))
+            else {
                 continue;
             };
-            let (_, requested_access) = remaining.remove(position);
             let mut restricted = mount.clone();
             restricted.access = requested_access;
             mounts.push(restricted);
         }
-        if remaining.is_empty() {
-            Some(Namespace { mounts })
-        } else {
-            None
-        }
+        Some(Namespace { mounts })
     }
 
     /// The union contributors at the **longest** matching prefix for `path`,
@@ -315,6 +319,36 @@ fn satisfies_access(granted: Access, requested: Access) -> bool {
         (Access::ReadWrite, Access::ReadWrite | Access::ReadOnly)
             | (Access::ReadOnly, Access::ReadOnly)
     )
+}
+
+fn preserved_overmount_access(
+    mounts: &[Mount],
+    explicit_access: &[Option<Access>],
+    index: usize,
+) -> Option<Access> {
+    let mount = &mounts[index];
+    let mut best: Option<(usize, Access)> = None;
+    for (ancestor_index, access) in explicit_access.iter().enumerate() {
+        let Some(access) = access else {
+            continue;
+        };
+        let ancestor = &mounts[ancestor_index];
+        if ancestor.prefix.len() < mount.prefix.len() && is_prefix(&ancestor.prefix, &mount.prefix)
+        {
+            match best {
+                Some((best_len, _)) if best_len >= ancestor.prefix.len() => {}
+                _ => best = Some((ancestor.prefix.len(), *access)),
+            }
+        }
+    }
+    best.map(|(_, access_ceiling)| restrict_access(mount.access, access_ceiling))
+}
+
+fn restrict_access(granted: Access, ceiling: Access) -> Access {
+    match (granted, ceiling) {
+        (Access::ReadOnly, _) | (_, Access::ReadOnly) => Access::ReadOnly,
+        (Access::ReadWrite, Access::ReadWrite) => Access::ReadWrite,
+    }
 }
 
 /// Whether `prefix` is a path-prefix of `components`.

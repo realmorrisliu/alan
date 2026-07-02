@@ -798,6 +798,57 @@ async fn clone_exec_namespace_manifest_may_downgrade_rw_mounts_to_read_only() {
 }
 
 #[tokio::test]
+async fn clone_exec_namespace_manifest_preserves_restrictive_overmounts() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/data/secrets",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(39), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(39), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(39), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/data", "access": "rw"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(39), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(39)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(40))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/data rw"),
+        "committed namespace keeps the requested broad mount: {namespace:?}"
+    );
+    assert!(
+        namespace.lines().any(|line| line == "/data/secrets ro"),
+        "committed namespace keeps the restrictive overmount masking the broad mount: {namespace:?}"
+    );
+}
+
+#[tokio::test]
 async fn restricted_manifest_rebinds_delegated_proc_clone_to_the_restricted_namespace() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());
