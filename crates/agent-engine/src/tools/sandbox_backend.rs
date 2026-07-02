@@ -16,7 +16,7 @@
 //! tooling is present, otherwise the path-guard fallback (under which bash must
 //! not auto-run — the policy escalates it).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,25 +122,30 @@ fn landlock_available() -> bool {
 }
 
 /// Generate a macOS Seatbelt (SBPL) profile that confines filesystem writes to
-/// the workspace (plus the temp dir) and denies outbound network.
+/// writable roots (plus the temp dir) and denies outbound network.
 ///
 /// Uses an allow-by-default base then denies the two effects we care about
 /// (network and out-of-workspace writes) and re-allows writes to the workspace
 /// and temp locations. This keeps process exec, dynamic linking, and reads
-/// working while still blocking network and writes that escape the workspace —
+/// working while still blocking network and writes that escape writable roots —
 /// which is what the auto-approve boundary relies on.
-pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
+pub fn seatbelt_profile(
+    writable_roots: &[PathBuf],
+    read_denylist: &[PathBuf],
+    allow_network: bool,
+) -> String {
     // sandbox-exec evaluates real (symlink-resolved) paths, so the subpath
     // rules must use canonical paths (e.g. /var -> /private/var on macOS).
-    let canonical_root = canonical_string(workspace_root);
-    let root = sbpl_quote(&canonical_root);
     let tmpdir = std::env::var("TMPDIR").ok();
-    let mut writable = vec![
-        root,
+    let mut writable = writable_roots
+        .iter()
+        .map(|root| sbpl_quote(&canonical_string(root)))
+        .collect::<Vec<_>>();
+    writable.extend([
         sbpl_quote("/tmp"),
         sbpl_quote("/private/tmp"),
         sbpl_quote("/private/var/folders"),
-    ];
+    ]);
     if let Some(tmpdir) = tmpdir.as_deref().filter(|value| !value.is_empty()) {
         writable.push(sbpl_quote(
             canonical_string(Path::new(tmpdir.trim_end_matches('/'))).as_str(),
@@ -151,6 +156,15 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
         .map(|path| format!("(allow file-write* (subpath {path}))"))
         .collect::<Vec<_>>()
         .join("\n");
+    let read_denies = read_denylist
+        .iter()
+        .map(|path| {
+            format!(
+                "(deny file-read* (subpath {}))\n",
+                sbpl_quote(&canonical_string(path))
+            )
+        })
+        .collect::<String>();
     // NOTE: we do NOT kernel-deny the protected subpaths (`.git`/`.alan`/
     // `.agents`). The kernel cannot distinguish a tool's tampering from the
     // legitimate program-internal writes those dirs are designed for — denying
@@ -168,6 +182,7 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
         "(version 1)\n\
          (allow default)\n\
          {network_rule}\
+         {read_denies}\
          (deny file-write*)\n\
          {write_allows}\n\
          (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
@@ -175,13 +190,17 @@ pub fn seatbelt_profile(workspace_root: &Path, allow_network: bool) -> String {
 }
 
 /// Apply a Landlock ruleset to the current (child) process: allow reads
-/// everywhere, restrict writes to the workspace and temp directories, and deny
+/// everywhere, restrict writes to writable roots and temp directories, and deny
 /// all outbound/listening TCP network access (Landlock ABI v4, best-effort).
 ///
 /// Intended to run in a `pre_exec` hook so it confines the spawned shell, not
 /// the daemon. Returns an `io::Error` (fail-closed) when enforcement fails.
 #[cfg(target_os = "linux")]
-pub fn apply_landlock(workspace_root: &Path, allow_network: bool) -> std::io::Result<()> {
+pub fn apply_landlock(
+    writable_roots: &[PathBuf],
+    read_denylist: &[PathBuf],
+    allow_network: bool,
+) -> std::io::Result<()> {
     use landlock::{
         ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, Ruleset, RulesetAttr,
         RulesetCreatedAttr, path_beneath_rules,
@@ -194,7 +213,11 @@ pub fn apply_landlock(workspace_root: &Path, allow_network: bool) -> std::io::Re
     // `CompatLevel::BestEffort` degrades gracefully on older kernels.
     let fs_abi = ABI::V5;
     let net_abi = ABI::V4;
-    let mut writable = vec![workspace_root.to_path_buf()];
+    // Landlock's allow-list model cannot express a read denylist while reads are
+    // otherwise allowed everywhere. P1 threads the value for signature stability.
+    let _ = read_denylist;
+
+    let mut writable = writable_roots.to_vec();
     for extra in [
         "/tmp",
         "/var/tmp",
@@ -317,7 +340,8 @@ mod tests {
 
     #[test]
     fn seatbelt_profile_confines_writes_and_denies_network() {
-        let profile = seatbelt_profile(&PathBuf::from("/work/space"), false);
+        let writable_roots = vec![PathBuf::from("/work/space")];
+        let profile = seatbelt_profile(&writable_roots, &[], false);
         assert!(profile.contains("(deny network*)"));
         assert!(profile.contains("(deny file-write*)"));
         assert!(profile.contains("(allow file-write* (subpath \"/work/space\"))"));
@@ -326,9 +350,30 @@ mod tests {
     #[test]
     fn seatbelt_profile_permits_network_when_approved() {
         // An approved network call runs with network allowed (still fs-confined).
-        let approved = seatbelt_profile(&PathBuf::from("/work/space"), true);
+        let writable_roots = vec![PathBuf::from("/work/space")];
+        let approved = seatbelt_profile(&writable_roots, &[], true);
         assert!(!approved.contains("(deny network*)"));
         assert!(approved.contains("(deny file-write*)"));
+    }
+
+    #[test]
+    fn seatbelt_profile_single_root_matches_pre_refactor_profile() {
+        let workspace_root = PathBuf::from("/work/space");
+        let writable_roots = vec![workspace_root.clone()];
+        let profile = seatbelt_profile(&writable_roots, &[], false);
+        assert_eq!(
+            profile,
+            pre_refactor_single_workspace_profile(&workspace_root, false)
+        );
+        assert!(!profile.contains("(deny file-read*"));
+    }
+
+    #[test]
+    fn seatbelt_profile_emits_read_denies_when_configured() {
+        let writable_roots = vec![PathBuf::from("/work/space")];
+        let read_denylist = vec![PathBuf::from("/secret")];
+        let profile = seatbelt_profile(&writable_roots, &read_denylist, false);
+        assert!(profile.contains("(deny file-read* (subpath \"/secret\"))"));
     }
 
     #[test]
@@ -343,7 +388,8 @@ mod tests {
             return; // sandbox-exec not present; nothing to enforce
         }
         let workspace = tempfile::tempdir().unwrap();
-        let profile = seatbelt_profile(workspace.path(), false);
+        let writable_roots = vec![workspace.path().to_path_buf()];
+        let profile = seatbelt_profile(&writable_roots, &[], false);
         let canonical_workspace = std::fs::canonicalize(workspace.path()).unwrap();
 
         let run = |script: String| {
@@ -399,7 +445,9 @@ mod tests {
             let mut cmd = std::process::Command::new("sh");
             cmd.arg("-c").arg(script);
             unsafe {
-                cmd.pre_exec(move || super::apply_landlock(&root, false));
+                cmd.pre_exec(move || {
+                    super::apply_landlock(std::slice::from_ref(&root), &[], false)
+                });
             }
             cmd.status().unwrap()
         };
@@ -447,7 +495,9 @@ mod tests {
         let mut cmd = std::process::Command::new("sh");
         cmd.arg("-c").arg(probe);
         unsafe {
-            cmd.pre_exec(move || super::apply_landlock(&workspace_path, false));
+            cmd.pre_exec(move || {
+                super::apply_landlock(std::slice::from_ref(&workspace_path), &[], false)
+            });
         }
         let output = cmd.output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -468,5 +518,40 @@ mod tests {
                 | SandboxBackendKind::Landlock
                 | SandboxBackendKind::WorkspacePathGuard
         ));
+    }
+
+    fn pre_refactor_single_workspace_profile(workspace_root: &Path, allow_network: bool) -> String {
+        let canonical_root = canonical_string(workspace_root);
+        let root = sbpl_quote(&canonical_root);
+        let tmpdir = std::env::var("TMPDIR").ok();
+        let mut writable = vec![
+            root,
+            sbpl_quote("/tmp"),
+            sbpl_quote("/private/tmp"),
+            sbpl_quote("/private/var/folders"),
+        ];
+        if let Some(tmpdir) = tmpdir.as_deref().filter(|value| !value.is_empty()) {
+            writable.push(sbpl_quote(
+                canonical_string(Path::new(tmpdir.trim_end_matches('/'))).as_str(),
+            ));
+        }
+        let write_allows = writable
+            .iter()
+            .map(|path| format!("(allow file-write* (subpath {path}))"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let network_rule = if allow_network {
+            ""
+        } else {
+            "(deny network*)\n"
+        };
+        format!(
+            "(version 1)\n\
+             (allow default)\n\
+             {network_rule}\
+             (deny file-write*)\n\
+             {write_allows}\n\
+             (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
+        )
     }
 }

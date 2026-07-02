@@ -9,9 +9,8 @@ proposals out as their own OpenSpec changes. No application code lands here.
   `Sandbox`'s `workspace_root: PathBuf` with `SandboxSpec { writable_roots,
   read_denylist, network }` seeded from a single-entry manifest (the workspace).
   Pure refactor, zero behavior change; welds the two-projection seam.
-  Created 2026-07-02; currently parked behind `refactor-engine-namespace-native`
-  Slice B (it touches `tool_orchestrator`, which the engine rewrite is actively
-  restructuring).
+  Created 2026-07-02; implemented after `refactor-engine-namespace-native`
+  Slice B settled the tool-execution seam.
 - [ ] 1.2 Create change `add-host-dir-file-server` (P2): `HostDirFs` (host-backed
   aP `FileServer`) + `mount_host` declaration entry point that records
   `(host_path, access)` into the manifest + multi-entry projection in `alan`.

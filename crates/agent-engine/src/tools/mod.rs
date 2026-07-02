@@ -11,7 +11,7 @@ mod sandbox_backend;
 
 pub use context::{ToolContext, ToolExecutionBinding};
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
-pub use sandbox::{ExecResult, Sandbox};
+pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
     SandboxBackendKind, active_backend_name, confines_network, detect_backend, os_backend_active,
     seatbelt_profile,
