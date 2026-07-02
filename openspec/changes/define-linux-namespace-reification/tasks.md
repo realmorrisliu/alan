@@ -23,12 +23,12 @@
 
 ## 3. Linux Runner Slice
 
-- [ ] 3.1 Add a `ReifiedNamespaceRunner` trait and keep the existing Landlock
+- [x] 3.1 Add a `ReifiedNamespaceRunner` trait and keep the existing Landlock
   execution path as fallback.
-- [ ] 3.2 Implement an opt-in Linux runner that attempts unprivileged user/mount
+- [x] 3.2 Implement an opt-in Linux runner that attempts unprivileged user/mount
   namespace creation, bind mounts the plan, applies read-only remounts, and execs
   the requested command.
-- [ ] 3.3 Preserve safe degradation when namespace setup fails, including explicit
+- [x] 3.3 Preserve safe degradation when namespace setup fails, including explicit
   error/audit reporting and no silent ambient-host execution.
 
 ## 4. Enforcement And Policy Integration

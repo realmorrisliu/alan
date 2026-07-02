@@ -17,6 +17,8 @@
 //! not auto-run — the policy escalates it).
 
 use std::fmt;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
 /// Available sandbox enforcement backends, in order of strength.
@@ -316,14 +318,17 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
 }
 
 #[cfg(target_os = "linux")]
+const TRUSTED_LINUX_PROBE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
+
+#[cfg(target_os = "linux")]
 fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let linux_host = LinuxReificationCapability::available();
-    let user_namespace = run_linux_probe(
+    let user_namespace = run_linux_probe_command(
         "user namespace",
         linux_unshare_command(&["--user", "--map-root-user"]),
     );
     let mount_namespace = if user_namespace.is_available() {
-        run_linux_probe(
+        run_linux_probe_command(
             "mount namespace",
             linux_unshare_command(&["--user", "--map-root-user", "--mount"]),
         )
@@ -334,8 +339,8 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let bind_mount = if mount_namespace.is_available() {
         run_mount_probe(
             "bind mount",
-            "mount --make-rprivate / 2>/dev/null || true; \
-             mount --bind \"$1\" \"$2\"; \
+            "\"$ALAN_PROBE_MOUNT_BIN\" --make-rprivate / && \
+             \"$ALAN_PROBE_MOUNT_BIN\" --bind \"$1\" \"$2\" && \
              test -f \"$2/probe-file\"",
         )
     } else {
@@ -345,10 +350,10 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let read_only_remount = if mount_namespace.is_available() {
         run_mount_probe(
             "read-only remount",
-            "mount --make-rprivate / 2>/dev/null || true; \
-             mount --bind \"$1\" \"$2\"; \
-             mount -o remount,bind,ro \"$2\"; \
-             if sh -c 'printf x > \"$1/probe-file\"' sh \"$2\" 2>/dev/null; then exit 1; fi",
+            "\"$ALAN_PROBE_MOUNT_BIN\" --make-rprivate / && \
+             \"$ALAN_PROBE_MOUNT_BIN\" --bind \"$1\" \"$2\" && \
+             \"$ALAN_PROBE_MOUNT_BIN\" -o remount,bind,ro \"$2\" && \
+             if \"$ALAN_PROBE_SHELL_BIN\" -c 'printf x > \"$1/probe-file\"' sh \"$2\" 2>/dev/null; then exit 1; fi",
         )
     } else {
         LinuxReificationCapability::unavailable("requires available mount namespace")
@@ -360,10 +365,13 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
         LinuxReificationCapability::unavailable("requires available mount namespace")
     };
 
-    let network_confinement = if landlock_supports_network() {
-        LinuxReificationCapability::available()
+    let network_confinement = if mount_namespace.is_available() {
+        run_linux_probe_command(
+            "network namespace",
+            linux_unshare_command(&["--user", "--map-root-user", "--mount", "--net"]),
+        )
     } else {
-        LinuxReificationCapability::unavailable("Landlock network confinement unavailable")
+        LinuxReificationCapability::unavailable("requires available mount namespace")
     };
 
     LinuxReificationCapabilityReport::new(
@@ -378,10 +386,14 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_unshare_command(flags: &[&str]) -> std::process::Command {
-    let mut command = std::process::Command::new("unshare");
+fn linux_unshare_command(flags: &[&str]) -> Result<std::process::Command, String> {
+    let mut command = std::process::Command::new(resolve_trusted_linux_helper(
+        "unshare",
+        &["/usr/bin/unshare", "/bin/unshare"],
+    )?);
     command.args(flags).arg("true");
-    command
+    command.env("PATH", TRUSTED_LINUX_PROBE_PATH);
+    Ok(command)
 }
 
 #[cfg(target_os = "linux")]
@@ -395,7 +407,7 @@ fn run_mount_probe(label: &str, script: &str) -> LinuxReificationCapability {
         script,
         &[probe_root.source.as_path(), probe_root.target.as_path()],
     );
-    run_linux_probe(label, command)
+    run_linux_probe_command(label, command)
 }
 
 #[cfg(target_os = "linux")]
@@ -406,23 +418,45 @@ fn run_scratch_tmp_probe() -> LinuxReificationCapability {
     };
 
     let command = linux_unshare_shell_command(
-        "mount --make-rprivate / 2>/dev/null || true; \
-         mount -t tmpfs tmpfs \"$1\" && \
+        "\"$ALAN_PROBE_MOUNT_BIN\" --make-rprivate / && \
+         \"$ALAN_PROBE_MOUNT_BIN\" -t tmpfs tmpfs \"$1\" && \
          printf ok > \"$1/probe-file\" && \
          test -f \"$1/probe-file\"",
         &[probe_root.scratch.as_path()],
     );
-    run_linux_probe("scratch tmp mount", command)
+    run_linux_probe_command("scratch tmp mount", command)
 }
 
 #[cfg(target_os = "linux")]
-fn linux_unshare_shell_command(script: &str, args: &[&Path]) -> std::process::Command {
-    let mut command = std::process::Command::new("unshare");
+fn linux_unshare_shell_command(
+    script: &str,
+    args: &[&Path],
+) -> Result<std::process::Command, String> {
+    let unshare = resolve_trusted_linux_helper("unshare", &["/usr/bin/unshare", "/bin/unshare"])?;
+    let shell = resolve_trusted_linux_helper("sh", &["/bin/sh", "/usr/bin/sh"])?;
+    let mount = resolve_trusted_linux_helper("mount", &["/usr/bin/mount", "/bin/mount"])?;
+    let mut command = std::process::Command::new(unshare);
     command
-        .args(["--user", "--map-root-user", "--mount", "sh", "-c", script])
+        .env("PATH", TRUSTED_LINUX_PROBE_PATH)
+        .env("ALAN_PROBE_MOUNT_BIN", mount)
+        .env("ALAN_PROBE_SHELL_BIN", &shell)
+        .args(["--user", "--map-root-user", "--mount"])
+        .arg(shell)
+        .args(["-c", script])
         .arg("alan-linux-reification-probe")
         .args(args);
-    command
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_probe_command(
+    label: &str,
+    command: Result<std::process::Command, String>,
+) -> LinuxReificationCapability {
+    match command {
+        Ok(command) => run_linux_probe(label, command),
+        Err(reason) => LinuxReificationCapability::unavailable(reason),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -437,6 +471,25 @@ fn run_linux_probe(label: &str, mut command: std::process::Command) -> LinuxReif
             LinuxReificationCapability::unavailable(format!("{label} probe failed to start: {err}"))
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_trusted_linux_helper(name: &str, candidates: &[&str]) -> Result<PathBuf, String> {
+    candidates
+        .iter()
+        .map(Path::new)
+        .find(|path| {
+            std::fs::metadata(path)
+                .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        })
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "trusted linux helper {name} not found in {}",
+                candidates.join(", ")
+            )
+        })
 }
 
 #[cfg(target_os = "linux")]
@@ -1050,7 +1103,7 @@ mod tests {
             available_capability(),
             available_capability(),
             available_capability(),
-            unavailable_capability("Landlock network confinement unavailable"),
+            unavailable_capability("network namespace unavailable"),
         );
 
         assert_eq!(report.backend_name(), "linux_reified_namespace");
@@ -1068,7 +1121,7 @@ mod tests {
                 ("scratch_tmp_mount", "available".to_string()),
                 (
                     "network_confinement",
-                    "unavailable(Landlock network confinement unavailable)".to_string()
+                    "unavailable(network namespace unavailable)".to_string()
                 ),
             ]
         );
@@ -1077,7 +1130,7 @@ mod tests {
             "linux_reified_namespace: degraded (linux_host=available, \
              user_namespace=available, mount_namespace=available, bind_mount=available, \
              read_only_remount=available, scratch_tmp_mount=available, \
-             network_confinement=unavailable(Landlock network confinement unavailable))"
+             network_confinement=unavailable(network namespace unavailable))"
         );
     }
 
@@ -1090,7 +1143,7 @@ mod tests {
             unavailable_capability("requires available mount namespace"),
             available_capability(),
             available_capability(),
-            unavailable_capability("Landlock network confinement unavailable"),
+            unavailable_capability("network namespace unavailable"),
         );
 
         assert_eq!(
@@ -1100,7 +1153,7 @@ mod tests {
                 "user_namespace: not a linux host".to_string(),
                 "mount_namespace: requires available user namespace".to_string(),
                 "bind_mount: requires available mount namespace".to_string(),
-                "network_confinement: Landlock network confinement unavailable".to_string(),
+                "network_confinement: network namespace unavailable".to_string(),
             ]
         );
     }

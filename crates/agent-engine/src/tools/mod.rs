@@ -14,9 +14,11 @@ pub use context::{ToolContext, ToolExecutionBinding};
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
 pub use reified_namespace::{
     DEFAULT_SCRATCH_TMP_NAMESPACE_PATH, DEFAULT_WORKSPACE_NAMESPACE_PATH,
-    ReifiedExecutionSubstrateMount, ReifiedHostMount, ReifiedMountAccess, ReifiedMountDeclaration,
-    ReifiedMountSource, ReifiedNamespacePlan, ReifiedNamespacePlanError, ReifiedNamespacePlanInput,
-    ReifiedScratchTmpMount, default_execution_substrate,
+    LinuxReifiedNamespaceRunner, ReifiedExecutionSubstrateMount, ReifiedHostMount,
+    ReifiedMountAccess, ReifiedMountDeclaration, ReifiedMountSource, ReifiedNamespaceCommandSpec,
+    ReifiedNamespacePlan, ReifiedNamespacePlanError, ReifiedNamespacePlanInput,
+    ReifiedNamespaceRunError, ReifiedNamespaceRunner, ReifiedScratchTmpMount,
+    default_execution_substrate,
 };
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
