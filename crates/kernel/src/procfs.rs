@@ -204,6 +204,44 @@ impl ProcFs {
         view.root_node = Node::Clone;
         view
     }
+
+    fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
+        let mut child_namespace = self
+            .spawn_context
+            .namespace
+            .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
+        self.rebind_proc_spawners(&mut child_namespace, pid);
+        child_namespace
+    }
+
+    fn rebind_proc_spawners(&self, namespace: &mut Namespace, pid: Pid) {
+        if let Some(proc_access) = mount_access_at(namespace, "/proc") {
+            let child_proc = self.for_spawner(
+                Some(pid),
+                namespace.clone(),
+                self.spawn_context.credentials.clone(),
+            );
+            namespace.unmount("/proc");
+            namespace.mount(
+                "/proc",
+                InProcessTransport::new(Arc::new(child_proc)),
+                proc_access,
+            );
+        }
+        if let Some(clone_access) = mount_access_at(namespace, "/proc/clone") {
+            let child_clone = self.clone_file_for_spawner(
+                Some(pid),
+                namespace.clone(),
+                self.spawn_context.credentials.clone(),
+            );
+            namespace.unmount("/proc/clone");
+            namespace.mount(
+                "/proc/clone",
+                InProcessTransport::new(Arc::new(child_clone)),
+                clone_access,
+            );
+        }
+    }
 }
 
 impl State {
@@ -350,12 +388,11 @@ impl FileServer for ProcFs {
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         // The pre-bound root fid is openable directly (to read the listing)
         // without a redundant empty walk, matching SrvFs and the reference server.
-        if fid == Fid::ROOT {
-            let state = self.state.lock().await;
-            return Ok(state.qid(&self.root_node));
-        }
         let mut state = self.state.lock().await;
         let node = state.node_of(fid, &self.root_node)?;
+        if fid == Fid::ROOT && !matches!(node, Node::Clone) {
+            return Ok(state.qid(&node));
+        }
         // Reopening a live fid before clunk is rejected, so a retried open cannot
         // overwrite a pending clone slot (leaking it) or downgrade write intent.
         if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
@@ -370,40 +407,11 @@ impl FileServer for ProcFs {
             }
             let parent = self.spawn_context.parent;
             let credentials = self.spawn_context.credentials.clone();
-            let spawn_namespace = self.spawn_context.namespace.clone();
             let proc_template = self.clone();
             let slot = state
                 .table
                 .clone_begin_with_namespace(parent, credentials, |pid| {
-                    let mut child_namespace = spawn_namespace
-                        .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
-                    if let Some(proc_access) = mount_access_at(&child_namespace, "/proc") {
-                        let child_proc = proc_template.for_spawner(
-                            Some(pid),
-                            child_namespace.clone(),
-                            proc_template.spawn_context.credentials.clone(),
-                        );
-                        child_namespace.unmount("/proc");
-                        child_namespace.mount(
-                            "/proc",
-                            InProcessTransport::new(Arc::new(child_proc)),
-                            proc_access,
-                        );
-                    }
-                    if let Some(clone_access) = mount_access_at(&child_namespace, "/proc/clone") {
-                        let child_clone = proc_template.clone_file_for_spawner(
-                            Some(pid),
-                            child_namespace.clone(),
-                            proc_template.spawn_context.credentials.clone(),
-                        );
-                        child_namespace.unmount("/proc/clone");
-                        child_namespace.mount(
-                            "/proc/clone",
-                            InProcessTransport::new(Arc::new(child_clone)),
-                            clone_access,
-                        );
-                    }
-                    child_namespace
+                    proc_template.child_namespace_for_spawn(pid)
                 })
                 .ok_or(ErrorCode::Io)?;
             let f = state
@@ -526,7 +534,7 @@ impl FileServer for ProcFs {
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        if fid == Fid::ROOT {
+        if fid == Fid::ROOT && !matches!(self.root_node, Node::Clone) {
             return Ok(());
         }
         let runner_launch = {
@@ -539,11 +547,23 @@ impl FileServer for ProcFs {
                 match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
                     Ok(exec) => {
                         if let Some(namespace_manifest) = exec.namespace.as_ref() {
-                            let Some(pending_namespace) = state.table.pending_namespace(pid) else {
+                            let Some(mut narrowed_namespace) = ({
+                                let Some(pending_namespace) = state.table.pending_namespace(pid)
+                                else {
+                                    state.table.discard(pid);
+                                    return Err(ErrorCode::BadRequest);
+                                };
+                                namespace_manifest.namespace_subset_from(pending_namespace)
+                            }) else {
                                 state.table.discard(pid);
                                 return Err(ErrorCode::BadRequest);
                             };
-                            if !namespace_manifest.matches_namespace(pending_namespace) {
+                            self.rebind_proc_spawners(&mut narrowed_namespace, pid);
+                            if state
+                                .table
+                                .replace_pending_namespace(pid, narrowed_namespace)
+                                .is_none()
+                            {
                                 state.table.discard(pid);
                                 return Err(ErrorCode::BadRequest);
                             }

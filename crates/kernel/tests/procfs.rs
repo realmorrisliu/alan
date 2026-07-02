@@ -313,6 +313,36 @@ async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
 }
 
 #[tokio::test]
+async fn delegated_proc_clone_root_open_allocates_a_pending_pid() {
+    let fs = proc();
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+    let proc_clone = fs.clone_file_for_spawner(
+        Some(parent_pid),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+
+    proc_clone
+        .open(Fid::ROOT, OpenMode::ReadWrite)
+        .await
+        .unwrap();
+    let child = String::from_utf8(proc_clone.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap();
+    proc_clone
+        .write(Fid::ROOT, 0, br#"{"executable":"/bin/child","args":[]}"#)
+        .await
+        .unwrap();
+    proc_clone.clunk(Fid::ROOT).await.unwrap();
+
+    let recorded_parent =
+        String::from_utf8(read_at(&fs, &[&child, "parent"], Fid(42)).await.unwrap()).unwrap();
+    assert_eq!(
+        recorded_parent, parent,
+        "opening a delegated /proc/clone root should spawn under its spawner context"
+    );
+}
+
+#[tokio::test]
 async fn a_malformed_exec_spec_is_rejected_at_clunk_and_leaks_nothing() {
     let fs = proc();
 
@@ -616,6 +646,151 @@ async fn clone_exec_namespace_manifest_must_match_spawner_namespace() {
     assert!(
         namespace.lines().any(|line| line == "/scratch rw"),
         "committed namespace includes /scratch: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn clone_exec_namespace_manifest_may_restrict_to_a_spawner_subset() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    namespace.mount(
+        "/scratch",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(35), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(35), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(35), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/data", "access": "ro"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(35), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(35)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(36))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/data ro"),
+        "committed namespace keeps the requested mount: {namespace:?}"
+    );
+    assert!(
+        !namespace.lines().any(|line| line == "/scratch rw"),
+        "committed namespace drops inherited mounts omitted from the manifest: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn restricted_manifest_rebinds_delegated_proc_clone_to_the_restricted_namespace() {
+    let runner = Arc::new(CaptureRunner::new());
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let parent = spawn(&fs, Fid(10)).await;
+    let parent_pid = Pid(parent.parse::<u64>().unwrap());
+
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/proc/clone",
+        InProcessTransport::new(Arc::new(fs.clone_file_for_spawner(
+            Some(parent_pid),
+            Namespace::new(),
+            Credentials::user("alan"),
+        ))),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/scratch",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    let spawner = fs.for_spawner(Some(parent_pid), namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(60), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(60), OpenMode::ReadWrite).await.unwrap();
+    let child = String::from_utf8(spawner.read(Fid(60), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/child",
+        "args": [],
+        "namespace": {
+            "mounts": [
+                {"path": "/proc/clone", "access": "rw"}
+            ]
+        }
+    })
+    .to_string();
+    spawner.write(Fid(60), 0, exec.as_bytes()).await.unwrap();
+    spawner.clunk(Fid(60)).await.unwrap();
+
+    let child_pid = Pid(child.parse::<u64>().unwrap());
+    let child_invocation = runner.wait_for(child_pid).await;
+    assert!(
+        child_invocation.namespace.resolve("/scratch").is_err(),
+        "restricted child namespace must drop omitted mounts"
+    );
+    let proc_clone = child_invocation
+        .namespace
+        .resolve("/proc/clone")
+        .expect("restricted child keeps delegated /proc/clone");
+
+    proc_clone
+        .call(Request::Open {
+            fid: Fid::ROOT,
+            mode: OpenMode::ReadWrite,
+        })
+        .await
+        .unwrap();
+    let grandchild = match proc_clone
+        .call(Request::Read {
+            fid: Fid::ROOT,
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap()
+    {
+        Response::Read { data } => String::from_utf8(data).unwrap(),
+        other => panic!("unexpected response: {other:?}"),
+    };
+    proc_clone
+        .call(Request::Write {
+            fid: Fid::ROOT,
+            offset: 0,
+            data: br#"{"executable":"/bin/grandchild","args":[]}"#.to_vec(),
+        })
+        .await
+        .unwrap();
+    proc_clone
+        .call(Request::Clunk { fid: Fid::ROOT })
+        .await
+        .unwrap();
+
+    let grandchild_pid = Pid(grandchild.parse::<u64>().unwrap());
+    let grandchild_invocation = runner.wait_for(grandchild_pid).await;
+    assert!(
+        grandchild_invocation.namespace.resolve("/scratch").is_err(),
+        "grandchild spawned through restricted /proc/clone must not regain omitted mounts"
     );
 }
 

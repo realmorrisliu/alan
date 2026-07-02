@@ -62,7 +62,7 @@ pub struct ExecSpec {
 ///
 /// The kernel still receives the actual namespace from the spawner context; this
 /// manifest is a commit-time check that the exec document and inherited pending
-/// namespace describe the same capability set.
+/// namespace describe the same or a narrower capability set.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExecNamespaceManifest {
     #[serde(default)]
@@ -80,10 +80,16 @@ impl ExecNamespaceManifest {
         Self { mounts }.normalized()
     }
 
-    /// Whether this manifest exactly matches the namespace's rendered mount
-    /// paths and access rights.
-    pub fn matches_namespace(&self, namespace: &Namespace) -> bool {
-        self.normalized().mounts == Self::from_namespace(namespace).mounts
+    pub(crate) fn namespace_subset_from(&self, namespace: &Namespace) -> Option<Namespace> {
+        namespace.restrict_to_mounts(&self.normalized_access_mounts())
+    }
+
+    fn normalized_access_mounts(&self) -> Vec<(String, Access)> {
+        self.normalized()
+            .mounts
+            .into_iter()
+            .map(|mount| (mount.path, mount.access.into()))
+            .collect()
     }
 
     fn normalized(&self) -> Self {
@@ -129,6 +135,15 @@ impl From<Access> for ExecNamespaceAccess {
         match access {
             Access::ReadOnly => Self::ReadOnly,
             Access::ReadWrite => Self::ReadWrite,
+        }
+    }
+}
+
+impl From<ExecNamespaceAccess> for Access {
+    fn from(access: ExecNamespaceAccess) -> Self {
+        match access {
+            ExecNamespaceAccess::ReadOnly => Self::ReadOnly,
+            ExecNamespaceAccess::ReadWrite => Self::ReadWrite,
         }
     }
 }
@@ -272,6 +287,13 @@ impl ProcessTable {
     /// Borrow the namespace of a pending clone slot before it is committed.
     pub fn pending_namespace(&self, slot: Pid) -> Option<&Namespace> {
         self.pending.get(&slot).map(|pending| &pending.namespace)
+    }
+
+    /// Replace a pending slot's namespace before commit. Used when an exec
+    /// manifest deliberately narrows the inherited namespace.
+    pub fn replace_pending_namespace(&mut self, slot: Pid, namespace: Namespace) -> Option<()> {
+        self.pending.get_mut(&slot)?.namespace = namespace;
+        Some(())
     }
 
     /// Record a process's termination. Terminal state is recorded once: a later

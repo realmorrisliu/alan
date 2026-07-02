@@ -234,15 +234,28 @@ impl Namespace {
     pub fn describe(&self) -> Vec<(String, Access)> {
         self.mounts
             .iter()
-            .map(|m| {
-                let path = if m.prefix.is_empty() {
-                    "/".to_string()
-                } else {
-                    format!("/{}", m.prefix.join("/"))
-                };
-                (path, m.access)
-            })
+            .map(|m| (mount_path(&m.prefix), m.access))
             .collect()
+    }
+
+    pub(crate) fn restrict_to_mounts(&self, requested: &[(String, Access)]) -> Option<Namespace> {
+        let mut remaining = requested.to_vec();
+        let mut mounts = Vec::new();
+        for mount in &self.mounts {
+            let path = mount_path(&mount.prefix);
+            let Some(position) = remaining.iter().position(|(requested_path, access)| {
+                requested_path == &path && *access == mount.access
+            }) else {
+                continue;
+            };
+            remaining.remove(position);
+            mounts.push(mount.clone());
+        }
+        if remaining.is_empty() {
+            Some(Namespace { mounts })
+        } else {
+            None
+        }
     }
 
     /// The union contributors at the **longest** matching prefix for `path`,
@@ -284,6 +297,14 @@ fn split_path(path: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+fn mount_path(prefix: &[String]) -> String {
+    if prefix.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", prefix.join("/"))
+    }
 }
 
 /// Whether `prefix` is a path-prefix of `components`.
