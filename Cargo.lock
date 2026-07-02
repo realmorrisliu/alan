@@ -163,6 +163,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-editfs"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "alan-kernel"
 version = "0.1.0"
 dependencies = [
