@@ -513,15 +513,37 @@ fn handle_mount_escalation_resolution(
         };
     };
     let approved = choice_str == "approve";
-    let status = if approved {
-        "approved_not_applied"
-    } else {
-        "rejected"
-    };
+    let grant = parse_mount_grant_request(&mount_request);
+    let tool_sandbox_projection_changed = approved
+        && grant
+            .as_ref()
+            .is_some_and(|grant| grant.access == "read_write")
+        && grant.as_ref().is_some_and(|grant| {
+            state
+                .tool_catalog
+                .add_default_sandbox_writable_root(grant.host_path.clone())
+        });
+    let tool_sandbox_applied = approved
+        && grant
+            .as_ref()
+            .is_some_and(|grant| grant.access == "read_write")
+        && state
+            .tool_catalog
+            .default_sandbox_writable_roots()
+            .iter()
+            .any(|root| {
+                grant
+                    .as_ref()
+                    .is_some_and(|grant| root == &normalize_mount_grant_host_path(&grant.host_path))
+            });
+    let status = if approved { "approved" } else { "rejected" };
     let result = json!({
         "status": status,
         "approved": approved,
         "live_applied": false,
+        "namespace_applied": false,
+        "tool_sandbox_applied": tool_sandbox_applied,
+        "tool_sandbox_projection_changed": tool_sandbox_projection_changed,
         "checkpoint_id": pending.checkpoint_id.clone(),
         "checkpoint_type": pending.checkpoint_type.clone(),
         "choice": choice_str,
@@ -593,8 +615,32 @@ fn host_mount_grant_event_payload(
         "checkpoint_id": result.get("checkpoint_id").and_then(serde_json::Value::as_str),
         "approved": true,
         "live_applied": false,
+        "namespace_applied": false,
+        "tool_sandbox_applied": result.get("tool_sandbox_applied").and_then(serde_json::Value::as_bool),
+        "tool_sandbox_projection_changed": result.get("tool_sandbox_projection_changed").and_then(serde_json::Value::as_bool),
         "tool_call_id": details.get("tool_call_id").and_then(serde_json::Value::as_str),
     })
+}
+
+struct MountGrantDetails {
+    host_path: std::path::PathBuf,
+    access: String,
+}
+
+fn parse_mount_grant_request(request: &serde_json::Value) -> Option<MountGrantDetails> {
+    let host_path = request.get("host_path")?.as_str()?.trim();
+    let access = request.get("access")?.as_str()?.trim();
+    if host_path.is_empty() || access.is_empty() {
+        return None;
+    }
+    Some(MountGrantDetails {
+        host_path: std::path::PathBuf::from(host_path),
+        access: access.to_string(),
+    })
+}
+
+fn normalize_mount_grant_host_path(path: &std::path::Path) -> std::path::PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf())
 }
 
 fn is_unknown_effect_confirmation(pending: &crate::approval::PendingConfirmation) -> bool {
@@ -700,9 +746,11 @@ mod tests {
         }
     }
 
-    fn mount_escalation_pending_confirmation() -> crate::approval::PendingConfirmation {
-        let host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
-        let host_path = host_path.display().to_string();
+    fn mount_escalation_pending_confirmation_with(
+        host_path: &str,
+        access: &str,
+        reason: &str,
+    ) -> crate::approval::PendingConfirmation {
         crate::approval::PendingConfirmation {
             checkpoint_id: "mount_escalation_call_mount".to_string(),
             checkpoint_type: crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -714,8 +762,8 @@ mod tests {
                 "mount_request": {
                     "namespace_path": "/mnt/project",
                     "host_path": host_path,
-                    "access": "read_write",
-                    "reason": "Need to edit project files"
+                    "access": access,
+                    "reason": reason
                 },
                 "live_applied": false
             }),
@@ -729,14 +777,21 @@ mod tests {
             .tape
             .messages()
             .iter()
+            .rev()
             .find_map(|message| match message {
                 crate::tape::Message::Tool { responses } => responses
                     .iter()
+                    .rev()
                     .find(|response| response.id == call_id)
                     .map(crate::tape::ToolResponse::text_content),
                 _ => None,
             })
             .expect("expected tool result")
+    }
+
+    fn tool_result_json_for_call(state: &RuntimeLoopState, call_id: &str) -> serde_json::Value {
+        serde_json::from_str(&tool_result_text_for_call(state, call_id))
+            .expect("tool result should be json")
     }
 
     #[tokio::test]
@@ -1014,14 +1069,23 @@ mod tests {
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_approve_records_grant_and_tool_result() {
         let temp = TempDir::new().unwrap();
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
         state.session =
             Session::new_with_id_and_recorder_in_dir("mount-approve", "test-model", temp.path())
                 .await
                 .unwrap();
         state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
             .turn_state
-            .set_confirmation(mount_escalation_pending_confirmation());
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_write",
+                "Need to edit project files",
+            ));
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -1040,10 +1104,20 @@ mod tests {
             }
         ));
 
-        let tool_result = tool_result_text_for_call(&state, "call_mount");
-        assert!(tool_result.contains("\"status\":\"approved_not_applied\""));
-        assert!(tool_result.contains("\"live_applied\":false"));
-        assert!(tool_result.contains("\"namespace_path\":\"/mnt/project\""));
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["status"], "approved");
+        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
+        assert_eq!(tool_result["namespace_applied"], false);
+        assert_eq!(tool_result["live_applied"], false);
+        assert_eq!(
+            tool_result["mount_request"]["namespace_path"],
+            "/mnt/project"
+        );
+        let roots = state.tool_catalog.default_sandbox_writable_roots();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], workspace.path());
+        assert_eq!(roots[1], dunce::canonicalize(approved_host.path()).unwrap());
 
         state.session.flush().await;
         let rollout_path = state.session.rollout_path().unwrap().clone();
@@ -1055,11 +1129,10 @@ mod tests {
                 _ => None,
             })
             .expect("expected approved mount grant event");
-        let expected_host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
         assert_eq!(grant.payload["namespace_path"], "/mnt/project");
         assert_eq!(
             grant.payload["host_path"],
-            expected_host_path.display().to_string()
+            approved_host.path().to_str().unwrap()
         );
         assert_eq!(grant.payload["access"], "read_write");
         assert_eq!(grant.payload["reason"], "Need to edit project files");
@@ -1069,20 +1142,117 @@ mod tests {
         );
         assert_eq!(grant.payload["approved"], true);
         assert_eq!(grant.payload["live_applied"], false);
+        assert_eq!(grant.payload["namespace_applied"], false);
+        assert_eq!(grant.payload["tool_sandbox_applied"], true);
+        assert_eq!(grant.payload["tool_sandbox_projection_changed"], true);
         assert_eq!(grant.payload["tool_call_id"], "call_mount");
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_duplicate_read_write_grant_is_idempotent() {
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        for _ in 0..2 {
+            state
+                .turn_state
+                .set_confirmation(mount_escalation_pending_confirmation_with(
+                    approved_host.path().to_str().unwrap(),
+                    "read_write",
+                    "Need to edit project files",
+                ));
+            handle_runtime_op_with_cancel(
+                &mut state,
+                Op::Resume {
+                    request_id: "mount_escalation_call_mount".to_string(),
+                    content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+                },
+                &mut emit,
+                &cancel,
+            )
+            .await
+            .unwrap();
+        }
+
+        let roots = state.tool_catalog.default_sandbox_writable_roots();
+        assert_eq!(
+            roots,
+            vec![
+                workspace.path().to_path_buf(),
+                dunce::canonicalize(approved_host.path()).unwrap()
+            ]
+        );
+        let latest = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(latest["tool_sandbox_applied"], true);
+        assert_eq!(latest["tool_sandbox_projection_changed"], false);
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_read_only_grant_does_not_expand_tool_sandbox() {
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_only",
+                "Need to inspect project files",
+            ));
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let result = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "mount_escalation_call_mount".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["status"], "approved");
+        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
+        assert_eq!(
+            state.tool_catalog.default_sandbox_writable_roots(),
+            vec![workspace.path().to_path_buf()]
+        );
     }
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_reject_returns_tool_result_without_grant() {
         let temp = TempDir::new().unwrap();
+        let workspace = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
         state.session =
             Session::new_with_id_and_recorder_in_dir("mount-reject", "test-model", temp.path())
                 .await
                 .unwrap();
         state
+            .tool_catalog
+            .set_default_workspace_root(workspace.path().to_path_buf());
+        state
             .turn_state
-            .set_confirmation(mount_escalation_pending_confirmation());
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_write",
+                "Need to edit project files",
+            ));
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};
@@ -1101,10 +1271,16 @@ mod tests {
             }
         ));
 
-        let tool_result = tool_result_text_for_call(&state, "call_mount");
-        assert!(tool_result.contains("\"status\":\"rejected\""));
-        assert!(tool_result.contains("\"approved\":false"));
-        assert!(tool_result.contains("\"live_applied\":false"));
+        let tool_result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(tool_result["status"], "rejected");
+        assert_eq!(tool_result["approved"], false);
+        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
+        assert_eq!(tool_result["live_applied"], false);
+        assert_eq!(
+            state.tool_catalog.default_sandbox_writable_roots(),
+            vec![workspace.path().to_path_buf()]
+        );
 
         state.session.flush().await;
         let rollout_path = state.session.rollout_path().unwrap().clone();
@@ -1126,9 +1302,15 @@ mod tests {
         )
         .await
         .unwrap();
+        let host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        let host_path = host_path.display().to_string();
         state
             .turn_state
-            .set_confirmation(mount_escalation_pending_confirmation());
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                &host_path,
+                "read_write",
+                "Need to edit project files",
+            ));
         let cancel = CancellationToken::new();
 
         let mut emit = |_event: Event| async {};

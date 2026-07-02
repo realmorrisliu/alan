@@ -15,6 +15,8 @@ pub struct ToolExecutionBinding {
     pub cwd: PathBuf,
     /// Scratch directory for temporary files.
     pub scratch_dir: PathBuf,
+    /// Runtime-projected sandbox authority for this execution binding.
+    pub sandbox_spec: Option<SandboxSpec>,
 }
 
 impl ToolExecutionBinding {
@@ -24,6 +26,7 @@ impl ToolExecutionBinding {
             workspace_root,
             cwd,
             scratch_dir,
+            sandbox_spec: None,
         }
     }
 
@@ -36,6 +39,12 @@ impl ToolExecutionBinding {
     pub fn with_workspace(workspace_root: PathBuf, cwd: PathBuf, scratch_dir: PathBuf) -> Self {
         Self::new(Some(workspace_root), cwd, scratch_dir)
     }
+
+    /// Return a copy of this binding with an explicit runtime sandbox projection.
+    pub fn with_sandbox_spec(mut self, sandbox_spec: SandboxSpec) -> Self {
+        self.sandbox_spec = Some(sandbox_spec);
+        self
+    }
 }
 
 /// Context provided to tools during execution.
@@ -47,6 +56,8 @@ pub struct ToolContext {
     pub cwd: PathBuf,
     /// Scratch directory for temporary files
     pub scratch_dir: PathBuf,
+    /// Runtime-projected sandbox authority for this context.
+    pub sandbox_spec: Option<SandboxSpec>,
     /// Global configuration
     pub config: Arc<Config>,
 }
@@ -84,6 +95,7 @@ impl ToolContext {
             workspace_root: binding.workspace_root,
             cwd: binding.cwd,
             scratch_dir: binding.scratch_dir,
+            sandbox_spec: binding.sandbox_spec,
             config,
         }
     }
@@ -94,6 +106,7 @@ impl ToolContext {
             workspace_root: self.workspace_root.clone(),
             cwd: self.cwd.clone(),
             scratch_dir: self.scratch_dir.clone(),
+            sandbox_spec: self.sandbox_spec.clone(),
         }
     }
 
@@ -110,6 +123,9 @@ impl ToolContext {
 
     /// Create a sandbox bound to the current workspace root.
     pub fn workspace_sandbox(&self) -> Result<Sandbox> {
+        if let Some(spec) = self.sandbox_spec.clone() {
+            return Ok(Sandbox::from_spec(spec));
+        }
         Ok(Sandbox::from_spec(SandboxSpec::seed(
             self.require_workspace_root()?.to_path_buf(),
         )))
@@ -171,5 +187,30 @@ mod tests {
                 PathBuf::from("/tmp/scratch")
             )
         );
+    }
+
+    #[test]
+    fn test_tool_context_uses_explicit_sandbox_spec() {
+        let config = Arc::new(Config::default());
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let approved_dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_dir.path().to_path_buf();
+        let approved = approved_dir.path().to_path_buf();
+        let spec = SandboxSpec {
+            writable_roots: vec![workspace.clone(), approved.clone()],
+            read_denylist: Vec::new(),
+            network: crate::tools::NetworkPosture::Deny,
+        };
+        let binding = ToolExecutionBinding::with_workspace(
+            workspace.clone(),
+            workspace.clone(),
+            PathBuf::from("/tmp/scratch"),
+        )
+        .with_sandbox_spec(spec.clone());
+        let ctx = ToolContext::from_binding(binding, config);
+
+        assert_eq!(ctx.binding().sandbox_spec, Some(spec));
+        let sandbox = ctx.workspace_sandbox().unwrap();
+        assert!(sandbox.is_in_workspace(&approved.join("file.txt")));
     }
 }

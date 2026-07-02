@@ -97,6 +97,112 @@ async fn test_sandbox_read_write() {
 }
 
 #[tokio::test]
+async fn sandbox_allows_each_writable_root() {
+    let workspace = TempDir::new().unwrap();
+    let approved = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec(SandboxSpec {
+        writable_roots: vec![
+            workspace.path().to_path_buf(),
+            approved.path().to_path_buf(),
+        ],
+        read_denylist: Vec::new(),
+        network: NetworkPosture::Deny,
+    });
+
+    let approved_file = approved.path().join("notes.txt");
+    sandbox.write(&approved_file, b"hello mount").await.unwrap();
+    assert_eq!(
+        sandbox.read_string(&approved_file).await.unwrap(),
+        "hello mount"
+    );
+    assert!(
+        sandbox
+            .list_dir(approved.path())
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.file_name() == "notes.txt")
+    );
+    assert!(sandbox.is_in_workspace(&workspace.path().join("a.txt")));
+    assert!(sandbox.is_in_workspace(&approved.path().join("b.txt")));
+    assert!(!sandbox.is_in_workspace(&outside.path().join("c.txt")));
+
+    let outside_read = sandbox.read(&outside.path().join("secret.txt")).await;
+    assert!(outside_read.is_err());
+    assert!(
+        outside_read
+            .unwrap_err()
+            .to_string()
+            .contains("outside workspace")
+    );
+}
+
+#[tokio::test]
+async fn sandbox_exec_accepts_cwd_under_secondary_writable_root() {
+    let workspace = TempDir::new().unwrap();
+    let approved = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            writable_roots: vec![
+                workspace.path().to_path_buf(),
+                approved.path().to_path_buf(),
+            ],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+    tokio::fs::write(approved.path().join("in_mount.txt"), "ok")
+        .await
+        .unwrap();
+
+    let result = sandbox.exec("cat ./in_mount.txt", approved.path()).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().stdout.trim(), "ok");
+
+    let outside_result = sandbox.exec("echo no", outside.path()).await;
+    assert!(outside_result.is_err());
+    assert!(
+        outside_result
+            .unwrap_err()
+            .to_string()
+            .contains("outside workspace")
+    );
+}
+
+#[tokio::test]
+async fn sandbox_protects_reserved_subpaths_under_secondary_writable_root() {
+    let workspace = TempDir::new().unwrap();
+    let approved = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            writable_roots: vec![
+                workspace.path().to_path_buf(),
+                approved.path().to_path_buf(),
+            ],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+    let protected = approved.path().join(".git/config");
+    tokio::fs::create_dir_all(protected.parent().unwrap())
+        .await
+        .unwrap();
+
+    let result = sandbox.write(&protected, b"[core]\n").await;
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("protected subpath")
+    );
+}
+
+#[tokio::test]
 async fn test_sandbox_blocks_outside_workspace() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
@@ -152,6 +258,34 @@ async fn sandbox_spec_writable_roots_still_block_host_protected_subpaths() {
         .unwrap();
 
     let result = sandbox.write(&protected, b"[core]\n").await;
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("protected subpath .git")
+    );
+}
+
+#[tokio::test]
+async fn sandbox_spec_writable_roots_block_protected_roots_themselves() {
+    let workspace = TempDir::new().unwrap();
+    let host = TempDir::new().unwrap();
+    let protected_root = host.path().join(".git");
+    tokio::fs::create_dir_all(&protected_root).await.unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            writable_roots: vec![workspace.path().to_path_buf(), protected_root.clone()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+
+    let result = sandbox
+        .write(&protected_root.join("config"), b"[core]\n")
+        .await;
 
     assert!(result.is_err());
     assert!(
@@ -510,6 +644,26 @@ async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
             .to_string()
             .contains("protected subpath .git")
     );
+}
+
+#[tokio::test]
+async fn test_sandbox_blocks_symlink_alias_outside_writable_roots() {
+    let workspace = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        workspace.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+    let outside_file = outside.path().join("secret.txt");
+    tokio::fs::write(&outside_file, "secret").await.unwrap();
+    let alias = workspace.path().join("safe.txt");
+    std::os::unix::fs::symlink(&outside_file, &alias).unwrap();
+
+    let read = sandbox.read_string(&alias).await.unwrap_err();
+    assert!(read.to_string().contains("outside workspace"), "{read}");
+
+    let write = sandbox.write(&alias, b"changed").await.unwrap_err();
+    assert!(write.to_string().contains("outside workspace"), "{write}");
 }
 
 #[tokio::test]

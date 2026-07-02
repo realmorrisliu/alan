@@ -1288,8 +1288,11 @@ fn workspace_routing_preflight(
     capability: ToolCapability,
 ) -> Option<(Value, String, alan_agent_protocol::ToolDecisionAudit)> {
     let workspace_root = bound_workspace_root(state)?;
-    let sandbox =
-        crate::tools::Sandbox::from_spec(crate::tools::SandboxSpec::seed(workspace_root.clone()));
+    let sandbox_spec = state
+        .tool_catalog
+        .default_sandbox_spec()
+        .unwrap_or_else(|| crate::tools::SandboxSpec::seed(workspace_root.clone()));
+    let sandbox = crate::tools::Sandbox::from_spec(sandbox_spec);
     let current_cwd = state
         .default_tool_cwd()
         .unwrap_or_else(|| workspace_root.clone());
@@ -3212,6 +3215,48 @@ mod tests {
             }),
             "cross-workspace local bash should not trigger confirmation escalation"
         );
+    }
+
+    #[test]
+    fn test_approved_mount_root_bypasses_workspace_routing_preflight() {
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let approved_root = tempfile::TempDir::new().unwrap();
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "bash",
+            capability: ToolCapability::Unknown,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
+        state
+            .tool_catalog_mut_for_test()
+            .set_default_workspace_binding(
+                workspace_root.path().to_path_buf(),
+                workspace_root.path().to_path_buf(),
+            );
+        let arguments = json!({
+            "command": format!("cd {} && pwd", approved_root.path().display()),
+            "timeout": 60
+        });
+        let blocked =
+            workspace_routing_preflight(&state, "bash", &arguments, ToolCapability::Unknown);
+        assert!(
+            blocked.is_some(),
+            "unapproved host root should require delegation"
+        );
+
+        assert!(
+            state
+                .tool_catalog_mut_for_test()
+                .add_default_sandbox_writable_root(approved_root.path().to_path_buf())
+        );
+
+        let preflight =
+            workspace_routing_preflight(&state, "bash", &arguments, ToolCapability::Unknown);
+
+        assert!(preflight.is_none(), "approved root should not be delegated");
     }
 
     #[tokio::test]

@@ -22,6 +22,21 @@ use crate::InstallChannel;
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
 pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
+pub(crate) fn protected_path_component(path: &Path) -> Option<&'static str> {
+    path.components().find_map(protected_component)
+}
+
+fn protected_component(component: Component<'_>) -> Option<&'static str> {
+    let Component::Normal(name) = component else {
+        return None;
+    };
+    let candidate = name.to_str()?;
+    PROTECTED_SUBPATHS
+        .iter()
+        .copied()
+        .find(|protected| *protected == candidate)
+}
+
 /// How thoroughly to validate command paths. Under an OS sandbox the kernel
 /// enforces workspace containment, so only protected-subpath writes need the
 /// parser; on the path-guard fallback the full syntactic checks apply.
@@ -188,6 +203,15 @@ impl Sandbox {
         &self.spec.writable_roots[0]
     }
 
+    fn allowed_roots_label(&self) -> String {
+        self.spec
+            .writable_roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// The backend in effect (override for tests, else host detection).
     fn active_backend(&self) -> super::sandbox_backend::SandboxBackendKind {
         self.backend_override
@@ -217,9 +241,9 @@ impl Sandbox {
     pub fn bash_workspace_routing_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
         if !self.is_in_workspace(cwd) {
             return Some(format!(
-                "Working directory outside workspace: {} (workspace: {})",
+                "Working directory outside workspace roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.workspace_root().display()
+                self.allowed_roots_label()
             ));
         }
 
@@ -240,13 +264,26 @@ impl Sandbox {
         } else {
             self.workspace_root().join(path)
         };
+        self.spec
+            .writable_roots
+            .iter()
+            .any(|root| self.is_path_in_root(&absolute_path, root))
+    }
+
+    fn is_path_in_root(&self, absolute_path: &Path, root: &Path) -> bool {
+        let canonical_root = self
+            .canonicalize(root)
+            .unwrap_or_else(|_| lexically_normalize_path(root));
+        let normalized_root = lexically_normalize_path(root);
 
         // For existing paths, use canonical path
         if absolute_path.exists() {
             let canonical_path = self
-                .canonicalize(&absolute_path)
-                .unwrap_or_else(|_| dunce::simplified(&absolute_path).to_path_buf());
-            return self.is_under_writable_root(&canonical_path);
+                .canonicalize(absolute_path)
+                .unwrap_or_else(|_| lexically_normalize_path(absolute_path));
+            let normalized_path = lexically_normalize_path(&canonical_path);
+            return canonical_path.starts_with(&canonical_root)
+                || normalized_path.starts_with(&normalized_root);
         }
 
         // For new files, check that existing parent directories are within an
@@ -256,23 +293,27 @@ impl Sandbox {
             if parent.exists() {
                 let canonical_parent = self
                     .canonicalize(parent)
-                    .unwrap_or_else(|_| dunce::simplified(parent).to_path_buf());
-                return self.is_under_writable_root(&canonical_parent);
+                    .unwrap_or_else(|_| lexically_normalize_path(parent));
+                let normalized_parent = lexically_normalize_path(&canonical_parent);
+                return canonical_parent.starts_with(&canonical_root)
+                    || normalized_parent.starts_with(&normalized_root);
             }
             current = parent.parent();
         }
 
-        // If no parent exists, check if the path itself starts with a writable root.
-        self.is_under_writable_root(&lexically_normalize_path(&absolute_path))
+        // If no parent exists, check if the path itself starts with the allowed root.
+        let normalized_path = lexically_normalize_path(absolute_path);
+        normalized_path.starts_with(&canonical_root)
+            || normalized_path.starts_with(&normalized_root)
     }
 
     /// Read a file within the workspace
     pub async fn read(&self, path: &Path) -> Result<Vec<u8>> {
         if !self.is_in_workspace(path) {
             return Err(anyhow!(
-                "Path outside workspace: {} (workspace: {})",
+                "Path outside workspace roots: {} (allowed roots: {})",
                 path.display(),
-                self.workspace_root().display()
+                self.allowed_roots_label()
             ));
         }
         self.ensure_path_not_read_denied(path, "read")?;
@@ -292,9 +333,9 @@ impl Sandbox {
     pub async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
         if !self.is_in_workspace(path) {
             return Err(anyhow!(
-                "Path outside workspace: {} (workspace: {})",
+                "Path outside workspace roots: {} (allowed roots: {})",
                 path.display(),
-                self.workspace_root().display()
+                self.allowed_roots_label()
             ));
         }
         self.ensure_path_not_protected(path, "write")?;
@@ -337,9 +378,9 @@ impl Sandbox {
     ) -> Result<ExecResult> {
         if !self.is_in_workspace(cwd) {
             return Err(anyhow!(
-                "Working directory outside workspace: {} (workspace: {})",
+                "Working directory outside workspace roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.workspace_root().display()
+                self.allowed_roots_label()
             ));
         }
         self.ensure_path_not_protected(cwd, "process cwd")?;
@@ -456,9 +497,9 @@ impl Sandbox {
     pub async fn list_dir(&self, path: &Path) -> Result<Vec<tokio::fs::DirEntry>> {
         if !self.is_in_workspace(path) {
             return Err(anyhow!(
-                "Path outside workspace: {} (workspace: {})",
+                "Path outside workspace roots: {} (allowed roots: {})",
                 path.display(),
-                self.workspace_root().display()
+                self.allowed_roots_label()
             ));
         }
         self.ensure_path_not_read_denied(path, "list directory")?;
@@ -639,40 +680,25 @@ impl Sandbox {
                 .canonicalize(root)
                 .unwrap_or_else(|_| lexically_normalize_path(root));
             let normalized_root = lexically_normalize_path(root);
+            let root_protected = protected_path_component(&canonical_root)
+                .or_else(|| protected_path_component(&normalized_root));
             let Ok(relative) = resolved_path
                 .strip_prefix(&canonical_root)
                 .or_else(|_| resolved_path.strip_prefix(&normalized_root))
             else {
                 continue;
             };
+            if let Some(component) = root_protected {
+                return Some(component);
+            }
             if is_allowed_protected_relative_path(relative) {
                 return None;
             }
-            if let Some(component) = relative.components().find_map(|component| match component {
-                Component::Normal(name) => {
-                    let candidate = name.to_str()?;
-                    PROTECTED_SUBPATHS
-                        .iter()
-                        .copied()
-                        .find(|protected| *protected == candidate)
-                }
-                _ => None,
-            }) {
+            if let Some(component) = relative.components().find_map(protected_component) {
                 return Some(component);
             }
         }
         None
-    }
-
-    fn is_under_writable_root(&self, path: &Path) -> bool {
-        let normalized_path = lexically_normalize_path(path);
-        self.spec.writable_roots.iter().any(|root| {
-            let canonical_root = self
-                .canonicalize(root)
-                .unwrap_or_else(|_| lexically_normalize_path(root));
-            let normalized_root = lexically_normalize_path(root);
-            path.starts_with(&canonical_root) || normalized_path.starts_with(&normalized_root)
-        })
     }
 
     fn normalized_path(&self, path: &Path) -> PathBuf {
