@@ -43,3 +43,7 @@ proposals out as their own OpenSpec changes. No application code lands here.
 
 - [ ] 3.1 Archive this framing change once P1 and P2 are proposed and the
   relationship it fixes is captured in their design docs.
+  Updated 2026-07-03: downstream Linux reification is now represented by ready
+  stacked PRs #603-#607. Keep this unchecked until the downstream stack merges,
+  then archive this framing change as the parent ledger for the completed
+  namespace-driven sandbox sequence.

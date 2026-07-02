@@ -64,5 +64,9 @@
   `openspec validate define-linux-namespace-reification --strict`,
   `openspec validate define-namespace-driven-sandbox --strict`, and
   `git diff --check` passed.
-- [ ] 5.4 Update parent namespace-driven sandbox task state and open stacked PRs
+- [x] 5.4 Update parent namespace-driven sandbox task state and open stacked PRs
   for each landed implementation slice.
+  Done 2026-07-03: updated the parent `define-namespace-driven-sandbox` task
+  ledger and opened ready stacked PRs for the Linux reification slices: #603
+  (probe), #604 (plan), #605 (runner), #606 (backend integration), and #607
+  (verification smoke coverage).
