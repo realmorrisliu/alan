@@ -227,6 +227,14 @@ impl AgentFs {
             .verify_root_hash(&state.tape_root)
             .map_err(map_knowledge_error)
     }
+
+    pub(crate) async fn append_child_event(&self, child_pid: &str) {
+        let state = self.state.lock().await;
+        state
+            .events
+            .append(format!("child:{child_pid}\n").as_bytes())
+            .await;
+    }
 }
 
 impl State {
@@ -530,9 +538,22 @@ impl FileServer for AgentFs {
             }
             _ => None,
         };
+        let read_write_base = if matches!(mode, OpenMode::ReadWrite) {
+            match &node {
+                Node::RequestField(..) | Node::ActionField(..) => {
+                    Some(state.computed_bytes(&node)?)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
         f.clone_id = clone_id;
+        if let Some(bytes) = read_write_base {
+            f.write_buf = bytes;
+        }
         if is_tape_write {
             state.tape_writer = Some(fid);
         }

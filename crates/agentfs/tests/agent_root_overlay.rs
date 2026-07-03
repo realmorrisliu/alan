@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -177,6 +177,61 @@ async fn agent_children_are_derived_from_proc_parentage() {
 }
 
 #[tokio::test]
+async fn child_registration_wakes_parent_events_stream() {
+    use std::time::Duration;
+
+    let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
+    let parent = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let spawner = proc.for_spawner(
+        Some(Pid(parent.parse::<u64>().unwrap())),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+    let parent_agent = Arc::new(AgentFs::new());
+    agent_root
+        .bind_process(parent.clone(), parent_agent.clone())
+        .await;
+
+    let events_fid = Fid(10_100);
+    agent_root
+        .walk(
+            Fid::ROOT,
+            events_fid,
+            &[parent.clone(), "events".to_string()],
+        )
+        .await
+        .unwrap();
+    agent_root.open(events_fid, OpenMode::Read).await.unwrap();
+    let reader_root = agent_root.clone();
+    let reader = tokio::spawn(async move { reader_root.read(events_fid, 0, 4096).await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !reader.is_finished(),
+        "events reader should block before the child is registered"
+    );
+
+    let child = spawn_on_proc(&spawner, Fid(10_101)).await;
+    agent_root
+        .bind_process(child.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let record = tokio::time::timeout(Duration::from_millis(500), reader)
+        .await
+        .expect("child event should wake the parent events reader")
+        .unwrap()
+        .unwrap();
+    let record = String::from_utf8(record).unwrap();
+    assert!(
+        record.contains(&format!("child:{child}")),
+        "parent events should publish child registration: {record:?}"
+    );
+    agent_root.clunk(events_fid).await.unwrap();
+}
+
+#[tokio::test]
 async fn agent_children_qid_versions_change_with_listing() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
@@ -343,6 +398,98 @@ async fn concurrent_walk_rechecks_newfid_before_insert() {
     );
     agent_root.clunk(shared_fid).await.unwrap();
     assert_eq!(backing.bound_fid_count(), 0);
+}
+
+#[tokio::test]
+async fn failed_concurrent_walk_does_not_delete_winning_fid() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let backing = Arc::new(DelayedFailWalkFs::new());
+    agent_root.bind_process(pid.clone(), backing.clone()).await;
+
+    let shared_fid = Fid(15_000);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    for _ in 0..2 {
+        let agent_root = agent_root.clone();
+        let pid = pid.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = agent_root
+                .walk(Fid::ROOT, shared_fid, &[pid, "file".to_string()])
+                .await;
+            tx.send(result).await.unwrap();
+        });
+    }
+    drop(tx);
+
+    let winner = rx.recv().await.unwrap();
+    assert!(winner.is_ok(), "one concurrent walk should bind the fid");
+    backing.release_failure();
+    let loser = rx.recv().await.unwrap();
+    assert_eq!(loser, Err(ErrorCode::NotFound));
+
+    agent_root
+        .open(shared_fid, OpenMode::Read)
+        .await
+        .expect("failed concurrent walk must not remove the winning binding");
+    agent_root.clunk(shared_fid).await.unwrap();
+}
+
+#[tokio::test]
+async fn create_collision_rolls_back_the_losing_backing_file() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let backing = Arc::new(RacingCreateFs::new());
+    agent_root.bind_process(pid.clone(), backing.clone()).await;
+
+    let dir_fid = Fid(16_000);
+    let shared_fid = Fid(16_001);
+    agent_root
+        .walk(Fid::ROOT, dir_fid, std::slice::from_ref(&pid))
+        .await
+        .unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    for name in ["alpha", "beta"] {
+        let agent_root = agent_root.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = agent_root
+                .create(dir_fid, shared_fid, name, FileKind::File)
+                .await;
+            tx.send((name.to_string(), result)).await.unwrap();
+        });
+    }
+    drop(tx);
+
+    let first = rx.recv().await.unwrap();
+    let second = rx.recv().await.unwrap();
+    let results = [first, second];
+    let ok_names: BTreeSet<String> = results
+        .iter()
+        .filter(|(_, result)| result.is_ok())
+        .map(|(name, _)| name.clone())
+        .collect();
+    let collision_count = results
+        .iter()
+        .filter(|(_, result)| matches!(result, Err(ErrorCode::BadRequest)))
+        .count();
+
+    assert_eq!(ok_names.len(), 1);
+    assert_eq!(collision_count, 1);
+    assert_eq!(
+        backing.file_names(),
+        ok_names,
+        "a create that returns BadRequest must not leave a hidden backing file"
+    );
+    agent_root.clunk(shared_fid).await.unwrap();
+    agent_root.clunk(dir_fid).await.unwrap();
 }
 
 #[tokio::test]
@@ -520,6 +667,288 @@ impl FileServer for RacingWalkFs {
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
         self.clunk(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid);
+        Ok(())
+    }
+}
+
+struct DelayedFailWalkFs {
+    fids: Mutex<HashMap<Fid, ()>>,
+    started_walks: AtomicUsize,
+    both_started: Notify,
+    release_failed_walk: Notify,
+}
+
+impl DelayedFailWalkFs {
+    fn new() -> Self {
+        Self {
+            fids: Mutex::new(HashMap::new()),
+            started_walks: AtomicUsize::new(0),
+            both_started: Notify::new(),
+            release_failed_walk: Notify::new(),
+        }
+    }
+
+    fn release_failure(&self) {
+        self.release_failed_walk.notify_waiters();
+    }
+
+    fn qid() -> Qid {
+        Qid {
+            kind: FileKind::File,
+            version: 0,
+            path: 0xF11E_0002,
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for DelayedFailWalkFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT || names.len() != 1 || names[0] != "file" {
+            return Err(ErrorCode::NotFound);
+        }
+        let started = self.started_walks.fetch_add(1, Ordering::SeqCst) + 1;
+        if started >= 2 {
+            self.both_started.notify_waiters();
+        }
+        while self.started_walks.load(Ordering::SeqCst) < 2 {
+            self.both_started.notified().await;
+        }
+        if started == 1 {
+            self.fids
+                .lock()
+                .expect("fid map lock should not be poisoned")
+                .insert(newfid, ());
+            Ok(Self::qid())
+        } else {
+            self.release_failed_walk.notified().await;
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .contains_key(&fid)
+        {
+            Ok(Self::qid())
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Ok(Vec::new())
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        if self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .contains_key(&fid)
+        {
+            Ok(Stat {
+                name: "file".to_string(),
+                qid: Self::qid(),
+                length: 0,
+                writable: false,
+            })
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunk(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid);
+        Ok(())
+    }
+}
+
+struct RacingCreateFs {
+    fids: Mutex<HashMap<Fid, String>>,
+    files: Mutex<BTreeSet<String>>,
+    started_creates: AtomicUsize,
+    release_creates: Notify,
+}
+
+impl RacingCreateFs {
+    fn new() -> Self {
+        Self {
+            fids: Mutex::new(HashMap::new()),
+            files: Mutex::new(BTreeSet::new()),
+            started_creates: AtomicUsize::new(0),
+            release_creates: Notify::new(),
+        }
+    }
+
+    fn file_names(&self) -> BTreeSet<String> {
+        self.files
+            .lock()
+            .expect("file set lock should not be poisoned")
+            .clone()
+    }
+
+    fn qid(kind: FileKind) -> Qid {
+        Qid {
+            kind,
+            version: 0,
+            path: match kind {
+                FileKind::Dir => 0x0C0D_ED1A,
+                FileKind::File => 0xC0DE_F11E,
+                FileKind::Stream => 0xC0DE_57EA,
+                FileKind::Clone => 0xC0DE_C10E,
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for RacingCreateFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT || names.len() != 1 {
+            return Err(ErrorCode::NotFound);
+        }
+        if self
+            .files
+            .lock()
+            .expect("file set lock should not be poisoned")
+            .contains(&names[0])
+        {
+            self.fids
+                .lock()
+                .expect("fid map lock should not be poisoned")
+                .insert(newfid, names[0].clone());
+            Ok(Self::qid(FileKind::File))
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if fid == Fid::ROOT
+            || self
+                .fids
+                .lock()
+                .expect("fid map lock should not be poisoned")
+                .contains_key(&fid)
+        {
+            Ok(Self::qid(FileKind::File))
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn read(&self, fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        if fid == Fid::ROOT {
+            Ok(self
+                .file_names()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into_bytes())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, data: &[u8]) -> Result<u32, ErrorCode> {
+        Ok(data.len() as u32)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        if fid == Fid::ROOT
+            || self
+                .fids
+                .lock()
+                .expect("fid map lock should not be poisoned")
+                .contains_key(&fid)
+        {
+            Ok(Stat {
+                name: String::new(),
+                qid: Self::qid(if fid == Fid::ROOT {
+                    FileKind::Dir
+                } else {
+                    FileKind::File
+                }),
+                length: 0,
+                writable: true,
+            })
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT || kind != FileKind::File {
+            return Err(ErrorCode::BadRequest);
+        }
+        let started = self.started_creates.fetch_add(1, Ordering::SeqCst) + 1;
+        if started >= 2 {
+            self.release_creates.notify_waiters();
+        }
+        while self.started_creates.load(Ordering::SeqCst) < 2 {
+            self.release_creates.notified().await;
+        }
+        self.files
+            .lock()
+            .expect("file set lock should not be poisoned")
+            .insert(name.to_string());
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .insert(newfid, name.to_string());
+        Ok(Self::qid(FileKind::File))
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let name = self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid)
+            .ok_or(ErrorCode::NotFound)?;
+        self.files
+            .lock()
+            .expect("file set lock should not be poisoned")
+            .remove(&name);
+        Ok(())
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {

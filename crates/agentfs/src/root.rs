@@ -8,6 +8,7 @@
 //! separate.
 
 use std::{
+    any::Any,
     collections::HashMap,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -21,8 +22,16 @@ use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat}
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
+use crate::AgentFs;
+
 static NEXT_BACKING_FID: AtomicU64 = AtomicU64::new(1_000_000);
 static NEXT_PROC_FID: AtomicU64 = AtomicU64::new(2_000_000);
+
+#[derive(Clone)]
+struct AgentRegistration {
+    backing: Arc<dyn FileServer>,
+    event_sink: Option<Arc<AgentFs>>,
+}
 
 #[derive(Clone)]
 enum Node {
@@ -50,7 +59,7 @@ struct Entry {
 }
 
 struct State {
-    agents: HashMap<String, Arc<dyn FileServer>>,
+    agents: HashMap<String, AgentRegistration>,
     root_pid: Option<String>,
     fids: HashMap<Fid, Entry>,
 }
@@ -78,8 +87,33 @@ impl AgentRootFs {
     }
 
     /// Register the agent-state backing tree for a committed process pid.
-    pub async fn bind_process(&self, pid: impl Into<String>, agent: Arc<dyn FileServer>) {
-        self.state.lock().await.agents.insert(pid.into(), agent);
+    pub async fn bind_process<T>(&self, pid: impl Into<String>, agent: Arc<T>)
+    where
+        T: FileServer + Any + 'static,
+    {
+        let pid = pid.into();
+        let event_sink = agent_event_sink(&agent);
+        let backing: Arc<dyn FileServer> = agent;
+        let parent_pid = self.proc_parent_of(&pid).await.ok().flatten();
+        let parent_events = {
+            let mut state = self.state.lock().await;
+            state.agents.insert(
+                pid.clone(),
+                AgentRegistration {
+                    backing,
+                    event_sink,
+                },
+            );
+            parent_pid.and_then(|parent_pid| {
+                state
+                    .agents
+                    .get(&parent_pid)
+                    .and_then(|agent| agent.event_sink.clone())
+            })
+        };
+        if let Some(parent) = parent_events {
+            parent.append_child_event(&pid).await;
+        }
     }
 
     /// Point `/agent/root` at the pid that embodies the Root Agent Process.
@@ -95,7 +129,11 @@ impl AgentRootFs {
             } else {
                 name.to_string()
             };
-            let backing = state.agents.get(&pid).cloned().ok_or(ErrorCode::NotFound)?;
+            let backing = state
+                .agents
+                .get(&pid)
+                .map(|agent| agent.backing.clone())
+                .ok_or(ErrorCode::NotFound)?;
             (pid, backing)
         };
         if self.proc_has_pid(&pid).await? {
@@ -191,8 +229,6 @@ impl AgentRootFs {
             }),
             Err(e) => {
                 let _ = backing.clunk(backing_fid).await;
-                let mut state = self.state.lock().await;
-                state.fids.remove(&newfid);
                 Err(e)
             }
         }
@@ -222,7 +258,7 @@ impl AgentRootFs {
 
     async fn bind_proc_walk(
         &self,
-        newfid: Fid,
+        _newfid: Fid,
         pid: &str,
         names: &[String],
     ) -> Result<Node, ErrorCode> {
@@ -237,8 +273,6 @@ impl AgentRootFs {
             }),
             Err(e) => {
                 let _ = self.proc.clunk(proc_fid).await;
-                let mut state = self.state.lock().await;
-                state.fids.remove(&newfid);
                 Err(e)
             }
         }
@@ -331,7 +365,7 @@ impl AgentRootFs {
             )
             .await
         {
-            let _ = backing.clunk(backing_fid).await;
+            rollback_created_fid(&backing, backing_fid).await;
             return Err(e);
         }
         Ok(namespace_agent_qid(&pid, qid))
@@ -363,7 +397,7 @@ impl AgentRootFs {
             )
             .await
         {
-            let _ = proc.clunk(proc_fid).await;
+            rollback_created_fid(&proc, proc_fid).await;
             return Err(e);
         }
         Ok(qid)
@@ -376,6 +410,20 @@ impl AgentRootFs {
         }
         state.fids.insert(fid, Entry { node });
         Ok(())
+    }
+}
+
+fn agent_event_sink<T>(agent: &Arc<T>) -> Option<Arc<AgentFs>>
+where
+    T: FileServer + Any + 'static,
+{
+    let erased: Arc<dyn Any + Send + Sync> = agent.clone();
+    Arc::downcast::<AgentFs>(erased).ok()
+}
+
+async fn rollback_created_fid(server: &Arc<dyn FileServer>, fid: Fid) {
+    if server.remove(fid).await.is_err() {
+        let _ = server.clunk(fid).await;
     }
 }
 

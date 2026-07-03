@@ -221,6 +221,61 @@ async fn a_tool_call_is_an_action_the_agent_records() {
 }
 
 #[tokio::test]
+async fn read_write_field_range_edits_preserve_existing_bytes() {
+    let fs = AgentFs::new();
+
+    fs.walk(Fid::ROOT, Fid(1), &["requests".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let request_id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(&fs, &["requests", &request_id, "prompt"], Fid(2), b"abcdef")
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(3),
+        &["requests".into(), request_id.clone(), "prompt".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(3), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(3), 2, b"XY").await.unwrap();
+    fs.clunk(Fid(3)).await.unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["requests", &request_id, "prompt"], Fid(4)).await,
+        "abXYef"
+    );
+
+    fs.walk(Fid::ROOT, Fid(5), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(5), OpenMode::ReadWrite).await.unwrap();
+    let action_id = String::from_utf8(fs.read(Fid(5), 0, 64).await.unwrap()).unwrap();
+    write_doc(&fs, &["actions", &action_id, "output"], Fid(6), b"tool")
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(7),
+        &["actions".into(), action_id.clone(), "output".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(7), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(7), 4, b" output").await.unwrap();
+    fs.clunk(Fid(7)).await.unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["actions", &action_id, "output"], Fid(8)).await,
+        "tool output"
+    );
+}
+
+#[tokio::test]
 async fn an_action_exposes_all_documented_fields() {
     let fs = AgentFs::new();
     fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
