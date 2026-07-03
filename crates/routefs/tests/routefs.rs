@@ -256,6 +256,41 @@ async fn invalid_rule_json_releases_the_reserved_name() {
 }
 
 #[tokio::test]
+async fn stale_rule_fid_does_not_release_a_replacement_reservation() {
+    let fs = RouteFs::new();
+    create_rule(
+        &fs,
+        "10-results",
+        Fid(1),
+        json!({"version":1,"match_type":"result","port":"review"}),
+    )
+    .await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["rules".into(), "10-results".into()])
+        .await
+        .unwrap();
+    fs.walk(Fid::ROOT, Fid(3), &["rules".into(), "10-results".into()])
+        .await
+        .unwrap();
+    fs.remove(Fid(3)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(4), &["rules".into()]).await.unwrap();
+    fs.create(Fid(4), Fid(5), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+
+    assert_eq!(
+        fs.create(Fid(4), Fid(6), "10-results", FileKind::File)
+            .await,
+        Err(ErrorCode::BadRequest),
+        "only the pending create fid may release its reservation"
+    );
+    fs.clunk(Fid(5)).await.unwrap();
+    fs.clunk(Fid(4)).await.unwrap();
+}
+
+#[tokio::test]
 async fn no_match_routes_to_dead_letter_and_log_records_decision() {
     let fs = RouteFs::new();
     write_doc(&fs, &["send"], Fid(1), &[&message("citation", "source")])

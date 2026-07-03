@@ -159,6 +159,7 @@ struct RouteFid {
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
     wrote: bool,
+    pending_rule_create: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -476,7 +477,7 @@ impl FileServer for RouteFs {
         state.pending_rules.insert(name.to_string());
         let node = Node::Rule(name.to_string());
         let qid = state.qid(&node);
-        state.fids.insert(newfid, RouteFid::at(node));
+        state.fids.insert(newfid, RouteFid::pending_rule(node));
         Ok(qid)
     }
 
@@ -504,7 +505,7 @@ impl FileServer for RouteFs {
         let f = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         match f.node {
             Node::Send if f.wrote => state.route_message(&f.write_buf).await,
-            Node::Rule(name) if f.wrote => {
+            Node::Rule(name) if f.wrote && f.pending_rule_create => {
                 let spec: RuleSpec = match serde_json::from_slice(&f.write_buf) {
                     Ok(spec) => spec,
                     Err(_) => {
@@ -514,7 +515,12 @@ impl FileServer for RouteFs {
                 };
                 state.commit_pending_rule(name, spec)
             }
-            Node::Rule(name) => {
+            Node::Rule(name) if f.wrote => {
+                let spec: RuleSpec =
+                    serde_json::from_slice(&f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+                state.install_rule(name, spec)
+            }
+            Node::Rule(name) if f.pending_rule_create => {
                 state.abandon_pending_rule(&name);
                 Ok(())
             }
@@ -530,6 +536,17 @@ impl RouteFid {
             mode: None,
             write_buf: Vec::new(),
             wrote: false,
+            pending_rule_create: false,
+        }
+    }
+
+    fn pending_rule(node: Node) -> Self {
+        Self {
+            node,
+            mode: None,
+            write_buf: Vec::new(),
+            wrote: false,
+            pending_rule_create: true,
         }
     }
 }

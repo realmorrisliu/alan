@@ -63,7 +63,8 @@
   create denial, and `newfid` reservation before backing create forwarding; and
   routefs coverage creates a rule through `/mnt/route/rules/<name>` before
   routing a message through that mounted namespace. Routefs also covers same-name
-  create reservation and reservation release for abandoned or invalid creates.
+  create reservation, reservation release for abandoned or invalid creates, and
+  stale rule fids not releasing replacement reservations.
 - [x] 4.2 Run `just verify`.
   Done 2026-07-02: `just verify` passed, including workspace fmt, clippy,
   tests, and smoke verification.
