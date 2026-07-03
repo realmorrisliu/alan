@@ -134,6 +134,27 @@ async fn durable_home_can_resume_a_file_from_its_root_hash() {
 }
 
 #[tokio::test]
+async fn stale_writer_clunk_after_restore_does_not_overwrite_checkpoint() {
+    let fs = MemFs::new();
+    create_file(&fs, "continuity", Fid(1), b"old").await;
+    create_file(&fs, "snapshot", Fid(2), b"restored").await;
+    let restored_root = fs.checkpoint_root("snapshot").await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["continuity".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(3), OpenMode::Write).await.unwrap();
+    fs.write(Fid(3), 0, b"stale").await.unwrap();
+
+    fs.restore_checkpoint("continuity", restored_root)
+        .await
+        .unwrap();
+
+    assert_eq!(fs.clunk(Fid(3)).await, Err(ErrorCode::NotFound));
+    assert_eq!(read_file(&fs, "continuity", Fid(4)).await, b"restored");
+}
+
+#[tokio::test]
 async fn ephemeral_home_does_not_resume_roots_it_did_not_persist() {
     let durable = MemFs::new();
     create_file(&durable, "continuity", Fid(1), b"remember this").await;

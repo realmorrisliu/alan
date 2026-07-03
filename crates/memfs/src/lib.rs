@@ -91,10 +91,7 @@ impl MemFs {
         if !valid_name(&name) {
             return Err(ErrorCode::BadRequest);
         }
-        let generation = match state.files.get(&name) {
-            Some(file) => file.generation,
-            None => state.next_generation(),
-        };
+        let generation = state.next_generation();
         state.bind_file_root(name, root, generation)?;
         Ok(())
     }
