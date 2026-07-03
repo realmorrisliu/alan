@@ -42,6 +42,8 @@ pub fn apply_host_mount_declarations(
     declarations: &[HostMountDeclaration],
 ) -> Result<()> {
     validate_non_overlapping_declarations(declarations)?;
+    let writable_roots = canonical_read_write_mount_roots(declarations)?;
+    validate_read_only_mounts_not_covered_by_writable_roots(&writable_roots, declarations)?;
     for declaration in declarations {
         let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
             .with_context(|| {
@@ -66,21 +68,13 @@ pub fn sandbox_spec_from_host_mounts(
 ) -> Result<SandboxSpec> {
     validate_non_overlapping_declarations(declarations)?;
     let mut effective_writable_roots = vec![canonical_host_path_or_original(&workspace_root)];
+    let writable_host_roots = canonical_read_write_mount_roots(declarations)?;
     let mut spec = SandboxSpec {
         writable_roots: vec![workspace_root],
         read_denylist: Vec::new(),
         network: NetworkPosture::Deny,
     };
-    for declaration in declarations {
-        if declaration.access != Access::ReadWrite {
-            continue;
-        }
-        let host_path = canonical_host_path(&declaration.host_path).with_context(|| {
-            format!(
-                "failed to project writable host mount {}",
-                declaration.host_path.display()
-            )
-        })?;
+    for host_path in writable_host_roots {
         if !spec.writable_roots.contains(&host_path) {
             spec.writable_roots.push(host_path.clone());
         }
@@ -97,6 +91,21 @@ pub fn sandbox_spec_from_host_mounts(
 
 fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
+}
+
+fn canonical_read_write_mount_roots(declarations: &[HostMountDeclaration]) -> Result<Vec<PathBuf>> {
+    declarations
+        .iter()
+        .filter(|declaration| declaration.access == Access::ReadWrite)
+        .map(|declaration| {
+            canonical_host_path(&declaration.host_path).with_context(|| {
+                format!(
+                    "failed to project writable host mount {}",
+                    declaration.host_path.display()
+                )
+            })
+        })
+        .collect()
 }
 
 fn canonical_host_path_or_original(path: &Path) -> PathBuf {
@@ -313,6 +322,21 @@ mod tests {
 
         let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
             .unwrap_err();
+        assert!(err.to_string().contains("read-only host mount"));
+    }
+
+    #[test]
+    fn read_only_mount_inside_writable_host_mount_is_rejected_before_apply() {
+        let host = tempfile::tempdir().unwrap();
+        let docs = host.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let declarations = vec![
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            HostMountDeclaration::new("/mnt/docs", docs, Access::ReadOnly),
+        ];
+        let mut namespace = Namespace::new();
+
+        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
         assert!(err.to_string().contains("read-only host mount"));
     }
 

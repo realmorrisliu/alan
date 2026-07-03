@@ -795,6 +795,11 @@ fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn running_as_root() -> bool {
+        unsafe { libc::geteuid() == 0 }
+    }
+
     #[tokio::test]
     async fn reads_host_file() {
         let temp = tempfile::tempdir().unwrap();
@@ -900,6 +905,10 @@ mod tests {
     async fn write_intent_open_rejects_host_file_without_write_permission() {
         use std::os::unix::fs::PermissionsExt;
 
+        if running_as_root() {
+            return;
+        }
+
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("readonly.txt");
         std::fs::write(&path, "readonly").unwrap();
@@ -1000,6 +1009,10 @@ mod tests {
     #[tokio::test]
     async fn failed_clunk_staging_preserves_original_host_file() {
         use std::os::unix::fs::PermissionsExt;
+
+        if running_as_root() {
+            return;
+        }
 
         let temp = tempfile::tempdir().unwrap();
         let mounted = temp.path().join("mounted");
