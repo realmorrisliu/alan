@@ -5,8 +5,8 @@ use super::agent_loop::{
     run_deferred_runtime_action_with_cancel,
 };
 use super::turn_driver::{
-    TurnInputBroker, drive_turn_submission_with_cancel, is_turn_inband_submission,
-    should_drive_turn_submission,
+    NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
+    is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
 use super::{RuntimeConfig, RuntimeEnvironment, RuntimeLoopState};
@@ -193,6 +193,20 @@ async fn read_namespace_input_submission(
     mode: InputMode,
 ) -> Option<Result<Submission>> {
     Some(namespace.read_next_input_submission(mode).await)
+}
+
+async fn read_pending_namespace_resume_submission(
+    state: &RuntimeLoopState,
+) -> Option<Result<Submission>> {
+    if !state.turn_state.has_pending_interaction() {
+        return None;
+    }
+
+    match namespace_pending_resume_submission(state).await {
+        Ok(Some(submission)) => Some(Ok(submission)),
+        Ok(None) => None,
+        Err(err) => Some(Err(err)),
+    }
 }
 
 #[derive(Default)]
@@ -1500,10 +1514,24 @@ fn spawn_with_prepared_runtime_environment(
                 queues.pop_outer_deferred()
             } else if let Some(queued_item) = queues.pop_outer() {
                 Some(queued_item)
+            } else if let Some(namespace_resume) =
+                read_pending_namespace_resume_submission(&state).await
+            {
+                match namespace_resume {
+                    Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
+                    Err(err) => {
+                        error!(
+                            error = %format!("{err:#}"),
+                            "Failed to read namespace answered request response"
+                        );
+                        None
+                    }
+                }
             } else if submissions_closed {
                 None
             } else {
                 let namespace_input = state.namespace_environment().clone();
+                let poll_pending_namespace_response = state.turn_state.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
                     namespace_submission = read_namespace_input_submission(namespace_input, InputMode::FollowUp) => {
@@ -1511,6 +1539,19 @@ fn spawn_with_prepared_runtime_environment(
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
                                 error!(error = %format!("{err:#}"), "Failed to read namespace io/input frame");
+                                None
+                            }
+                            None => None,
+                        }
+                    }
+                    _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL), if poll_pending_namespace_response => {
+                        match read_pending_namespace_resume_submission(&state).await {
+                            Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
+                            Some(Err(err)) => {
+                                error!(
+                                    error = %format!("{err:#}"),
+                                    "Failed to read namespace answered request response"
+                                );
                                 None
                             }
                             None => None,
@@ -2376,6 +2417,84 @@ mod tests {
         assert_eq!(output, "hello from namespace runtime");
 
         controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_outer_idle_reads_answered_namespace_request_response() {
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let namespace_environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        let request_id = namespace_environment
+            .write_request(crate::runtime::agent_loop::NamespaceRequestRecord::new(
+                "structured_input",
+                "Provide the missing value",
+            ))
+            .await
+            .unwrap();
+        let mut turn_state = TurnState::default();
+        turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: request_id.clone(),
+            title: "Missing value".to_string(),
+            prompt: "Provide the missing value".to_string(),
+            questions: Vec::new(),
+        });
+        let state = RuntimeLoopState {
+            workspace_id: "outer-idle-namespace-response-test".to_string(),
+            workspace_root_dir: None,
+            session: crate::Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(namespace_environment),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: crate::Config::default(),
+            runtime_config: RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
+        };
+
+        assert!(
+            read_pending_namespace_resume_submission(&state)
+                .await
+                .is_none(),
+            "unanswered request should not create a resume submission"
+        );
+
+        shell
+            .write(
+                &format!("/agent/1/requests/{request_id}/response"),
+                br#"{"answers":[{"question_id":"q1","value":"from file"}]}"#,
+            )
+            .await
+            .unwrap();
+
+        let submission = read_pending_namespace_resume_submission(&state)
+            .await
+            .expect("answered namespace request should be observed")
+            .unwrap();
+        match submission.op {
+            Op::Resume {
+                request_id: resumed_id,
+                content,
+            } => {
+                assert_eq!(resumed_id, request_id);
+                assert_eq!(
+                    content,
+                    vec![ContentPart::structured(serde_json::json!({
+                        "answers": [{"question_id": "q1", "value": "from file"}]
+                    }))]
+                );
+            }
+            other => panic!("expected Op::Resume from namespace response, got {other:?}"),
+        }
     }
 
     #[test]

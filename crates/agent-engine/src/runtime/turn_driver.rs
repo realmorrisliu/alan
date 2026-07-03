@@ -11,7 +11,7 @@ use super::turn_support::cancel_current_task;
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
-const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+pub(super) const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub(super) struct TurnInputBroker {
@@ -219,7 +219,7 @@ where
     }
 }
 
-async fn namespace_pending_resume_submission(
+pub(super) async fn namespace_pending_resume_submission(
     state: &RuntimeLoopState,
 ) -> Result<Option<Submission>> {
     let namespace = state.namespace_environment();

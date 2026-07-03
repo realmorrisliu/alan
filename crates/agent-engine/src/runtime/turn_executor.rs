@@ -858,6 +858,10 @@ where
     }
 
     let user_input_for_skills = user_input.clone();
+    let mut namespace_user_input_for_tape = user_input_for_skills
+        .as_deref()
+        .map(crate::tape::parts_to_text)
+        .filter(|input| !input.trim().is_empty());
     let turn_recall_bundle = if state.core_config.memory.enabled {
         super::memory_recall::build_turn_recall_bundle(
             state.core_config.memory.workspace_dir.as_deref(),
@@ -1254,10 +1258,7 @@ where
         };
 
         if assistant_message_persisted && !response.content.is_empty() {
-            let namespace_input_text = user_input_for_skills
-                .as_deref()
-                .map(crate::tape::parts_to_text)
-                .filter(|input| !input.trim().is_empty());
+            let namespace_input_text = namespace_user_input_for_tape.take();
             namespace_generation
                 .write_assistant_output(&response.content)
                 .await
@@ -1342,10 +1343,7 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
-            let namespace_input_text = user_input_for_skills
-                .as_deref()
-                .map(crate::tape::parts_to_text)
-                .filter(|input| !input.trim().is_empty());
+            let namespace_input_text = namespace_user_input_for_tape.take();
             namespace_generation
                 .write_assistant_output(fallback_text)
                 .await
@@ -2716,6 +2714,112 @@ description: {description}
             requests[0].extra_params.is_empty(),
             "namespace generation must write a neutral llmfs request, not provider-local projection params: {:?}",
             requests[0].extra_params.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_namespace_tape_writes_user_once_across_tool_loop_assistant_outputs() {
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        llmfs.register_connection(
+            "default",
+            Box::new(SequenceMockProvider::new(
+                vec![
+                    GenerationResponse {
+                        content: "I will update the plan.".to_string(),
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: Vec::new(),
+                        tool_calls: vec![ToolCall {
+                            id: Some("call_plan".to_string()),
+                            name: "update_plan".to_string(),
+                            arguments: json!({
+                                "explanation": "Testing",
+                                "items": [{"id": "1", "content": "Step 1", "status": "completed"}]
+                            }),
+                        }],
+                        usage: None,
+                        finish_reason: Some("tool_calls".to_string()),
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        warnings: Vec::new(),
+                    },
+                    GenerationResponse {
+                        content: "Done.".to_string(),
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: Vec::new(),
+                        tool_calls: Vec::new(),
+                        usage: None,
+                        finish_reason: Some("stop".to_string()),
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        warnings: Vec::new(),
+                    },
+                ],
+                Arc::clone(&generate_calls),
+            )),
+        );
+
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            alan_ap::InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+
+        let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
+        state.environment = RuntimeEnvironment::namespace(
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        );
+        let cancel = CancellationToken::new();
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Original user request")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(result, TurnExecutionOutcome::Finished));
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
+        let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        let records = tape
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let user_records = records
+            .iter()
+            .filter(|record| record["role"] == "user")
+            .collect::<Vec<_>>();
+        let assistant_contents = records
+            .iter()
+            .filter(|record| record["role"] == "assistant")
+            .map(|record| record["content"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_records.len(), 1, "tape was {tape}");
+        assert_eq!(user_records[0]["content"], "Original user request");
+        assert_eq!(
+            assistant_contents,
+            vec!["I will update the plan.".to_string(), "Done.".to_string()]
         );
     }
 
