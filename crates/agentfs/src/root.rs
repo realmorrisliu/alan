@@ -21,7 +21,8 @@ use std::{
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessInputEventSink,
-    ProcessInputEventSource, ProcessOutputEventSink, ProcessOutputEventSource, Qid, Stat,
+    ProcessInputEventSource, ProcessIoEventKind, ProcessIoEventSink, ProcessIoEventSource,
+    ProcessOutputEventSink, ProcessOutputEventSource, Qid, Stat,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -73,6 +74,7 @@ struct ProcCreateDir {
 
 struct State {
     agents: HashMap<String, AgentRegistration>,
+    io_event_pids: HashSet<String>,
     input_event_pids: HashSet<String>,
     output_event_pids: HashSet<String>,
     root_pid: Option<String>,
@@ -86,6 +88,7 @@ struct State {
 /// per-agent state is served by the registered backing `AgentFs` handles.
 pub struct AgentRootFs {
     proc: Arc<dyn FileServer>,
+    io_events: Option<Arc<dyn ProcessIoEventSource>>,
     input_events: Option<Arc<dyn ProcessInputEventSource>>,
     output_events: Option<Arc<dyn ProcessOutputEventSource>>,
     state: Arc<Mutex<State>>,
@@ -95,10 +98,12 @@ impl AgentRootFs {
     pub fn new(proc: Arc<dyn FileServer>) -> Self {
         Self {
             proc,
+            io_events: None,
             input_events: None,
             output_events: None,
             state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                io_event_pids: HashSet::new(),
                 input_event_pids: HashSet::new(),
                 output_event_pids: HashSet::new(),
                 root_pid: None,
@@ -113,10 +118,12 @@ impl AgentRootFs {
     ) -> Self {
         Self {
             proc,
+            io_events: None,
             input_events: None,
             output_events: Some(output_events),
             state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                io_event_pids: HashSet::new(),
                 input_event_pids: HashSet::new(),
                 output_event_pids: HashSet::new(),
                 root_pid: None,
@@ -132,10 +139,32 @@ impl AgentRootFs {
     ) -> Self {
         Self {
             proc,
+            io_events: None,
             input_events: Some(input_events),
             output_events: Some(output_events),
             state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                io_event_pids: HashSet::new(),
+                input_event_pids: HashSet::new(),
+                output_event_pids: HashSet::new(),
+                root_pid: None,
+                fids: HashMap::new(),
+            })),
+        }
+    }
+
+    pub fn new_with_ordered_process_io_events(
+        proc: Arc<dyn FileServer>,
+        io_events: Arc<dyn ProcessIoEventSource>,
+    ) -> Self {
+        Self {
+            proc,
+            io_events: Some(io_events),
+            input_events: None,
+            output_events: None,
+            state: Arc::new(Mutex::new(State {
+                agents: HashMap::new(),
+                io_event_pids: HashSet::new(),
                 input_event_pids: HashSet::new(),
                 output_event_pids: HashSet::new(),
                 root_pid: None,
@@ -154,7 +183,7 @@ impl AgentRootFs {
         let has_event_sink = event_sink.is_some();
         let backing: Arc<dyn FileServer> = agent;
         let parent_pid = self.proc_parent_of(&pid).await.ok().flatten();
-        let (parent_events, subscribe_input_events, subscribe_output_events) = {
+        let (parent_events, subscribe_io_events, subscribe_input_events, subscribe_output_events) = {
             let mut state = self.state.lock().await;
             state.agents.insert(
                 pid.clone(),
@@ -169,20 +198,34 @@ impl AgentRootFs {
                     .get(&parent_pid)
                     .and_then(|agent| agent.event_sink.clone())
             });
+            let subscribe_io_events = has_event_sink
+                && self.io_events.is_some()
+                && state.io_event_pids.insert(pid.clone());
             let subscribe_input_events = has_event_sink
+                && self.io_events.is_none()
                 && self.input_events.is_some()
                 && state.input_event_pids.insert(pid.clone());
             let subscribe_output_events = has_event_sink
+                && self.io_events.is_none()
                 && self.output_events.is_some()
                 && state.output_event_pids.insert(pid.clone());
             (
                 parent_events,
+                subscribe_io_events,
                 subscribe_input_events,
                 subscribe_output_events,
             )
         };
         if let Some(parent) = parent_events {
             parent.append_child_event(&pid).await;
+        }
+        if subscribe_io_events && let Some(io_events) = self.io_events.clone() {
+            let sink = Arc::new(AgentIoEventSink {
+                state: self.state.clone(),
+            });
+            if io_events.subscribe_process_io(&pid, sink).await.is_err() {
+                self.state.lock().await.io_event_pids.remove(&pid);
+            }
         }
         if subscribe_input_events && let Some(input_events) = self.input_events.clone() {
             let sink = Arc::new(AgentInputEventSink {
@@ -539,6 +582,29 @@ struct AgentOutputEventSink {
 
 struct AgentInputEventSink {
     state: Arc<Mutex<State>>,
+}
+
+struct AgentIoEventSink {
+    state: Arc<Mutex<State>>,
+}
+
+#[async_trait]
+impl ProcessIoEventSink for AgentIoEventSink {
+    async fn io_appended(&self, pid: &str, kind: ProcessIoEventKind, count: u32) {
+        let event_sink = {
+            let state = self.state.lock().await;
+            state
+                .agents
+                .get(pid)
+                .and_then(|agent| agent.event_sink.clone())
+        };
+        if let Some(agent) = event_sink {
+            match kind {
+                ProcessIoEventKind::Input => agent.append_input_event(count).await,
+                ProcessIoEventKind::Output => agent.append_output_event(count).await,
+            }
+        }
+    }
 }
 
 #[async_trait]

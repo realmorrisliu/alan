@@ -20,7 +20,8 @@ mod wire;
 
 pub use server::{
     FileServer, InProcessTransport, ProcessInputEventSink, ProcessInputEventSource,
-    ProcessOutputEventSink, ProcessOutputEventSource,
+    ProcessIoEventKind, ProcessIoEventSink, ProcessIoEventSource, ProcessOutputEventSink,
+    ProcessOutputEventSource,
 };
 pub use stream::Stream;
 pub use types::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};

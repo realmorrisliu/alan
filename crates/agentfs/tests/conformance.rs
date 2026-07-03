@@ -6,8 +6,8 @@ use std::sync::{
 
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessInputEventSource,
-    ProcessOutputEventSource, Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessIoEventSource, Qid,
+    Stat,
 };
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 use alan_shell::Shell;
@@ -16,12 +16,10 @@ use async_trait::async_trait;
 fn namespace_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>) {
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn FileServer> = proc.clone();
-    let proc_input_events: Arc<dyn ProcessInputEventSource> = proc.clone();
-    let proc_output_events: Arc<dyn ProcessOutputEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_process_io_events(
+    let proc_io_events: Arc<dyn ProcessIoEventSource> = proc.clone();
+    let agent_root = Arc::new(AgentRootFs::new_with_ordered_process_io_events(
         proc_server,
-        proc_input_events,
-        proc_output_events,
+        proc_io_events,
     ));
 
     let mut namespace = Namespace::new();
@@ -98,6 +96,25 @@ async fn conformance_checker_rejects_generic_process_missing_input_and_events() 
 }
 
 #[tokio::test]
+async fn conformance_checker_requires_current_checkpoint_file() {
+    let checker = AgentConformanceChecker::new(InProcessTransport::new(Arc::new(
+        MissingCheckpointAgentFs::new(),
+    )));
+
+    let report = checker.check_agent_process("/agent/1").await;
+    let paths = report
+        .issues
+        .iter()
+        .map(|issue| issue.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        paths.contains(&"/agent/1/machine/checkpoints/current"),
+        "agent conformance checks must require machine/checkpoints/current: {report:?}"
+    );
+}
+
+#[tokio::test]
 async fn conformance_checker_verifies_dynamic_container_event_streams() {
     let (root, shell, agent_root) = namespace_with_agent_root();
     let pid = shell
@@ -148,6 +165,85 @@ async fn conformance_checker_aborts_timed_out_event_readers() {
         0,
         "timed-out event read tasks should be aborted before returning"
     );
+}
+
+struct MissingCheckpointAgentFs {
+    inner: AgentFs,
+}
+
+impl MissingCheckpointAgentFs {
+    fn new() -> Self {
+        Self {
+            inner: AgentFs::new(),
+        }
+    }
+
+    fn forwarded_names<'a>(
+        &self,
+        fid: Fid,
+        names: &'a [String],
+    ) -> Result<&'a [String], ErrorCode> {
+        if fid != Fid::ROOT {
+            return Ok(names);
+        }
+        match names {
+            [agent, pid, rest @ ..] if agent == "agent" && pid == "1" => Ok(rest),
+            _ => Err(ErrorCode::NotFound),
+        }
+    }
+
+    fn hides_current_checkpoint(names: &[String]) -> bool {
+        matches!(
+            names,
+            [machine, checkpoints, current]
+                if machine == "machine" && checkpoints == "checkpoints" && current == "current"
+        )
+    }
+}
+
+#[async_trait]
+impl FileServer for MissingCheckpointAgentFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let names = self.forwarded_names(fid, names)?;
+        if Self::hides_current_checkpoint(names) {
+            return Err(ErrorCode::NotFound);
+        }
+        self.inner.walk(fid, newfid, names).await
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        self.inner.open(fid, mode).await
+    }
+
+    async fn read(&self, fid: Fid, offset: u64, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        self.inner.read(fid, offset, count).await
+    }
+
+    async fn write(&self, fid: Fid, offset: u64, data: &[u8]) -> Result<u32, ErrorCode> {
+        self.inner.write(fid, offset, data).await
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        self.inner.stat(fid).await
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        self.inner.create(fid, newfid, name, kind).await
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.remove(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.clunk(fid).await
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

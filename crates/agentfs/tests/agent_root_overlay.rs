@@ -8,8 +8,8 @@ use std::{
 
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessInputEventSource,
-    ProcessOutputEventSource, Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessIoEventSource, Qid,
+    Stat,
 };
 use alan_kernel::{
     Access, Credentials, MountFs, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome,
@@ -29,12 +29,10 @@ fn namespace_shell_with_agent_root_for_proc(
     proc: Arc<ProcFs>,
 ) -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc_server: Arc<dyn FileServer> = proc.clone();
-    let proc_input_events: Arc<dyn ProcessInputEventSource> = proc.clone();
-    let proc_output_events: Arc<dyn ProcessOutputEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_process_io_events(
+    let proc_io_events: Arc<dyn ProcessIoEventSource> = proc.clone();
+    let agent_root = Arc::new(AgentRootFs::new_with_ordered_process_io_events(
         proc_server,
-        proc_input_events,
-        proc_output_events,
+        proc_io_events,
     ));
 
     let mut namespace = Namespace::new();
@@ -372,6 +370,55 @@ async fn bind_process_replays_existing_proc_io_events() {
     assert!(
         events.contains("output:19"),
         "late-bound agent aggregate should replay existing proc IO events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn bind_process_replays_existing_proc_io_events_in_order() {
+    let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+
+    let output_fid = Fid(9_275);
+    proc.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    proc.open(output_fid, OpenMode::Write).await.unwrap();
+    proc.write(output_fid, 0, b"early output").await.unwrap();
+    proc.clunk(output_fid).await.unwrap();
+
+    let input_fid = Fid(9_276);
+    proc.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    proc.open(input_fid, OpenMode::Write).await.unwrap();
+    proc.write(input_fid, 0, b"early input").await.unwrap();
+    proc.clunk(input_fid).await.unwrap();
+
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let events =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+    let io_records = events
+        .lines()
+        .filter(|line| line.starts_with("input:") || line.starts_with("output:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        io_records,
+        vec!["output:12", "input:11"],
+        "late-bound aggregate should preserve proc io/events order: {events:?}"
     );
 }
 

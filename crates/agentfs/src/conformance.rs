@@ -78,6 +78,8 @@ impl AgentConformanceChecker {
             ("events", FileKind::Stream),
             ("machine", FileKind::Dir),
             ("machine/tape", FileKind::Stream),
+            ("machine/checkpoints", FileKind::Dir),
+            ("machine/checkpoints/current", FileKind::File),
             ("machine/status", FileKind::File),
             ("machine/ctl", FileKind::File),
             ("requests", FileKind::Dir),

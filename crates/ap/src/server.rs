@@ -99,6 +99,33 @@ pub trait ProcessInputEventSource: Send + Sync {
     ) -> Result<(), ErrorCode>;
 }
 
+/// Process IO event direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessIoEventKind {
+    Input,
+    Output,
+}
+
+/// Receiver for ordered process IO append notifications.
+///
+/// This is the ordered form of the input/output-specific sinks above. A
+/// subscriber that binds after IO has already happened can replay retained
+/// `/proc/<pid>/io/events` history without grouping records by direction.
+#[async_trait]
+pub trait ProcessIoEventSink: Send + Sync {
+    async fn io_appended(&self, pid: &str, kind: ProcessIoEventKind, count: u32);
+}
+
+/// Optional ordered event source implemented by file servers that own process IO.
+#[async_trait]
+pub trait ProcessIoEventSource: Send + Sync {
+    async fn subscribe_process_io(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessIoEventSink>,
+    ) -> Result<(), ErrorCode>;
+}
+
 /// The in-process fast path: dispatches a wire [`Request`] to a [`FileServer`]
 /// and returns its [`Response`] with no serialization (§5.6).
 #[derive(Clone)]
