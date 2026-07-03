@@ -6,13 +6,17 @@
 //! that list their child mount points.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use alan_ap::reference::MemFs;
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
 };
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+use tokio::sync::Notify;
 
 fn memfs() -> InProcessTransport {
     InProcessTransport::new(Arc::new(MemFs::new()))
@@ -56,6 +60,18 @@ enum CreateNode {
 struct CreateFs {
     files: tokio::sync::Mutex<HashMap<String, Vec<u8>>>,
     fids: tokio::sync::Mutex<HashMap<Fid, CreateNode>>,
+    create_gate: Option<Arc<Notify>>,
+    create_started: Option<Arc<AtomicUsize>>,
+}
+
+impl CreateFs {
+    fn gated(create_gate: Arc<Notify>, create_started: Arc<AtomicUsize>) -> Self {
+        Self {
+            create_gate: Some(create_gate),
+            create_started: Some(create_started),
+            ..Self::default()
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -178,6 +194,12 @@ impl FileServer for CreateFs {
         if !is_root {
             return Err(ErrorCode::NotDirectory);
         }
+        if let Some(started) = &self.create_started {
+            started.fetch_add(1, Ordering::SeqCst);
+        }
+        if let Some(gate) = &self.create_gate {
+            gate.notified().await;
+        }
         let mut files = self.files.lock().await;
         if files.contains_key(name) {
             return Err(ErrorCode::BadRequest);
@@ -273,6 +295,51 @@ async fn create_delegates_to_the_backing_tree_and_binds_newfid() {
     assert_eq!(
         fs.read(Fid(4), 0, 64).await.unwrap(),
         b"created through mount"
+    );
+}
+
+#[tokio::test]
+async fn create_reserves_newfid_before_forwarding_to_the_backing_tree() {
+    let gate = Arc::new(Notify::new());
+    let started = Arc::new(AtomicUsize::new(0));
+    let backing = Arc::new(CreateFs::gated(gate.clone(), started.clone()));
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/create",
+        InProcessTransport::new(backing),
+        Access::ReadWrite,
+    );
+    let fs = Arc::new(MountFs::new(ns));
+    fs.walk(Fid::ROOT, Fid(1), &["create".into()])
+        .await
+        .unwrap();
+
+    let first = {
+        let fs = fs.clone();
+        tokio::spawn(async move { fs.create(Fid(1), Fid(2), "first", FileKind::File).await })
+    };
+    while started.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(
+        fs.create(Fid(1), Fid(2), "second", FileKind::File).await,
+        Err(ErrorCode::BadRequest),
+        "the caller-visible newfid is reserved before backing create runs"
+    );
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "the failed create must not reach the backing file server"
+    );
+
+    gate.notify_waiters();
+    first.await.unwrap().unwrap();
+    let entries = read_lines(&fs, &["create"], Fid(3)).await;
+    assert!(entries.iter().any(|entry| entry == "first"), "{entries:?}");
+    assert!(
+        !entries.iter().any(|entry| entry == "second"),
+        "the failed create must not leave a backing child behind: {entries:?}"
     );
 }
 

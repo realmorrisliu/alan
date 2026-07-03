@@ -367,28 +367,8 @@ where
         &child_namespace_plan.llm_connection_name()?,
         Box::new(ChildLlmProvider::new(llm_client)),
     );
-    let routefs = Arc::new(alan_routefs::RouteFs::new());
-    let srvfs = Arc::new(alan_kernel::SrvFs::new());
-    srvfs
-        .post(
-            alan_routefs::SRV_HANDLE,
-            InProcessTransport::new(routefs.clone()),
-            alan_kernel::Access::ReadWrite,
-        )
-        .await;
-    let (route_tree, route_access) = srvfs
-        .lookup(alan_routefs::SRV_HANDLE)
-        .await
-        .context("lookup child routefs handle after posting /srv/route")?;
-    if route_access != alan_kernel::Access::ReadWrite {
-        bail!("child routefs handle must be mounted read-write");
-    }
-    let mut handles = ChildNamespaceLaunchHandles::new(
-        agentfs,
-        InProcessTransport::new(llmfs),
-        InProcessTransport::new(srvfs),
-        route_tree,
-    );
+    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
+        .context("Failed to assemble child-agent shared namespace handles")?;
     for mount in &child_namespace_plan.bin_tool_mounts {
         handles = handles.with_bin_tool(
             mount.clone(),
@@ -1411,6 +1391,23 @@ impl ChildNamespaceLaunchHandles {
     }
 }
 
+fn child_namespace_launch_handles_from_parent(
+    parent: &RuntimeLoopState,
+    agent_tree: Arc<alan_agentfs::AgentFs>,
+    llm_connection: Arc<alan_llmfs::LlmFs>,
+) -> Result<ChildNamespaceLaunchHandles> {
+    let shared_services = parent
+        .namespace_environment()
+        .shared_services()
+        .context("parent namespace missing shared service handles for child-agent launch")?;
+    Ok(ChildNamespaceLaunchHandles::new(
+        agent_tree,
+        InProcessTransport::new(llm_connection),
+        shared_services.srv,
+        shared_services.route,
+    ))
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 struct ChildNamespaceRuntimeLaunch {
     pid: String,
@@ -1491,7 +1488,8 @@ async fn spawn_child_namespace_runtime_environment(
         root,
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
-    );
+    )
+    .with_shared_services(handles.srv.clone(), handles.route.clone());
 
     Ok(ChildNamespaceRuntimeLaunch {
         pid,
@@ -2038,11 +2036,18 @@ mod tests {
     }
 
     fn namespace_environment_for_parent_test() -> RuntimeEnvironment {
+        namespace_environment_for_parent_test_with_route(Arc::new(alan_routefs::RouteFs::new()))
+    }
+
+    fn namespace_environment_for_parent_test_with_route(
+        routefs: Arc<alan_routefs::RouteFs>,
+    ) -> RuntimeEnvironment {
         let root =
             InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(KernelNamespace::new())));
-        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        let namespace =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+                .with_shared_services(memfs_transport(), InProcessTransport::new(routefs));
+        RuntimeEnvironment::namespace(namespace)
     }
 
     #[derive(Clone, Default)]
@@ -2985,6 +2990,83 @@ Body
             tool_namespace.lines().any(|line| line == "/bin/alpha ro"),
             "child-spawned processes inherit mounted tools: {tool_namespace:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn child_namespace_launch_handles_share_parent_routefs() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let routefs = Arc::new(alan_routefs::RouteFs::new());
+        routefs
+            .install_rule(
+                "10-results",
+                alan_routefs::RuleSpec::for_type("result", "review"),
+            )
+            .await
+            .unwrap();
+        let mut parent = make_parent_state(&temp, requests, response);
+        parent.environment = namespace_environment_for_parent_test_with_route(routefs.clone());
+
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Workspace];
+        let plan =
+            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let child_tools = build_child_tool_registry_from_namespace_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            &plan,
+        )
+        .unwrap();
+        let launch_procfs = KernelProcFs::new();
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            &plan.llm_connection_name().unwrap(),
+            Box::new(ChildLlmProvider::new(LlmClient::new(
+                RecordingProvider::new(RecordedRequests::default(), completed_response("unused")),
+            ))),
+        );
+        let handles = child_namespace_launch_handles_from_parent(
+            &parent,
+            Arc::new(alan_agentfs::AgentFs::new()),
+            llmfs,
+        )
+        .unwrap()
+        .with_bin_tool("/bin/alpha", memfs_transport())
+        .with_bin_tool("/bin/beta", memfs_transport());
+
+        let launch = spawn_child_namespace_runtime_environment(
+            &launch_procfs,
+            &runtime_procfs,
+            &plan,
+            handles,
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
+
+        let child_shell = alan_shell::Shell::new(launch.environment.root_transport());
+        let message = serde_json::to_vec(&json!({
+            "version": 1,
+            "type": "result",
+            "content": "child result"
+        }))
+        .unwrap();
+        child_shell
+            .write("/mnt/route/send", &message)
+            .await
+            .unwrap();
+
+        let parent_route_shell = alan_shell::Shell::new(InProcessTransport::new(routefs));
+        let routed =
+            String::from_utf8(parent_route_shell.cat("/ports/review").await.unwrap()).unwrap();
+        assert!(routed.contains(r#""type":"result""#), "{routed}");
+        assert!(routed.contains(r#""content":"child result""#), "{routed}");
     }
 
     #[tokio::test]

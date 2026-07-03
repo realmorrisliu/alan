@@ -1168,7 +1168,8 @@ async fn build_root_namespace_environment(
         alan_kernel::Access::ReadWrite,
     );
     mount_llmfs_standard_handles(&mut process_namespace, srvfs.clone(), llmfs).await?;
-    mount_routefs_standard_handles(&mut process_namespace, srvfs, routefs).await?;
+    let route_tree =
+        mount_routefs_standard_handles(&mut process_namespace, srvfs.clone(), routefs).await?;
     for tool_name in &tool_names {
         process_namespace.mount(
             &format!("/bin/{tool_name}"),
@@ -1200,8 +1201,11 @@ async fn build_root_namespace_environment(
         alan_kernel::Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(process_namespace)));
+    let namespace =
+        super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
+            .with_shared_services(InProcessTransport::new(srvfs), route_tree);
     Ok(RuntimeEnvironment::namespace_with_tool_definitions(
-        super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default"),
+        namespace,
         tool_definitions,
     ))
 }
@@ -1235,7 +1239,7 @@ async fn mount_routefs_standard_handles(
     namespace: &mut alan_kernel::Namespace,
     srvfs: Arc<alan_kernel::SrvFs>,
     routefs: Arc<alan_routefs::RouteFs>,
-) -> Result<()> {
+) -> Result<InProcessTransport> {
     srvfs
         .post(
             alan_routefs::SRV_HANDLE,
@@ -1252,8 +1256,8 @@ async fn mount_routefs_standard_handles(
         .lookup(alan_routefs::SRV_HANDLE)
         .await
         .context("lookup routefs handle after posting /srv/route")?;
-    namespace.mount(alan_routefs::MOUNT_PATH, route_tree, route_access);
-    Ok(())
+    namespace.mount(alan_routefs::MOUNT_PATH, route_tree.clone(), route_access);
+    Ok(route_tree)
 }
 
 async fn spawn_root_agent_process(

@@ -64,6 +64,10 @@ struct Entry {
     path: Vec<String>,
     /// `Some` when the path is at/below a mount; `None` for a synthetic directory.
     backing: Option<Backing>,
+    /// Temporarily reserves a caller-visible fid while a backing create is in
+    /// flight. Normal operations cannot use it until the backing tree succeeds and
+    /// this entry is replaced with a real backing fid.
+    reserved: bool,
 }
 
 struct State {
@@ -86,6 +90,7 @@ impl MountFs {
             Entry {
                 path: Vec::new(),
                 backing: None,
+                reserved: false,
             },
         );
         Self {
@@ -181,6 +186,9 @@ impl MountFs {
     async fn target(&self, fid: Fid) -> Result<Target, ErrorCode> {
         let state = self.state.lock().await;
         let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+        if entry.reserved {
+            return Err(ErrorCode::BadRequest);
+        }
         Ok(match &entry.backing {
             Some(b) => Target::Backing {
                 resolved: b.resolved.clone(),
@@ -201,6 +209,9 @@ impl FileServer for MountFs {
             return Err(ErrorCode::BadRequest);
         }
         let base = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+        if base.reserved {
+            return Err(ErrorCode::BadRequest);
+        }
         // A non-empty walk descends into a child, so the base must be a directory.
         // A backing *file* base is rejected here rather than re-resolving the
         // absolute path (which could otherwise traverse a non-directory into a
@@ -236,6 +247,7 @@ impl FileServer for MountFs {
                             backing_fid,
                             is_dir: qid.kind == FileKind::Dir,
                         }),
+                        reserved: false,
                     },
                 );
                 return Ok(qid);
@@ -254,6 +266,7 @@ impl FileServer for MountFs {
                 Entry {
                     path,
                     backing: None,
+                    reserved: false,
                 },
             );
             return Ok(qid);
@@ -385,46 +398,60 @@ impl FileServer for MountFs {
         name: &str,
         kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
-        let (resolved, backing_fid, parent_path) = {
-            let state = self.state.lock().await;
+        let (resolved, backing_fid, path) = {
+            let mut state = self.state.lock().await;
             if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
                 return Err(ErrorCode::BadRequest);
             }
             let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if entry.reserved {
+                return Err(ErrorCode::BadRequest);
+            }
             let Some(backing) = &entry.backing else {
                 return Err(ErrorCode::Unsupported);
             };
             if !backing.is_dir {
                 return Err(ErrorCode::NotDirectory);
             }
-            (
-                backing.resolved.clone(),
-                backing.backing_fid,
-                entry.path.clone(),
-            )
+            let resolved = backing.resolved.clone();
+            let backing_fid = backing.backing_fid;
+            let mut path = entry.path.clone();
+            path.push(name.to_string());
+            state.fids.insert(
+                newfid,
+                Entry {
+                    path: path.clone(),
+                    backing: None,
+                    reserved: true,
+                },
+            );
+            (resolved, backing_fid, path)
         };
 
         let backing_newfid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
-        let qid = match resolved
+        let create = resolved
             .call(Request::Create {
                 fid: backing_fid,
                 newfid: backing_newfid,
                 name: name.to_string(),
                 kind,
             })
-            .await?
-        {
-            Response::Create { qid } => qid,
-            _ => return Err(ErrorCode::Io),
+            .await;
+        let qid = match create {
+            Ok(Response::Create { qid }) => qid,
+            Ok(_) => {
+                self.state.lock().await.fids.remove(&newfid);
+                return Err(ErrorCode::Io);
+            }
+            Err(err) => {
+                self.state.lock().await.fids.remove(&newfid);
+                return Err(err);
+            }
         };
 
-        let mut path = parent_path;
-        path.push(name.to_string());
         let inserted = {
             let mut state = self.state.lock().await;
-            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
-                false
-            } else {
+            if matches!(state.fids.get(&newfid), Some(entry) if entry.reserved) {
                 state.fids.insert(
                     newfid,
                     Entry {
@@ -434,9 +461,12 @@ impl FileServer for MountFs {
                             backing_fid: backing_newfid,
                             is_dir: qid.kind == FileKind::Dir,
                         }),
+                        reserved: false,
                     },
                 );
                 true
+            } else {
+                false
             }
         };
         if !inserted {
@@ -459,6 +489,10 @@ impl FileServer for MountFs {
         // Drop the entry under the lock, then forward without it held.
         let backing = {
             let mut state = self.state.lock().await;
+            let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if entry.reserved {
+                return Err(ErrorCode::BadRequest);
+            }
             state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?.backing
         };
         match backing {
@@ -481,6 +515,12 @@ impl FileServer for MountFs {
         // lock held (a commit-on-clunk commit must not serialize the namespace).
         let backing = {
             let mut state = self.state.lock().await;
+            let Some(entry) = state.fids.get(&fid) else {
+                return Err(ErrorCode::NotFound);
+            };
+            if entry.reserved {
+                return Err(ErrorCode::BadRequest);
+            }
             let Some(entry) = state.fids.remove(&fid) else {
                 return Err(ErrorCode::NotFound);
             };

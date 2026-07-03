@@ -140,7 +140,14 @@ pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
+    shared_services: Option<NamespaceSharedServices>,
     input_offset: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NamespaceSharedServices {
+    pub(crate) srv: InProcessTransport,
+    pub(crate) route: InProcessTransport,
 }
 
 impl std::fmt::Debug for NamespaceRuntimeEnvironment {
@@ -148,6 +155,7 @@ impl std::fmt::Debug for NamespaceRuntimeEnvironment {
         f.debug_struct("NamespaceRuntimeEnvironment")
             .field("agent_path", &self.agent_path)
             .field("llm_connection", &self.llm_connection)
+            .field("has_shared_services", &self.shared_services.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -162,8 +170,22 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
+            shared_services: None,
             input_offset: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    pub(crate) fn with_shared_services(
+        mut self,
+        srv: InProcessTransport,
+        route: InProcessTransport,
+    ) -> Self {
+        self.shared_services = Some(NamespaceSharedServices { srv, route });
+        self
+    }
+
+    pub(crate) fn shared_services(&self) -> Option<NamespaceSharedServices> {
+        self.shared_services.clone()
     }
 
     pub fn agent_path(&self) -> &str {
