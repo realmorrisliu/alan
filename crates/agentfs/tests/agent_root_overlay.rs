@@ -150,6 +150,100 @@ async fn agent_children_are_derived_from_proc_parentage() {
 }
 
 #[tokio::test]
+async fn agent_children_qid_versions_change_with_listing() {
+    let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
+    let parent = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(parent.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let empty_fid = Fid(11_000);
+    agent_root
+        .walk(
+            Fid::ROOT,
+            empty_fid,
+            &[parent.clone(), "children".to_string()],
+        )
+        .await
+        .unwrap();
+    let empty_qid = agent_root.stat(empty_fid).await.unwrap().qid;
+    agent_root.clunk(empty_fid).await.unwrap();
+
+    let spawner = proc.for_spawner(
+        Some(Pid(parent.parse::<u64>().unwrap())),
+        Namespace::new(),
+        Credentials::user("alan"),
+    );
+    let child = spawn_on_proc(&spawner, Fid(11_001)).await;
+    agent_root
+        .bind_process(child.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let child_fid = Fid(11_002);
+    agent_root
+        .walk(Fid::ROOT, child_fid, &[parent, "children".to_string()])
+        .await
+        .unwrap();
+    let child_qid = agent_root.stat(child_fid).await.unwrap().qid;
+    agent_root.clunk(child_fid).await.unwrap();
+
+    assert_eq!(empty_qid.kind, FileKind::Dir);
+    assert_eq!(empty_qid.path, child_qid.path);
+    assert_ne!(empty_qid.version, child_qid.version);
+}
+
+#[tokio::test]
+async fn agent_root_namespaces_backing_qids_by_pid() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let first = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let second = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(first.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root
+        .bind_process(second.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let first_fid = Fid(12_000);
+    let first_qid = agent_root
+        .walk(
+            Fid::ROOT,
+            first_fid,
+            &[first, "io".to_string(), "output".to_string()],
+        )
+        .await
+        .unwrap();
+    let first_stat_qid = agent_root.stat(first_fid).await.unwrap().qid;
+
+    let second_fid = Fid(12_001);
+    let second_qid = agent_root
+        .walk(
+            Fid::ROOT,
+            second_fid,
+            &[second, "io".to_string(), "output".to_string()],
+        )
+        .await
+        .unwrap();
+    let second_stat_qid = agent_root.stat(second_fid).await.unwrap().qid;
+    agent_root.clunk(first_fid).await.unwrap();
+    agent_root.clunk(second_fid).await.unwrap();
+
+    assert_eq!(first_qid, first_stat_qid);
+    assert_eq!(second_qid, second_stat_qid);
+    assert_eq!(first_qid.kind, second_qid.kind);
+    assert_ne!(first_qid.path, second_qid.path);
+}
+
+#[tokio::test]
 async fn agent_root_tracks_created_fids_forwarded_to_backing() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
