@@ -380,14 +380,74 @@ impl FileServer for MountFs {
 
     async fn create(
         &self,
-        _fid: Fid,
-        _newfid: Fid,
-        _name: &str,
-        _kind: FileKind,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
-        // v1 does not multiplex create across a mount (the newfid mapping is a
-        // later slice); the backing servers do not support it either.
-        Err(ErrorCode::Unsupported)
+        let (resolved, backing_fid, parent_path) = {
+            let state = self.state.lock().await;
+            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+                return Err(ErrorCode::BadRequest);
+            }
+            let entry = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            let Some(backing) = &entry.backing else {
+                return Err(ErrorCode::Unsupported);
+            };
+            if !backing.is_dir {
+                return Err(ErrorCode::NotDirectory);
+            }
+            (
+                backing.resolved.clone(),
+                backing.backing_fid,
+                entry.path.clone(),
+            )
+        };
+
+        let backing_newfid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
+        let qid = match resolved
+            .call(Request::Create {
+                fid: backing_fid,
+                newfid: backing_newfid,
+                name: name.to_string(),
+                kind,
+            })
+            .await?
+        {
+            Response::Create { qid } => qid,
+            _ => return Err(ErrorCode::Io),
+        };
+
+        let mut path = parent_path;
+        path.push(name.to_string());
+        let inserted = {
+            let mut state = self.state.lock().await;
+            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+                false
+            } else {
+                state.fids.insert(
+                    newfid,
+                    Entry {
+                        path,
+                        backing: Some(Backing {
+                            resolved: resolved.clone(),
+                            backing_fid: backing_newfid,
+                            is_dir: qid.kind == FileKind::Dir,
+                        }),
+                    },
+                );
+                true
+            }
+        };
+        if !inserted {
+            let _ = resolved
+                .call(Request::Clunk {
+                    fid: backing_newfid,
+                })
+                .await;
+            return Err(ErrorCode::BadRequest);
+        }
+        Ok(qid)
     }
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {

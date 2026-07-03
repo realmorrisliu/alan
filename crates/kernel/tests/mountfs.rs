@@ -22,6 +22,10 @@ fn procfs() -> InProcessTransport {
     InProcessTransport::new(Arc::new(ProcFs::new()))
 }
 
+fn createfs() -> InProcessTransport {
+    InProcessTransport::new(Arc::new(CreateFs::default()))
+}
+
 /// A namespace with `/proc` (ProcFs) and `/data` (MemFs), both read-write.
 fn ns() -> Namespace {
     let mut ns = Namespace::new();
@@ -40,6 +44,174 @@ async fn read_lines(fs: &MountFs, path: &[&str], fid: Fid) -> Vec<String> {
         .lines()
         .map(str::to_string)
         .collect()
+}
+
+#[derive(Clone)]
+enum CreateNode {
+    Root,
+    File(String),
+}
+
+#[derive(Default)]
+struct CreateFs {
+    files: tokio::sync::Mutex<HashMap<String, Vec<u8>>>,
+    fids: tokio::sync::Mutex<HashMap<Fid, CreateNode>>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for CreateFs {
+    async fn walk(&self, _fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let node = match names {
+            [] => CreateNode::Root,
+            [name] if self.files.lock().await.contains_key(name) => CreateNode::File(name.clone()),
+            _ => return Err(ErrorCode::NotFound),
+        };
+        let kind = match node {
+            CreateNode::Root => FileKind::Dir,
+            CreateNode::File(_) => FileKind::File,
+        };
+        self.fids.lock().await.insert(newfid, node);
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        let kind = match self.fids.lock().await.get(&fid) {
+            Some(CreateNode::Root) => FileKind::Dir,
+            Some(CreateNode::File(_)) => FileKind::File,
+            None if fid == Fid::ROOT => FileKind::Dir,
+            None => return Err(ErrorCode::NotFound),
+        };
+        Ok(Qid {
+            kind,
+            version: 0,
+            path: 0,
+        })
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let bytes = match self.fids.lock().await.get(&fid) {
+            Some(CreateNode::Root) => {
+                let mut names = self.files.lock().await.keys().cloned().collect::<Vec<_>>();
+                names.sort();
+                names.join("\n").into_bytes()
+            }
+            None if fid == Fid::ROOT => {
+                let mut names = self.files.lock().await.keys().cloned().collect::<Vec<_>>();
+                names.sort();
+                names.join("\n").into_bytes()
+            }
+            Some(CreateNode::File(name)) => self
+                .files
+                .lock()
+                .await
+                .get(name)
+                .cloned()
+                .ok_or(ErrorCode::NotFound)?,
+            None => return Err(ErrorCode::NotFound),
+        };
+        let start = (offset as usize).min(bytes.len());
+        let end = bytes.len().min(start + count as usize);
+        Ok(bytes[start..end].to_vec())
+    }
+
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        let name = match self.fids.lock().await.get(&fid) {
+            Some(CreateNode::File(name)) => name.clone(),
+            Some(CreateNode::Root) => return Err(ErrorCode::IsDirectory),
+            None => return Err(ErrorCode::NotFound),
+        };
+        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        let mut files = self.files.lock().await;
+        let bytes = files.get_mut(&name).ok_or(ErrorCode::NotFound)?;
+        if bytes.len() < end {
+            bytes.resize(end, 0);
+        }
+        bytes[start..end].copy_from_slice(data);
+        Ok(data.len() as u32)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let (kind, length, writable) = match self.fids.lock().await.get(&fid) {
+            Some(CreateNode::Root) => (FileKind::Dir, 0, true),
+            None if fid == Fid::ROOT => (FileKind::Dir, 0, true),
+            Some(CreateNode::File(name)) => {
+                let length = self
+                    .files
+                    .lock()
+                    .await
+                    .get(name)
+                    .map(|bytes| bytes.len() as u64)
+                    .ok_or(ErrorCode::NotFound)?;
+                (FileKind::File, length, true)
+            }
+            None => return Err(ErrorCode::NotFound),
+        };
+        Ok(Stat {
+            name: String::new(),
+            qid: Qid {
+                kind,
+                version: 0,
+                path: 0,
+            },
+            length,
+            writable,
+        })
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        if kind != FileKind::File || name.is_empty() || name.contains('/') || name.contains('\n') {
+            return Err(ErrorCode::BadRequest);
+        }
+        let is_root =
+            matches!(self.fids.lock().await.get(&fid), Some(CreateNode::Root)) || fid == Fid::ROOT;
+        if !is_root {
+            return Err(ErrorCode::NotDirectory);
+        }
+        let mut files = self.files.lock().await;
+        if files.contains_key(name) {
+            return Err(ErrorCode::BadRequest);
+        }
+        files.insert(name.to_string(), Vec::new());
+        self.fids
+            .lock()
+            .await
+            .insert(newfid, CreateNode::File(name.to_string()));
+        Ok(Qid {
+            kind: FileKind::File,
+            version: 0,
+            path: 0,
+        })
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let Some(CreateNode::File(name)) = self.fids.lock().await.remove(&fid) else {
+            return Err(ErrorCode::Unsupported);
+        };
+        self.files
+            .lock()
+            .await
+            .remove(&name)
+            .ok_or(ErrorCode::NotFound)?;
+        Ok(())
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if fid != Fid::ROOT {
+            self.fids.lock().await.remove(&fid);
+        }
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -69,6 +241,39 @@ async fn read_delegates_to_the_backing_file() {
         .unwrap();
     fs.open(Fid(1), OpenMode::Read).await.unwrap();
     assert_eq!(fs.read(Fid(1), 0, 64).await.unwrap(), b"hi");
+}
+
+#[tokio::test]
+async fn create_delegates_to_the_backing_tree_and_binds_newfid() {
+    let mut ns = Namespace::new();
+    ns.mount("/create", createfs(), Access::ReadWrite);
+    let fs = MountFs::new(ns);
+    fs.walk(Fid::ROOT, Fid(1), &["create".into()])
+        .await
+        .unwrap();
+    let qid = fs
+        .create(Fid(1), Fid(2), "created", FileKind::File)
+        .await
+        .unwrap();
+    assert_eq!(qid.kind, FileKind::File);
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"created through mount").await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+    fs.clunk(Fid(1)).await.unwrap();
+
+    let entries = read_lines(&fs, &["create"], Fid(3)).await;
+    assert!(
+        entries.iter().any(|entry| entry == "created"),
+        "{entries:?}"
+    );
+    fs.walk(Fid::ROOT, Fid(4), &["create".into(), "created".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(4), OpenMode::Read).await.unwrap();
+    assert_eq!(
+        fs.read(Fid(4), 0, 64).await.unwrap(),
+        b"created through mount"
+    );
 }
 
 #[tokio::test]
@@ -111,6 +316,18 @@ async fn a_read_only_mount_denies_a_write_open() {
         .unwrap();
     assert_eq!(
         fs.open(Fid(1), OpenMode::Write).await,
+        Err(ErrorCode::NoAccess)
+    );
+}
+
+#[tokio::test]
+async fn a_read_only_mount_denies_create() {
+    let mut ns = Namespace::new();
+    ns.mount("/ro", createfs(), Access::ReadOnly);
+    let fs = MountFs::new(ns);
+    fs.walk(Fid::ROOT, Fid(1), &["ro".into()]).await.unwrap();
+    assert_eq!(
+        fs.create(Fid(1), Fid(2), "created", FileKind::File).await,
         Err(ErrorCode::NoAccess)
     );
 }

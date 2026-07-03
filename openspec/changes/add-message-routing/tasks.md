@@ -6,7 +6,9 @@
   `ports`, and `log`; the root runtime namespace posts it under `/srv/route`
   and mounts the handle at `/mnt/route`, and child-agent namespace manifests
   inherit `/srv` plus `/mnt/route` alongside `/agent`, `/mnt/llm`, and mounted
-  `/bin` tools.
+  `/bin` tools. `MountFs` now forwards create requests to backing trees, so
+  rules can be installed through the advertised `/mnt/route/rules/<name>` file
+  path rather than only through direct test helpers.
 - [x] 1.2 Implement the `send` write entry point for typed messages; frame a
   message across multiple writes and match/route only on clunk of the `send` fid
   (commit-on-clunk), never on a partial write.
@@ -52,7 +54,10 @@
   port reads, complete JSON message preservation, and `/srv/route` to
   `/mnt/route` mounting. `alan-agent-engine` regression coverage verifies the
   production root namespace exposes `/srv/route` and writable `/mnt/route/send`,
-  and child namespace launch manifests include `/srv` plus `/mnt/route`.
+  and child namespace launch manifests include `/srv` plus `/mnt/route`. Kernel
+  `MountFs` coverage verifies create forwarding and read-only create denial,
+  and routefs coverage creates a rule through `/mnt/route/rules/<name>` before
+  routing a message through that mounted namespace.
 - [x] 4.2 Run `just verify`.
   Done 2026-07-02: `just verify` passed, including workspace fmt, clippy,
   tests, and smoke verification.

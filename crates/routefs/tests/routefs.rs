@@ -249,3 +249,50 @@ async fn routefs_posts_under_srv_and_mounts_at_canonical_path() {
         assert!(root.lines().any(|line| line == entry), "{root}");
     }
 }
+
+#[tokio::test]
+async fn mounted_routefs_allows_rule_creation_through_mnt_route() {
+    let srv = Arc::new(SrvFs::new());
+    let routefs = Arc::new(RouteFs::new());
+    srv.post(
+        SRV_HANDLE,
+        InProcessTransport::new(routefs),
+        Access::ReadWrite,
+    )
+    .await;
+    let (handle, access) = srv.lookup(SRV_HANDLE).await.expect("route handle");
+    let mut ns = Namespace::new();
+    ns.mount("/srv", InProcessTransport::new(srv), Access::ReadOnly);
+    ns.mount(MOUNT_PATH, handle, access);
+    let fs = Arc::new(MountFs::new(ns));
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(1),
+        &["mnt".into(), "route".into(), "rules".into()],
+    )
+    .await
+    .unwrap();
+    fs.create(Fid(1), Fid(2), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    let rule = serde_json::to_vec(&json!({
+        "version": 1,
+        "match_type": "result",
+        "port": "review"
+    }))
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, &rule).await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+    fs.clunk(Fid(1)).await.unwrap();
+
+    let shell = Shell::new(InProcessTransport::new(fs));
+    shell
+        .write("/mnt/route/send", &message("result", "needs review"))
+        .await
+        .unwrap();
+    let routed = String::from_utf8(shell.cat("/mnt/route/ports/review").await.unwrap()).unwrap();
+    assert!(routed.contains(r#""rule":"10-results""#), "{routed}");
+    assert!(routed.contains(r#""type":"result""#), "{routed}");
+}
