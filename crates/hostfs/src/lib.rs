@@ -10,6 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::{Read as _, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 use async_trait::async_trait;
@@ -112,15 +113,15 @@ impl HostDirFs {
         } else {
             return Err(ErrorCode::Unsupported);
         };
-        let modified = metadata
+        let version = metadata
             .modified()
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.subsec_nanos())
+            .map(qid_version_from_duration)
             .unwrap_or(0);
         Ok(Qid {
             kind,
-            version: modified,
+            version,
             path: qid_path(path),
         })
     }
@@ -394,6 +395,13 @@ fn qid_path(path: &Path) -> u64 {
     hasher.finish()
 }
 
+fn qid_version_from_duration(duration: Duration) -> u32 {
+    let mut hasher = DefaultHasher::new();
+    duration.as_secs().hash(&mut hasher);
+    duration.subsec_nanos().hash(&mut hasher);
+    hasher.finish() as u32
+}
+
 fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
@@ -502,6 +510,16 @@ mod tests {
             .unwrap();
         let err = fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap_err();
         assert_eq!(err, ErrorCode::BadRequest);
+    }
+
+    #[test]
+    fn qid_versions_include_full_modified_timestamp() {
+        let first = qid_version_from_duration(Duration::new(1, 42));
+        let same_nanos_later_second = qid_version_from_duration(Duration::new(2, 42));
+        let same_second_later_nanos = qid_version_from_duration(Duration::new(1, 43));
+
+        assert_ne!(first, same_nanos_later_second);
+        assert_ne!(first, same_second_later_nanos);
     }
 
     #[tokio::test]

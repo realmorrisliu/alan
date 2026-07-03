@@ -41,6 +41,7 @@ pub fn apply_host_mount_declarations(
     namespace: &mut Namespace,
     declarations: &[HostMountDeclaration],
 ) -> Result<()> {
+    validate_non_overlapping_declarations(declarations)?;
     for declaration in declarations {
         let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
             .with_context(|| {
@@ -63,6 +64,7 @@ pub fn sandbox_spec_from_host_mounts(
     workspace_root: PathBuf,
     declarations: &[HostMountDeclaration],
 ) -> Result<SandboxSpec> {
+    validate_non_overlapping_declarations(declarations)?;
     let mut spec = SandboxSpec {
         writable_roots: vec![workspace_root],
         read_denylist: Vec::new(),
@@ -87,6 +89,53 @@ pub fn sandbox_spec_from_host_mounts(
 
 fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
+}
+
+fn validate_non_overlapping_declarations(declarations: &[HostMountDeclaration]) -> Result<()> {
+    let paths = declarations
+        .iter()
+        .map(|declaration| {
+            normalized_namespace_components(&declaration.namespace_path)
+                .map(|components| (&declaration.namespace_path, components))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    for (index, (left_path, left_components)) in paths.iter().enumerate() {
+        for (right_path, right_components) in paths.iter().skip(index + 1) {
+            if namespace_paths_overlap(left_components, right_components) {
+                anyhow::bail!(
+                    "overlapping host mount declarations are not supported: {} and {}",
+                    left_path,
+                    right_path
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn normalized_namespace_components(path: &str) -> Result<Vec<&str>> {
+    anyhow::ensure!(
+        path.starts_with('/'),
+        "host mount namespace path must be absolute: {}",
+        path
+    );
+    path.split('/')
+        .filter(|component| !component.is_empty())
+        .map(|component| {
+            anyhow::ensure!(
+                component != "." && component != "..",
+                "host mount namespace path contains invalid component: {}",
+                path
+            );
+            Ok(component)
+        })
+        .collect()
+}
+
+fn namespace_paths_overlap(left: &[&str], right: &[&str]) -> bool {
+    left.len() <= right.len() && right.starts_with(left)
+        || right.len() <= left.len() && left.starts_with(right)
 }
 
 #[cfg(test)]
@@ -155,6 +204,41 @@ mod tests {
         let host_path = std::fs::canonicalize(host.path()).unwrap();
         assert_eq!(spec.writable_roots, vec![workspace.path().to_path_buf()]);
         assert!(!spec.writable_roots.contains(&host_path));
+    }
+
+    #[test]
+    fn overlapping_declarations_are_rejected_before_projection() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        let declarations = vec![
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadOnly),
+        ];
+
+        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
+            .unwrap_err();
+        assert!(err.to_string().contains("overlapping host mount"));
+        let mut namespace = Namespace::new();
+        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
+        assert!(err.to_string().contains("overlapping host mount"));
+    }
+
+    #[test]
+    fn nested_declarations_are_rejected_before_projection() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        let declarations = vec![
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            HostMountDeclaration::new(
+                "/mnt/project/docs",
+                host.path().to_path_buf(),
+                Access::ReadOnly,
+            ),
+        ];
+
+        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
+            .unwrap_err();
+        assert!(err.to_string().contains("overlapping host mount"));
     }
 
     #[test]
