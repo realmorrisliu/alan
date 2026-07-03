@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, ImportedFileServer, Offset, OpenMode, Qid, Request,
-    Response, Stat, Stream, decode_request_frame, decode_response_frame, encode_request_frame,
-    encode_response_frame, export_file_server,
+    ErrorCode, Fid, FileKind, FileServer, ImportedFileServer, MAX_WIRE_FRAME_BYTES, Offset,
+    OpenMode, Qid, Request, Response, Stat, Stream, decode_request_frame, decode_response_frame,
+    encode_request_frame, encode_response_frame, export_file_server,
 };
 use tokio::io::{BufReader, duplex};
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 
 fn qid(kind: FileKind, path: u64) -> Qid {
     Qid {
@@ -346,6 +346,190 @@ async fn cancelled_in_flight_call_does_not_desynchronize_next_request() {
     stream.append(b"abandoned response").await;
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(imported.stat(Fid(1)).await, Err(ErrorCode::Io));
+
+    drop(imported);
+    server_task.abort();
+}
+
+struct BlockingReadFile {
+    read_started: Arc<Notify>,
+    read_dropped: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for BlockingReadFile {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: Offset, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        struct DropNotify(Arc<Notify>);
+
+        impl Drop for DropNotify {
+            fn drop(&mut self) {
+                self.0.notify_one();
+            }
+        }
+
+        self.read_started.notify_one();
+        let _drop_notify = DropNotify(Arc::clone(&self.read_dropped));
+        std::future::pending().await
+    }
+
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn export_cancels_blocking_call_when_peer_disconnects() {
+    let (client_stream, server_stream) = duplex(4096);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let read_started = Arc::new(Notify::new());
+    let read_dropped = Arc::new(Notify::new());
+    let server: Arc<dyn FileServer> = Arc::new(BlockingReadFile {
+        read_started: Arc::clone(&read_started),
+        read_dropped: Arc::clone(&read_dropped),
+    });
+    let server_task = tokio::spawn(export_file_server(
+        server,
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let imported = Arc::new(ImportedFileServer::new(
+        BufReader::new(client_read),
+        client_write,
+    ));
+
+    let reader = Arc::clone(&imported);
+    let read_task = tokio::spawn(async move { reader.read(Fid(1), 0, 64).await });
+    tokio::time::timeout(Duration::from_millis(500), read_started.notified())
+        .await
+        .expect("remote read request did not reach exported server");
+
+    drop(imported);
+    read_task.abort();
+    let _ = read_task.await;
+
+    tokio::time::timeout(Duration::from_millis(500), read_dropped.notified())
+        .await
+        .expect("exported blocking read was not cancelled after peer disconnect");
+    let result = tokio::time::timeout(Duration::from_millis(500), server_task)
+        .await
+        .expect("export task did not exit after peer disconnect")
+        .expect("export task panicked");
+    assert!(result.is_ok(), "{result:?}");
+}
+
+struct RecordingWriteFile {
+    writes: Mutex<Vec<(Offset, Vec<u8>)>>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for RecordingWriteFile {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: Offset, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn write(&self, _fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        self.writes.lock().await.push((offset, data.to_vec()));
+        Ok(data.len() as u32)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn imported_large_write_is_split_into_bounded_remote_frames() {
+    let (client_stream, server_stream) = duplex(1024 * 1024);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let server = Arc::new(RecordingWriteFile {
+        writes: Mutex::new(Vec::new()),
+    });
+    let server_task = tokio::spawn(export_file_server(
+        server.clone(),
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let imported = ImportedFileServer::new(BufReader::new(client_read), client_write);
+    let data = vec![255; MAX_WIRE_FRAME_BYTES];
+
+    assert_eq!(
+        imported.write(Fid(1), 7, &data).await,
+        Ok(data.len() as u32)
+    );
+
+    let writes = server.writes.lock().await;
+    assert!(
+        writes.len() > 1,
+        "large imported write should be split into multiple bounded frames"
+    );
+    let mut next_offset = 7;
+    let mut reconstructed = Vec::new();
+    for (offset, chunk) in writes.iter() {
+        assert_eq!(*offset, next_offset);
+        next_offset += chunk.len() as u64;
+        reconstructed.extend_from_slice(chunk);
+    }
+    assert_eq!(reconstructed, data);
 
     drop(imported);
     server_task.abort();

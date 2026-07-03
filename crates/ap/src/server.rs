@@ -11,12 +11,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::wire::{
-    read_request_frame, read_response_frame, write_request_frame, write_response_frame,
+    MAX_WIRE_FRAME_BYTES, read_request_frame, read_response_frame, write_request_frame,
+    write_response_frame,
 };
 use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat, WireError};
+
+const MAX_WIRE_WRITE_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
 
 /// A file server: the backing implementation of one mountable tree.
 ///
@@ -211,19 +214,59 @@ impl InProcessTransport {
 /// added above this without changing the [`FileServer`] contract.
 pub async fn export_file_server<R, W>(
     server: Arc<dyn FileServer>,
-    mut reader: R,
+    reader: R,
     mut writer: W,
 ) -> Result<(), WireError>
 where
-    R: AsyncBufRead + Unpin,
+    R: AsyncBufRead + Send + Unpin + 'static,
     W: AsyncWrite + Unpin,
 {
     let transport = InProcessTransport::new(server);
-    while let Some(request) = read_request_frame(&mut reader).await? {
-        let result = transport.call(request).await;
+    let (request_tx, mut request_rx) = mpsc::channel(1);
+    let (reader_closed_tx, mut reader_closed_rx) = watch::channel(false);
+    tokio::spawn(read_export_requests(reader, request_tx, reader_closed_tx));
+
+    while let Some(message) = request_rx.recv().await {
+        let ExportReaderMessage::Request(request) = message?;
+        let result = tokio::select! {
+            result = transport.call(request) => result,
+            _ = reader_closed_rx.changed() => return Ok(()),
+        };
         write_response_frame(&mut writer, &result).await?;
     }
     Ok(())
+}
+
+enum ExportReaderMessage {
+    Request(Request),
+}
+
+async fn read_export_requests<R>(
+    mut reader: R,
+    request_tx: mpsc::Sender<Result<ExportReaderMessage, WireError>>,
+    reader_closed_tx: watch::Sender<bool>,
+) where
+    R: AsyncBufRead + Unpin,
+{
+    loop {
+        match read_request_frame(&mut reader).await {
+            Ok(Some(request)) => {
+                if request_tx
+                    .send(Ok(ExportReaderMessage::Request(request)))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                let _ = request_tx.send(Err(error)).await;
+                break;
+            }
+        }
+    }
+    let _ = reader_closed_tx.send(true);
 }
 
 /// Client side of one aP wire connection.
@@ -343,17 +386,47 @@ where
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        match self
-            .remote_call(Request::Write {
-                fid,
-                offset,
-                data: data.to_vec(),
-            })
-            .await?
-        {
-            Response::Write { count } => Ok(count),
-            _ => Err(ErrorCode::BadRequest),
+        if data.is_empty() {
+            return match self
+                .remote_call(Request::Write {
+                    fid,
+                    offset,
+                    data: Vec::new(),
+                })
+                .await?
+            {
+                Response::Write { count } => Ok(count),
+                _ => Err(ErrorCode::BadRequest),
+            };
         }
+
+        let mut accepted_total = 0usize;
+        for chunk in data.chunks(MAX_WIRE_WRITE_CHUNK_BYTES) {
+            let chunk_offset = offset
+                .checked_add(accepted_total as u64)
+                .ok_or(ErrorCode::BadRequest)?;
+            let accepted = match self
+                .remote_call(Request::Write {
+                    fid,
+                    offset: chunk_offset,
+                    data: chunk.to_vec(),
+                })
+                .await?
+            {
+                Response::Write { count } => count as usize,
+                _ => return Err(ErrorCode::BadRequest),
+            };
+            if accepted > chunk.len() {
+                return Err(ErrorCode::BadRequest);
+            }
+            accepted_total = accepted_total
+                .checked_add(accepted)
+                .ok_or(ErrorCode::BadRequest)?;
+            if accepted < chunk.len() {
+                break;
+            }
+        }
+        u32::try_from(accepted_total).map_err(|_| ErrorCode::BadRequest)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
