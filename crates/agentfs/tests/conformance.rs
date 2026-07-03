@@ -6,7 +6,7 @@ use std::sync::{
 
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessIoEventSource, Qid,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessEventSource, Qid,
     Stat,
 };
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
@@ -16,10 +16,10 @@ use async_trait::async_trait;
 fn namespace_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>) {
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn FileServer> = proc.clone();
-    let proc_io_events: Arc<dyn ProcessIoEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_ordered_process_io_events(
+    let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+    let agent_root = Arc::new(AgentRootFs::new_with_process_events(
         proc_server,
-        proc_io_events,
+        proc_events,
     ));
 
     let mut namespace = Namespace::new();

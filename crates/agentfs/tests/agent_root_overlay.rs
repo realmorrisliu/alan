@@ -8,7 +8,7 @@ use std::{
 
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessIoEventSource, Qid,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessEventSource, Qid,
     Stat,
 };
 use alan_kernel::{
@@ -29,10 +29,10 @@ fn namespace_shell_with_agent_root_for_proc(
     proc: Arc<ProcFs>,
 ) -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc_server: Arc<dyn FileServer> = proc.clone();
-    let proc_io_events: Arc<dyn ProcessIoEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_ordered_process_io_events(
+    let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+    let agent_root = Arc::new(AgentRootFs::new_with_process_events(
         proc_server,
-        proc_io_events,
+        proc_events,
     ));
 
     let mut namespace = Namespace::new();
@@ -374,6 +374,57 @@ async fn bind_process_replays_existing_proc_io_events() {
 }
 
 #[tokio::test]
+async fn bind_process_replays_existing_proc_lifecycle_events() {
+    let proc =
+        Arc::new(ProcFs::new().with_runner(Arc::new(ImmediateOutputRunner::new(Vec::new()))));
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root_for_proc(proc);
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    wait_for_file_contains(&shell, &format!("/proc/{pid}/status"), "exited").await;
+
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let events =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+    assert!(
+        events.contains("status:exited"),
+        "late-bound agent aggregate should replay existing proc lifecycle events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn direct_proc_cancel_publishes_agent_lifecycle_events() {
+    let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let ctl_fid = Fid(9_274);
+    proc.walk(Fid::ROOT, ctl_fid, &[pid.clone(), "ctl".to_string()])
+        .await
+        .unwrap();
+    proc.open(ctl_fid, OpenMode::Write).await.unwrap();
+    proc.write(ctl_fid, 0, b"cancel").await.unwrap();
+    proc.clunk(ctl_fid).await.unwrap();
+    wait_for_file_contains(&shell, &format!("/proc/{pid}/status"), "exited").await;
+
+    let events =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+    assert!(
+        events.contains("status:exited"),
+        "agent aggregate should publish proc cancel lifecycle events: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn bind_process_replays_existing_proc_io_events_in_order() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
@@ -567,8 +618,10 @@ async fn child_registration_wakes_parent_events_stream() {
         .await
         .unwrap();
     agent_root.open(events_fid, OpenMode::Read).await.unwrap();
+    let events_offset = agent_root.stat(events_fid).await.unwrap().length;
     let reader_root = agent_root.clone();
-    let reader = tokio::spawn(async move { reader_root.read(events_fid, 0, 4096).await });
+    let reader =
+        tokio::spawn(async move { reader_root.read(events_fid, events_offset, 4096).await });
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(
         !reader.is_finished(),

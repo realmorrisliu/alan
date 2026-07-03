@@ -19,9 +19,9 @@ mod version;
 mod wire;
 
 pub use server::{
-    FileServer, InProcessTransport, ProcessInputEventSink, ProcessInputEventSource,
-    ProcessIoEventKind, ProcessIoEventSink, ProcessIoEventSource, ProcessOutputEventSink,
-    ProcessOutputEventSource,
+    FileServer, InProcessTransport, ProcessEvent, ProcessEventSink, ProcessEventSource,
+    ProcessInputEventSink, ProcessInputEventSource, ProcessIoEventKind, ProcessIoEventSink,
+    ProcessIoEventSource, ProcessOutputEventSink, ProcessOutputEventSource,
 };
 pub use stream::Stream;
 pub use types::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};

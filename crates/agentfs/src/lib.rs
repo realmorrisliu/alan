@@ -247,6 +247,14 @@ impl AgentFs {
         state.io_events.append(record.as_bytes()).await;
         state.events.append(record.as_bytes()).await;
     }
+
+    pub(crate) async fn append_status_event(&self, status: &str) {
+        let state = self.state.lock().await;
+        state
+            .events
+            .append(format!("status:{status}\n").as_bytes())
+            .await;
+    }
 }
 
 impl State {

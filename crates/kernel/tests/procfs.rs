@@ -6,13 +6,17 @@
 //! needs no side API to launch a process.
 
 use alan_ap::{
-    ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, ProcessInputEventSink,
-    ProcessInputEventSource, ProcessOutputEventSink, ProcessOutputEventSource, Request, Response,
+    ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, ProcessEvent, ProcessEventSink,
+    ProcessEventSource, ProcessInputEventSink, ProcessInputEventSource, ProcessOutputEventSink,
+    ProcessOutputEventSource, Request, Response,
 };
 use alan_kernel::{
     Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::Notify;
 
 fn proc() -> ProcFs {
@@ -186,6 +190,74 @@ impl ProcessInputEventSink for RecordingInputSink {
             .lock()
             .expect("input records lock should not be poisoned")
             .push((pid.to_string(), count));
+        self.notify.notify_waiters();
+    }
+}
+
+struct BlockingProcessEventSink {
+    records: Mutex<Vec<ProcessEvent>>,
+    first_started: AtomicBool,
+    first_entered: Notify,
+    release_first: Notify,
+    notify: Notify,
+}
+
+impl BlockingProcessEventSink {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            first_started: AtomicBool::new(false),
+            first_entered: Notify::new(),
+            release_first: Notify::new(),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait_for(&self, expected: usize) -> Vec<ProcessEvent> {
+        for _ in 0..50 {
+            let records = self
+                .records
+                .lock()
+                .expect("process event records lock should not be poisoned")
+                .clone();
+            if records.len() >= expected {
+                return records;
+            }
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(10), self.notify.notified())
+                    .await;
+        }
+        self.records
+            .lock()
+            .expect("process event records lock should not be poisoned")
+            .clone()
+    }
+
+    async fn wait_until_first_replay_enters(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            self.first_entered.notified(),
+        )
+        .await
+        .expect("first replay event should enter the sink");
+    }
+
+    fn release_first_replay(&self) {
+        self.release_first.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessEventSink for BlockingProcessEventSink {
+    async fn process_event(&self, _pid: &str, event: ProcessEvent) {
+        if !self.first_started.swap(true, Ordering::SeqCst) {
+            self.first_entered.notify_waiters();
+            self.release_first.notified().await;
+        }
+        self.records
+            .lock()
+            .expect("process event records lock should not be poisoned")
+            .push(event);
         self.notify.notify_waiters();
     }
 }
@@ -390,6 +462,73 @@ async fn late_io_event_subscribers_replay_existing_events() {
         .await
         .unwrap();
     assert_eq!(output_sink.wait_for(1).await, vec![(pid, 12)]);
+}
+
+#[tokio::test]
+async fn process_event_replay_precedes_live_events_for_late_subscribers() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let output_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(output_fid, OpenMode::Write).await.unwrap();
+    fs.write(output_fid, 0, b"early output").await.unwrap();
+    fs.clunk(output_fid).await.unwrap();
+
+    let sink = Arc::new(BlockingProcessEventSink::new());
+    let subscribe_fs = fs.clone();
+    let subscribe_pid = pid.clone();
+    let subscribe_sink = sink.clone();
+    let subscription = tokio::spawn(async move {
+        subscribe_fs
+            .subscribe_process_events(&subscribe_pid, subscribe_sink)
+            .await
+            .unwrap();
+    });
+    sink.wait_until_first_replay_enters().await;
+
+    let live_fs = fs.clone();
+    let live_pid = pid.clone();
+    let live_write = tokio::spawn(async move {
+        let input_fid = Fid(12);
+        live_fs
+            .walk(
+                Fid::ROOT,
+                input_fid,
+                &[live_pid, "io".to_string(), "input".to_string()],
+            )
+            .await
+            .unwrap();
+        live_fs.open(input_fid, OpenMode::Write).await.unwrap();
+        live_fs.write(input_fid, 0, b"live input").await.unwrap();
+        live_fs.clunk(input_fid).await.unwrap();
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !live_write.is_finished(),
+        "live event delivery should wait while retained event replay is active"
+    );
+
+    sink.release_first_replay();
+    subscription.await.unwrap();
+    live_write.await.unwrap();
+
+    assert_eq!(
+        sink.wait_for(3).await,
+        vec![
+            ProcessEvent::Status {
+                status: "running".to_string()
+            },
+            ProcessEvent::Output { count: 12 },
+            ProcessEvent::Input { count: 10 },
+        ]
+    );
 }
 
 #[tokio::test]

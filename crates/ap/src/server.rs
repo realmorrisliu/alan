@@ -126,6 +126,30 @@ pub trait ProcessIoEventSource: Send + Sync {
     ) -> Result<(), ErrorCode>;
 }
 
+/// Ordered process event retained by `/proc` and projected into aggregate views.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessEvent {
+    Input { count: u32 },
+    Output { count: u32 },
+    Status { status: String },
+}
+
+/// Receiver for ordered process lifecycle and IO notifications.
+#[async_trait]
+pub trait ProcessEventSink: Send + Sync {
+    async fn process_event(&self, pid: &str, event: ProcessEvent);
+}
+
+/// Optional ordered event source implemented by file servers that own process state.
+#[async_trait]
+pub trait ProcessEventSource: Send + Sync {
+    async fn subscribe_process_events(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessEventSink>,
+    ) -> Result<(), ErrorCode>;
+}
+
 /// The in-process fast path: dispatches a wire [`Request`] to a [`FileServer`]
 /// and returns its [`Response`] with no serialization (§5.6).
 #[derive(Clone)]
