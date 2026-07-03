@@ -9,11 +9,12 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
-use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+use std::io::{Read as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
@@ -22,6 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Mutex;
 
 const MAX_BUFFERED_FILE_BYTES: usize = 64 * 1024 * 1024;
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostDirAccess {
@@ -358,12 +360,7 @@ impl FileServer for HostDirFs {
         let mut fids = self.fids.lock().await;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         if fid_state.wrote {
-            let handle = self.existing_write_handle(&fid_state.rel)?;
-            if !handle.metadata.is_file() {
-                return Err(ErrorCode::Unsupported);
-            }
-            reject_multiply_linked_file(&handle.metadata)?;
-            write_all_to_file(handle.file, &fid_state.write_buf)?;
+            atomic_replace_file(&self.root_dir, &fid_state.rel, &fid_state.write_buf)?;
         }
         Ok(())
     }
@@ -460,14 +457,29 @@ fn mkdir_child(parent_fd: RawFd, name: &str) -> Result<(), ErrorCode> {
 }
 
 fn create_child_file(parent_fd: RawFd, name: &str) -> Result<(), ErrorCode> {
-    let file = openat_file(
-        parent_fd,
-        name,
-        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-        0o666,
-    )?;
+    let file = create_child_file_with_mode(parent_fd, name, 0o666)?;
     drop(file);
     Ok(())
+}
+
+fn create_child_file_with_mode(
+    parent_fd: RawFd,
+    name: &str,
+    mode: libc::mode_t,
+) -> Result<std::fs::File, ErrorCode> {
+    let name = c_name(name)?;
+    let fd = unsafe {
+        libc::openat(
+            parent_fd,
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            mode as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(map_create_error(std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 fn remove_entry(root_dir: &std::fs::File, rel: &[String]) -> Result<(), ErrorCode> {
@@ -487,6 +499,17 @@ fn unlink_child(parent_fd: RawFd, name: &str, flags: libc::c_int) -> Result<(), 
         Ok(())
     } else {
         Err(map_remove_error(std::io::Error::last_os_error()))
+    }
+}
+
+fn rename_child(parent_fd: RawFd, from: &str, to: &str) -> Result<(), ErrorCode> {
+    let from = c_name(from)?;
+    let to = c_name(to)?;
+    let result = unsafe { libc::renameat(parent_fd, from.as_ptr(), parent_fd, to.as_ptr()) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(map_create_error(std::io::Error::last_os_error()))
     }
 }
 
@@ -663,12 +686,6 @@ fn read_file_for_write_seed(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
     Ok(bytes)
 }
 
-fn write_all_to_file(mut file: std::fs::File, bytes: &[u8]) -> Result<(), ErrorCode> {
-    file.set_len(0).map_err(|_| ErrorCode::Io)?;
-    file.seek(SeekFrom::Start(0)).map_err(|_| ErrorCode::Io)?;
-    file.write_all(bytes).map_err(|_| ErrorCode::Io)
-}
-
 fn file_kind(metadata: &std::fs::Metadata) -> Result<FileKind, ErrorCode> {
     if metadata.is_dir() {
         Ok(FileKind::Dir)
@@ -685,6 +702,60 @@ fn reject_multiply_linked_file(metadata: &std::fs::Metadata) -> Result<(), Error
     } else {
         Ok(())
     }
+}
+
+fn atomic_replace_file(
+    root_dir: &std::fs::File,
+    rel: &[String],
+    bytes: &[u8],
+) -> Result<(), ErrorCode> {
+    let (parent, name) = open_parent_for_entry(root_dir, rel)?;
+    let existing = openat_file(
+        parent.file.as_raw_fd(),
+        &name,
+        libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        0,
+    )?;
+    let existing_metadata = existing.metadata().map_err(|_| ErrorCode::Io)?;
+    if !existing_metadata.is_file() {
+        return Err(ErrorCode::Unsupported);
+    }
+    reject_multiply_linked_file(&existing_metadata)?;
+    let mode = existing_metadata.mode() & 0o7777;
+    drop(existing);
+
+    let (temp_name, mut temp_file) = create_replacement_temp_file(parent.file.as_raw_fd(), mode)?;
+    let write_result = temp_file
+        .set_permissions(std::fs::Permissions::from_mode(mode))
+        .and_then(|_| temp_file.write_all(bytes))
+        .and_then(|_| temp_file.sync_all());
+    if write_result.is_err() {
+        drop(temp_file);
+        let _ = unlink_child(parent.file.as_raw_fd(), &temp_name, 0);
+        return Err(ErrorCode::Io);
+    }
+    drop(temp_file);
+    if let Err(error) = rename_child(parent.file.as_raw_fd(), &temp_name, &name) {
+        let _ = unlink_child(parent.file.as_raw_fd(), &temp_name, 0);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn create_replacement_temp_file(
+    parent_fd: RawFd,
+    mode: u32,
+) -> Result<(String, std::fs::File), ErrorCode> {
+    for _ in 0..16 {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = format!(".alan-hostfs-replace-{}-{counter}", std::process::id());
+        match create_child_file_with_mode(parent_fd, &name, mode as libc::mode_t) {
+            Ok(file) => return Ok((name, file)),
+            Err(ErrorCode::BadRequest) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(ErrorCode::Io)
 }
 
 fn qid_path(metadata: &std::fs::Metadata) -> u64 {
@@ -923,6 +994,30 @@ mod tests {
         assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "safe");
         assert_eq!(std::fs::read_to_string(outside_alias).unwrap(), "safe");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_clunk_staging_preserves_original_host_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mounted = temp.path().join("mounted");
+        std::fs::create_dir(&mounted).unwrap();
+        let path = mounted.join("target.txt");
+        std::fs::write(&path, "safe").unwrap();
+        let fs = HostDirFs::new(&mounted, HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["target.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        fs.write(Fid(1), 0, b"changed").await.unwrap();
+        std::fs::set_permissions(&mounted, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
+        std::fs::set_permissions(&mounted, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "safe");
     }
 
     #[test]
