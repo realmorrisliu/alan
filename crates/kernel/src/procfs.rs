@@ -34,7 +34,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode,
-    ProcessOutputEventSink, ProcessOutputEventSource, Qid, Stat, Stream,
+    ProcessInputEventSink, ProcessInputEventSource, ProcessOutputEventSink,
+    ProcessOutputEventSource, Qid, Stat, Stream,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -136,6 +137,7 @@ struct State {
     inputs: HashMap<Pid, Stream>,
     outputs: HashMap<Pid, Stream>,
     io_events: HashMap<Pid, Stream>,
+    input_observers: HashMap<Pid, Vec<Arc<dyn ProcessInputEventSink>>>,
     output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
 }
 
@@ -171,6 +173,7 @@ impl ProcFs {
                 inputs: HashMap::new(),
                 outputs: HashMap::new(),
                 io_events: HashMap::new(),
+                input_observers: HashMap::new(),
                 output_observers: HashMap::new(),
             })),
             view_id: next_view_id(),
@@ -286,6 +289,17 @@ impl ProcFs {
             observer.output_appended(&pid, count).await;
         }
     }
+
+    async fn notify_input_observers(&self, pid: Pid, count: u32) {
+        let observers = {
+            let state = self.state.lock().await;
+            state.input_observers.get(&pid).cloned().unwrap_or_default()
+        };
+        let pid = pid.0.to_string();
+        for observer in observers {
+            observer.input_appended(&pid, count).await;
+        }
+    }
 }
 
 #[async_trait]
@@ -301,6 +315,23 @@ impl ProcessOutputEventSource for ProcFs {
             return Err(ErrorCode::NotFound);
         }
         state.output_observers.entry(pid).or_default().push(sink);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ProcessInputEventSource for ProcFs {
+    async fn subscribe_process_input(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessInputEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let mut state = self.state.lock().await;
+        if state.table.get(pid).is_none() {
+            return Err(ErrorCode::NotFound);
+        }
+        state.input_observers.entry(pid).or_default().push(sink);
         Ok(())
     }
 }
@@ -438,6 +469,7 @@ impl State {
 
 enum ProcStreamWrite {
     Input {
+        pid: Pid,
         stream: Stream,
         events: Stream,
     },
@@ -594,6 +626,7 @@ impl FileServer for ProcFs {
                         return Err(ErrorCode::NoAccess);
                     }
                     ProcStreamWrite::Input {
+                        pid,
                         stream: state.inputs.get(&pid).cloned().ok_or(ErrorCode::NotFound)?,
                         events: state
                             .io_events
@@ -627,9 +660,14 @@ impl FileServer for ProcFs {
         };
         let count = data.len() as u32;
         match stream_write {
-            ProcStreamWrite::Input { stream, events } => {
+            ProcStreamWrite::Input {
+                pid,
+                stream,
+                events,
+            } => {
                 stream.append(data).await;
                 append_io_event(&events, "input", count).await;
+                self.notify_input_observers(pid, count).await;
             }
             ProcStreamWrite::Output {
                 pid,

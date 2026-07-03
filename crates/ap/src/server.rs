@@ -80,6 +80,25 @@ pub trait ProcessOutputEventSource: Send + Sync {
     ) -> Result<(), ErrorCode>;
 }
 
+/// Receiver for process-input append notifications.
+///
+/// This mirrors process-output notifications so higher-level views can observe
+/// input delivered directly through `/proc/<pid>/io/input`.
+#[async_trait]
+pub trait ProcessInputEventSink: Send + Sync {
+    async fn input_appended(&self, pid: &str, count: u32);
+}
+
+/// Optional event source implemented by file servers that own process input.
+#[async_trait]
+pub trait ProcessInputEventSource: Send + Sync {
+    async fn subscribe_process_input(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessInputEventSink>,
+    ) -> Result<(), ErrorCode>;
+}
+
 /// The in-process fast path: dispatches a wire [`Request`] to a [`FileServer`]
 /// and returns its [`Response`] with no serialization (§5.6).
 #[derive(Clone)]

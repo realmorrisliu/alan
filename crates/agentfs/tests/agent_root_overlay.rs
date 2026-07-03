@@ -8,8 +8,8 @@ use std::{
 
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessOutputEventSource,
-    Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessInputEventSource,
+    ProcessOutputEventSource, Qid, Stat,
 };
 use alan_kernel::{Access, Credentials, MountFs, Namespace, Pid, ProcFs};
 use alan_memfs::MemFs;
@@ -20,9 +20,11 @@ use tokio::sync::Notify;
 fn namespace_shell_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn FileServer> = proc.clone();
+    let proc_input_events: Arc<dyn ProcessInputEventSource> = proc.clone();
     let proc_output_events: Arc<dyn ProcessOutputEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_process_output_events(
+    let agent_root = Arc::new(AgentRootFs::new_with_process_io_events(
         proc_server,
+        proc_input_events,
         proc_output_events,
     ));
 
@@ -266,6 +268,46 @@ async fn direct_proc_output_writes_publish_agent_events() {
                 .unwrap()
                 .contains("output:11"),
             "{path} should publish a proc-owned output event"
+        );
+    }
+}
+
+#[tokio::test]
+async fn direct_proc_input_writes_publish_agent_events() {
+    let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let input_fid = Fid(9_250);
+    proc.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    proc.open(input_fid, OpenMode::Write).await.unwrap();
+    proc.write(input_fid, 0, b"direct input").await.unwrap();
+    proc.clunk(input_fid).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap(),
+        "direct input"
+    );
+    for path in [
+        format!("/agent/{pid}/events"),
+        format!("/agent/{pid}/io/events"),
+    ] {
+        assert!(
+            String::from_utf8(shell.cat(&path).await.unwrap())
+                .unwrap()
+                .contains("input:12"),
+            "{path} should publish a direct proc input event"
         );
     }
 }

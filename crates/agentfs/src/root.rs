@@ -20,8 +20,8 @@ use std::{
 };
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessOutputEventSink,
-    ProcessOutputEventSource, Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessInputEventSink,
+    ProcessInputEventSource, ProcessOutputEventSink, ProcessOutputEventSource, Qid, Stat,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -73,6 +73,7 @@ struct ProcCreateDir {
 
 struct State {
     agents: HashMap<String, AgentRegistration>,
+    input_event_pids: HashSet<String>,
     output_event_pids: HashSet<String>,
     root_pid: Option<String>,
     fids: HashMap<Fid, Entry>,
@@ -85,6 +86,7 @@ struct State {
 /// per-agent state is served by the registered backing `AgentFs` handles.
 pub struct AgentRootFs {
     proc: Arc<dyn FileServer>,
+    input_events: Option<Arc<dyn ProcessInputEventSource>>,
     output_events: Option<Arc<dyn ProcessOutputEventSource>>,
     state: Arc<Mutex<State>>,
 }
@@ -93,9 +95,11 @@ impl AgentRootFs {
     pub fn new(proc: Arc<dyn FileServer>) -> Self {
         Self {
             proc,
+            input_events: None,
             output_events: None,
             state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                input_event_pids: HashSet::new(),
                 output_event_pids: HashSet::new(),
                 root_pid: None,
                 fids: HashMap::new(),
@@ -109,9 +113,30 @@ impl AgentRootFs {
     ) -> Self {
         Self {
             proc,
+            input_events: None,
             output_events: Some(output_events),
             state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                input_event_pids: HashSet::new(),
+                output_event_pids: HashSet::new(),
+                root_pid: None,
+                fids: HashMap::new(),
+            })),
+        }
+    }
+
+    pub fn new_with_process_io_events(
+        proc: Arc<dyn FileServer>,
+        input_events: Arc<dyn ProcessInputEventSource>,
+        output_events: Arc<dyn ProcessOutputEventSource>,
+    ) -> Self {
+        Self {
+            proc,
+            input_events: Some(input_events),
+            output_events: Some(output_events),
+            state: Arc::new(Mutex::new(State {
+                agents: HashMap::new(),
+                input_event_pids: HashSet::new(),
                 output_event_pids: HashSet::new(),
                 root_pid: None,
                 fids: HashMap::new(),
@@ -129,7 +154,7 @@ impl AgentRootFs {
         let has_event_sink = event_sink.is_some();
         let backing: Arc<dyn FileServer> = agent;
         let parent_pid = self.proc_parent_of(&pid).await.ok().flatten();
-        let (parent_events, subscribe_output_events) = {
+        let (parent_events, subscribe_input_events, subscribe_output_events) = {
             let mut state = self.state.lock().await;
             state.agents.insert(
                 pid.clone(),
@@ -144,13 +169,32 @@ impl AgentRootFs {
                     .get(&parent_pid)
                     .and_then(|agent| agent.event_sink.clone())
             });
+            let subscribe_input_events = has_event_sink
+                && self.input_events.is_some()
+                && state.input_event_pids.insert(pid.clone());
             let subscribe_output_events = has_event_sink
                 && self.output_events.is_some()
                 && state.output_event_pids.insert(pid.clone());
-            (parent_events, subscribe_output_events)
+            (
+                parent_events,
+                subscribe_input_events,
+                subscribe_output_events,
+            )
         };
         if let Some(parent) = parent_events {
             parent.append_child_event(&pid).await;
+        }
+        if subscribe_input_events && let Some(input_events) = self.input_events.clone() {
+            let sink = Arc::new(AgentInputEventSink {
+                state: self.state.clone(),
+            });
+            if input_events
+                .subscribe_process_input(&pid, sink)
+                .await
+                .is_err()
+            {
+                self.state.lock().await.input_event_pids.remove(&pid);
+            }
         }
         if subscribe_output_events && let Some(output_events) = self.output_events.clone() {
             let sink = Arc::new(AgentOutputEventSink {
@@ -482,14 +526,6 @@ impl AgentRootFs {
         state.fids.insert(fid, Entry { node });
         Ok(())
     }
-
-    async fn agent_event_sink_for(&self, pid: &str) -> Option<Arc<AgentFs>> {
-        let state = self.state.lock().await;
-        state
-            .agents
-            .get(pid)
-            .and_then(|agent| agent.event_sink.clone())
-    }
 }
 
 fn agent_event_sink<T>(agent: &Arc<T>) -> Option<Arc<AgentFs>>
@@ -502,6 +538,26 @@ where
 
 struct AgentOutputEventSink {
     state: Arc<Mutex<State>>,
+}
+
+struct AgentInputEventSink {
+    state: Arc<Mutex<State>>,
+}
+
+#[async_trait]
+impl ProcessInputEventSink for AgentInputEventSink {
+    async fn input_appended(&self, pid: &str, count: u32) {
+        let event_sink = {
+            let state = self.state.lock().await;
+            state
+                .agents
+                .get(pid)
+                .and_then(|agent| agent.event_sink.clone())
+        };
+        if let Some(agent) = event_sink {
+            agent.append_input_event(count).await;
+        }
+    }
 }
 
 #[async_trait]
@@ -656,20 +712,7 @@ impl FileServer for AgentRootFs {
                 backing_fid,
                 ..
             } => backing.write(backing_fid, offset, data).await,
-            Node::ProcFile {
-                proc,
-                proc_fid,
-                pid,
-                names,
-            } => {
-                let count = proc.write(proc_fid, offset, data).await?;
-                if is_proc_io_input_path(&names)
-                    && let Some(agent) = self.agent_event_sink_for(&pid).await
-                {
-                    agent.append_input_event(count).await;
-                }
-                Ok(count)
-            }
+            Node::ProcFile { proc, proc_fid, .. } => proc.write(proc_fid, offset, data).await,
         }
     }
 
@@ -899,10 +942,6 @@ fn is_proc_overlay_name(name: &str) -> bool {
         name,
         "status" | "parent" | "credentials" | "exit" | "ctl" | "namespace" | "io"
     )
-}
-
-fn is_proc_io_input_path(names: &[String]) -> bool {
-    names == ["io", "input"]
 }
 
 fn proc_child_names(mut names: Vec<String>, child: &str) -> Vec<String> {

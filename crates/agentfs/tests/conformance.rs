@@ -6,8 +6,8 @@ use std::sync::{
 
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessOutputEventSource,
-    Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessInputEventSource,
+    ProcessOutputEventSource, Qid, Stat,
 };
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 use alan_shell::Shell;
@@ -16,9 +16,11 @@ use async_trait::async_trait;
 fn namespace_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>) {
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn FileServer> = proc.clone();
+    let proc_input_events: Arc<dyn ProcessInputEventSource> = proc.clone();
     let proc_output_events: Arc<dyn ProcessOutputEventSource> = proc.clone();
-    let agent_root = Arc::new(AgentRootFs::new_with_process_output_events(
+    let agent_root = Arc::new(AgentRootFs::new_with_process_io_events(
         proc_server,
+        proc_input_events,
         proc_output_events,
     ));
 
