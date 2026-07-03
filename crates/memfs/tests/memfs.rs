@@ -60,6 +60,19 @@ async fn removing_a_memory_file_removes_its_namespace_authority() {
 }
 
 #[tokio::test]
+async fn read_write_range_writes_preserve_unwritten_bytes() {
+    let fs = MemFs::new();
+    create_file(&fs, "facts", Fid(1), b"abcdef").await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["facts".into()]).await.unwrap();
+    fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(2), 2, b"XY").await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+
+    assert_eq!(read_file(&fs, "facts", Fid(3)).await, b"abXYef");
+}
+
+#[tokio::test]
 async fn durable_home_can_resume_a_file_from_its_root_hash() {
     let fs = MemFs::new();
     create_file(&fs, "continuity", Fid(1), b"remember this").await;

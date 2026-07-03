@@ -551,6 +551,9 @@ impl FileServer for AgentRootFs {
     }
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if fid == Fid::ROOT {
+            return Err(ErrorCode::Unsupported);
+        }
         match self.node(fid).await? {
             Node::Root => Err(ErrorCode::Unsupported),
             Node::AgentChildren { .. } => Err(ErrorCode::Unsupported),
@@ -561,7 +564,9 @@ impl FileServer for AgentRootFs {
                 ..
             } => backing.remove(backing_fid).await,
             Node::ProcFile { proc, proc_fid } => proc.remove(proc_fid).await,
-        }
+        }?;
+        self.state.lock().await.fids.remove(&fid);
+        Ok(())
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {

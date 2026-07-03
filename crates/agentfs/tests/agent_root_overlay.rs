@@ -181,3 +181,44 @@ async fn agent_root_tracks_created_fids_forwarded_to_backing() {
         "alpha"
     );
 }
+
+#[tokio::test]
+async fn agent_root_releases_outer_fid_after_delegated_remove() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(MemFs::new()))
+        .await;
+
+    let dir_fid = Fid(21_000);
+    let file_fid = Fid(21_001);
+    agent_root
+        .walk(Fid::ROOT, dir_fid, std::slice::from_ref(&pid))
+        .await
+        .unwrap();
+    agent_root
+        .create(dir_fid, file_fid, "scratch", FileKind::File)
+        .await
+        .unwrap();
+    agent_root.clunk(file_fid).await.unwrap();
+    agent_root.clunk(dir_fid).await.unwrap();
+
+    let remove_fid = Fid(21_002);
+    agent_root
+        .walk(Fid::ROOT, remove_fid, &[pid.clone(), "scratch".into()])
+        .await
+        .unwrap();
+    agent_root.remove(remove_fid).await.unwrap();
+    assert!(matches!(
+        shell.cat(&format!("/agent/{pid}/scratch")).await,
+        Err(ErrorCode::NotFound)
+    ));
+
+    agent_root
+        .walk(Fid::ROOT, remove_fid, std::slice::from_ref(&pid))
+        .await
+        .expect("remove releases the outer fid for reuse");
+}

@@ -193,9 +193,20 @@ impl FileServer for MemFs {
         {
             return Err(ErrorCode::NotFound);
         }
+        let read_write_base = if matches!(mode, OpenMode::ReadWrite) {
+            match &node {
+                Node::File(name) => Some(state.materialize(name)?),
+                Node::Root => None,
+            }
+        } else {
+            None
+        };
         if fid != Fid::ROOT {
             let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
             f.mode = Some(mode);
+            if let Some(bytes) = read_write_base {
+                f.write_buf = bytes;
+            }
         }
         Ok(state.qid(&node))
     }
