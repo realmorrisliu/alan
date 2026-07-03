@@ -89,6 +89,27 @@ async fn addr_selects_a_revision_bound_body_range() {
 }
 
 #[tokio::test]
+async fn addr_write_rejects_non_current_body_revision() {
+    let fs = EditFs::new();
+    write_doc(&fs, &["body"], Fid(1), b"alpha").await.unwrap();
+
+    let future = write_doc(&fs, &["addr"], Fid(2), b"rev:2 0..5")
+        .await
+        .unwrap_err();
+    assert_eq!(future, ErrorCode::BadRequest);
+    assert_eq!(read_text(&fs, &["addr"], Fid(3)).await, "rev:0 0..0");
+
+    write_doc(&fs, &["body"], Fid(4), b"alpha beta")
+        .await
+        .unwrap();
+    let stale = write_doc(&fs, &["addr"], Fid(5), b"rev:1 0..5")
+        .await
+        .unwrap_err();
+    assert_eq!(stale, ErrorCode::BadRequest);
+    assert_eq!(read_text(&fs, &["addr"], Fid(6)).await, "rev:0 0..0");
+}
+
+#[tokio::test]
 async fn stale_addr_is_rejected_when_exec_consumes_it() {
     let fs = EditFs::with_execution_policy(ExecutionPolicy::AcceptAll);
     write_doc(&fs, &["body"], Fid(1), b"first").await.unwrap();

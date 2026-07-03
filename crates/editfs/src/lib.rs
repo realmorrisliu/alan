@@ -248,6 +248,9 @@ impl State {
     async fn commit_addr(&mut self, bytes: Vec<u8>) -> Result<(), ErrorCode> {
         let text = String::from_utf8(bytes).map_err(|_| ErrorCode::BadRequest)?;
         let addr = AddressRange::parse(&text)?;
+        if addr.revision != self.body_revision {
+            return Err(ErrorCode::BadRequest);
+        }
         self.validate_range_shape(&addr)?;
         self.addr = addr.clone();
         self.versions.bump(node_identity(&Node::Addr).1);
