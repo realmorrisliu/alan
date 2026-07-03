@@ -1137,7 +1137,7 @@ async fn build_root_namespace_environment(
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let agentfs: Arc<dyn FileServer> = Arc::new(alan_agentfs::AgentFs::new());
+    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection("default", Box::new(RuntimeLlmProvider::new(llm_client)));
 
@@ -2198,13 +2198,17 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut core_config = crate::Config::default();
+        let mut core_config = crate::Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("test-model"),
+        );
         core_config.memory.enabled = true;
         core_config.memory.workspace_dir = Some(memory_dir.clone());
         core_config.streaming_mode = crate::config::StreamingMode::Off;
@@ -2236,19 +2240,33 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let mut observed_events = Vec::new();
+        let wait_result = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if envelope.submission_id.as_deref() != Some(submission.id.as_str()) {
-                    continue;
-                }
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
+                let envelope = event_rx
+                    .recv()
+                    .await
+                    .expect("runtime event stream closed before turn completion");
+                observed_events.push(format!(
+                    "{:?} submission_id={:?}",
+                    envelope.event, envelope.submission_id
+                ));
+                match &envelope.event {
+                    Event::TurnCompleted { .. } => break,
+                    Event::Error { message, .. } => {
+                        panic!(
+                            "runtime emitted error before shutdown drain: {message}; \
+                             observed_events={observed_events:?}"
+                        );
+                    }
+                    _ => {}
                 }
             }
         })
-        .await
-        .expect("wait for turn completion");
+        .await;
+        if wait_result.is_err() {
+            panic!("wait for turn completion; observed_events={observed_events:?}");
+        }
 
         controller.shutdown().await.unwrap();
 

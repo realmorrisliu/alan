@@ -16,7 +16,7 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{config::Config, runtime::RuntimeConfig, session::Session, tools::ToolRegistry};
+use crate::{config::Config, retry, runtime::RuntimeConfig, session::Session, tools::ToolRegistry};
 
 use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
 use super::tool_orchestrator::{
@@ -190,25 +190,52 @@ impl RuntimeLoopState {
         timeout_secs: u64,
         cancel: &CancellationToken,
     ) -> Result<crate::llm::GenerationResponse> {
-        let namespace = self.namespace_environment().clone();
-        let generate = async move { namespace.generate(&request).await };
-        if timeout_secs == 0 {
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = generate => result,
+        let max_retries = retry::DEFAULT_MAX_RETRIES;
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            if cancel.is_cancelled() {
+                return Err(anyhow::anyhow!("LLM request cancelled"));
             }
-        } else {
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = tokio::time::timeout(
-                    tokio::time::Duration::from_secs(timeout_secs),
-                    generate,
-                ) => match result {
-                    Ok(result) => result,
-                    Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
-                },
+
+            let namespace = self.namespace_environment().clone();
+            let attempt_request = request.clone();
+            let generate = async move { namespace.generate(&attempt_request).await };
+            let result = if timeout_secs == 0 {
+                tokio::select! {
+                    _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
+                    result = generate => result,
+                }
+            } else {
+                tokio::select! {
+                    _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
+                    result = tokio::time::timeout(
+                        tokio::time::Duration::from_secs(timeout_secs),
+                        generate,
+                    ) => match result {
+                        Ok(result) => result,
+                        Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
+                    },
+                }
+            };
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if !retry::is_retryable(&error) || attempt >= max_retries {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                    let delay = retry::backoff_delay(attempt + 1);
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
             }
         }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
     }
 
     pub(crate) fn tool_catalog(&self) -> &ToolRegistry {
@@ -645,6 +672,22 @@ mod tests {
         ))
     }
 
+    fn runtime_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment: namespace_environment_with_provider(provider),
+            tool_catalog: ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        }
+    }
+
     async fn namespace_environment_with_live_process(
         provider: impl LlmProvider + 'static,
     ) -> RuntimeEnvironment {
@@ -953,6 +996,26 @@ mod tests {
         fn provider_name(&self) -> &'static str {
             "sequenced_mock"
         }
+    }
+
+    #[tokio::test]
+    async fn namespace_generation_retries_transient_llmfs_errors() {
+        let mut state = runtime_state_with_provider(SequencedMockProvider::new(vec![
+            SequencedStep::Error("503 unavailable".to_string()),
+            SequencedStep::Success("recovered".to_string()),
+        ]));
+        let cancel = CancellationToken::new();
+
+        let response = state
+            .generate_response_with_retry(
+                GenerationRequest::new().with_user_message("hello"),
+                0,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "recovered");
     }
 
     fn memory_flush_json_response() -> String {

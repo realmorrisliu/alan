@@ -159,7 +159,32 @@ where
     F: std::future::Future<Output = ()>,
 {
     if live_namespace_text {
+        return generate_live_namespace_response_with_retry(state, request, timeout_secs, cancel)
+            .await;
+    }
+
+    state
+        .generate_response_with_retry(request, timeout_secs, cancel)
+        .await
+        .map(|response| (response, Vec::new()))
+}
+
+async fn generate_live_namespace_response_with_retry(
+    state: &RuntimeLoopState,
+    request: crate::llm::GenerationRequest,
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> Result<(crate::llm::GenerationResponse, Vec<String>)> {
+    let max_retries = crate::retry::DEFAULT_MAX_RETRIES;
+    let mut last_error = None;
+
+    for attempt in 0..=max_retries {
+        if cancel.is_cancelled() {
+            return Err(anyhow::anyhow!("LLM request cancelled"));
+        }
+
         let namespace = state.namespace_environment().clone();
+        let attempt_request = request.clone();
         let mut live_text_chunks = Vec::new();
         let mut collect_text = |event: Event| {
             if let Event::TextDelta {
@@ -172,32 +197,32 @@ where
             }
             async {}
         };
-        let generate = namespace.generate_with_text_events(&request, &mut collect_text);
-        let result = if timeout_secs == 0 {
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = generate => result,
+        let result = namespace
+            .generate_with_text_events_controlled(
+                &attempt_request,
+                &mut collect_text,
+                timeout_secs,
+                cancel,
+            )
+            .await;
+
+        match result {
+            Ok((response, _saw_text_events)) => return Ok((response, live_text_chunks)),
+            Err(error) => {
+                if !crate::retry::is_retryable(&error) || attempt >= max_retries {
+                    return Err(error);
+                }
+                last_error = Some(error);
+                let delay = crate::retry::backoff_delay(attempt + 1);
+                tokio::select! {
+                    _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
+                    _ = tokio::time::sleep(delay) => {}
+                }
             }
-        } else {
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = tokio::time::timeout(
-                    tokio::time::Duration::from_secs(timeout_secs),
-                    generate,
-                ) => match result {
-                    Ok(result) => result,
-                    Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
-                },
-            }
-        }?;
-        let (response, _saw_text_events) = result;
-        return Ok((response, live_text_chunks));
+        }
     }
 
-    state
-        .generate_response_with_retry(request, timeout_secs, cancel)
-        .await
-        .map(|response| (response, Vec::new()))
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
 }
 
 async fn load_generation_connection_context(
@@ -1779,6 +1804,52 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "panic_on_stream"
+        }
+    }
+
+    struct TransientStreamFailureProvider {
+        generate_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for TransientStreamFailureProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Err(anyhow::anyhow!(
+                "transient stream provider should use generate_stream"
+            ))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("transient stream mock".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let call = self.generate_calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Err(anyhow::anyhow!("temporary 503 from stream"));
+            }
+            Ok(response_stream(GenerationResponse {
+                content: "Recovered after retry.".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+                warnings: Vec::new(),
+            }))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "transient_stream_failure"
         }
     }
 
@@ -5771,5 +5842,49 @@ runtime:
             })
             .collect::<String>();
         assert_eq!(emitted_text, "final response through request response");
+    }
+
+    #[tokio::test]
+    async fn test_namespace_live_turn_generation_retries_transient_stream_failure() {
+        let generate_calls = Arc::new(AtomicUsize::new(0));
+        let mut state = create_test_state_with_provider(TransientStreamFailureProvider {
+            generate_calls: Arc::clone(&generate_calls),
+        });
+        state.runtime_config.llm_request_timeout_secs = 5;
+
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result = run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("Test transient stream retry")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+        assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Error { .. })),
+            "transient stream failure should retry without surfacing an error: {events:?}"
+        );
+        let emitted_text = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta { chunk, .. } if !chunk.is_empty() => Some(chunk.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(emitted_text, "Recovered after retry.");
     }
 }

@@ -18,6 +18,7 @@ use alan_ap::{ErrorCode, Fid, FileKind, InProcessTransport, OpenMode, Request, R
 use alan_llm::{GenerationRequest, GenerationResponse};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 static NEXT_FID: AtomicU64 = AtomicU64::new(10_000);
 
@@ -296,6 +297,47 @@ impl NamespaceRuntimeEnvironment {
         Ok(response)
     }
 
+    pub async fn generate_with_text_events_controlled<E, F>(
+        &self,
+        request: &GenerationRequest,
+        emit: &mut E,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<(GenerationResponse, bool)>
+    where
+        E: FnMut(Event) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        let request_doc = LlmRequestDoc::from_generation_request(request)?;
+        let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
+        let client = NamespaceClient::new(self.root.clone());
+        let generation_id = start_generation_controlled(
+            &client,
+            &self.llm_connection,
+            &request_bytes,
+            timeout_secs,
+            cancel,
+        )
+        .await?;
+        let read_response = read_generation_response_with_text_events(
+            &client,
+            &self.llm_connection,
+            &generation_id,
+            emit,
+        );
+        let response = run_generation_read_with_controls(
+            read_response,
+            &client,
+            &self.llm_connection,
+            &generation_id,
+            timeout_secs,
+            cancel,
+        )
+        .await
+        .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        Ok(response)
+    }
+
     pub async fn write_assistant_state(&self, response: &str) -> Result<()> {
         self.write_assistant_output(response).await?;
         self.write_turn_tape_state(None, response).await
@@ -333,6 +375,10 @@ impl NamespaceRuntimeEnvironment {
 
     pub async fn write_process_control(&self, command: &str) -> Result<()> {
         let pid = agent_pid_from_path(&self.agent_path)?;
+        self.write_process_control_for_pid(pid, command).await
+    }
+
+    pub async fn write_process_control_for_pid(&self, pid: &str, command: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         let ctl_path = format!("/proc/{pid}/ctl");
         client
@@ -379,11 +425,59 @@ impl NamespaceRuntimeEnvironment {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let pid = self.spawn_process(executable, args).await?;
-        let result = self
-            .read_process_result(&pid)
+        let cancel = CancellationToken::new();
+        self.run_tool_action_with_cancel_and_timeout(tool_name, executable, args, &cancel, 30)
             .await
-            .with_context(|| format!("read tool process {pid} result"))?;
+    }
+
+    pub async fn run_tool_action_with_cancel<I, S>(
+        &self,
+        tool_name: &str,
+        executable: &str,
+        args: I,
+        cancel: &CancellationToken,
+    ) -> Result<NamespaceToolActionOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.run_tool_action_with_cancel_and_timeout(tool_name, executable, args, cancel, 30)
+            .await
+    }
+
+    pub async fn run_tool_action_with_cancel_and_timeout<I, S>(
+        &self,
+        tool_name: &str,
+        executable: &str,
+        args: I,
+        cancel: &CancellationToken,
+        timeout_secs: usize,
+    ) -> Result<NamespaceToolActionOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        if cancel.is_cancelled() {
+            bail!("tool process cancelled before spawn");
+        }
+        let pid = self.spawn_process(executable, args).await?;
+        let result = tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = self.write_process_control_for_pid(&pid, "cancel").await;
+                bail!("tool process {pid} cancelled");
+            }
+            result = self.read_process_result(&pid, timeout_secs) => {
+                match result {
+                    Ok(result) => result,
+                    Err(err) => {
+                        let _ = self.write_process_control_for_pid(&pid, "cancel").await;
+                        return Err(err).with_context(|| {
+                            format!("read tool process {pid} result")
+                        });
+                    }
+                }
+            }
+        };
         let action_status = if result.exit_code == 0 {
             "completed"
         } else {
@@ -410,13 +504,20 @@ impl NamespaceRuntimeEnvironment {
         })
     }
 
-    async fn read_process_result(&self, pid: &str) -> Result<NamespaceProcessResult> {
+    async fn read_process_result(
+        &self,
+        pid: &str,
+        timeout_secs: usize,
+    ) -> Result<NamespaceProcessResult> {
+        if timeout_secs == 0 {
+            return self.read_process_result_until_exit(pid).await;
+        }
         tokio::time::timeout(
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(timeout_secs as u64),
             self.read_process_result_until_exit(pid),
         )
         .await
-        .with_context(|| format!("timed out waiting for process {pid} to exit"))?
+        .with_context(|| format!("timed out waiting {timeout_secs}s for process {pid} to exit"))?
     }
 
     async fn read_process_result_until_exit(&self, pid: &str) -> Result<NamespaceProcessResult> {
@@ -789,6 +890,106 @@ async fn start_generation(
     Ok(generation_id)
 }
 
+async fn start_generation_controlled(
+    client: &NamespaceClient,
+    llm_connection: &str,
+    request: &[u8],
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> Result<String> {
+    let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
+    let generation_id = client
+        .clone_via_open(&clone_path)
+        .await
+        .context("llmfs clone returned generation id")?;
+
+    let data_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/data");
+    let commit = client.write_document(&data_path, request);
+    let result = run_generation_step_with_controls(
+        commit,
+        client,
+        llm_connection,
+        &generation_id,
+        timeout_secs,
+        cancel,
+    )
+    .await;
+    match result {
+        Ok(()) => Ok(generation_id),
+        Err(err) => Err(err),
+    }
+}
+
+async fn abort_generation(
+    client: &NamespaceClient,
+    llm_connection: &str,
+    generation_id: &str,
+) -> Result<()> {
+    let ctl_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/ctl");
+    client.write_document(&ctl_path, b"abort").await
+}
+
+async fn run_generation_step_with_controls<T, Fut>(
+    operation: Fut,
+    client: &NamespaceClient,
+    llm_connection: &str,
+    generation_id: &str,
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> Result<T>
+where
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    if timeout_secs == 0 {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = abort_generation(client, llm_connection, generation_id).await;
+                Err(anyhow::anyhow!("LLM request cancelled"))
+            }
+            result = operation => result,
+        }
+    } else {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = abort_generation(client, llm_connection, generation_id).await;
+                Err(anyhow::anyhow!("LLM request cancelled"))
+            }
+            result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(timeout_secs),
+                operation,
+            ) => match result {
+                Ok(result) => result,
+                Err(_) => {
+                    let _ = abort_generation(client, llm_connection, generation_id).await;
+                    Err(anyhow::anyhow!("LLM request timed out"))
+                }
+            },
+        }
+    }
+}
+
+async fn run_generation_read_with_controls<T, Fut>(
+    operation: Fut,
+    client: &NamespaceClient,
+    llm_connection: &str,
+    generation_id: &str,
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> Result<T>
+where
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    run_generation_step_with_controls(
+        operation,
+        client,
+        llm_connection,
+        generation_id,
+        timeout_secs,
+        cancel,
+    )
+    .await
+}
+
 async fn read_generation_response(
     client: &NamespaceClient,
     llm_connection: &str,
@@ -811,8 +1012,9 @@ where
     F: std::future::Future<Output = ()>,
 {
     let events_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/events");
-    let fid = client.walk_to(&events_path).await?;
-    client.open(fid, OpenMode::Read).await?;
+    let fid = client
+        .open_path_guarded(&events_path, OpenMode::Read)
+        .await?;
     let mut offset = 0_u64;
     let mut response = String::new();
     let mut thinking = String::new();
@@ -826,7 +1028,7 @@ where
     let mut pending = Vec::new();
     let mut emitted_text = false;
     loop {
-        let chunk = client.read_at(fid, offset, 4096).await?;
+        let chunk = client.read_at(fid.fid(), offset, 4096).await?;
         if chunk.is_empty() {
             tokio::task::yield_now().await;
             continue;
@@ -903,7 +1105,7 @@ where
             let _ = event.sequence_number;
             if event.done == Some(true) {
                 let (tool_calls, warnings) = assemble_llmfs_tool_calls(tool_call_buffers);
-                client.clunk(fid).await?;
+                fid.close().await?;
                 return Ok((
                     GenerationResponse {
                         content: response,
@@ -927,12 +1129,15 @@ where
                 ));
             }
             if let Some(error) = event.error {
+                fid.close().await?;
                 bail!("llmfs generation failed: {error}");
             }
             if event.rejected == Some(true) {
+                fid.close().await?;
                 bail!("llmfs generation request was rejected");
             }
             if event.aborted == Some(true) {
+                fid.close().await?;
                 bail!("llmfs generation request was aborted");
             }
         }
@@ -1073,9 +1278,9 @@ struct InputFrame {
 }
 
 impl InputFrame {
-    fn parse_one(raw: &[u8]) -> Result<Self> {
+    fn total_len(raw: &[u8]) -> Result<Option<usize>> {
         let Some(nl) = raw.iter().position(|&b| b == b'\n') else {
-            bail!("input frame is missing length header");
+            return Ok(None);
         };
         let len: usize = std::str::from_utf8(&raw[..nl])
             .context("input frame length is not utf8")?
@@ -1085,9 +1290,19 @@ impl InputFrame {
         let end = start
             .checked_add(len)
             .context("input frame length overflowed")?;
+        Ok(Some(end))
+    }
+
+    fn parse_one(raw: &[u8]) -> Result<Self> {
+        let end = Self::total_len(raw)?.context("input frame is missing length header")?;
         if raw.len() < end {
             bail!("input frame is truncated");
         }
+        let start = raw
+            .iter()
+            .position(|&b| b == b'\n')
+            .expect("total_len requires a length header")
+            + 1;
         let message = String::from_utf8(raw[start..end].to_vec())
             .context("input frame payload is not utf8")?;
         Ok(Self {
@@ -1100,6 +1315,43 @@ impl InputFrame {
 #[derive(Clone)]
 struct NamespaceClient {
     fs: InProcessTransport,
+}
+
+struct NamespaceFidGuard {
+    client: NamespaceClient,
+    fid: Option<Fid>,
+}
+
+impl NamespaceFidGuard {
+    fn new(client: NamespaceClient, fid: Fid) -> Self {
+        Self {
+            client,
+            fid: Some(fid),
+        }
+    }
+
+    fn fid(&self) -> Fid {
+        self.fid.expect("namespace fid guard is closed")
+    }
+
+    async fn close(mut self) -> Result<()> {
+        let Some(fid) = self.fid.take() else {
+            return Ok(());
+        };
+        self.client.clunk(fid).await
+    }
+}
+
+impl Drop for NamespaceFidGuard {
+    fn drop(&mut self) {
+        let Some(fid) = self.fid.take() else {
+            return;
+        };
+        let client = self.client.clone();
+        drop(tokio::spawn(async move {
+            let _ = client.clunk(fid).await;
+        }));
+    }
 }
 
 impl NamespaceClient {
@@ -1130,6 +1382,21 @@ impl NamespaceClient {
         }
     }
 
+    async fn open_guarded_fid(&self, fid: Fid, mode: OpenMode) -> Result<NamespaceFidGuard> {
+        match self.open(fid, mode).await {
+            Ok(_) => Ok(NamespaceFidGuard::new(self.clone(), fid)),
+            Err(err) => {
+                let _ = self.clunk(fid).await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn open_path_guarded(&self, path: &str, mode: OpenMode) -> Result<NamespaceFidGuard> {
+        let fid = self.walk_to(path).await?;
+        self.open_guarded_fid(fid, mode).await
+    }
+
     async fn read_at(&self, fid: Fid, offset: u64, count: u32) -> Result<Vec<u8>> {
         match self.fs.call(Request::Read { fid, offset, count }).await? {
             Response::Read { data } => Ok(data),
@@ -1144,11 +1411,28 @@ impl NamespaceClient {
         }
     }
 
+    async fn read_all_opened(&self, fid: Fid) -> Result<Vec<u8>> {
+        let mut offset = 0_u64;
+        let mut data = Vec::new();
+        loop {
+            let chunk = self.read_at(fid, offset, 64 * 1024).await?;
+            if chunk.is_empty() {
+                break;
+            }
+            offset += chunk.len() as u64;
+            let reached_short_read = chunk.len() < 64 * 1024;
+            data.extend_from_slice(&chunk);
+            if reached_short_read {
+                break;
+            }
+        }
+        Ok(data)
+    }
+
     async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        let fid = self.walk_to(path).await?;
-        self.open(fid, OpenMode::Read).await?;
-        let data = self.read_at(fid, 0, 64 * 1024).await;
-        let clunk = self.clunk(fid).await;
+        let fid = self.open_path_guarded(path, OpenMode::Read).await?;
+        let data = self.read_all_opened(fid.fid()).await;
+        let clunk = fid.close().await;
         match (data, clunk) {
             (Ok(data), Ok(())) => Ok(data),
             (Err(err), _) => Err(err),
@@ -1173,9 +1457,9 @@ impl NamespaceClient {
             Err(err) => return Err(err).with_context(|| format!("walk to {path}")),
         }
 
-        self.open(fid, OpenMode::Read).await?;
-        let data = self.read_at(fid, 0, 64 * 1024).await;
-        let clunk = self.clunk(fid).await;
+        let fid = self.open_guarded_fid(fid, OpenMode::Read).await?;
+        let data = self.read_all_opened(fid.fid()).await;
+        let clunk = fid.close().await;
         match (data, clunk) {
             (Ok(data), Ok(())) => Ok(Some(data)),
             (Err(err), _) => Err(err),
@@ -1288,10 +1572,29 @@ impl NamespaceClient {
     }
 
     async fn read_stream_from(&self, path: &str, offset: u64) -> Result<Vec<u8>> {
-        let fid = self.walk_to(path).await?;
-        self.open(fid, OpenMode::Read).await?;
-        let data = self.read_at(fid, offset, 64 * 1024).await;
-        let clunk = self.clunk(fid).await;
+        let fid = self.open_path_guarded(path, OpenMode::Read).await?;
+        let data = async {
+            let mut data = self.read_at(fid.fid(), offset, 64 * 1024).await?;
+            let total_len =
+                InputFrame::total_len(&data)?.context("input frame is missing length header")?;
+            while data.len() < total_len {
+                let remaining = total_len - data.len();
+                let count = remaining.min(64 * 1024) as u32;
+                if count == 0 {
+                    bail!("input frame is truncated");
+                }
+                let chunk = self
+                    .read_at(fid.fid(), offset + data.len() as u64, count)
+                    .await?;
+                if chunk.is_empty() {
+                    bail!("input frame is truncated");
+                }
+                data.extend_from_slice(&chunk);
+            }
+            Ok(data)
+        }
+        .await;
+        let clunk = fid.close().await;
         match (data, clunk) {
             (Ok(data), Ok(())) => Ok(data),
             (Err(err), _) => Err(err),
@@ -1330,17 +1633,23 @@ fn agent_pid_from_path(agent_path: &str) -> Result<&str> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    };
 
     use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
-    use alan_ap::{FileServer, InProcessTransport, Request};
+    use alan_ap::{FileServer, InProcessTransport, Qid, Request};
     use alan_kernel::{
         Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
         ProcessRunner,
     };
-    use alan_llm::{GenerationResponse, MockLlmProvider};
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
+    };
     use alan_llmfs::LlmFs;
     use alan_shell::Shell;
+    use tokio::sync::Notify;
 
     use super::*;
 
@@ -1369,6 +1678,383 @@ mod tests {
             output.push(b'\n');
             ProcessOutcome::exited(0, output)
         }
+    }
+
+    struct LargeOutputRunner;
+
+    #[async_trait::async_trait]
+    impl ProcessRunner for LargeOutputRunner {
+        async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+            ProcessOutcome::exited(0, vec![b'x'; 70 * 1024])
+        }
+    }
+
+    struct AbortObservedRunner {
+        started: Arc<Notify>,
+        dropped: Arc<Notify>,
+    }
+
+    struct AbortDropGuard {
+        dropped: Arc<Notify>,
+    }
+
+    impl Drop for AbortDropGuard {
+        fn drop(&mut self) {
+            self.dropped.notify_one();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProcessRunner for AbortObservedRunner {
+        async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+            let _guard = AbortDropGuard {
+                dropped: Arc::clone(&self.dropped),
+            };
+            self.started.notify_one();
+            std::future::pending::<ProcessOutcome>().await
+        }
+    }
+
+    struct BlockingStreamProvider {
+        started: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for BlockingStreamProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Err(anyhow::anyhow!("blocking provider uses streaming"))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("blocking stream provider".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            self.started.notify_one();
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tokio::spawn(async move {
+                let _hold = tx;
+                std::future::pending::<()>().await;
+            });
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "blocking_stream"
+        }
+    }
+
+    fn input_frame(message: &str) -> Vec<u8> {
+        format!("{}\n{message}", message.len()).into_bytes()
+    }
+
+    fn tool_test_environment(
+        runner: Arc<dyn ProcessRunner>,
+    ) -> (NamespaceRuntimeEnvironment, Shell) {
+        let procfs = ProcFs::new().with_runner(runner);
+        let agentfs = Arc::new(AgentFs::new());
+        let binfs = Arc::new(alan_ap::reference::MemFs::new());
+
+        let mut child_namespace = Namespace::new();
+        child_namespace.mount(
+            "/proc",
+            InProcessTransport::new(Arc::new(procfs.clone())),
+            Access::ReadWrite,
+        );
+        child_namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs.clone()),
+            Access::ReadWrite,
+        );
+        child_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
+
+        let spawner_procfs =
+            Arc::new(procfs.for_spawner(None, child_namespace, Credentials::user("root-agent")));
+        let mut root_namespace = Namespace::new();
+        root_namespace.mount(
+            "/proc",
+            InProcessTransport::new(spawner_procfs),
+            Access::ReadWrite,
+        );
+        root_namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
+        (
+            NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
+            Shell::new(root),
+        )
+    }
+
+    struct BlockingReadFs {
+        read_started: Notify,
+        clunked: Notify,
+        clunk_count: AtomicUsize,
+    }
+
+    impl BlockingReadFs {
+        fn new() -> Self {
+            Self {
+                read_started: Notify::new(),
+                clunked: Notify::new(),
+                clunk_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn qid(kind: FileKind) -> Qid {
+            Qid {
+                kind,
+                version: 0,
+                path: 1,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileServer for BlockingReadFs {
+        async fn walk(
+            &self,
+            _fid: Fid,
+            _newfid: Fid,
+            _names: &[String],
+        ) -> std::result::Result<Qid, ErrorCode> {
+            Ok(Self::qid(FileKind::Stream))
+        }
+
+        async fn open(&self, _fid: Fid, _mode: OpenMode) -> std::result::Result<Qid, ErrorCode> {
+            Ok(Self::qid(FileKind::Stream))
+        }
+
+        async fn read(
+            &self,
+            _fid: Fid,
+            _offset: u64,
+            _count: u32,
+        ) -> std::result::Result<Vec<u8>, ErrorCode> {
+            self.read_started.notify_one();
+            std::future::pending().await
+        }
+
+        async fn write(
+            &self,
+            _fid: Fid,
+            _offset: u64,
+            _data: &[u8],
+        ) -> std::result::Result<u32, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn stat(&self, _fid: Fid) -> std::result::Result<Stat, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn create(
+            &self,
+            _fid: Fid,
+            _newfid: Fid,
+            _name: &str,
+            _kind: FileKind,
+        ) -> std::result::Result<Qid, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn remove(&self, _fid: Fid) -> std::result::Result<(), ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn clunk(&self, _fid: Fid) -> std::result::Result<(), ErrorCode> {
+            self.clunk_count.fetch_add(1, AtomicOrdering::SeqCst);
+            self.clunked.notify_one();
+            Ok(())
+        }
+    }
+
+    struct ScriptedReadFs {
+        data: Vec<u8>,
+        clunk_count: AtomicUsize,
+    }
+
+    impl ScriptedReadFs {
+        fn new(data: impl Into<Vec<u8>>) -> Self {
+            Self {
+                data: data.into(),
+                clunk_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileServer for ScriptedReadFs {
+        async fn walk(
+            &self,
+            _fid: Fid,
+            _newfid: Fid,
+            _names: &[String],
+        ) -> std::result::Result<Qid, ErrorCode> {
+            Ok(BlockingReadFs::qid(FileKind::Stream))
+        }
+
+        async fn open(&self, _fid: Fid, _mode: OpenMode) -> std::result::Result<Qid, ErrorCode> {
+            Ok(BlockingReadFs::qid(FileKind::Stream))
+        }
+
+        async fn read(
+            &self,
+            _fid: Fid,
+            offset: u64,
+            count: u32,
+        ) -> std::result::Result<Vec<u8>, ErrorCode> {
+            let start = offset as usize;
+            if start >= self.data.len() {
+                return Ok(Vec::new());
+            }
+            let end = (start + count as usize).min(self.data.len());
+            Ok(self.data[start..end].to_vec())
+        }
+
+        async fn write(
+            &self,
+            _fid: Fid,
+            _offset: u64,
+            _data: &[u8],
+        ) -> std::result::Result<u32, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn stat(&self, _fid: Fid) -> std::result::Result<Stat, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn create(
+            &self,
+            _fid: Fid,
+            _newfid: Fid,
+            _name: &str,
+            _kind: FileKind,
+        ) -> std::result::Result<Qid, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn remove(&self, _fid: Fid) -> std::result::Result<(), ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn clunk(&self, _fid: Fid) -> std::result::Result<(), ErrorCode> {
+            self.clunk_count.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn read_stream_clunks_open_fid_when_cancelled() {
+        let fs = Arc::new(BlockingReadFs::new());
+        let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
+        let task = tokio::spawn({
+            let client = client.clone();
+            async move { client.read_stream_from("/agent/1/io/input", 0).await }
+        });
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            fs.read_started.notified(),
+        )
+        .await
+        .expect("read should start");
+        task.abort();
+        let _ = task.await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), fs.clunked.notified())
+            .await
+            .expect("cancelled read should clunk the fid");
+
+        assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn llmfs_event_error_clunks_events_fid() {
+        let fs = Arc::new(ScriptedReadFs::new(
+            b"{\"version\":1,\"error\":\"temporary 503\"}\n".as_slice(),
+        ));
+        let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
+        let mut ignore = |_event: Event| async {};
+
+        let err =
+            read_generation_response_with_text_events(&client, "default", "gen-1", &mut ignore)
+                .await
+                .unwrap_err();
+
+        assert!(
+            err.to_string().contains("llmfs generation failed"),
+            "{err:#}"
+        );
+        assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn controlled_generation_aborts_llmfs_on_cancel() {
+        let started = Arc::new(Notify::new());
+        let llmfs = Arc::new(LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(BlockingStreamProvider {
+                started: Arc::clone(&started),
+            }),
+        );
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn({
+            let environment = environment.clone();
+            let cancel = cancel.clone();
+            async move {
+                let request = GenerationRequest::new().with_user_message("hello");
+                let mut ignore = |_event: Event| async {};
+                environment
+                    .generate_with_text_events_controlled(&request, &mut ignore, 30, &cancel)
+                    .await
+            }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("provider stream should start");
+        cancel.cancel();
+        let err = task.await.unwrap().unwrap_err();
+        let err = format!("{err:#}");
+        assert!(
+            err.contains("cancelled") || err.contains("aborted"),
+            "{err}"
+        );
+
+        let status = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g0/status")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(status["status"], "aborted");
     }
 
     #[tokio::test]
@@ -1418,7 +2104,7 @@ mod tests {
         agent_root.set_root_process(pid.clone()).await;
 
         shell
-            .write("/agent/1/io/input", b"hello agent")
+            .write("/agent/1/io/input", &input_frame("hello agent"))
             .await
             .unwrap();
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();
@@ -1744,6 +2430,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn input_frame_larger_than_initial_read_becomes_submission() {
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let message = "x".repeat(70 * 1024);
+
+        shell
+            .write("/agent/1/io/input", message.as_bytes())
+            .await
+            .unwrap();
+        let submission = environment
+            .read_next_input_submission(InputMode::FollowUp)
+            .await
+            .unwrap();
+
+        match submission.op {
+            Op::Input { parts, mode } => {
+                assert_eq!(mode, InputMode::FollowUp);
+                assert_eq!(parts, vec![ContentPart::text(message)]);
+            }
+            other => panic!("expected Op::Input, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn engine_spawns_process_with_spawner_assembled_namespace() {
         let procfs = ProcFs::new();
         let agentfs = Arc::new(AgentFs::new());
@@ -1874,6 +2592,111 @@ mod tests {
             String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
             "/proc/1"
         );
+    }
+
+    #[tokio::test]
+    async fn run_tool_action_cancels_spawned_process_on_cancel() {
+        let started = Arc::new(Notify::new());
+        let dropped = Arc::new(Notify::new());
+        let (environment, shell) = tool_test_environment(Arc::new(AbortObservedRunner {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        }));
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn({
+            let environment = environment.clone();
+            let cancel = cancel.clone();
+            async move {
+                environment
+                    .run_tool_action_with_cancel(
+                        "blocked",
+                        "/bin/blocked",
+                        Vec::<String>::new(),
+                        &cancel,
+                    )
+                    .await
+            }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("tool runner should start");
+        cancel.cancel();
+        let err = task.await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err:#}");
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped.notified())
+            .await
+            .expect("tool runner future should be aborted");
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            "exited\n"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+            "130"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
+        let started = Arc::new(Notify::new());
+        let dropped = Arc::new(Notify::new());
+        let (environment, shell) = tool_test_environment(Arc::new(AbortObservedRunner {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        }));
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn({
+            let environment = environment.clone();
+            let cancel = cancel.clone();
+            async move {
+                environment
+                    .run_tool_action_with_cancel_and_timeout(
+                        "blocked",
+                        "/bin/blocked",
+                        Vec::<String>::new(),
+                        &cancel,
+                        1,
+                    )
+                    .await
+            }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("tool runner should start");
+        let err = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("tool wait should use the configured timeout")
+            .unwrap()
+            .unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("timed out waiting 1s"), "{err}");
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped.notified())
+            .await
+            .expect("tool runner future should be aborted on wait timeout");
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            "exited\n"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+            "130"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_tool_action_reads_output_larger_than_initial_read() {
+        let (environment, _shell) = tool_test_environment(Arc::new(LargeOutputRunner));
+
+        let action = environment
+            .run_tool_action("large", "/bin/large", Vec::<String>::new())
+            .await
+            .unwrap();
+
+        assert_eq!(action.output.len(), 70 * 1024);
+        assert!(action.output.bytes().all(|byte| byte == b'x'));
+        assert_eq!(action.exit_code, 0);
     }
 
     #[tokio::test]

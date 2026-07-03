@@ -20,6 +20,7 @@ mod models;
 mod paths;
 mod policy;
 mod request_controls;
+mod retry;
 mod rollout;
 mod session;
 pub mod tape;

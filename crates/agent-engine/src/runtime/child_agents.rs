@@ -350,9 +350,11 @@ where
     .context("Failed to build child-agent tool registry")?;
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
-    let procfs = alan_kernel::ProcFs::new()
+    let launch_procfs = alan_kernel::ProcFs::new();
+    let runtime_procfs = launch_procfs
+        .clone()
         .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools.clone())));
-    let agentfs: Arc<dyn FileServer> = Arc::new(alan_agentfs::AgentFs::new());
+    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
         &child_namespace_plan.llm_connection_name()?,
@@ -366,7 +368,8 @@ where
         );
     }
     let namespace_launch = spawn_child_namespace_runtime_environment(
-        &procfs,
+        &launch_procfs,
+        &runtime_procfs,
         &child_namespace_plan,
         handles,
         "/bin/alan-agent",
@@ -1346,14 +1349,14 @@ impl ChildNamespaceAssemblyPlan {
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone)]
 struct ChildNamespaceLaunchHandles {
-    agent_tree: Arc<dyn FileServer>,
+    agent_tree: Arc<alan_agentfs::AgentFs>,
     llm_connection: InProcessTransport,
     bin_tools: Vec<(String, InProcessTransport)>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl ChildNamespaceLaunchHandles {
-    fn new(agent_tree: Arc<dyn FileServer>, llm_connection: InProcessTransport) -> Self {
+    fn new(agent_tree: Arc<alan_agentfs::AgentFs>, llm_connection: InProcessTransport) -> Self {
         Self {
             agent_tree,
             llm_connection,
@@ -1376,18 +1379,21 @@ struct ChildNamespaceRuntimeLaunch {
 
 #[cfg_attr(not(test), allow(dead_code))]
 async fn spawn_child_namespace_runtime_environment(
-    procfs: &alan_kernel::ProcFs,
+    launch_procfs: &alan_kernel::ProcFs,
+    runtime_procfs: &alan_kernel::ProcFs,
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
     validate_child_namespace_launch_handles(plan, &handles)?;
 
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(
+        launch_procfs.clone(),
+    )));
     let agent_root_tree = InProcessTransport::new(agent_root.clone());
     let spawner_namespace =
         child_spawner_namespace_from_launch_handles(plan, agent_root_tree.clone(), &handles);
-    let spawner_procfs = procfs.for_spawner(
+    let spawner_procfs = launch_procfs.for_spawner(
         None,
         spawner_namespace,
         alan_kernel::Credentials::user("root-agent"),
@@ -1428,7 +1434,7 @@ async fn spawn_child_namespace_runtime_environment(
     );
     let child_namespace =
         child_runtime_namespace_from_launch_handles(plan, agent_root_tree, &handles);
-    let child_procfs = procfs.for_spawner(
+    let child_procfs = runtime_procfs.for_spawner(
         Some(child_pid),
         child_namespace.clone(),
         alan_kernel::Credentials::user("child-agent"),
@@ -2811,18 +2817,25 @@ Body
             &plan,
         )
         .unwrap();
-        let procfs =
-            KernelProcFs::new().with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let launch_procfs = KernelProcFs::new();
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
         )
         .with_bin_tool("/bin/alpha", memfs_transport());
 
-        let launch =
-            spawn_child_namespace_runtime_environment(&procfs, &plan, handles, "/bin/alan-agent")
-                .await
-                .unwrap();
+        let launch = spawn_child_namespace_runtime_environment(
+            &launch_procfs,
+            &runtime_procfs,
+            &plan,
+            handles,
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(launch.pid, "1");
         assert_eq!(launch.environment.agent_path(), "/agent/1");
@@ -2832,8 +2845,18 @@ Body
             plan.clone_exec_spec_for_pid("1", "/bin/alan-agent", std::iter::empty::<String>())
         );
 
+        assert_eq!(
+            read_proc_path(
+                &launch_procfs,
+                vec![launch.pid.clone(), "status".to_string()],
+                Fid(90),
+            )
+            .await,
+            "running\n",
+            "child agent process should stay running after launch"
+        );
         let namespace = read_proc_path(
-            &procfs,
+            &launch_procfs,
             vec![launch.pid.clone(), "namespace".to_string()],
             Fid(92),
         )
@@ -2860,7 +2883,7 @@ Body
         assert_eq!(tool.action_id, "a0");
         assert_eq!(tool.output.trim(), r#"{"ok":true}"#);
         let tool_namespace = read_proc_path(
-            &procfs,
+            &launch_procfs,
             vec![tool.pid.clone(), "namespace".to_string()],
             Fid(93),
         )

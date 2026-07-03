@@ -462,6 +462,8 @@ async fn execute_tool_effect(
     target: ToolExecutionTarget,
     tool_name: &str,
     tool_arguments: Value,
+    cancel: &CancellationToken,
+    timeout_secs: usize,
 ) -> Result<Value> {
     match target {
         ToolExecutionTarget::Namespace(namespace) => {
@@ -469,7 +471,13 @@ async fn execute_tool_effect(
             let arguments_doc =
                 serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
             let tool = namespace
-                .run_tool_action(tool_name, &executable, [arguments_doc])
+                .run_tool_action_with_cancel_and_timeout(
+                    tool_name,
+                    &executable,
+                    [arguments_doc],
+                    cancel,
+                    timeout_secs,
+                )
                 .await?;
             namespace_tool_payload(tool)
         }
@@ -585,7 +593,7 @@ where
             refresh_context: false,
         });
     }
-    let current_tool_cwd: Option<std::path::PathBuf> = None;
+    let current_tool_cwd = state.default_tool_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             &state.runtime_config.policy_engine,
@@ -1130,19 +1138,21 @@ where
 
     let execution_target = ToolExecutionTarget::Namespace(state.namespace_environment().clone());
     let tool_start = Instant::now();
-    let tool_result = tokio::select! {
-        _ = inputs.cancel.cancelled() => {
-            if check_turn_cancelled(state, emit, inputs.cancel).await? {
-                return Ok(ToolOrchestratorOutcome::EndTurn);
-            }
-            unreachable!("check_turn_cancelled returns on cancellation");
-        }
-        result = execute_tool_effect(
-            execution_target,
-            &tool_call.name,
-            tool_arguments.clone(),
-        ) => result,
-    };
+    let tool_timeout_secs = state
+        .tool_catalog()
+        .execution_timeout_secs(&tool_call.name)
+        .unwrap_or(state.core_config.tool_timeout_secs);
+    let tool_result = execute_tool_effect(
+        execution_target,
+        &tool_call.name,
+        tool_arguments.clone(),
+        inputs.cancel,
+        tool_timeout_secs,
+    )
+    .await;
+    if inputs.cancel.is_cancelled() && check_turn_cancelled(state, emit, inputs.cancel).await? {
+        return Ok(ToolOrchestratorOutcome::EndTurn);
+    }
 
     match tool_result {
         Ok(value) => {
@@ -2452,12 +2462,15 @@ mod tests {
     async fn namespace_execution_target_spawns_every_builtin_bin_tool() {
         let (state, shell) = create_namespace_test_state_and_shell();
         let namespace = state.namespace_environment().clone();
+        let cancel = CancellationToken::new();
 
         for (idx, tool_name) in BUILTIN_BIN_TOOLS.iter().enumerate() {
             let payload = execute_tool_effect(
                 ToolExecutionTarget::Namespace(namespace.clone()),
                 tool_name,
                 json!({ "tool": tool_name, "call_index": idx }),
+                &cancel,
+                30,
             )
             .await
             .expect("namespace tool effect should execute through /bin");
@@ -3258,6 +3271,77 @@ mod tests {
                 .as_ref()
                 .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
         );
+    }
+
+    #[tokio::test]
+    async fn test_path_prefix_policy_uses_default_tool_cwd() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let workspace_alan = workspace_root.join(".alan");
+        std::fs::create_dir_all(workspace_root.join("src")).unwrap();
+        std::fs::create_dir_all(&workspace_alan).unwrap();
+        std::fs::write(
+            workspace_alan.join("policy.yaml"),
+            r#"
+rules:
+  - id: review-deploy
+    tool: "*"
+    capability: write
+    match_path_prefix: "deploy/"
+    action: deny
+    reason: deploy config updates are blocked
+default_action: allow
+"#,
+        )
+        .unwrap();
+
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
+        state.runtime_config.policy_engine =
+            crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
+        state
+            .tool_catalog_mut_for_test()
+            .set_default_cwd(workspace_root.join("src"));
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-deploy-write",
+            "write_file",
+            json!({"path": "../deploy/prod.yaml", "content": "version = 2"}),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("deploy config updates are blocked"),
+            "expected policy block preview, got {:?}",
+            result_preview
+        );
+        assert!(audit.as_ref().is_some_and(|audit| {
+            audit.rule_id.as_deref() == Some("review-deploy") && audit.action == "deny"
+        }));
     }
 
     #[tokio::test]
