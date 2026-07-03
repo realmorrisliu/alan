@@ -5,6 +5,7 @@ use alan_agent_engine::{
 use alan_agent_protocol::{ContentPart, Event, Op, Submission};
 use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, ToolCall,
+    ToolCallDelta,
 };
 use std::{
     collections::VecDeque,
@@ -59,15 +60,13 @@ impl LlmProvider for RecordingProvider {
 
     async fn generate_stream(
         &mut self,
-        _request: GenerationRequest,
+        request: GenerationRequest,
     ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
-        Err(anyhow::anyhow!(
-            "recording provider does not implement streaming"
-        ))
+        Ok(response_stream(self.generate(request).await?))
     }
 
     fn provider_name(&self) -> &'static str {
-        "recording_provider"
+        "openai_responses"
     }
 }
 
@@ -136,6 +135,80 @@ fn text_response(content: &str) -> GenerationResponse {
         provider_response_status: None,
         warnings: Vec::new(),
     }
+}
+
+fn response_stream(response: GenerationResponse) -> mpsc::Receiver<StreamChunk> {
+    let (tx, rx) = mpsc::channel(16);
+    tokio::spawn(async move {
+        if !response.content.is_empty() {
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(response.content),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+        }
+
+        let tool_calls = response.tool_calls;
+        for (index, tool_call) in tool_calls.iter().enumerate() {
+            let arguments =
+                serde_json::to_string(&tool_call.arguments).unwrap_or_else(|_| "{}".to_string());
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
+                    tool_call_delta: Some(ToolCallDelta {
+                        index,
+                        id: tool_call.id.clone(),
+                        name: Some(tool_call.name.clone()),
+                        arguments_delta: Some(arguments.clone()),
+                        arguments: Some(arguments),
+                    }),
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+        }
+
+        let finish_reason = response.finish_reason.unwrap_or_else(|| {
+            if tool_calls.is_empty() {
+                "stop".to_string()
+            } else {
+                "tool_calls".to_string()
+            }
+        });
+        let _ = tx
+            .send(StreamChunk {
+                text: None,
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                usage: response.usage,
+                provider_response_id: response.provider_response_id,
+                provider_response_status: response.provider_response_status,
+                sequence_number: None,
+                tool_call_delta: None,
+                is_finished: true,
+                finish_reason: Some(finish_reason),
+            })
+            .await;
+    });
+    rx
 }
 
 fn write_skill(root: &Path, body: &str) {

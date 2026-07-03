@@ -4,8 +4,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::llm::LlmClient;
-
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 
 pub(super) async fn cancel_current_task<E, F>(
@@ -67,22 +65,77 @@ pub(super) fn normalize_tool_calls(
         .collect()
 }
 
-pub(super) fn detect_provider(llm_client: &LlmClient) -> &'static str {
-    if llm_client.is_google_gemini_generate_content() {
-        "google_gemini_generate_content"
-    } else if llm_client.is_chatgpt() {
-        "chatgpt"
-    } else if llm_client.is_anthropic_messages() {
-        "anthropic_messages"
-    } else if llm_client.is_openai_responses() {
-        "openai_responses"
-    } else if llm_client.is_openai_chat_completions() {
-        "openai_chat_completions"
-    } else if llm_client.is_openai_chat_completions_compatible() {
-        "openai_chat_completions_compatible"
+fn non_empty_trimmed(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
     } else {
-        "unknown"
+        Some(trimmed.to_string())
     }
+}
+
+pub(super) fn project_messages_for_namespace(
+    messages: &[crate::session::Message],
+) -> Vec<crate::llm::Message> {
+    use crate::tape;
+
+    messages
+        .iter()
+        .flat_map(|message| match message {
+            tape::Message::Tool { responses } => responses
+                .iter()
+                .map(|response| crate::llm::Message {
+                    role: crate::llm::MessageRole::Tool,
+                    content: crate::llm::project_tool_response_for_prompt(&response.content),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    tool_calls: None,
+                    tool_call_id: non_empty_trimmed(&response.id),
+                })
+                .collect::<Vec<_>>(),
+            _ => {
+                let role = match message.role() {
+                    tape::MessageRole::System => crate::llm::MessageRole::System,
+                    tape::MessageRole::Context => crate::llm::MessageRole::Context,
+                    tape::MessageRole::User => crate::llm::MessageRole::User,
+                    tape::MessageRole::Assistant => crate::llm::MessageRole::Assistant,
+                    tape::MessageRole::Tool => crate::llm::MessageRole::Tool,
+                };
+
+                vec![crate::llm::Message {
+                    role,
+                    content: message.non_thinking_text_content(),
+                    thinking: message.thinking_content(),
+                    thinking_signature: message.thinking_signature(),
+                    redacted_thinking: {
+                        let blocks = message.redacted_thinking_blocks();
+                        if blocks.is_empty() {
+                            None
+                        } else {
+                            Some(blocks)
+                        }
+                    },
+                    tool_calls: if message.tool_requests().is_empty() {
+                        None
+                    } else {
+                        Some(
+                            message
+                                .tool_requests()
+                                .iter()
+                                .map(|tool_request| crate::llm::ToolCall {
+                                    id: non_empty_trimmed(&tool_request.id),
+                                    name: tool_request.name.clone(),
+                                    arguments: tool_request.arguments.clone(),
+                                })
+                                .collect(),
+                        )
+                    },
+                    tool_call_id: None,
+                }]
+            }
+        })
+        .collect()
 }
 
 pub(super) fn tool_result_preview(value: &serde_json::Value) -> Option<String> {

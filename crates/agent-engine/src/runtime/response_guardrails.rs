@@ -47,10 +47,10 @@ impl ResponseGuardrailContext {
         let empty_args = serde_json::json!({});
         let recent_failures = current_turn_tool_failures(state);
 
-        for tool_name in state.tools.list_tools() {
+        for tool_name in state.static_tool_names() {
             has_any_tools = true;
             if matches!(
-                state.tools.capability_for_tool(tool_name, &empty_args),
+                state.static_tool_capability(&tool_name, &empty_args),
                 Some(ToolCapability::Network)
             ) {
                 has_network_capability = true;
@@ -220,8 +220,7 @@ fn capability_for_tool_request(
     request: &ToolRequest,
 ) -> Option<ToolCapability> {
     state
-        .tools
-        .capability_for_tool(&request.name, &request.arguments)
+        .static_tool_capability(&request.name, &request.arguments)
         .or_else(|| {
             state
                 .session

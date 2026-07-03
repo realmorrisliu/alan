@@ -190,6 +190,11 @@ impl ToolRegistry {
         self.tool_factories.get(name).map(|factory| factory())
     }
 
+    /// Whether the catalog can materialize the named tool.
+    pub fn has_tool_factory(&self, name: &str) -> bool {
+        self.tool_factories.contains_key(name)
+    }
+
     /// Check if a tool exists
     pub fn has(&self, name: &str) -> bool {
         self.tools.contains_key(name)
@@ -328,6 +333,20 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Get the timeout the registry will apply for a tool execution.
+    pub fn execution_timeout_secs(&self, name: &str) -> Option<usize> {
+        self.get(name)
+            .map(|tool| self.effective_timeout_secs(tool.as_ref()))
+    }
+
+    fn effective_timeout_secs(&self, tool: &dyn Tool) -> usize {
+        if self.config.tool_timeout_secs != 30 {
+            self.config.tool_timeout_secs
+        } else {
+            tool.timeout_secs()
+        }
+    }
+
     /// Execute a tool by name with the given context
     pub async fn execute_with_context(
         &self,
@@ -339,12 +358,8 @@ impl ToolRegistry {
             debug!(%name, "Executing tool");
             self.validate_tool_args(tool.as_ref(), &arguments)?;
 
-            // Use tool-specific timeout
-            let timeout_secs = if self.config.tool_timeout_secs != 30 {
-                self.config.tool_timeout_secs
-            } else {
-                tool.timeout_secs()
-            };
+            // Use tool-specific timeout unless the runtime config overrides it.
+            let timeout_secs = self.effective_timeout_secs(tool.as_ref());
 
             if timeout_secs == 0 {
                 tool.execute(arguments, ctx).await
@@ -693,6 +708,27 @@ mod tests {
         assert!(registry.is_workspace_local_tool("workspace_local_tool"));
         assert!(!registry.is_workspace_local_tool("test_tool"));
         assert_eq!(registry.tool_locality("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_execution_timeout_uses_tool_timeout_when_runtime_default() {
+        let mut registry = ToolRegistry::new();
+        registry.register(NetworkTool);
+
+        assert_eq!(registry.execution_timeout_secs("network_tool"), Some(120));
+        assert_eq!(registry.execution_timeout_secs("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_execution_timeout_uses_runtime_override() {
+        let config = Arc::new(Config {
+            tool_timeout_secs: 45,
+            ..Default::default()
+        });
+        let mut registry = ToolRegistry::with_config(config);
+        registry.register(NetworkTool);
+
+        assert_eq!(registry.execution_timeout_secs("network_tool"), Some(45));
     }
 
     #[test]

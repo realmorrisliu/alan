@@ -33,10 +33,8 @@ fn refresh_prompt_cache_host_capabilities_with_path_dirs<I, P>(
     let delegated_supported = state.prompt_cache.supports_delegated_skill_invocation();
     let host_capabilities = crate::skills::build_skill_host_capabilities_with_path_dirs(
         state
-            .tools
-            .list_tools()
+            .static_tool_names()
             .into_iter()
-            .map(str::to_string)
             .chain(state.session.dynamic_tools.keys().cloned()),
         path_dirs,
         delegated_supported,
@@ -502,77 +500,61 @@ fn parse_replay_tool_call_from_confirmation_details(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::{
         config::Config,
-        llm::LlmClient,
-        runtime::{RuntimeConfig, TurnState},
+        runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, TurnState},
         session::Session,
         tape::ContentPart,
         tools::ToolRegistry,
     };
-    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-    use async_trait::async_trait;
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+    use alan_shell::Shell;
 
-    // Simple mock provider for testing
-    struct SimpleMockProvider;
+    fn namespace_environment_for_test() -> RuntimeEnvironment {
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
+    }
 
-    #[async_trait]
-    impl LlmProvider for SimpleMockProvider {
-        async fn generate(
-            &mut self,
-            _request: GenerationRequest,
-        ) -> anyhow::Result<GenerationResponse> {
-            Ok(GenerationResponse {
-                content: "test".to_string(),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: Vec::new(),
-                tool_calls: vec![],
-                usage: None,
-                finish_reason: None,
-                warnings: Vec::new(),
-                provider_response_id: None,
-                provider_response_status: None,
-            })
-        }
-
-        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
-            Ok("mock".to_string())
-        }
-
-        async fn generate_stream(
-            &mut self,
-            _request: GenerationRequest,
-        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            let (tx, rx) = tokio::sync::mpsc::channel(1);
-            let _ = tx
-                .send(StreamChunk {
-                    text: Some("test".to_string()),
-                    thinking: None,
-                    thinking_signature: None,
-                    redacted_thinking: None,
-                    usage: None,
-                    provider_response_id: None,
-                    provider_response_status: None,
-                    sequence_number: None,
-                    tool_call_delta: None,
-                    is_finished: true,
-                    finish_reason: Some("stop".to_string()),
-                })
-                .await;
-            Ok(rx)
-        }
-
-        fn provider_name(&self) -> &'static str {
-            "mock"
-        }
+    async fn namespace_environment_with_live_process_for_test() -> (RuntimeEnvironment, Shell) {
+        let procfs = Arc::new(ProcFs::new());
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let mut namespace = Namespace::new();
+        namespace.mount("/proc", InProcessTransport::new(procfs), Access::ReadWrite);
+        namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = Shell::new(root.clone());
+        let pid = shell
+            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .await
+            .unwrap();
+        assert_eq!(pid, "1");
+        (
+            RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            shell,
+        )
     }
 
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
         let runtime_config = RuntimeConfig::default();
 
         RuntimeLoopState {
@@ -580,8 +562,8 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SimpleMockProvider),
-            tools,
+            environment: namespace_environment_for_test(),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1531,6 +1513,8 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_cancel() {
         let mut state = create_test_state();
+        let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
+        state.environment = environment;
         state.session.has_active_task = true;
         let cancel = CancellationToken::new();
 
@@ -1867,6 +1851,8 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_interrupt_op() {
         let mut state = create_test_state();
+        let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
+        state.environment = environment;
         state.session.has_active_task = true;
         state
             .turn_state
@@ -1883,6 +1869,35 @@ Use this skill when asked.
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
         assert!(!state.session.has_active_task);
+    }
+
+    #[tokio::test]
+    async fn test_handle_interrupt_op_keeps_agent_process_running() {
+        let (environment, shell) = namespace_environment_with_live_process_for_test().await;
+        let mut state = create_test_state();
+        state.environment = environment;
+        state.session.has_active_task = true;
+        let cancel = CancellationToken::new();
+        let mut events = vec![];
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let result =
+            handle_runtime_op_with_cancel(&mut state, Op::Interrupt, &mut emit, &cancel).await;
+
+        assert!(result.is_ok());
+        assert!(!state.session.has_active_task);
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            "running\n"
+        );
+        let agent_events = String::from_utf8(shell.cat("/agent/1/events").await.unwrap()).unwrap();
+        assert!(
+            !agent_events.contains("ctl:"),
+            "generic interrupt must not be routed through machine/ctl: {agent_events:?}"
+        );
     }
 
     #[tokio::test]

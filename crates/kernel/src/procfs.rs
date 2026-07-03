@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::task::JoinHandle;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, ProcessEvent,
@@ -143,6 +144,7 @@ struct State {
     io_observers: HashMap<Pid, Vec<Arc<OrderedProcessIoEventObserver>>>,
     input_observers: HashMap<Pid, Vec<Arc<dyn ProcessInputEventSink>>>,
     output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
+    runner_tasks: HashMap<Pid, JoinHandle<()>>,
 }
 
 struct OrderedProcessEventObserver {
@@ -220,6 +222,7 @@ impl ProcFs {
                 io_observers: HashMap::new(),
                 input_observers: HashMap::new(),
                 output_observers: HashMap::new(),
+                runner_tasks: HashMap::new(),
             })),
             view_id: next_view_id(),
             root_node: Node::Root,
@@ -800,7 +803,12 @@ impl FileServer for ProcFs {
                         return Err(ErrorCode::NoAccess);
                     }
                     match data {
-                        b"cancel" | b"interrupt" => state.table.exit(pid, 130),
+                        b"cancel" | b"interrupt" => {
+                            if let Some(task) = state.runner_tasks.remove(&pid) {
+                                task.abort();
+                            }
+                            state.table.exit(pid, 130);
+                        }
                         _ => return Err(ErrorCode::BadRequest),
                     }
                     ProcStreamWrite::Status { pid }
@@ -1002,7 +1010,9 @@ impl FileServer for ProcFs {
             .await;
             if let Some((runner, output, io_events, invocation, events)) = runner_launch {
                 let state = self.state.clone();
-                tokio::spawn(async move {
+                let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+                let task = tokio::spawn(async move {
+                    let _ = start_rx.await;
                     let outcome = runner.run(invocation.clone()).await;
                     if !outcome.output.is_empty() {
                         let count = outcome.output.len() as u32;
@@ -1014,6 +1024,7 @@ impl FileServer for ProcFs {
                     }
                     {
                         let mut state = state.lock().await;
+                        state.runner_tasks.remove(&invocation.pid);
                         state.table.exit(invocation.pid, outcome.exit_code);
                     }
                     events
@@ -1025,6 +1036,11 @@ impl FileServer for ProcFs {
                         )
                         .await;
                 });
+                {
+                    let mut state = self.state.lock().await;
+                    state.runner_tasks.insert(committed, task);
+                }
+                let _ = start_tx.send(());
             }
         }
         Ok(())

@@ -6,9 +6,8 @@
 //! - **Transition**: The agent loop drives LLM generation and tool execution
 //! - **Persistence**: `RolloutRecorder` — checkpoints every state transition
 //!
-//! The core is intentionally agnostic of LLM providers, tool implementations,
-//! hosting concerns, and domain-specific behavior. It defines interfaces
-//! (`Tool` trait, `ToolRegistry`) that outer crates implement.
+//! The core is intentionally agnostic of hosting concerns and domain-specific
+//! behavior. Live generation, tools, and state flow through the agent namespace.
 
 mod agent_definition;
 mod agent_root;

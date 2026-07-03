@@ -1,11 +1,10 @@
 use super::*;
 use crate::{
     config::Config,
-    llm::LlmClient,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
-        ChildRunRecord, ChildRunStatus, RuntimeConfig, TurnState, global_child_run_registry,
-        turn_state::TurnActivityState,
+        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
+        RuntimeEnvironment, TurnState, global_child_run_registry, turn_state::TurnActivityState,
     },
     session::Session,
     skills::{
@@ -15,66 +14,27 @@ use crate::{
     },
     tools::ToolRegistry,
 };
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use async_trait::async_trait;
+use alan_agentfs::AgentFs;
+use alan_ap::InProcessTransport;
+use alan_kernel::{Access, MountFs, Namespace};
+use alan_shell::Shell;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-// Simple mock provider for testing
-struct SimpleMockProvider;
-
-#[async_trait]
-impl LlmProvider for SimpleMockProvider {
-    async fn generate(
-        &mut self,
-        _request: GenerationRequest,
-    ) -> anyhow::Result<GenerationResponse> {
-        Ok(GenerationResponse {
-            content: "test".to_string(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: Vec::new(),
-            tool_calls: vec![],
-            usage: None,
-            finish_reason: None,
-            warnings: Vec::new(),
-            provider_response_id: None,
-            provider_response_status: None,
-        })
-    }
-
-    async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
-        Ok("mock".to_string())
-    }
-
-    async fn generate_stream(
-        &mut self,
-        _request: GenerationRequest,
-    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let _ = tx
-            .send(StreamChunk {
-                text: Some("test".to_string()),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: None,
-                usage: None,
-                provider_response_id: None,
-                provider_response_status: None,
-                sequence_number: None,
-                tool_call_delta: None,
-                is_finished: true,
-                finish_reason: Some("stop".to_string()),
-            })
-            .await;
-        Ok(rx)
-    }
-
-    fn provider_name(&self) -> &'static str {
-        "mock"
-    }
+fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
+    let agentfs = Arc::new(AgentFs::new());
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+    RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+        root, "/agent/1", "default",
+    ))
 }
 
 fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
@@ -95,14 +55,36 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
         workspace_root_dir: None,
         session,
         current_submission_id: None,
-        llm_client: LlmClient::new(SimpleMockProvider),
-        tools,
+        environment: namespace_environment_for_virtual_tool_test(),
+        tool_catalog: tools,
         core_config: config,
         runtime_config,
         workspace_persona_dirs: Vec::new(),
         prompt_cache,
         turn_state: TurnState::default(),
     }
+}
+
+fn create_namespace_agent_loop_state_and_shell()
+-> (super::super::agent_loop::RuntimeLoopState, Shell) {
+    let agentfs = Arc::new(AgentFs::new());
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+    let shell = Shell::new(root.clone());
+    let mut state = create_test_agent_loop_state();
+    state.environment = RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+        root, "/agent/1", "default",
+    ));
+    (state, shell)
+}
+
+async fn read_shell_utf8(shell: &Shell, path: &str) -> String {
+    String::from_utf8(shell.cat(path).await.expect("read agent file")).expect("agent file utf8")
 }
 
 fn delegated_test_skill_metadata(skill_id: &str, target: &str) -> SkillMetadata {
@@ -1240,6 +1222,68 @@ async fn test_try_handle_virtual_tool_call_request_confirmation() {
 }
 
 #[tokio::test]
+async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id() {
+    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+
+    let tool_call = NormalizedToolCall {
+        id: "call_1".to_string(),
+        name: "request_confirmation".to_string(),
+        arguments: json!({
+            "checkpoint_type": "test",
+            "summary": "Test confirmation",
+            "details": {"path": "demo.txt"},
+            "options": ["approve", "reject"]
+        }),
+    };
+
+    let mut events = vec![];
+    let mut emit = |event: Event| {
+        events.push(event);
+        async {}
+    };
+
+    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+        .await
+        .unwrap();
+    assert!(matches!(result, VirtualToolOutcome::PauseTurn));
+    assert_eq!(
+        state.turn_state.pending_request_ids(),
+        vec!["r0".to_string()]
+    );
+    assert_eq!(
+        state
+            .turn_state
+            .pending_confirmation()
+            .unwrap()
+            .checkpoint_id,
+        "call_1"
+    );
+    assert_eq!(
+        read_shell_utf8(&shell, "/agent/1/requests/r0/kind").await,
+        "confirmation"
+    );
+    assert_eq!(
+        read_shell_utf8(&shell, "/agent/1/requests/r0/prompt").await,
+        "Test confirmation"
+    );
+    let options: serde_json::Value =
+        serde_json::from_str(&read_shell_utf8(&shell, "/agent/1/requests/r0/options").await)
+            .unwrap();
+    assert_eq!(options["checkpoint_id"], "call_1");
+    assert_eq!(options["checkpoint_type"], "test");
+    assert_eq!(options["details"]["path"], "demo.txt");
+    assert_eq!(options["options"][0], "approve");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Yield {
+            request_id,
+            kind: alan_agent_protocol::YieldKind::Confirmation,
+            ..
+        } if request_id == "r0"
+    )));
+}
+
+#[tokio::test]
 async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
     let mut state = create_test_agent_loop_state();
 
@@ -1289,6 +1333,58 @@ async fn test_try_handle_virtual_tool_call_request_user_input() {
 
     // Verify structured input was set
     assert!(state.turn_state.has_pending_interaction());
+}
+
+#[tokio::test]
+async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id() {
+    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+
+    let tool_call = NormalizedToolCall {
+        id: "call_1".to_string(),
+        name: "request_user_input".to_string(),
+        arguments: json!({
+            "title": "Test Input",
+            "prompt": "Enter value",
+            "questions": [{"id": "q1", "label": "Q1", "prompt": "What?"}]
+        }),
+    };
+
+    let mut events = vec![];
+    let mut emit = |event: Event| {
+        events.push(event);
+        async {}
+    };
+
+    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+        .await
+        .unwrap();
+    assert!(matches!(result, VirtualToolOutcome::PauseTurn));
+    assert_eq!(
+        state.turn_state.pending_request_ids(),
+        vec!["r0".to_string()]
+    );
+    assert_eq!(
+        read_shell_utf8(&shell, "/agent/1/requests/r0/kind").await,
+        "structured_input"
+    );
+    assert_eq!(
+        read_shell_utf8(&shell, "/agent/1/requests/r0/prompt").await,
+        "Enter value"
+    );
+    let options: serde_json::Value =
+        serde_json::from_str(&read_shell_utf8(&shell, "/agent/1/requests/r0/options").await)
+            .unwrap();
+    assert_eq!(options["request_id"], "call_1");
+    assert_eq!(options["title"], "Test Input");
+    assert_eq!(options["questions"][0]["id"], "q1");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Yield {
+            request_id,
+            kind: alan_agent_protocol::YieldKind::StructuredInput,
+            ..
+        } if request_id == "r0"
+    )));
 }
 
 #[tokio::test]
@@ -1959,7 +2055,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_keeps_workspac
     state.core_config.memory.workspace_dir =
         Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
@@ -2027,7 +2123,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_explici
     let mut state = create_test_agent_loop_state();
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
@@ -2108,7 +2204,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_does_not_promo
     let mut state = create_test_agent_loop_state();
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
@@ -2178,7 +2274,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_wor
     state.workspace_root_dir = Some(PathBuf::from("/Users/morris/Developer/Alan"));
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/custom-memory-layout"));
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/Users/morris/Developer/Alan/docs"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
@@ -2245,7 +2341,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_rel
  {
     let mut state = create_test_agent_loop_state();
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
@@ -2313,7 +2409,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_rel
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unresolvable_relative_cwd()
  {
     let mut state = create_test_agent_loop_state();
-    state.tools = ToolRegistry::new();
+    *state.tool_catalog_mut_for_test() = ToolRegistry::new();
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -2385,7 +2481,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspa
  {
     let mut state = create_test_agent_loop_state();
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
@@ -2520,7 +2616,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normal
         .await
         .unwrap();
     state
-        .tools
+        .tool_catalog_mut_for_test()
         .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 

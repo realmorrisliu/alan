@@ -1,7 +1,8 @@
+#[cfg(test)]
+use std::time::Duration;
 use std::{
     collections::HashSet,
     path::{Component, Path, PathBuf},
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -9,9 +10,9 @@ use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::llm::{
-    GenerationRequest, LlmClient, Message as LlmMessage, MessageRole, build_generation_request,
-};
+#[cfg(test)]
+use crate::llm::LlmClient;
+use crate::llm::{GenerationRequest, Message as LlmMessage, MessageRole, build_generation_request};
 use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
     WORKSPACE_MEMORY_FILENAME, ensure_workspace_memory_layout_at,
@@ -282,6 +283,7 @@ pub(crate) fn build_turn_memory_promotion_job(
     })
 }
 
+#[cfg(test)]
 pub(crate) async fn run_turn_memory_promotion_job_with_cancel(
     llm_client: &mut LlmClient,
     job: &TurnMemoryPromotionJob,
@@ -298,6 +300,21 @@ pub(crate) async fn run_turn_memory_promotion_job_with_cancel(
     .await
 }
 
+pub(crate) async fn run_turn_memory_promotion_job_for_runtime_with_cancel(
+    state: &mut RuntimeLoopState,
+    job: &TurnMemoryPromotionJob,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let request = build_memory_promotion_request(job.active_turn_user_messages.clone());
+    let response = state
+        .generate_response_with_retry(request, job.llm_request_timeout_secs, cancel)
+        .await
+        .context("generate turn-end memory promotion plan")?;
+    let candidates = parse_memory_promotion_candidates(&response.content, &job.session_id)?;
+    apply_memory_promotion_candidates(&job.memory_dir, candidates, cancel).await
+}
+
+#[cfg(test)]
 async fn capture_confirmed_turn_memory_for_session(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
@@ -314,6 +331,18 @@ async fn capture_confirmed_turn_memory_for_session(
         cancel,
     )
     .await?;
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    apply_memory_promotion_candidates(memory_dir, candidates, cancel).await
+}
+
+async fn apply_memory_promotion_candidates(
+    memory_dir: &Path,
+    candidates: Vec<MemoryPromotionCandidate>,
+    cancel: &CancellationToken,
+) -> Result<()> {
     if candidates.is_empty() {
         return Ok(());
     }
@@ -587,6 +616,7 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 async fn generate_memory_promotion_candidates(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
@@ -657,6 +687,7 @@ fn build_memory_promotion_request(active_turn_user_messages: Vec<String>) -> Gen
     )
 }
 
+#[cfg(test)]
 async fn generate_memory_promotion_response(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
@@ -946,12 +977,25 @@ async fn write_text_file(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace};
     use alan_llm::{
         GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
         TokenUsage,
     };
+    use alan_llmfs::LlmFs;
     use async_trait::async_trait;
     use tempfile::TempDir;
+
+    use crate::{
+        config::Config,
+        runtime::{
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
+            TurnState, prompt_cache::PromptAssemblyCache,
+        },
+    };
 
     #[tokio::test]
     async fn stage_inbox_entry_writes_expected_observed_entry() {
@@ -1333,6 +1377,91 @@ Direct user-stated stable identity detail.
         let stored = tokio::fs::read_to_string(&inbox_entries[0]).await.unwrap();
         assert!(stored.contains("status: observed"));
         assert!(stored.contains("Workflow rule: use Python 3.12"));
+    }
+
+    #[tokio::test]
+    async fn deferred_memory_promotion_uses_namespace_llmfs() {
+        let temp = TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+
+        let provider = MockLlmProvider::new().with_response(mock_generation_response(
+            serde_json::json!({
+                "writes": [
+                    {
+                        "kind": "workspace_fact",
+                        "target": "MEMORY.md",
+                        "confidence": "medium",
+                        "disposition": "stage_inbox",
+                        "observation": "Namespace promotion uses llmfs.",
+                        "evidence": ["Remember this namespace fact."],
+                        "promotion_rationale": "Captured from a confirmed turn."
+                    }
+                ]
+            })
+            .to_string(),
+        ));
+        let recorded_provider = provider.clone();
+        let llmfs = Arc::new(LlmFs::new());
+        llmfs.register_connection("default", Box::new(provider));
+
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let mut state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        };
+        let job = TurnMemoryPromotionJob {
+            memory_dir: memory_dir.clone(),
+            session_id: "sess-namespace".to_string(),
+            active_turn_user_messages: vec!["Remember this namespace fact.".to_string()],
+            llm_request_timeout_secs: 30,
+            warning_context: "test",
+        };
+
+        run_turn_memory_promotion_job_for_runtime_with_cancel(
+            &mut state,
+            &job,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        let requests = recorded_provider.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].system_prompt.as_deref(),
+            Some(MEMORY_PROMOTION_PROMPT)
+        );
+        assert!(
+            requests[0]
+                .messages
+                .iter()
+                .any(|message| message.content.contains("Remember this namespace fact."))
+        );
+
+        let inbox_entries =
+            collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME));
+        assert_eq!(inbox_entries.len(), 1);
+        let stored = tokio::fs::read_to_string(&inbox_entries[0]).await.unwrap();
+        assert!(stored.contains("status: observed"));
+        assert!(stored.contains("Namespace promotion uses llmfs."));
     }
 
     #[tokio::test]

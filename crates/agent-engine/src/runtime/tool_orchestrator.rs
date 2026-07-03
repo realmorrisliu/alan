@@ -3,7 +3,7 @@ use alan_agent_protocol::{
     Event, InputMode, Op, StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
     ToolCapability,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
@@ -23,6 +23,11 @@ use super::tool_policy::{ToolPolicyDecision, capability_label, evaluate_tool_pol
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
+
+#[derive(Clone)]
+enum ToolExecutionTarget {
+    Namespace(crate::runtime::NamespaceRuntimeEnvironment),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectCategory {
@@ -409,6 +414,76 @@ fn maybe_allow_approved_tool_escalation_replay(
     }
 }
 
+fn namespace_builtin_tool_capability(tool_name: &str) -> ToolCapability {
+    match tool_name {
+        "read_file" | "grep" | "glob" | "list_dir" => ToolCapability::Read,
+        "write_file" | "edit_file" => ToolCapability::Write,
+        // Until bash is converted with command classification behind `/bin/bash`,
+        // keep it conservative so policy routes it through escalation.
+        "bash" => ToolCapability::Unknown,
+        _ => ToolCapability::Unknown,
+    }
+}
+
+fn namespace_tool_payload(
+    tool: crate::runtime::NamespaceToolActionOutput,
+) -> Result<serde_json::Value> {
+    let trimmed = tool.output.trim();
+    let mut payload = if trimmed.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str::<Value>(trimmed)
+            .unwrap_or_else(|_| json!({ "output": tool.output.clone() }))
+    };
+    let process = format!("/proc/{}", tool.pid);
+    match &mut payload {
+        Value::Object(object) => {
+            object
+                .entry("success")
+                .or_insert(Value::Bool(tool.exit_code == 0));
+            object.entry("exit_code").or_insert(json!(tool.exit_code));
+            object.entry("process").or_insert(json!(process));
+            object.entry("action_id").or_insert(json!(tool.action_id));
+        }
+        other => {
+            payload = json!({
+                "success": tool.exit_code == 0,
+                "exit_code": tool.exit_code,
+                "output": other.clone(),
+                "process": process,
+                "action_id": tool.action_id,
+            });
+        }
+    }
+    Ok(payload)
+}
+
+async fn execute_tool_effect(
+    target: ToolExecutionTarget,
+    tool_name: &str,
+    tool_arguments: Value,
+    cancel: &CancellationToken,
+    timeout_secs: usize,
+) -> Result<Value> {
+    match target {
+        ToolExecutionTarget::Namespace(namespace) => {
+            let executable = format!("/bin/{tool_name}");
+            let arguments_doc =
+                serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
+            let tool = namespace
+                .run_tool_action_with_cancel_and_timeout(
+                    tool_name,
+                    &executable,
+                    [arguments_doc],
+                    cancel,
+                    timeout_secs,
+                )
+                .await?;
+            namespace_tool_payload(tool)
+        }
+    }
+}
+
 async fn orchestrate_tool_call_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
@@ -457,8 +532,7 @@ where
     }
 
     let tool_capability = state
-        .tools
-        .capability_for_tool(&tool_call.name, &tool_arguments)
+        .static_tool_capability(&tool_call.name, &tool_arguments)
         .or_else(|| {
             state
                 .session
@@ -466,9 +540,9 @@ where
                 .get(&tool_call.name)
                 .and_then(|tool| tool.capability)
         })
-        .unwrap_or(ToolCapability::Unknown);
+        .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
     let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
-    let tool_locality = state.tools.tool_locality(&tool_call.name);
+    let tool_locality = state.static_tool_locality(&tool_call.name);
     if !is_dynamic_tool
         && tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
@@ -519,7 +593,7 @@ where
             refresh_context: false,
         });
     }
-    let current_tool_cwd = state.tools.default_cwd();
+    let current_tool_cwd = state.default_tool_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             &state.runtime_config.policy_engine,
@@ -581,12 +655,16 @@ where
                         transcript: &transcript,
                         approval_request: &details,
                     };
-                    super::guardian::review(
-                        &mut state.llm_client,
-                        &review_ctx,
-                        state.runtime_config.llm_request_timeout_secs,
-                    )
-                    .await
+                    let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
+                    let request = super::guardian::build_review_request(&review_ctx);
+                    let result = state
+                        .generate_response_with_retry(
+                            request,
+                            llm_request_timeout_secs,
+                            inputs.cancel,
+                        )
+                        .await;
+                    super::guardian::review_generation_result(result)
                 };
                 match outcome {
                     super::guardian::ReviewOutcome::Allow => {
@@ -658,23 +736,29 @@ where
                     details,
                     options: vec!["approve".to_string(), "reject".to_string()],
                 };
+                let request_id = state
+                    .write_namespace_confirmation_request(&pending)
+                    .await?
+                    .unwrap_or_else(|| pending.checkpoint_id.clone());
                 state.session.record_tool_call_with_audit(
                     &tool_call.name,
                     tool_arguments.clone(),
-                    json!({"status":"escalation_required"}),
+                    json!({"status":"escalation_required","request_id": request_id.clone()}),
                     true,
                     Some(audit),
                 );
-                state.turn_state.set_confirmation(pending.clone());
+                state
+                    .turn_state
+                    .set_confirmation_for_request(request_id.clone(), pending.clone());
                 emit(Event::Yield {
-                    request_id: pending.checkpoint_id,
+                    request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
                     payload: serde_json::to_value(confirmation_payload(
                         &state.session.client_capabilities,
-                        pending.checkpoint_type,
-                        pending.summary,
-                        pending.details,
-                        pending.options,
+                        pending.checkpoint_type.clone(),
+                        pending.summary.clone(),
+                        pending.details.clone(),
+                        pending.options.clone(),
                     ))
                     .unwrap_or_else(|_| json!({})),
                 })
@@ -731,22 +815,31 @@ where
             audit: tool_audit.clone(),
         })
         .await;
+        let pending_dynamic_tool = crate::approval::PendingDynamicToolCall {
+            call_id: tool_call.id.clone(),
+            tool_name: tool_call.name.clone(),
+            arguments: tool_arguments.clone(),
+        };
+        let request_id = state
+            .write_namespace_dynamic_tool_request(&pending_dynamic_tool)
+            .await?
+            .unwrap_or_else(|| pending_dynamic_tool.call_id.clone());
         state
             .turn_state
-            .set_dynamic_tool_call(crate::approval::PendingDynamicToolCall {
-                call_id: tool_call.id.clone(),
-                tool_name: tool_call.name.clone(),
-                arguments: tool_arguments.clone(),
-            });
+            .set_dynamic_tool_call_for_request(request_id.clone(), pending_dynamic_tool);
         state.session.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
-            json!({"status":"pending_dynamic_tool_result","call_id": tool_call.id}),
+            json!({
+                "status":"pending_dynamic_tool_result",
+                "call_id": tool_call.id.clone(),
+                "request_id": request_id.clone()
+            }),
             true,
             tool_audit.clone(),
         );
         emit(Event::Yield {
-            request_id: tool_call.id.clone(),
+            request_id,
             kind: alan_agent_protocol::YieldKind::DynamicTool,
             payload: serde_json::to_value(DynamicToolYieldPayload {
                 tool_name: tool_call.name.clone(),
@@ -820,6 +913,10 @@ where
             ),
             options: vec!["approve".to_string(), "reject".to_string()],
         };
+        let request_id = state
+            .write_namespace_confirmation_request(&pending)
+            .await?
+            .unwrap_or_else(|| pending.checkpoint_id.clone());
         state.session.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
@@ -827,21 +924,24 @@ where
                 "status": "escalation_required",
                 "reason": escalation_reason,
                 "idempotency_key": identity.idempotency_key,
-                "effect_status": "unknown"
+                "effect_status": "unknown",
+                "request_id": request_id.clone()
             }),
             true,
             tool_audit.clone(),
         );
-        state.turn_state.set_confirmation(pending.clone());
+        state
+            .turn_state
+            .set_confirmation_for_request(request_id.clone(), pending.clone());
         emit(Event::Yield {
-            request_id: pending.checkpoint_id,
+            request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,
             payload: serde_json::to_value(confirmation_payload(
                 &state.session.client_capabilities,
-                pending.checkpoint_type,
-                pending.summary,
-                pending.details,
-                pending.options,
+                pending.checkpoint_type.clone(),
+                pending.summary.clone(),
+                pending.details.clone(),
+                pending.options.clone(),
             ))
             .unwrap_or_else(|_| json!({})),
         })
@@ -1036,16 +1136,23 @@ where
         });
     }
 
+    let execution_target = ToolExecutionTarget::Namespace(state.namespace_environment().clone());
     let tool_start = Instant::now();
-    let tool_result = tokio::select! {
-        _ = inputs.cancel.cancelled() => {
-            if check_turn_cancelled(state, emit, inputs.cancel).await? {
-                return Ok(ToolOrchestratorOutcome::EndTurn);
-            }
-            unreachable!("check_turn_cancelled returns on cancellation");
-        }
-        result = state.tools.execute(&tool_call.name, tool_arguments.clone()) => result,
-    };
+    let tool_timeout_secs = state
+        .tool_catalog()
+        .execution_timeout_secs(&tool_call.name)
+        .unwrap_or(state.core_config.tool_timeout_secs);
+    let tool_result = execute_tool_effect(
+        execution_target,
+        &tool_call.name,
+        tool_arguments.clone(),
+        inputs.cancel,
+        tool_timeout_secs,
+    )
+    .await;
+    if inputs.cancel.is_cancelled() && check_turn_cancelled(state, emit, inputs.cancel).await? {
+        return Ok(ToolOrchestratorOutcome::EndTurn);
+    }
 
     match tool_result {
         Ok(value) => {
@@ -1183,8 +1290,7 @@ fn workspace_routing_preflight(
     let workspace_root = bound_workspace_root(state)?;
     let sandbox = crate::tools::Sandbox::new(workspace_root.clone());
     let current_cwd = state
-        .tools
-        .default_cwd()
+        .default_tool_cwd()
         .unwrap_or_else(|| workspace_root.clone());
 
     let reason = if tool_name == "bash" {
@@ -1517,18 +1623,28 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
-        llm::LlmClient,
-        runtime::TurnState,
+        runtime::{NamespaceRuntimeEnvironment, RuntimeEnvironment, TurnState},
         session::Session,
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_agent_protocol::{DynamicToolSpec, ToolCapability};
+    use alan_agentfs::AgentFs;
+    use alan_ap::{
+        ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Request, Stat,
+    };
+    use alan_kernel::{
+        Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
+        ProcessRunner,
+    };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+    use alan_shell::Shell;
     use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use tokio::sync::Mutex;
 
     // Simple mock provider for testing
     struct SimpleMockProvider;
@@ -1582,6 +1698,243 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "mock"
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum BinNode {
+        Root,
+        Tool(&'static str),
+    }
+
+    const BUILTIN_BIN_TOOLS: [&str; 7] = [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "bash",
+        "grep",
+        "glob",
+        "list_dir",
+    ];
+
+    struct StaticBinFs {
+        fids: Mutex<HashMap<Fid, BinNode>>,
+    }
+
+    impl StaticBinFs {
+        fn new() -> Self {
+            let mut fids = HashMap::new();
+            fids.insert(Fid::ROOT, BinNode::Root);
+            Self {
+                fids: Mutex::new(fids),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl FileServer for StaticBinFs {
+        async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+            let mut fids = self.fids.lock().await;
+            if newfid == Fid::ROOT || fids.contains_key(&newfid) {
+                return Err(ErrorCode::BadRequest);
+            }
+            let mut node = *fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            for name in names {
+                node = match (node, name.as_str()) {
+                    (BinNode::Root, name) => BUILTIN_BIN_TOOLS
+                        .iter()
+                        .copied()
+                        .find(|tool| *tool == name)
+                        .map(BinNode::Tool)
+                        .ok_or(ErrorCode::NotFound)?,
+                    (BinNode::Tool(_), _) => return Err(ErrorCode::NotDirectory),
+                };
+            }
+            fids.insert(newfid, node);
+            Ok(bin_qid(node))
+        }
+
+        async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+            let fids = self.fids.lock().await;
+            let node = *fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if !matches!(mode, OpenMode::Read) {
+                return Err(ErrorCode::NoAccess);
+            }
+            Ok(bin_qid(node))
+        }
+
+        async fn read(&self, fid: Fid, offset: u64, count: u32) -> Result<Vec<u8>, ErrorCode> {
+            let fids = self.fids.lock().await;
+            let node = *fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            let bytes = match node {
+                BinNode::Root => BUILTIN_BIN_TOOLS.join("\n").into_bytes(),
+                BinNode::Tool(_) => Vec::new(),
+            };
+            let start = (offset as usize).min(bytes.len());
+            let end = bytes.len().min(start + count as usize);
+            Ok(bytes[start..end].to_vec())
+        }
+
+        async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+            let fids = self.fids.lock().await;
+            let node = *fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            Ok(Stat {
+                name: String::new(),
+                qid: bin_qid(node),
+                length: match node {
+                    BinNode::Root => BUILTIN_BIN_TOOLS.join("\n").len() as u64,
+                    BinNode::Tool(_) => 0,
+                },
+                writable: false,
+            })
+        }
+
+        async fn create(
+            &self,
+            _fid: Fid,
+            _newfid: Fid,
+            _name: &str,
+            _kind: FileKind,
+        ) -> Result<Qid, ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+            Err(ErrorCode::Unsupported)
+        }
+
+        async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+            if fid != Fid::ROOT {
+                self.fids.lock().await.remove(&fid);
+            }
+            Ok(())
+        }
+    }
+
+    fn bin_qid(node: BinNode) -> Qid {
+        match node {
+            BinNode::Root => Qid {
+                kind: FileKind::Dir,
+                version: 0,
+                path: 1,
+            },
+            BinNode::Tool(name) => Qid {
+                kind: FileKind::File,
+                version: 0,
+                path: 2 + BUILTIN_BIN_TOOLS
+                    .iter()
+                    .position(|tool| *tool == name)
+                    .unwrap_or(0) as u64,
+            },
+        }
+    }
+
+    struct JsonToolRunner;
+
+    #[async_trait]
+    impl ProcessRunner for JsonToolRunner {
+        async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
+            let Ok(resolved) = invocation.namespace.resolve(&invocation.exec.executable) else {
+                return ProcessOutcome::exited(
+                    127,
+                    br#"{"success":false,"error":"executable is not mounted"}"#.to_vec(),
+                );
+            };
+            let fid = Fid(70_000 + invocation.pid.0);
+            let reachable = resolved
+                .call(Request::Walk {
+                    fid: Fid::ROOT,
+                    newfid: fid,
+                    names: resolved.rel.clone(),
+                })
+                .await
+                .is_ok();
+            let _ = resolved.call(Request::Clunk { fid }).await;
+            if !reachable {
+                return ProcessOutcome::exited(
+                    127,
+                    br#"{"success":false,"error":"executable is not reachable"}"#.to_vec(),
+                );
+            }
+            let arguments = invocation
+                .exec
+                .args
+                .first()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                .unwrap_or(Value::Null);
+            let tool_name = invocation
+                .exec
+                .executable
+                .rsplit('/')
+                .next()
+                .unwrap_or(invocation.exec.executable.as_str());
+            let mut output = json!({
+                "success": true,
+                "tool": tool_name,
+                "content": format!("from namespace {tool_name}"),
+                "arguments": arguments,
+            })
+            .to_string()
+            .into_bytes();
+            output.push(b'\n');
+            ProcessOutcome::exited(0, output)
+        }
+    }
+
+    struct RegistryToolRunner {
+        tools: ToolRegistry,
+    }
+
+    impl RegistryToolRunner {
+        fn new(tools: ToolRegistry) -> Self {
+            Self { tools }
+        }
+    }
+
+    #[async_trait]
+    impl ProcessRunner for RegistryToolRunner {
+        async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
+            if invocation
+                .namespace
+                .resolve(&invocation.exec.executable)
+                .is_err()
+            {
+                return ProcessOutcome::exited(127, b"executable is not mounted\n".to_vec());
+            }
+            let tool_name = invocation
+                .exec
+                .executable
+                .rsplit('/')
+                .next()
+                .unwrap_or(invocation.exec.executable.as_str());
+            let arguments = invocation
+                .exec
+                .args
+                .first()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                .unwrap_or(Value::Null);
+
+            match self.tools.execute(tool_name, arguments).await {
+                Ok(output) => {
+                    let mut bytes = serde_json::to_vec(&output)
+                        .unwrap_or_else(|_| b"{\"success\":true}".to_vec());
+                    bytes.push(b'\n');
+                    ProcessOutcome::exited(0, bytes)
+                }
+                Err(err) => {
+                    let mut bytes = serde_json::to_vec(&json!({
+                        "success": false,
+                        "error": format!("{err:#}"),
+                    }))
+                    .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
+                    bytes.push(b'\n');
+                    ProcessOutcome::exited(1, bytes)
+                }
+            }
         }
     }
 
@@ -1669,22 +2022,84 @@ mod tests {
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
         let runtime_config = super::super::RuntimeConfig::default();
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(AgentFs::new())),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SimpleMockProvider),
-            tools,
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn create_namespace_test_state_and_shell() -> (RuntimeLoopState, Shell) {
+        create_namespace_test_state_and_shell_with_bin(true)
+    }
+
+    fn create_namespace_test_state_and_shell_with_bin(
+        mount_bin: bool,
+    ) -> (RuntimeLoopState, Shell) {
+        let procfs = ProcFs::new().with_runner(Arc::new(JsonToolRunner));
+        let agentfs = Arc::new(AgentFs::new());
+        let binfs = Arc::new(StaticBinFs::new());
+
+        let mut child_namespace = Namespace::new();
+        child_namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs.clone()),
+            Access::ReadWrite,
+        );
+        if mount_bin {
+            child_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
+        }
+
+        let spawner_procfs =
+            Arc::new(procfs.for_spawner(None, child_namespace, Credentials::user("root-agent")));
+        let mut root_namespace = Namespace::new();
+        root_namespace.mount(
+            "/proc",
+            InProcessTransport::new(spawner_procfs),
+            Access::ReadWrite,
+        );
+        root_namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
+        let shell = Shell::new(root.clone());
+        let state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: super::super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        };
+        (state, shell)
     }
 
     fn reviewer_response(decision: &str) -> alan_llm::GenerationResponse {
@@ -1715,11 +2130,11 @@ mod tests {
             capability: ToolCapability::Unknown,
             counter: Arc::clone(counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
-        state.llm_client = LlmClient::new(
+        create_test_state_with_session_tools_and_provider(
+            session,
+            tools,
             alan_llm::MockLlmProvider::new().with_response(reviewer_response(decision)),
-        );
-        state
+        )
     }
 
     #[tokio::test]
@@ -1772,14 +2187,63 @@ mod tests {
         session: Session,
         tools: ToolRegistry,
     ) -> RuntimeLoopState {
+        create_test_state_with_session_tools_and_provider(session, tools, SimpleMockProvider)
+    }
+
+    fn create_test_state_with_session_tools_and_provider<P: LlmProvider + 'static>(
+        session: Session,
+        tools: ToolRegistry,
+        provider: P,
+    ) -> RuntimeLoopState {
+        let agentfs = Arc::new(AgentFs::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection("default", Box::new(provider));
+
+        let mut process_namespace = Namespace::new();
+        process_namespace.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs.clone()),
+            Access::ReadWrite,
+        );
+        process_namespace.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs.clone()),
+            Access::ReadWrite,
+        );
+        for tool_name in tools.list_tools() {
+            process_namespace.mount(
+                &format!("/bin/{tool_name}"),
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+                Access::ReadOnly,
+            );
+        }
+
+        let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
+        let spawner_procfs = Arc::new(procfs.for_spawner(
+            None,
+            process_namespace.clone(),
+            Credentials::user("root-agent"),
+        ));
+        process_namespace.mount(
+            "/proc",
+            InProcessTransport::new(spawner_procfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(process_namespace)));
+        let config = Config {
+            openai_responses_model: "mock-model".to_string(),
+            ..Default::default()
+        };
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SimpleMockProvider),
-            tools,
-            core_config: Config::default(),
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: tools,
+            core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
@@ -1816,6 +2280,238 @@ mod tests {
             .await
             .expect("tool orchestration should succeed");
         (outcome, events)
+    }
+
+    async fn read_shell_utf8(shell: &Shell, path: &str) -> String {
+        String::from_utf8(shell.cat(path).await.expect("read agent file")).expect("agent file utf8")
+    }
+
+    #[tokio::test]
+    async fn namespace_tool_call_spawns_bin_executable_and_records_action() {
+        let (mut state, shell) = create_namespace_test_state_and_shell();
+
+        let (outcome, events) = execute_single_tool_call(
+            &mut state,
+            "call-read",
+            "read_file",
+            json!({ "path": "sample.txt" }),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                refresh_context: false
+            }
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted {
+                id,
+                name,
+                success: Some(true),
+                ..
+            } if id == "call-read" && name.as_deref() == Some("read_file")
+        )));
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-read")
+            .expect("tool response payload should be recorded on tape");
+        assert_eq!(payload["success"], json!(true));
+        assert_eq!(payload["content"], json!("from namespace read_file"));
+        assert_eq!(payload["arguments"], json!({ "path": "sample.txt" }));
+        assert_eq!(payload["exit_code"], json!(0));
+        assert_eq!(payload["process"], json!("/proc/1"));
+        assert_eq!(payload["action_id"], json!("a0"));
+
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            "exited\n"
+        );
+        let action_output =
+            String::from_utf8(shell.cat("/agent/1/actions/a0/output").await.unwrap()).unwrap();
+        let action_payload: Value = serde_json::from_str(action_output.trim()).unwrap();
+        assert_eq!(action_payload["content"], json!("from namespace read_file"));
+        assert_eq!(
+            String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
+            "/proc/1"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
+            r#"{"exit_code":0}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_dynamic_tool_yield_writes_request_file_and_waits_on_file_id() {
+        let (mut state, shell) = create_namespace_test_state_and_shell();
+        state.session.dynamic_tools.insert(
+            "custom_dynamic_tool".to_string(),
+            DynamicToolSpec {
+                name: "custom_dynamic_tool".to_string(),
+                description: "A test dynamic tool".to_string(),
+                parameters: json!({"type": "object", "properties": {}}),
+                capability: Some(alan_agent_protocol::ToolCapability::Read),
+            },
+        );
+
+        let (outcome, events) = execute_single_tool_call(
+            &mut state,
+            "call_dynamic",
+            "custom_dynamic_tool",
+            json!({"path": "demo.txt"}),
+        )
+        .await;
+
+        assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
+        assert_eq!(
+            state.turn_state.pending_request_ids(),
+            vec!["r0".to_string()]
+        );
+        assert_eq!(
+            read_shell_utf8(&shell, "/agent/1/requests/r0/kind").await,
+            "dynamic_tool"
+        );
+        assert_eq!(
+            read_shell_utf8(&shell, "/agent/1/requests/r0/prompt").await,
+            "Resolve dynamic tool: custom_dynamic_tool"
+        );
+        let options: serde_json::Value =
+            serde_json::from_str(&read_shell_utf8(&shell, "/agent/1/requests/r0/options").await)
+                .unwrap();
+        assert_eq!(options["call_id"], "call_dynamic");
+        assert_eq!(options["tool_name"], "custom_dynamic_tool");
+        assert_eq!(options["arguments"]["path"], "demo.txt");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Yield {
+                request_id,
+                kind: alan_agent_protocol::YieldKind::DynamicTool,
+                ..
+            } if request_id == "r0"
+        )));
+    }
+
+    #[tokio::test]
+    async fn namespace_tool_call_fails_when_bin_tool_is_withheld() {
+        let (mut state, shell) = create_namespace_test_state_and_shell_with_bin(false);
+
+        let (outcome, events) = execute_single_tool_call(
+            &mut state,
+            "call-read",
+            "read_file",
+            json!({ "path": "sample.txt" }),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                refresh_context: false
+            }
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted {
+                id,
+                name,
+                success: Some(false),
+                ..
+            } if id == "call-read" && name.as_deref() == Some("read_file")
+        )));
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-read")
+            .expect("failed tool response payload should be recorded on tape");
+        assert_eq!(payload["success"], json!(false));
+        assert_eq!(payload["exit_code"], json!(127));
+        assert_eq!(payload["process"], json!("/proc/1"));
+        assert_eq!(payload["action_id"], json!("a0"));
+        assert!(
+            payload["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("executable is not mounted")),
+            "payload should explain the withheld executable: {payload}"
+        );
+
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            "exited\n"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+            "127"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/agent/1/actions/a0/status").await.unwrap()).unwrap(),
+            "failed"
+        );
+        let action_output =
+            String::from_utf8(shell.cat("/agent/1/actions/a0/output").await.unwrap()).unwrap();
+        let action_payload: Value = serde_json::from_str(action_output.trim()).unwrap();
+        assert_eq!(action_payload["success"], json!(false));
+        assert!(
+            action_payload["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("executable is not mounted")),
+            "action output should explain the withheld executable: {action_payload}"
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_execution_target_spawns_every_builtin_bin_tool() {
+        let (state, shell) = create_namespace_test_state_and_shell();
+        let namespace = state.namespace_environment().clone();
+        let cancel = CancellationToken::new();
+
+        for (idx, tool_name) in BUILTIN_BIN_TOOLS.iter().enumerate() {
+            let payload = execute_tool_effect(
+                ToolExecutionTarget::Namespace(namespace.clone()),
+                tool_name,
+                json!({ "tool": tool_name, "call_index": idx }),
+                &cancel,
+                30,
+            )
+            .await
+            .expect("namespace tool effect should execute through /bin");
+            let pid = idx + 1;
+            let action_id = format!("a{idx}");
+
+            assert_eq!(payload["success"], json!(true));
+            assert_eq!(payload["tool"], json!(tool_name));
+            assert_eq!(
+                payload["content"],
+                json!(format!("from namespace {tool_name}"))
+            );
+            assert_eq!(
+                payload["arguments"],
+                json!({ "tool": tool_name, "call_index": idx })
+            );
+            assert_eq!(payload["exit_code"], json!(0));
+            assert_eq!(payload["process"], json!(format!("/proc/{pid}")));
+            assert_eq!(payload["action_id"], json!(action_id));
+
+            assert_eq!(
+                String::from_utf8(
+                    shell
+                        .cat(&format!("/agent/1/actions/{action_id}/name"))
+                        .await
+                        .unwrap()
+                )
+                .unwrap(),
+                *tool_name
+            );
+            assert_eq!(
+                String::from_utf8(
+                    shell
+                        .cat(&format!("/agent/1/actions/{action_id}/process"))
+                        .await
+                        .unwrap()
+                )
+                .unwrap(),
+                format!("/proc/{pid}")
+            );
+        }
     }
 
     #[tokio::test]
@@ -2311,6 +3007,10 @@ mod tests {
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_cancel() {
         let mut state = create_test_state();
+        state.turn_state.begin_turn(0);
+        state
+            .turn_state
+            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
 
@@ -2459,7 +3159,7 @@ mod tests {
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
-            .tools
+            .tool_catalog_mut_for_test()
             .set_default_cwd(workspace_root.path().to_path_buf());
 
         let (_, events) = execute_single_tool_call(
@@ -2528,7 +3228,7 @@ mod tests {
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
-            .tools
+            .tool_catalog_mut_for_test()
             .set_default_cwd(workspace_root.path().to_path_buf());
 
         let (_, events) = execute_single_tool_call(
@@ -2574,6 +3274,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_path_prefix_policy_uses_default_tool_cwd() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workspace_root = temp.path().join("repo");
+        let workspace_alan = workspace_root.join(".alan");
+        std::fs::create_dir_all(workspace_root.join("src")).unwrap();
+        std::fs::create_dir_all(&workspace_alan).unwrap();
+        std::fs::write(
+            workspace_alan.join("policy.yaml"),
+            r#"
+rules:
+  - id: review-deploy
+    tool: "*"
+    capability: write
+    match_path_prefix: "deploy/"
+    action: deny
+    reason: deploy config updates are blocked
+default_action: allow
+"#,
+        )
+        .unwrap();
+
+        let session = Session::new();
+        let mut tools = ToolRegistry::new();
+        tools.register(StaticResultTool {
+            name: "write_file",
+            capability: ToolCapability::Write,
+            workspace_local: true,
+        });
+        let mut state = create_test_state_with_session_and_tools(session, tools);
+        state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
+        state.runtime_config.policy_engine =
+            crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
+        state
+            .tool_catalog_mut_for_test()
+            .set_default_cwd(workspace_root.join("src"));
+
+        let (_, events) = execute_single_tool_call(
+            &mut state,
+            "call-deploy-write",
+            "write_file",
+            json!({"path": "../deploy/prod.yaml", "content": "version = 2"}),
+        )
+        .await;
+
+        let completed = events.iter().find_map(|event| match event {
+            Event::ToolCallCompleted {
+                success,
+                result_preview,
+                audit,
+                ..
+            } => Some((success, result_preview, audit)),
+            _ => None,
+        });
+        let Some((success, result_preview, audit)) = completed else {
+            panic!("expected ToolCallCompleted event");
+        };
+        assert_eq!(*success, Some(false));
+        assert!(
+            result_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("deploy config updates are blocked"),
+            "expected policy block preview, got {:?}",
+            result_preview
+        );
+        assert!(audit.as_ref().is_some_and(|audit| {
+            audit.rule_id.as_deref() == Some("review-deploy") && audit.action == "deny"
+        }));
+    }
+
+    #[tokio::test]
     async fn test_cross_workspace_bash_routing_uses_bound_workspace_root_with_custom_memory_dir() {
         let workspace_root = tempfile::TempDir::new().unwrap();
         let other_workspace = tempfile::TempDir::new().unwrap();
@@ -2589,7 +3360,7 @@ mod tests {
         state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
         state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
         state
-            .tools
+            .tool_catalog_mut_for_test()
             .set_default_cwd(workspace_root.path().to_path_buf());
 
         let (_, events) = execute_single_tool_call(
@@ -2651,7 +3422,9 @@ mod tests {
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state.tools.set_default_cwd(workspace_root.clone());
+        state
+            .tool_catalog_mut_for_test()
+            .set_default_cwd(workspace_root.clone());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -2707,7 +3480,9 @@ mod tests {
         });
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state.tools.set_default_cwd(workspace_root.clone());
+        state
+            .tool_catalog_mut_for_test()
+            .set_default_cwd(workspace_root.clone());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -2754,7 +3529,7 @@ mod tests {
         let mut state = create_test_state();
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
-            .tools
+            .tool_catalog_mut_for_test()
             .set_default_cwd(workspace_root.path().to_path_buf());
         state.session.dynamic_tools.insert(
             "custom_dynamic_tool".to_string(),
@@ -2813,7 +3588,7 @@ mod tests {
         let mut state = create_test_state_with_session_and_tools(session, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
-            .tools
+            .tool_catalog_mut_for_test()
             .set_default_cwd(workspace_root.path().to_path_buf());
 
         let (_, events) = execute_single_tool_call(
@@ -3429,10 +4204,10 @@ mod tests {
         assert!(events.iter().any(|event| matches!(
             event,
             Event::Yield {
-                request_id,
                 kind: alan_agent_protocol::YieldKind::Confirmation,
+                payload,
                 ..
-            } if request_id.contains("call-dup")
+            } if payload["details"]["replay_tool_call"]["call_id"] == "call-dup"
         )));
     }
 

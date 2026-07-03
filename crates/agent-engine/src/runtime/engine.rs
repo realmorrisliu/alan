@@ -5,24 +5,138 @@ use super::agent_loop::{
     run_deferred_runtime_action_with_cancel,
 };
 use super::turn_driver::{
-    TurnInputBroker, drive_turn_submission_with_cancel, is_turn_inband_submission,
-    should_drive_turn_submission,
+    NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
+    is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{RuntimeConfig, RuntimeLoopState};
+use super::{RuntimeConfig, RuntimeEnvironment, RuntimeLoopState};
 use crate::{llm::LlmClient, session::Session};
-use alan_agent_protocol::{Event, Submission};
+use alan_agent_protocol::{Event, InputMode, Submission};
+use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+
+static NEXT_RUNTIME_NAMESPACE_FID: AtomicU64 = AtomicU64::new(120_000);
+const LLM_SRV_HANDLE: &str = "llm";
+const SRV_MOUNT: &str = "/srv";
+const LLM_MOUNT: &str = "/mnt/llm";
+
+struct RuntimeLlmProvider {
+    client: LlmClient,
+}
+
+impl RuntimeLlmProvider {
+    fn new(client: LlmClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for RuntimeLlmProvider {
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+        self.client.generate(request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        self.client.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        self.client.generate_stream(request).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        self.client.provider_name()
+    }
+}
+
+struct RuntimeToolProcessRunner {
+    tools: crate::tools::ToolRegistry,
+}
+
+impl RuntimeToolProcessRunner {
+    fn new(tools: crate::tools::ToolRegistry) -> Self {
+        Self { tools }
+    }
+}
+
+#[async_trait::async_trait]
+impl alan_kernel::ProcessRunner for RuntimeToolProcessRunner {
+    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
+        if invocation
+            .namespace
+            .resolve(&invocation.exec.executable)
+            .is_err()
+        {
+            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
+        }
+        let tool_name = invocation
+            .exec
+            .executable
+            .rsplit('/')
+            .next()
+            .unwrap_or(invocation.exec.executable.as_str());
+        let arguments = invocation
+            .exec
+            .args
+            .first()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            .unwrap_or(serde_json::Value::Null);
+
+        match self.tools.execute(tool_name, arguments).await {
+            Ok(output) => {
+                let mut bytes =
+                    serde_json::to_vec(&output).unwrap_or_else(|_| b"{\"success\":true}".to_vec());
+                bytes.push(b'\n');
+                alan_kernel::ProcessOutcome::exited(0, bytes)
+            }
+            Err(err) => {
+                let mut bytes = serde_json::to_vec(&serde_json::json!({
+                    "success": false,
+                    "error": format!("{err:#}"),
+                }))
+                .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
+                bytes.push(b'\n');
+                alan_kernel::ProcessOutcome::exited(1, bytes)
+            }
+        }
+    }
+}
+
+enum RuntimeEnvironmentBootstrap {
+    Ready(RuntimeEnvironment),
+    NamespaceRoot {
+        llm_client: LlmClient,
+        tools: crate::tools::ToolRegistry,
+    },
+}
+
+impl RuntimeEnvironmentBootstrap {
+    async fn into_environment(self) -> Result<RuntimeEnvironment> {
+        match self {
+            Self::Ready(environment) => Ok(environment),
+            Self::NamespaceRoot { llm_client, tools } => {
+                build_root_namespace_environment(llm_client, tools).await
+            }
+        }
+    }
+}
 
 fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
     hard_trigger_ratio * 0.9
@@ -72,6 +186,27 @@ fn should_requeue_deferred_action(
     exit: DeferredRuntimeActionExit,
 ) -> bool {
     requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
+}
+
+async fn read_namespace_input_submission(
+    namespace: super::NamespaceRuntimeEnvironment,
+    mode: InputMode,
+) -> Option<Result<Submission>> {
+    Some(namespace.read_next_input_submission(mode).await)
+}
+
+async fn read_pending_namespace_resume_submission(
+    state: &RuntimeLoopState,
+) -> Option<Result<Submission>> {
+    if !state.turn_state.has_pending_interaction() {
+        return None;
+    }
+
+    match namespace_pending_resume_submission(state).await {
+        Ok(Some(submission)) => Some(Ok(submission)),
+        Ok(None) => None,
+        Err(err) => Some(Err(err)),
+    }
 }
 
 #[derive(Default)]
@@ -1005,6 +1140,143 @@ pub fn effective_core_config_for_runtime(
     Ok(core_config)
 }
 
+async fn build_root_namespace_environment(
+    llm_client: LlmClient,
+    tools: crate::tools::ToolRegistry,
+) -> Result<RuntimeEnvironment> {
+    let tool_definitions = tools.get_tool_definitions();
+    let tool_names = tools
+        .list_tools()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(RuntimeLlmProvider::new(llm_client)));
+
+    let procfs = alan_kernel::ProcFs::new();
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+    let agent_root_tree = InProcessTransport::new(agent_root.clone());
+
+    let mut process_namespace = alan_kernel::Namespace::new();
+    process_namespace.mount(
+        "/agent",
+        agent_root_tree.clone(),
+        alan_kernel::Access::ReadWrite,
+    );
+    mount_llmfs_standard_handles(
+        &mut process_namespace,
+        Arc::new(alan_kernel::SrvFs::new()),
+        llmfs,
+    )
+    .await?;
+    for tool_name in &tool_names {
+        process_namespace.mount(
+            &format!("/bin/{tool_name}"),
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+    }
+
+    let root_pid = spawn_root_agent_process(&procfs, process_namespace.clone()).await?;
+    agent_root
+        .bind_process(root_pid.clone(), agentfs.clone())
+        .await;
+    agent_root.set_root_process(root_pid.clone()).await;
+
+    let root_pid_value = alan_kernel::Pid(
+        root_pid
+            .parse::<u64>()
+            .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
+    );
+    let procfs_with_runner = procfs.with_runner(Arc::new(RuntimeToolProcessRunner::new(tools)));
+    let process_procfs = procfs_with_runner.for_spawner(
+        Some(root_pid_value),
+        process_namespace.clone(),
+        alan_kernel::Credentials::user("root-agent"),
+    );
+    process_namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(process_procfs)),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(process_namespace)));
+    Ok(RuntimeEnvironment::namespace_with_tool_definitions(
+        super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default"),
+        tool_definitions,
+    ))
+}
+
+async fn mount_llmfs_standard_handles(
+    namespace: &mut alan_kernel::Namespace,
+    srvfs: Arc<alan_kernel::SrvFs>,
+    llmfs: Arc<alan_llmfs::LlmFs>,
+) -> Result<()> {
+    srvfs
+        .post(
+            LLM_SRV_HANDLE,
+            InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        )
+        .await;
+    namespace.mount(
+        SRV_MOUNT,
+        InProcessTransport::new(srvfs.clone()),
+        alan_kernel::Access::ReadOnly,
+    );
+    let (llm_tree, llm_access) = srvfs
+        .lookup(LLM_SRV_HANDLE)
+        .await
+        .context("lookup llmfs handle after posting /srv/llm")?;
+    namespace.mount(LLM_MOUNT, llm_tree, llm_access);
+    Ok(())
+}
+
+async fn spawn_root_agent_process(
+    procfs: &alan_kernel::ProcFs,
+    process_namespace: alan_kernel::Namespace,
+) -> Result<String> {
+    let spawner_procfs = procfs.for_spawner(
+        None,
+        process_namespace.clone(),
+        alan_kernel::Credentials::user("service-manager"),
+    );
+    let clone_fid = Fid(NEXT_RUNTIME_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed));
+    spawner_procfs
+        .walk(Fid::ROOT, clone_fid, &["clone".to_string()])
+        .await
+        .context("walk root agent /proc/clone")?;
+    spawner_procfs
+        .open(clone_fid, OpenMode::ReadWrite)
+        .await
+        .context("open root agent /proc/clone")?;
+    let pid = String::from_utf8(
+        spawner_procfs
+            .read(clone_fid, 0, 64)
+            .await
+            .context("read root agent pid from /proc/clone")?,
+    )
+    .context("root agent pid is utf8")?;
+    let exec = alan_kernel::ExecSpec {
+        executable: "/bin/alan-agent".to_string(),
+        args: Vec::new(),
+        namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
+            &process_namespace,
+        )),
+    };
+    let exec_bytes = serde_json::to_vec(&exec).context("serialize root agent exec spec")?;
+    spawner_procfs
+        .write(clone_fid, 0, &exec_bytes)
+        .await
+        .context("write root agent exec spec")?;
+    spawner_procfs
+        .clunk(clone_fid)
+        .await
+        .context("commit root agent /proc/clone")?;
+    Ok(pid)
+}
+
 /// Spawn a new agent runtime with an externally-provided LLM client and tools.
 ///
 /// Hosts should use this when they need to inject concrete tool implementations
@@ -1014,14 +1286,6 @@ pub fn spawn_with_llm_client_and_tools(
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
-    let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
-    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-    let (liveness_tx, _) = tokio::sync::broadcast::channel::<RuntimeLivenessEnvelope>(256);
-    let liveness_tx_for_task = liveness_tx.clone();
-    let (ready_tx, ready_rx) =
-        oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
-
     let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
     let channel = runtime_install_channel(&config);
     if let Some(default_cwd) = config.default_cwd_override.as_ref() {
@@ -1053,6 +1317,52 @@ pub fn spawn_with_llm_client_and_tools(
             scratch_dir,
         ));
     }
+
+    let generation_capabilities = llm_client.capabilities();
+    let host_tools = tools.clone();
+    spawn_with_prepared_runtime_environment(
+        config,
+        RuntimeEnvironmentBootstrap::NamespaceRoot { llm_client, tools },
+        host_tools,
+        generation_capabilities,
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn spawn_with_namespace_environment(
+    config: WorkspaceRuntimeConfig,
+    namespace: super::NamespaceRuntimeEnvironment,
+    host_tools: crate::tools::ToolRegistry,
+    generation_capabilities: crate::llm::ProviderCapabilities,
+) -> Result<RuntimeController> {
+    let tool_definitions = host_tools.get_tool_definitions();
+    spawn_with_prepared_runtime_environment(
+        config,
+        RuntimeEnvironmentBootstrap::Ready(RuntimeEnvironment::namespace_with_tool_definitions(
+            namespace,
+            tool_definitions,
+        )),
+        host_tools,
+        generation_capabilities,
+    )
+}
+
+fn spawn_with_prepared_runtime_environment(
+    config: WorkspaceRuntimeConfig,
+    environment: RuntimeEnvironmentBootstrap,
+    host_tools: crate::tools::ToolRegistry,
+    _generation_capabilities: crate::llm::ProviderCapabilities,
+) -> Result<RuntimeController> {
+    let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+    let (liveness_tx, _) = tokio::sync::broadcast::channel::<RuntimeLivenessEnvelope>(256);
+    let liveness_tx_for_task = liveness_tx.clone();
+    let (ready_tx, ready_rx) =
+        oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
+
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
+    let channel = runtime_install_channel(&config);
 
     let mut agent_config = config.agent_config.clone();
     if !resolved_agent_definition.config_overlay_paths.is_empty() {
@@ -1115,7 +1425,8 @@ pub fn spawn_with_llm_client_and_tools(
     let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
     let resume_rollout_path = config.resume_rollout_path.clone();
     let desired_session_id = config.session_id.clone();
-    let host_capabilities = runtime_host_capabilities(&config, &tools);
+    let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
+    let host_capabilities = runtime_host_capabilities(&config, &host_tools);
     let mut prompt_cache =
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
             resolved_agent_definition.capability_view.clone(),
@@ -1133,10 +1444,17 @@ pub fn spawn_with_llm_client_and_tools(
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
+        let environment = match environment.into_environment().await {
+            Ok(environment) => environment,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
+            }
+        };
         let model = core_config.effective_model().to_string();
         let session_request_controls = match crate::resolve_session_request_controls(
             &core_config,
-            llm_client.capabilities(),
+            generation_capabilities,
             runtime_config.request_control_intent,
         ) {
             Ok(controls) => controls,
@@ -1170,8 +1488,8 @@ pub fn spawn_with_llm_client_and_tools(
             workspace_root_dir: runtime_workspace_root_dir,
             session,
             current_submission_id: None,
-            llm_client,
-            tools,
+            environment,
+            tool_catalog: host_tools.clone(),
             core_config,
             runtime_config,
             workspace_persona_dirs: prompt_cache_persona_dirs.clone(),
@@ -1196,11 +1514,49 @@ pub fn spawn_with_llm_client_and_tools(
                 queues.pop_outer_deferred()
             } else if let Some(queued_item) = queues.pop_outer() {
                 Some(queued_item)
+            } else if let Some(namespace_resume) =
+                read_pending_namespace_resume_submission(&state).await
+            {
+                match namespace_resume {
+                    Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
+                    Err(err) => {
+                        error!(
+                            error = %format!("{err:#}"),
+                            "Failed to read namespace answered request response"
+                        );
+                        None
+                    }
+                }
             } else if submissions_closed {
                 None
             } else {
+                let namespace_input = state.namespace_environment().clone();
+                let poll_pending_namespace_response = state.turn_state.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
+                    namespace_submission = read_namespace_input_submission(namespace_input, InputMode::FollowUp) => {
+                        match namespace_submission {
+                            Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
+                            Some(Err(err)) => {
+                                error!(error = %format!("{err:#}"), "Failed to read namespace io/input frame");
+                                None
+                            }
+                            None => None,
+                        }
+                    }
+                    _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL), if poll_pending_namespace_response => {
+                        match read_pending_namespace_resume_submission(&state).await {
+                            Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
+                            Some(Err(err)) => {
+                                error!(
+                                    error = %format!("{err:#}"),
+                                    "Failed to read namespace answered request response"
+                                );
+                                None
+                            }
+                            None => None,
+                        }
+                    }
                     _ = shutdown_rx.recv() => {
                         shutdown_requested = true;
                         submissions_closed = true;
@@ -1251,6 +1607,7 @@ pub fn spawn_with_llm_client_and_tools(
                     let mut set_active_submission_id = |submission_id: &str| {
                         submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
                     };
+                    let namespace_input = state.namespace_environment().clone();
                     let mut submission_fut: std::pin::Pin<
                         Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
                     > = if drive_as_turn_submission {
@@ -1323,6 +1680,33 @@ pub fn spawn_with_llm_client_and_tools(
                                     }
                                 }
                             }
+                            namespace_submission = read_namespace_input_submission(namespace_input.clone(), InputMode::FollowUp) => {
+                                match namespace_submission {
+                                    Some(Ok(incoming)) => {
+                                        if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
+                                            if !queues.active_turn_broker.push(incoming.clone()).await {
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        } else {
+                                            queues.push_outer_submission(incoming);
+                                        }
+                                    }
+                                    Some(Err(err)) => {
+                                        let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
+                                        error!(error = %error_msg);
+                                        let _ = evt_tx
+                                            .send(RuntimeEventEnvelope {
+                                                submission_id: submission_event_ctx.get_submission_id(),
+                                                event: Event::Error {
+                                                    message: error_msg,
+                                                    recoverable: true,
+                                                },
+                                            })
+                                            .await;
+                                    }
+                                    None => {}
+                                }
+                            }
                             _ = heartbeat_interval.tick() => {
                                 let _ = liveness_tx_for_task.send(RuntimeLivenessEnvelope {
                                     submission_id: submission_event_ctx.get_submission_id(),
@@ -1345,6 +1729,7 @@ pub fn spawn_with_llm_client_and_tools(
                     let action_for_requeue = action.clone();
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
+                    let namespace_input = state.namespace_environment().clone();
                     let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
                         &mut state, action, &cancel,
                     ));
@@ -1372,6 +1757,22 @@ pub fn spawn_with_llm_client_and_tools(
                                     None => {
                                         submissions_closed = true;
                                     }
+                                }
+                            }
+                            namespace_submission = read_namespace_input_submission(namespace_input.clone(), InputMode::FollowUp) => {
+                                match namespace_submission {
+                                    Some(Ok(incoming)) => {
+                                        requeue_if_cancelled = true;
+                                        cancel.cancel();
+                                        queues.push_outer_submission(incoming);
+                                    }
+                                    Some(Err(err)) => {
+                                        error!(
+                                            error = %format!("{err:#}"),
+                                            "Failed to read namespace io/input frame during deferred action"
+                                        );
+                                    }
+                                    None => {}
                                 }
                             }
                             _ = shutdown_rx.recv() => {
@@ -1426,16 +1827,25 @@ fn runtime_install_channel(config: &WorkspaceRuntimeConfig) -> crate::InstallCha
 mod tests {
     use super::*;
     use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
-    use alan_agent_protocol::Op;
+    use alan_agent_protocol::{ContentPart, Op};
     use alan_llm::{
         GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
-        TokenUsage,
+        TokenUsage, ToolCallDelta,
     };
     use anyhow::anyhow;
     use async_trait::async_trait;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
+
+    fn namespace_environment_for_test() -> RuntimeEnvironment {
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+            alan_kernel::Namespace::new(),
+        )));
+        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
+    }
 
     fn write_agent_overlay(path: &Path, body: &str) {
         std::fs::write(path, body).unwrap();
@@ -1462,11 +1872,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(MockLlmProvider::new()),
+            environment: namespace_environment_for_test(),
+            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
-            tools: crate::tools::ToolRegistry::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };
@@ -1484,6 +1894,35 @@ mod tests {
                 QueuedRuntimeItem::Deferred(_) => "deferred",
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn llmfs_standard_handle_posts_under_srv_and_mounts_tree_under_mnt_llm() {
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection("default", Box::new(MockLlmProvider::new()));
+        let srvfs = Arc::new(alan_kernel::SrvFs::new());
+        let mut namespace = alan_kernel::Namespace::new();
+
+        mount_llmfs_standard_handles(&mut namespace, srvfs, llmfs)
+            .await
+            .unwrap();
+
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root);
+
+        assert_eq!(shell.ls("/srv").await.unwrap(), vec!["llm".to_string()]);
+        assert_eq!(shell.cat("/srv/llm").await.unwrap(), b"llm");
+        assert_eq!(
+            shell.ls("/srv/llm").await,
+            Err(alan_ap::ErrorCode::NotDirectory),
+            "/srv/llm is the rendezvous handle, not the llmfs state tree"
+        );
+
+        let llm_root = shell.ls("/mnt/llm").await.unwrap();
+        assert!(llm_root.iter().any(|entry| entry == "connections"));
+        assert!(llm_root.iter().any(|entry| entry == "providers"));
+        let connections = shell.ls("/mnt/llm/connections").await.unwrap();
+        assert_eq!(connections, vec!["default".to_string()]);
     }
 
     #[test]
@@ -1521,6 +1960,158 @@ mod tests {
             provider_response_status: None,
             warnings: Vec::new(),
         }
+    }
+
+    fn response_stream(response: GenerationResponse) -> tokio::sync::mpsc::Receiver<StreamChunk> {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        tokio::spawn(async move {
+            if !response.content.is_empty()
+                || response
+                    .thinking
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                || response
+                    .thinking_signature
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                || !response.redacted_thinking.is_empty()
+            {
+                let mut redacted = response.redacted_thinking.into_iter();
+                let _ = tx
+                    .send(StreamChunk {
+                        text: (!response.content.is_empty()).then_some(response.content),
+                        thinking: response.thinking,
+                        thinking_signature: response.thinking_signature,
+                        redacted_thinking: redacted.next(),
+                        usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
+                        tool_call_delta: None,
+                        is_finished: false,
+                        finish_reason: None,
+                    })
+                    .await;
+                for redacted in redacted {
+                    let _ = tx
+                        .send(StreamChunk {
+                            text: None,
+                            thinking: None,
+                            thinking_signature: None,
+                            redacted_thinking: Some(redacted),
+                            usage: None,
+                            provider_response_id: None,
+                            provider_response_status: None,
+                            sequence_number: None,
+                            tool_call_delta: None,
+                            is_finished: false,
+                            finish_reason: None,
+                        })
+                        .await;
+                }
+            }
+
+            let tool_calls = response.tool_calls;
+            for (index, tool_call) in tool_calls.iter().enumerate() {
+                let arguments =
+                    serde_json::to_string(&tool_call.arguments).unwrap_or_else(|_| "{}".into());
+                let _ = tx
+                    .send(StreamChunk {
+                        text: None,
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
+                        tool_call_delta: Some(ToolCallDelta {
+                            index,
+                            id: tool_call.id.clone(),
+                            name: Some(tool_call.name.clone()),
+                            arguments_delta: Some(arguments.clone()),
+                            arguments: Some(arguments),
+                        }),
+                        is_finished: false,
+                        finish_reason: None,
+                    })
+                    .await;
+            }
+
+            let finish_reason = response.finish_reason.unwrap_or_else(|| {
+                if tool_calls.is_empty() {
+                    "stop".to_string()
+                } else {
+                    "tool_calls".to_string()
+                }
+            });
+            let _ = tx
+                .send(StreamChunk {
+                    text: None,
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: response.usage,
+                    provider_response_id: response.provider_response_id,
+                    provider_response_status: response.provider_response_status,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: Some(finish_reason),
+                })
+                .await;
+        });
+        rx
+    }
+
+    #[tokio::test]
+    async fn test_spawn_with_llm_client_and_tools_runs_turn_after_namespace_bootstrap() {
+        let llm_client = LlmClient::new(
+            MockLlmProvider::new()
+                .with_response(mock_generation_response("hello from namespace bootstrap")),
+        );
+        let mut controller = spawn_with_llm_client_and_tools(
+            WorkspaceRuntimeConfig::default(),
+            llm_client,
+            crate::tools::ToolRegistry::new(),
+        )
+        .unwrap();
+        controller.wait_until_ready().await.unwrap();
+
+        let mut events = controller.handle.event_sender.subscribe();
+        controller
+            .handle
+            .submission_tx
+            .send(Submission::new(Op::Turn {
+                parts: vec![ContentPart::text("hello")],
+                context: None,
+            }))
+            .await
+            .unwrap();
+
+        let mut text = String::new();
+        let mut completed = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let envelope = tokio::time::timeout(remaining, events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            match envelope.event {
+                Event::TextDelta { chunk, .. } => text.push_str(&chunk),
+                Event::TurnCompleted { .. } => {
+                    completed = true;
+                    break;
+                }
+                Event::Error { message, .. } => panic!("runtime emitted error: {message}"),
+                _ => {}
+            }
+        }
+
+        assert!(completed, "turn did not complete; text so far: {text:?}");
+        assert_eq!(text, "hello from namespace bootstrap");
+        controller.shutdown().await.unwrap();
     }
 
     struct ShutdownDrainMemoryPromotionProvider {
@@ -1576,11 +2167,9 @@ mod tests {
 
         async fn generate_stream(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            Err(anyhow!(
-                "ShutdownDrainMemoryPromotionProvider does not implement generate_stream"
-            ))
+            Ok(response_stream(self.generate(request).await?))
         }
 
         fn provider_name(&self) -> &'static str {
@@ -1650,13 +2239,17 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut core_config = crate::Config::default();
+        let mut core_config = crate::Config::for_openai_chat_completions_compatible(
+            "sk-test",
+            None,
+            Some("test-model"),
+        );
         core_config.memory.enabled = true;
         core_config.memory.workspace_dir = Some(memory_dir.clone());
         core_config.streaming_mode = crate::config::StreamingMode::Off;
@@ -1688,19 +2281,33 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let mut observed_events = Vec::new();
+        let wait_result = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if envelope.submission_id.as_deref() != Some(submission.id.as_str()) {
-                    continue;
-                }
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
+                let envelope = event_rx
+                    .recv()
+                    .await
+                    .expect("runtime event stream closed before turn completion");
+                observed_events.push(format!(
+                    "{:?} submission_id={:?}",
+                    envelope.event, envelope.submission_id
+                ));
+                match &envelope.event {
+                    Event::TurnCompleted { .. } => break,
+                    Event::Error { message, .. } => {
+                        panic!(
+                            "runtime emitted error before shutdown drain: {message}; \
+                             observed_events={observed_events:?}"
+                        );
+                    }
+                    _ => {}
                 }
             }
         })
-        .await
-        .expect("wait for turn completion");
+        .await;
+        if wait_result.is_err() {
+            panic!("wait for turn completion; observed_events={observed_events:?}");
+        }
 
         controller.shutdown().await.unwrap();
 
@@ -1709,6 +2316,185 @@ mod tests {
                 .await
                 .unwrap();
         assert!(user_memory.contains("Name: Morris"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_with_namespace_environment_reaches_ready_without_legacy_capabilities() {
+        let core_config = crate::Config::default();
+        let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
+        let config = WorkspaceRuntimeConfig {
+            agent_config: crate::AgentConfig::from(core_config),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+            alan_kernel::Namespace::new(),
+        )));
+        let namespace_environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            namespace_environment,
+            crate::tools::ToolRegistry::new(),
+            generation_capabilities,
+        )
+        .unwrap();
+        let ready = controller.wait_until_ready().await.unwrap();
+
+        assert!(!ready.session_id.is_empty());
+        controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submission() {
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(MockLlmProvider::new().with_response(GenerationResponse {
+                content: "hello from namespace runtime".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+                warnings: Vec::new(),
+            })),
+        );
+
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            alan_ap::InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+
+        let core_config = crate::Config::default();
+        let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
+        let config = WorkspaceRuntimeConfig {
+            agent_config: crate::AgentConfig::from(core_config),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let namespace_environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            namespace_environment,
+            crate::tools::ToolRegistry::new(),
+            generation_capabilities,
+        )
+        .unwrap();
+        controller.wait_until_ready().await.unwrap();
+
+        let mut event_rx = controller.handle.event_sender.subscribe();
+        shell
+            .write("/agent/1/io/input", b"hello through files")
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = event_rx.recv().await.unwrap();
+                if matches!(envelope.event, Event::TurnCompleted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("namespace io/input should drive a turn to completion");
+
+        let output = String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap();
+        assert_eq!(output, "hello from namespace runtime");
+
+        controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_outer_idle_reads_answered_namespace_request_response() {
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let namespace_environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        let request_id = namespace_environment
+            .write_request(crate::runtime::agent_loop::NamespaceRequestRecord::new(
+                "structured_input",
+                "Provide the missing value",
+            ))
+            .await
+            .unwrap();
+        let mut turn_state = TurnState::default();
+        turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: request_id.clone(),
+            title: "Missing value".to_string(),
+            prompt: "Provide the missing value".to_string(),
+            questions: Vec::new(),
+        });
+        let state = RuntimeLoopState {
+            workspace_id: "outer-idle-namespace-response-test".to_string(),
+            workspace_root_dir: None,
+            session: crate::Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(namespace_environment),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: crate::Config::default(),
+            runtime_config: RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state,
+        };
+
+        assert!(
+            read_pending_namespace_resume_submission(&state)
+                .await
+                .is_none(),
+            "unanswered request should not create a resume submission"
+        );
+
+        shell
+            .write(
+                &format!("/agent/1/requests/{request_id}/response"),
+                br#"{"answers":[{"question_id":"q1","value":"from file"}]}"#,
+            )
+            .await
+            .unwrap();
+
+        let submission = read_pending_namespace_resume_submission(&state)
+            .await
+            .expect("answered namespace request should be observed")
+            .unwrap();
+        match submission.op {
+            Op::Resume {
+                request_id: resumed_id,
+                content,
+            } => {
+                assert_eq!(resumed_id, request_id);
+                assert_eq!(
+                    content,
+                    vec![ContentPart::structured(serde_json::json!({
+                        "answers": [{"question_id": "q1", "value": "from file"}]
+                    }))]
+                );
+            }
+            other => panic!("expected Op::Resume from namespace response, got {other:?}"),
+        }
     }
 
     #[test]

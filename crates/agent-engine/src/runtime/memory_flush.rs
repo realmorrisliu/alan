@@ -307,7 +307,7 @@ async fn generate_flush_content(
             tool_call_id: None,
         });
     }
-    llm_messages.extend(state.llm_client.project_messages(sanitized_messages));
+    llm_messages.extend(state.project_generation_messages(sanitized_messages));
 
     let request = build_generation_request(
         Some(prompts::MEMORY_FLUSH_PROMPT.to_string()),
@@ -317,10 +317,9 @@ async fn generate_flush_content(
         Some(MEMORY_FLUSH_MAX_TOKENS),
     );
 
-    let response = tokio::select! {
-        _ = cancel.cancelled() => Err(anyhow::anyhow!("memory flush cancelled")),
-        result = state.llm_client.generate(request) => result,
-    }?;
+    let response = state
+        .generate_once_with_cancel(request, cancel, "memory flush cancelled")
+        .await?;
 
     parse_memory_flush_content(&response.content)
 }
@@ -563,7 +562,133 @@ fn truncate_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, MountFs, Namespace};
+    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+    use alan_llmfs::LlmFs;
+    use tokio::sync::mpsc;
+
+    use crate::{
+        config::Config,
+        runtime::{
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
+            TurnState, prompt_cache::PromptAssemblyCache,
+        },
+        session::Session,
+    };
     use std::path::PathBuf;
+
+    struct RecordingProvider {
+        requests: Arc<Mutex<Vec<GenerationRequest>>>,
+        response: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RecordingProvider {
+        async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+            unimplemented!()
+        }
+
+        async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+            unimplemented!()
+        }
+
+        async fn generate_stream(
+            &mut self,
+            request: GenerationRequest,
+        ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+            self.requests.lock().unwrap().push(request);
+            let (tx, rx) = mpsc::channel(4);
+            let response = self.response.clone();
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(StreamChunk {
+                        text: Some(response),
+                        thinking: None,
+                        thinking_signature: None,
+                        redacted_thinking: None,
+                        usage: None,
+                        provider_response_id: None,
+                        provider_response_status: None,
+                        sequence_number: None,
+                        tool_call_delta: None,
+                        is_finished: true,
+                        finish_reason: Some("stop".to_string()),
+                    })
+                    .await;
+            });
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "recording"
+        }
+    }
+
+    fn namespace_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+        let llmfs = Arc::new(LlmFs::new());
+        llmfs.register_connection("default", Box::new(provider));
+
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+                root, "/agent/1", "default",
+            )),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_flush_generation_uses_namespace_llmfs() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut state = namespace_state_with_provider(RecordingProvider {
+            requests: Arc::clone(&requests),
+            response: r#"{"why":"namespace flush","key_decisions":["via llmfs"],"constraints":[],"next_steps":[],"important_refs":["/mnt/llm"]}"#
+                .to_string(),
+        });
+        state
+            .session
+            .add_user_message("remember this namespace fact");
+        let messages = state.session.tape.messages().to_vec();
+
+        let content = generate_flush_content(&mut state, &messages, &CancellationToken::new())
+            .await
+            .unwrap()
+            .expect("flush content");
+
+        assert_eq!(content.why, "namespace flush");
+        assert_eq!(content.key_decisions, vec!["via llmfs"]);
+        let recorded = requests.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].system_prompt.as_deref(),
+            Some(prompts::MEMORY_FLUSH_PROMPT)
+        );
+        assert!(
+            recorded[0]
+                .messages
+                .iter()
+                .any(|message| message.content.contains("remember this namespace fact"))
+        );
+    }
 
     #[test]
     fn test_parse_memory_flush_content_accepts_json_fences() {

@@ -82,11 +82,33 @@ tool executables, the agent's own `/agent/<pid>` tree — SHALL be the agent's
 entire capability set. There SHALL be no capability granted to an agent outside
 its namespace.
 
+Implementation evidence for this change SHALL state the ADR-0024 R1 boundary:
+until the kernel §7.1a amplification check and cross-process/isolation transport
+land, this capability boundary is convention-enforced in one address space, not
+hard isolation. Do not claim security isolation from absent mounts until that
+later enforcement slice is present.
+
 #### Scenario: An agent is spawned
 - **WHEN** an agent process is created
 - **THEN** it is spawned via `/proc/clone` with an exec spec that mounts its LLM
   connection, tools, and agent tree
 - **AND** the agent can do exactly what those mounts permit, and nothing else
+
+#### Scenario: The agent tree is observed
+- **WHEN** a client walks `/agent/<pid>` or `/agent/root`
+- **THEN** the entry resolves only if the corresponding `/proc/<pid>` process
+  exists and has an agent-state backing tree
+- **AND** `/agent/root` is an alias for the Root Agent Process pid, not a
+  separate state tree
+- **AND** generic process files remain under `/proc/<pid>` while agent runtime
+  files remain under `/agent/<pid>`
+
+#### Scenario: Generic process control is applied
+- **WHEN** a client interrupts or cancels an Agent Process
+- **THEN** the generic lifecycle command is written to `/proc/<pid>/ctl`
+- **AND** `machine/ctl` remains reserved for agent-runtime tape/checkpoint
+  commands such as `compact` and `rollback`
+- **AND** the kernel interprets no agent-runtime control semantics
 
 #### Scenario: A sub-agent is given a narrower world
 - **WHEN** a parent spawns a sub-agent with fewer mounts (e.g. no model, or a

@@ -2,15 +2,21 @@
 //!
 //! This module contains the main agent execution logic.
 
-use alan_agent_protocol::{Event, Submission};
+mod namespace_environment;
+
+#[cfg(test)]
+pub(super) use namespace_environment::NamespaceRequestRecord;
+pub use namespace_environment::{
+    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
+    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+};
+
+use alan_agent_protocol::{Event, Submission, ToolCapability};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{
-    config::Config, llm::LlmClient, retry, runtime::RuntimeConfig, session::Session,
-    tools::ToolRegistry,
-};
+use crate::{config::Config, retry, runtime::RuntimeConfig, session::Session, tools::ToolRegistry};
 
 use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
 use super::tool_orchestrator::{
@@ -23,8 +29,7 @@ use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_state::{TurnActivityState, TurnState};
 #[allow(unused_imports)]
 use super::turn_support::{
-    cancel_current_task, detect_provider, emit_streaming_chunks, normalize_tool_calls,
-    split_text_for_typing,
+    cancel_current_task, emit_streaming_chunks, normalize_tool_calls, split_text_for_typing,
 };
 /// Normalized tool call with guaranteed ID
 #[derive(Debug, Clone)]
@@ -45,19 +50,218 @@ pub(super) enum DeferredRuntimeActionExit {
     Cancelled,
 }
 
+/// Runtime environment available to the Agent Execution Engine.
+///
+/// Generation, tools, and state are reached by walking files under one aP root.
+pub enum RuntimeEnvironment {
+    #[allow(dead_code)]
+    Namespace {
+        namespace: NamespaceRuntimeEnvironment,
+        tool_definitions: Vec<crate::llm::ToolDefinition>,
+    },
+}
+
+impl RuntimeEnvironment {
+    #[allow(dead_code)]
+    pub fn namespace(namespace: NamespaceRuntimeEnvironment) -> Self {
+        Self::namespace_with_tool_definitions(namespace, Vec::new())
+    }
+
+    pub fn namespace_with_tool_definitions(
+        namespace: NamespaceRuntimeEnvironment,
+        tool_definitions: Vec<crate::llm::ToolDefinition>,
+    ) -> Self {
+        Self::Namespace {
+            namespace,
+            tool_definitions,
+        }
+    }
+}
+
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
     pub workspace_root_dir: Option<std::path::PathBuf>,
     pub session: Session,
     pub current_submission_id: Option<String>,
-    pub llm_client: LlmClient,
+    pub environment: RuntimeEnvironment,
+    pub tool_catalog: ToolRegistry,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
     pub workspace_persona_dirs: Vec<std::path::PathBuf>,
-    pub tools: ToolRegistry,
     pub prompt_cache: super::prompt_cache::PromptAssemblyCache,
     pub turn_state: TurnState,
+}
+
+impl RuntimeLoopState {
+    pub(crate) fn namespace_environment(&self) -> &NamespaceRuntimeEnvironment {
+        match &self.environment {
+            RuntimeEnvironment::Namespace { namespace, .. } => namespace,
+        }
+    }
+
+    pub(crate) async fn write_namespace_confirmation_request(
+        &self,
+        pending: &crate::approval::PendingConfirmation,
+    ) -> Result<Option<String>> {
+        let kind = crate::approval::runtime_confirmation_control_kind(&pending.checkpoint_type)
+            .unwrap_or("confirmation");
+        let options = serde_json::to_string(&serde_json::json!({
+            "checkpoint_id": pending.checkpoint_id.clone(),
+            "checkpoint_type": pending.checkpoint_type.clone(),
+            "details": pending.details.clone(),
+            "options": pending.options.clone(),
+        }))?;
+        let request_id = self
+            .namespace_environment()
+            .write_request(
+                namespace_environment::NamespaceRequestRecord::new(kind, pending.summary.clone())
+                    .with_options(options),
+            )
+            .await?;
+        Ok(Some(request_id))
+    }
+
+    pub(crate) async fn write_namespace_structured_input_request(
+        &self,
+        pending: &crate::approval::PendingStructuredInputRequest,
+    ) -> Result<Option<String>> {
+        let options = serde_json::to_string(&serde_json::json!({
+            "request_id": pending.request_id.clone(),
+            "title": pending.title.clone(),
+            "questions": pending.questions.clone(),
+        }))?;
+        let request_id = self
+            .namespace_environment()
+            .write_request(
+                namespace_environment::NamespaceRequestRecord::new(
+                    "structured_input",
+                    pending.prompt.clone(),
+                )
+                .with_options(options),
+            )
+            .await?;
+        Ok(Some(request_id))
+    }
+
+    pub(crate) async fn write_namespace_dynamic_tool_request(
+        &self,
+        pending: &crate::approval::PendingDynamicToolCall,
+    ) -> Result<Option<String>> {
+        let prompt = format!("Resolve dynamic tool: {}", pending.tool_name);
+        let options = serde_json::to_string(&serde_json::json!({
+            "call_id": pending.call_id.clone(),
+            "tool_name": pending.tool_name.clone(),
+            "arguments": pending.arguments.clone(),
+        }))?;
+        let request_id = self
+            .namespace_environment()
+            .write_request(
+                namespace_environment::NamespaceRequestRecord::new("dynamic_tool", prompt)
+                    .with_options(options),
+            )
+            .await?;
+        Ok(Some(request_id))
+    }
+
+    pub(crate) fn project_generation_messages(
+        &self,
+        messages: &[crate::session::Message],
+    ) -> Vec<crate::llm::Message> {
+        super::turn_support::project_messages_for_namespace(messages)
+    }
+
+    pub(crate) async fn generate_once_with_cancel(
+        &mut self,
+        request: crate::llm::GenerationRequest,
+        cancel: &CancellationToken,
+        cancel_message: &'static str,
+    ) -> Result<crate::llm::GenerationResponse> {
+        let namespace = self.namespace_environment().clone();
+        match namespace.generate_controlled(&request, 0, cancel).await {
+            Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
+            result => result,
+        }
+    }
+
+    pub(crate) async fn generate_response_with_retry(
+        &mut self,
+        request: crate::llm::GenerationRequest,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<crate::llm::GenerationResponse> {
+        let max_retries = retry::DEFAULT_MAX_RETRIES;
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            if cancel.is_cancelled() {
+                return Err(anyhow::anyhow!("LLM request cancelled"));
+            }
+
+            let namespace = self.namespace_environment().clone();
+            let attempt_request = request.clone();
+            let result = namespace
+                .generate_controlled(&attempt_request, timeout_secs, cancel)
+                .await;
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if !retry::is_retryable(&error) || attempt >= max_retries {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                    let delay = retry::backoff_delay(attempt + 1);
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
+    }
+
+    pub(crate) fn tool_catalog(&self) -> &ToolRegistry {
+        &self.tool_catalog
+    }
+
+    pub(crate) fn static_tool_definitions(&self) -> Vec<crate::llm::ToolDefinition> {
+        self.tool_catalog.get_tool_definitions()
+    }
+
+    pub(crate) fn static_tool_names(&self) -> Vec<String> {
+        self.tool_catalog
+            .list_tools()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    pub(crate) fn static_tool_capability(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+    ) -> Option<ToolCapability> {
+        self.tool_catalog.capability_for_tool(tool_name, arguments)
+    }
+
+    pub(crate) fn static_tool_locality(
+        &self,
+        tool_name: &str,
+    ) -> Option<crate::tools::ToolLocality> {
+        self.tool_catalog.tool_locality(tool_name)
+    }
+
+    pub(crate) fn default_tool_cwd(&self) -> Option<std::path::PathBuf> {
+        self.tool_catalog.default_cwd()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tool_catalog_mut_for_test(&mut self) -> &mut ToolRegistry {
+        &mut self.tool_catalog
+    }
 }
 
 /// Handle a single submission
@@ -316,10 +520,8 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
 ) -> DeferredRuntimeActionExit {
     match action {
         DeferredRuntimeAction::TurnMemoryPromotion(job) => {
-            match super::memory_promotion::run_turn_memory_promotion_job_with_cancel(
-                &mut state.llm_client,
-                &job,
-                cancel,
+            match super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
+                state, &job, cancel,
             )
             .await
             {
@@ -338,80 +540,6 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
     }
 }
 
-/// Generate LLM response with retry logic
-#[cfg_attr(not(test), allow(dead_code))]
-async fn generate_with_retry(
-    llm_client: &mut LlmClient,
-    request: crate::llm::GenerationRequest,
-    timeout_secs: u64,
-) -> Result<crate::llm::GenerationResponse> {
-    let cancel = CancellationToken::new();
-    generate_with_retry_with_cancel(llm_client, request, timeout_secs, &cancel).await
-}
-
-pub(super) async fn generate_with_retry_with_cancel(
-    llm_client: &mut LlmClient,
-    request: crate::llm::GenerationRequest,
-    timeout_secs: u64,
-    cancel: &CancellationToken,
-) -> Result<crate::llm::GenerationResponse> {
-    let max_retries = retry::DEFAULT_MAX_RETRIES;
-    let mut last_error = None;
-
-    for attempt in 0..=max_retries {
-        if cancel.is_cancelled() {
-            return Err(anyhow::anyhow!("LLM request cancelled"));
-        }
-        // timeout_secs == 0 means no timeout (wait indefinitely)
-        let result = if timeout_secs == 0 {
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = llm_client.generate(request.clone()) => result,
-            }
-        } else {
-            let timeout_duration = tokio::time::Duration::from_secs(timeout_secs);
-            tokio::select! {
-                _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                result = tokio::time::timeout(timeout_duration, llm_client.generate(request.clone())) => {
-                    match result {
-                        Ok(result) => result,
-                        Err(_) => {
-                            let timeout_error = anyhow::anyhow!("LLM request timed out");
-                            if attempt >= max_retries {
-                                return Err(timeout_error);
-                            }
-                            last_error = Some(timeout_error);
-                            let delay = retry::backoff_delay(attempt + 1);
-                            tokio::select! {
-                                _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
-                                _ = tokio::time::sleep(delay) => {}
-                            }
-                            continue;
-                        }
-                    }
-                }
-            }
-        };
-
-        match result {
-            Ok(response) => return Ok(response),
-            Err(error) => {
-                if !retry::is_retryable(&error) || attempt >= max_retries {
-                    return Err(error);
-                }
-                last_error = Some(error);
-                let delay = retry::backoff_delay(attempt + 1);
-                tokio::select! {
-                    _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
-                    _ = tokio::time::sleep(delay) => {}
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::compaction::{
@@ -424,14 +552,14 @@ mod tests {
 
     use crate::approval::{PendingConfirmation, TOOL_ESCALATION_CHECKPOINT_TYPE};
     use crate::config::Config;
-    use crate::llm::{
-        GenerationRequest, GenerationResponse, LlmClient, LlmProvider, StreamChunk, ToolCall,
-    };
+    use crate::llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk, ToolCall};
     use crate::rollout::{RolloutItem, RolloutRecorder};
     use alan_agent_protocol::{
         CompactionOutcome, CompactionPressureLevel, CompactionReason, CompactionResult,
         CompactionTrigger, MemoryFlushResult,
     };
+    use alan_ap::{Fid, FileServer, OpenMode};
+    use alan_shell::Shell;
     use serde_json::json;
     use std::{
         collections::VecDeque,
@@ -484,6 +612,156 @@ mod tests {
         })
     }
 
+    fn generation_response(content: impl Into<String>) -> GenerationResponse {
+        GenerationResponse {
+            content: content.into(),
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: None,
+            finish_reason: None,
+            warnings: Vec::new(),
+            provider_response_id: None,
+            provider_response_status: None,
+        }
+    }
+
+    fn finished_stream(response: GenerationResponse) -> tokio::sync::mpsc::Receiver<StreamChunk> {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(response.content),
+                    thinking: response.thinking,
+                    thinking_signature: response.thinking_signature,
+                    redacted_thinking: response.redacted_thinking.into_iter().next(),
+                    usage: response.usage,
+                    provider_response_id: response.provider_response_id,
+                    provider_response_status: response.provider_response_status,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: true,
+                    finish_reason: response.finish_reason.or_else(|| Some("stop".to_string())),
+                })
+                .await;
+        });
+        rx
+    }
+
+    fn namespace_environment_with_provider(
+        provider: impl LlmProvider + 'static,
+    ) -> RuntimeEnvironment {
+        let (root, _procfs) = namespace_root_with_provider(provider);
+        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
+    }
+
+    fn runtime_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+        runtime_state_with_environment(namespace_environment_with_provider(provider))
+    }
+
+    fn runtime_state_with_environment(environment: RuntimeEnvironment) -> RuntimeLoopState {
+        RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session: Session::new(),
+            current_submission_id: None,
+            environment,
+            tool_catalog: ToolRegistry::new(),
+            core_config: Config::default(),
+            runtime_config: super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        }
+    }
+
+    async fn namespace_environment_with_live_process(
+        provider: impl LlmProvider + 'static,
+    ) -> RuntimeEnvironment {
+        let (root, procfs) = namespace_root_with_provider(provider);
+        let pid = spawn_test_process(&procfs).await;
+        assert_eq!(pid, "1");
+        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
+    }
+
+    fn namespace_root_with_provider(
+        provider: impl LlmProvider + 'static,
+    ) -> (alan_ap::InProcessTransport, Arc<alan_kernel::ProcFs>) {
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection("default", Box::new(provider));
+        let procfs = Arc::new(alan_kernel::ProcFs::new());
+
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/proc",
+            alan_ap::InProcessTransport::new(procfs.clone()),
+            alan_kernel::Access::ReadWrite,
+        );
+        namespace.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        namespace.mount(
+            "/mnt/llm",
+            alan_ap::InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+        (root, procfs)
+    }
+
+    async fn spawn_test_process(procfs: &alan_kernel::ProcFs) -> String {
+        let clone_fid = Fid(80_000);
+        procfs
+            .walk(Fid::ROOT, clone_fid, &["clone".to_string()])
+            .await
+            .expect("walk /proc/clone");
+        procfs
+            .open(clone_fid, OpenMode::ReadWrite)
+            .await
+            .expect("open /proc/clone");
+        let pid = String::from_utf8(
+            procfs
+                .read(clone_fid, 0, 64)
+                .await
+                .expect("read pending pid"),
+        )
+        .expect("pending pid is utf8");
+        procfs
+            .write(clone_fid, 0, br#"{"executable":"/bin/agent","args":[]}"#)
+            .await
+            .expect("write exec spec");
+        procfs.clunk(clone_fid).await.expect("commit process");
+
+        let list_fid = Fid(80_001);
+        procfs
+            .walk(Fid::ROOT, list_fid, &[])
+            .await
+            .expect("walk /proc");
+        procfs
+            .open(list_fid, OpenMode::Read)
+            .await
+            .expect("open /proc");
+        let listing = String::from_utf8(
+            procfs
+                .read(list_fid, 0, 4096)
+                .await
+                .expect("read /proc listing"),
+        )
+        .expect("/proc listing is utf8");
+        assert!(
+            listing.lines().any(|line| line == pid),
+            "spawned process {pid} should be visible in /proc: {listing:?}"
+        );
+        pid
+    }
+
     struct DelayedMockProvider {
         delay: tokio::time::Duration,
         response_text: String,
@@ -508,18 +786,7 @@ mod tests {
             if let Some(response) = maybe_memory_promotion_response(&request) {
                 return Ok(response);
             }
-            Ok(GenerationResponse {
-                content: self.response_text.clone(),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: None,
-                finish_reason: None,
-                warnings: Vec::new(),
-                provider_response_id: None,
-                provider_response_status: None,
-            })
+            Ok(generation_response(self.response_text.clone()))
         }
 
         async fn chat(&mut self, _system: Option<&str>, user: &str) -> anyhow::Result<String> {
@@ -528,29 +795,68 @@ mod tests {
 
         async fn generate_stream(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            let (tx, rx) = tokio::sync::mpsc::channel(1);
-            let _ = tx
-                .send(StreamChunk {
-                    text: Some(self.response_text.clone()),
-                    thinking: None,
-                    thinking_signature: None,
-                    redacted_thinking: None,
-                    usage: None,
-                    provider_response_id: None,
-                    provider_response_status: None,
-                    sequence_number: None,
-                    tool_call_delta: None,
-                    is_finished: true,
-                    finish_reason: Some("stop".to_string()),
-                })
-                .await;
-            Ok(rx)
+            tokio::time::sleep(self.delay).await;
+            if let Some(response) = maybe_memory_promotion_response(&request) {
+                return Ok(finished_stream(response));
+            }
+            Ok(finished_stream(generation_response(
+                self.response_text.clone(),
+            )))
         }
 
         fn provider_name(&self) -> &'static str {
             "mock"
+        }
+    }
+
+    struct TimeoutThenSucceedStreamProvider {
+        attempts: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl TimeoutThenSucceedStreamProvider {
+        fn new(attempts: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+            Self { attempts }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for TimeoutThenSucceedStreamProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Err(anyhow::anyhow!(
+                "timeout-then-succeed provider uses streaming"
+            ))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("timeout-then-succeed stream provider".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let attempt = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if attempt == 0 {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                tokio::spawn(async move {
+                    let _hold = tx;
+                    std::future::pending::<()>().await;
+                });
+                return Ok(rx);
+            }
+
+            Ok(finished_stream(generation_response("recovered")))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "timeout_then_succeed_stream"
         }
     }
 
@@ -564,11 +870,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tools: ToolRegistry::new(),
+            tool_catalog: ToolRegistry::new(),
             core_config: {
                 let mut config = Config::default();
                 config.memory.workspace_dir = Some(memory_dir);
@@ -659,18 +965,7 @@ mod tests {
                 return Err(anyhow::anyhow!("synthetic retryable compaction failure"));
             }
 
-            Ok(GenerationResponse {
-                content: self.response_text.clone(),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: Vec::new(),
-                tool_calls: Vec::new(),
-                usage: None,
-                finish_reason: None,
-                warnings: Vec::new(),
-                provider_response_id: None,
-                provider_response_status: None,
-            })
+            Ok(generation_response(self.response_text.clone()))
         }
 
         async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
@@ -681,11 +976,10 @@ mod tests {
 
         async fn generate_stream(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            Err(anyhow::anyhow!(
-                "FailThenSucceedMockProvider does not implement generate_stream"
-            ))
+            let response = self.generate(request).await?;
+            Ok(finished_stream(response))
         }
 
         fn provider_name(&self) -> &'static str {
@@ -718,18 +1012,7 @@ mod tests {
             _request: GenerationRequest,
         ) -> anyhow::Result<GenerationResponse> {
             match self.steps.lock().unwrap().pop_front() {
-                Some(SequencedStep::Success(content)) => Ok(GenerationResponse {
-                    content,
-                    thinking: None,
-                    thinking_signature: None,
-                    redacted_thinking: Vec::new(),
-                    tool_calls: Vec::new(),
-                    usage: None,
-                    finish_reason: None,
-                    warnings: Vec::new(),
-                    provider_response_id: None,
-                    provider_response_status: None,
-                }),
+                Some(SequencedStep::Success(content)) => Ok(generation_response(content)),
                 Some(SequencedStep::Error(message)) => Err(anyhow::anyhow!(message)),
                 None => Err(anyhow::anyhow!("sequenced mock provider exhausted")),
             }
@@ -743,16 +1026,70 @@ mod tests {
 
         async fn generate_stream(
             &mut self,
-            _request: GenerationRequest,
+            request: GenerationRequest,
         ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-            Err(anyhow::anyhow!(
-                "SequencedMockProvider does not implement generate_stream"
-            ))
+            let response = self.generate(request).await?;
+            Ok(finished_stream(response))
         }
 
         fn provider_name(&self) -> &'static str {
             "sequenced_mock"
         }
+    }
+
+    #[tokio::test]
+    async fn namespace_generation_retries_transient_llmfs_errors() {
+        let mut state = runtime_state_with_provider(SequencedMockProvider::new(vec![
+            SequencedStep::Error("503 unavailable".to_string()),
+            SequencedStep::Success("recovered".to_string()),
+        ]));
+        let cancel = CancellationToken::new();
+
+        let response = state
+            .generate_response_with_retry(
+                GenerationRequest::new().with_user_message("hello"),
+                0,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "recovered");
+    }
+
+    #[tokio::test]
+    async fn namespace_generation_aborts_timed_out_generation_before_retry() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (root, _procfs) = namespace_root_with_provider(TimeoutThenSucceedStreamProvider::new(
+            Arc::clone(&attempts),
+        ));
+        let shell = Shell::new(root.clone());
+        let mut state = runtime_state_with_environment(RuntimeEnvironment::namespace(
+            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        ));
+        let cancel = CancellationToken::new();
+
+        let response = state
+            .generate_response_with_retry(
+                GenerationRequest::new().with_user_message("hello"),
+                1,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "recovered");
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let status = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g0/status")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(status["status"], "aborted");
     }
 
     fn memory_flush_json_response() -> String {
@@ -809,85 +1146,6 @@ mod tests {
         assert!(sanitized.contains("crates/agent-engine/src/runtime/agent_loop.rs"));
         assert!(sanitized.contains("call_tail_123"));
         assert!(sanitized.contains("final status: failed"));
-    }
-
-    #[tokio::test]
-    async fn test_generate_with_retry_timeout_zero_waits_for_response() {
-        let provider =
-            DelayedMockProvider::new(tokio::time::Duration::from_millis(50), "delayed response");
-        let mut llm_client = LlmClient::new(provider);
-        let request = GenerationRequest::new().with_user_message("hello");
-
-        let started_at = std::time::Instant::now();
-        let result = generate_with_retry(&mut llm_client, request, 0).await;
-
-        assert!(
-            result.is_ok(),
-            "timeout=0 should not fail: {:?}",
-            result.err()
-        );
-        assert_eq!(result.unwrap().content, "delayed response");
-        assert!(
-            started_at.elapsed() >= tokio::time::Duration::from_millis(40),
-            "timeout=0 should wait for provider completion rather than timing out immediately"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_generate_with_retry_timeout_triggers() {
-        // Provider with long delay should timeout
-        let provider = DelayedMockProvider::new(
-            tokio::time::Duration::from_secs(10),
-            "should not receive this",
-        );
-        let mut llm_client = LlmClient::new(provider);
-        let request = GenerationRequest::new().with_user_message("hello");
-
-        let result = generate_with_retry(&mut llm_client, request, 1).await;
-
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("timed out") || err_msg.contains("Max retries"));
-    }
-
-    #[tokio::test]
-    async fn test_generate_with_retry_can_be_cancelled() {
-        let provider = DelayedMockProvider::new(
-            tokio::time::Duration::from_secs(10),
-            "should not receive this",
-        );
-        let mut llm_client = LlmClient::new(provider);
-        let request = GenerationRequest::new().with_user_message("hello");
-        let cancel = CancellationToken::new();
-        let cancel_for_task = cancel.clone();
-
-        let task = tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-            cancel_for_task.cancel();
-        });
-
-        let result = generate_with_retry_with_cancel(&mut llm_client, request, 0, &cancel).await;
-        let _ = task.await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cancelled"));
-    }
-
-    #[tokio::test]
-    async fn test_generate_with_retry_non_retryable_error() {
-        let provider = ErrorMockProvider::new("non-retryable error");
-        let mut llm_client = LlmClient::new(provider);
-        let request = GenerationRequest::new().with_user_message("hello");
-
-        let result = generate_with_retry(&mut llm_client, request, 5).await;
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("non-retryable error")
-        );
     }
 
     #[test]
@@ -953,89 +1211,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_provider_with_mock() {
-        // Test that detect_provider returns the correct provider string
-        // LlmClient::new maps provider_name() to ProviderType:
-        // - "google_gemini_generate_content" -> ProviderType::GoogleGeminiGenerateContent
-        // - "openai_responses" -> ProviderType::OpenAiResponses
-        // - "openai_chat_completions" -> ProviderType::OpenAiChatCompletions
-        // - "openai_chat_completions_compatible" -> ProviderType::OpenAiChatCompletionsCompatible
-        // - "anthropic_messages" -> ProviderType::AnthropicMessages
-        // - others -> ProviderType::OpenAiChatCompletionsCompatible (default)
-        struct TestProvider {
-            name: &'static str,
-        }
-        #[async_trait::async_trait]
-        impl LlmProvider for TestProvider {
-            async fn generate(
-                &mut self,
-                _request: GenerationRequest,
-            ) -> anyhow::Result<GenerationResponse> {
-                unreachable!()
-            }
-            async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
-                unreachable!()
-            }
-            async fn generate_stream(
-                &mut self,
-                _request: GenerationRequest,
-            ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-                unreachable!()
-            }
-            fn provider_name(&self) -> &'static str {
-                self.name
-            }
-        }
-
-        let gemini_client = LlmClient::new(TestProvider {
-            name: "google_gemini_generate_content",
-        });
-        assert_eq!(
-            detect_provider(&gemini_client),
-            "google_gemini_generate_content"
-        );
-
-        let anthropic_client = LlmClient::new(TestProvider {
-            name: "anthropic_messages",
-        });
-        assert_eq!(detect_provider(&anthropic_client), "anthropic_messages");
-
-        let chatgpt_client = LlmClient::new(TestProvider { name: "chatgpt" });
-        assert_eq!(detect_provider(&chatgpt_client), "chatgpt");
-
-        let openai_responses_client = LlmClient::new(TestProvider {
-            name: "openai_responses",
-        });
-        assert_eq!(
-            detect_provider(&openai_responses_client),
-            "openai_responses"
-        );
-
-        let openai_chat_completions_client = LlmClient::new(TestProvider {
-            name: "openai_chat_completions",
-        });
-        assert_eq!(
-            detect_provider(&openai_chat_completions_client),
-            "openai_chat_completions"
-        );
-
-        let openai_chat_completions_compatible_client = LlmClient::new(TestProvider {
-            name: "openai_chat_completions_compatible",
-        });
-        assert_eq!(
-            detect_provider(&openai_chat_completions_compatible_client),
-            "openai_chat_completions_compatible"
-        );
-
-        // Unknown providers fall back to the chat-completions-compatible projection.
-        let unknown_client = LlmClient::new(TestProvider { name: "custom" });
-        assert_eq!(
-            detect_provider(&unknown_client),
-            "openai_chat_completions_compatible"
-        );
-    }
-
-    #[test]
     fn test_split_text_for_typing() {
         let text = "Hello";
         let chunks = split_text_for_typing(text);
@@ -1071,7 +1246,6 @@ mod tests {
     async fn test_cancel_current_task() {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -1079,11 +1253,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1268,7 +1442,6 @@ mod tests {
     fn test_agent_loop_state_creation() {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let state = RuntimeLoopState {
@@ -1276,11 +1449,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1324,7 +1497,6 @@ mod tests {
     async fn test_maybe_compact_context_no_compaction_needed() {
         let config = Config::default();
         let session = Session::new();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -1332,11 +1504,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1372,7 +1544,6 @@ mod tests {
             session.add_user_message(&format!("Message {}", i));
         }
 
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -1380,11 +1551,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1417,7 +1588,6 @@ mod tests {
         session.add_user_message(&"x".repeat(1200));
         session.add_assistant_message(&"y".repeat(1200), None);
 
-        let tools = ToolRegistry::new();
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
@@ -1429,11 +1599,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from token-triggered compaction",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1471,7 +1641,6 @@ mod tests {
         session.add_user_message(&"x".repeat(1200));
         session.add_assistant_message(&"y".repeat(1200), None);
 
-        let tools = ToolRegistry::new();
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
@@ -1483,11 +1652,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from zero-ratio compaction",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1525,7 +1694,6 @@ mod tests {
         session.add_user_message(&"x".repeat(1200));
         session.add_assistant_message(&"y".repeat(1200), None);
 
-        let tools = ToolRegistry::new();
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
@@ -1537,11 +1705,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Should not compact",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1583,7 +1751,6 @@ mod tests {
         }
 
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1599,11 +1766,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+            environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success(memory_flush_json_response()),
                 SequencedStep::Success("Summary after soft-threshold compaction".to_string()),
             ])),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1681,7 +1848,6 @@ mod tests {
         }
 
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1697,11 +1863,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+            environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Error("synthetic memory flush failure".to_string()),
                 SequencedStep::Success("Summary after failed memory flush".to_string()),
             ])),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1782,7 +1948,6 @@ mod tests {
         }
 
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1798,14 +1963,14 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SequencedMockProvider::new(vec![
+            environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success(
                     "{\"why\":\"\",\"key_decisions\":[],\"constraints\":[],\"next_steps\":[],\"important_refs\":[]}"
                         .to_string(),
                 ),
                 SequencedStep::Success("Summary after noop memory flush".to_string()),
             ])),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1887,7 +2052,6 @@ mod tests {
         session.note_auto_memory_flush_attempt();
 
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1903,10 +2067,10 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
-                "Summary after already-flushed-cycle skip".to_string(),
-            )])),
-            tools,
+            environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
+                SequencedStep::Success("Summary after already-flushed-cycle skip".to_string()),
+            ])),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1985,7 +2149,6 @@ mod tests {
         }
 
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -2001,10 +2164,10 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(SequencedMockProvider::new(vec![SequencedStep::Success(
-                "Summary at hard threshold".to_string(),
-            )])),
-            tools,
+            environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
+                SequencedStep::Success("Summary at hard threshold".to_string()),
+            ])),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2053,7 +2216,6 @@ mod tests {
         session.add_user_message("Investigate the compaction contract.");
         session.add_assistant_message("Need to preserve the current next step.", None);
 
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -2069,11 +2231,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Manual compaction below threshold",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2116,7 +2278,6 @@ mod tests {
         session.add_assistant_message(&"y".repeat(1200), None);
         let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
 
-        let tools = ToolRegistry::new();
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100;
         runtime_config.compaction_keep_last = 1;
@@ -2128,11 +2289,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Summary from emergency mid-turn compaction",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2167,7 +2328,6 @@ mod tests {
         }
 
         let rollout_path = session.rollout_path().unwrap().clone();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2175,11 +2335,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: Some("sub-compact".to_string()),
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "Manual compaction summary",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2260,7 +2420,6 @@ mod tests {
         }
 
         let rollout_path = session.rollout_path().unwrap().clone();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2268,11 +2427,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(FailThenSucceedMockProvider::new(
+            environment: namespace_environment_with_provider(FailThenSucceedMockProvider::new(
                 1,
                 "Compaction summary after retry",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2333,7 +2492,6 @@ mod tests {
         }
 
         let rollout_path = session.rollout_path().unwrap().clone();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2341,8 +2499,10 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
-            tools,
+            environment: namespace_environment_with_provider(ErrorMockProvider::new(
+                "synthetic compaction failure",
+            )),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2415,7 +2575,6 @@ mod tests {
         session.add_user_message("older turn 2");
         session.add_user_message("current turn");
 
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig {
             compaction_keep_last: 1,
             ..super::RuntimeConfig::default()
@@ -2426,8 +2585,10 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
-            tools,
+            environment: namespace_environment_with_provider(ErrorMockProvider::new(
+                "synthetic compaction failure",
+            )),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2504,7 +2665,6 @@ mod tests {
 
         let original_messages = stateful_messages_snapshot(&session);
         let rollout_path = session.rollout_path().unwrap().clone();
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2512,8 +2672,10 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(ErrorMockProvider::new("synthetic compaction failure")),
-            tools,
+            environment: namespace_environment_with_provider(ErrorMockProvider::new(
+                "synthetic compaction failure",
+            )),
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2594,7 +2756,6 @@ mod tests {
         let mut session = Session::new();
         session.add_user_message("existing history");
         session.has_active_task = true;
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2602,11 +2763,12 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_live_process(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
-            )),
-            tools,
+            ))
+            .await,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2624,7 +2786,7 @@ mod tests {
 
         let result = handle_submission(&mut state, submission, &mut emit).await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "interrupt should succeed: {result:?}");
         assert_eq!(events.len(), 1);
         assert_eq!(state.session.tape.messages().len(), 1);
         assert_eq!(
@@ -2650,7 +2812,6 @@ mod tests {
         session.add_user_message("u2");
         session.add_assistant_message("a2", None);
         session.has_active_task = true;
-        let tools = ToolRegistry::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
@@ -2658,11 +2819,11 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: LlmClient::new(DelayedMockProvider::new(
+            environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tools,
+            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),

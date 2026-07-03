@@ -440,8 +440,19 @@ fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::RuntimeEnvironment;
     use crate::runtime::turn_state::TurnState;
     use crate::session::Session;
+    use std::sync::Arc;
+
+    fn namespace_environment_for_test() -> RuntimeEnvironment {
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+            alan_kernel::Namespace::new(),
+        )));
+        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
+    }
 
     #[test]
     fn render_memory_surfaces_follow_pure_text_layout_and_content() {
@@ -597,7 +608,8 @@ mod tests {
             workspace_root_dir: None,
             session,
             current_submission_id: None,
-            llm_client: crate::llm::LlmClient::new(alan_llm::MockLlmProvider::new()),
+            environment: namespace_environment_for_test(),
+            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: {
                 let mut config = crate::Config::default();
                 config.memory.workspace_dir = Some(memory_dir.clone());
@@ -605,7 +617,6 @@ mod tests {
             },
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
-            tools: crate::tools::ToolRegistry::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };

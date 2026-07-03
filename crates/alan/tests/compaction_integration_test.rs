@@ -93,16 +93,53 @@ impl LlmProvider for ScriptedProvider {
 
     async fn generate_stream(
         &mut self,
-        _request: GenerationRequest,
+        request: GenerationRequest,
     ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
-        Err(anyhow::anyhow!(
-            "scripted provider does not implement generate_stream"
-        ))
+        Ok(response_stream(self.generate(request).await?))
     }
 
     fn provider_name(&self) -> &'static str {
-        "scripted_provider"
+        "openai_responses"
     }
+}
+
+fn response_stream(response: GenerationResponse) -> mpsc::Receiver<StreamChunk> {
+    let (tx, rx) = mpsc::channel(4);
+    tokio::spawn(async move {
+        if !response.content.is_empty() {
+            let _ = tx
+                .send(StreamChunk {
+                    text: Some(response.content),
+                    thinking: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
+                    usage: None,
+                    provider_response_id: None,
+                    provider_response_status: None,
+                    sequence_number: None,
+                    tool_call_delta: None,
+                    is_finished: false,
+                    finish_reason: None,
+                })
+                .await;
+        }
+        let _ = tx
+            .send(StreamChunk {
+                text: None,
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+                usage: response.usage,
+                provider_response_id: response.provider_response_id,
+                provider_response_status: response.provider_response_status,
+                sequence_number: None,
+                tool_call_delta: None,
+                is_finished: true,
+                finish_reason: Some(response.finish_reason.unwrap_or_else(|| "stop".to_string())),
+            })
+            .await;
+    });
+    rx
 }
 
 fn success_step(text: impl Into<String>) -> ScriptedStep {
