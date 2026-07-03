@@ -203,9 +203,13 @@ dependencies = [
 name = "alan-shell"
 version = "0.1.0"
 dependencies = [
+ "alan-agentfs",
  "alan-ap",
  "alan-kernel",
+ "alan-llm",
+ "alan-llmfs",
  "async-trait",
+ "serde_json",
  "tokio",
 ]
 

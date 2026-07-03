@@ -4,12 +4,12 @@
 //! request document to `data` (committed on clunk), and reads the streamed token
 //! records from `events`. Backed by the mock provider — no real API key.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
 use alan_llm::mock::MockLlmProvider;
-use alan_llmfs::LlmFs;
+use alan_llmfs::{ConnectionLimits, ConnectionProfile, LlmFs};
 
 fn llmfs() -> LlmFs {
     let fs = LlmFs::new();
@@ -97,6 +97,229 @@ async fn two_clone_opens_allocate_independent_generations() {
 }
 
 #[tokio::test]
+async fn providers_expose_introspection_files() {
+    let fs = llmfs();
+
+    let providers = String::from_utf8(read_all(&fs, &["providers"], Fid(1)).await).unwrap();
+    assert!(
+        providers.lines().any(|line| line == "openai_responses"),
+        "providers dir should list OpenAI Responses: {providers:?}"
+    );
+
+    let provider_listing =
+        String::from_utf8(read_all(&fs, &["providers", "openai_responses"], Fid(2)).await).unwrap();
+    for name in ["models", "capabilities", "status"] {
+        assert!(
+            provider_listing.lines().any(|line| line == name),
+            "provider dir should list {name}: {provider_listing:?}"
+        );
+    }
+
+    let capabilities: serde_json::Value = serde_json::from_slice(
+        &read_all(
+            &fs,
+            &["providers", "openai_responses", "capabilities"],
+            Fid(3),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(capabilities["version"], 1);
+    assert_eq!(capabilities["provider"], "openai_responses");
+    assert_eq!(
+        capabilities["capabilities"]["instruction_role"],
+        "ResponsesInstructions"
+    );
+    assert_eq!(
+        capabilities["capabilities"]["supports_provider_compaction"],
+        true
+    );
+
+    let models: serde_json::Value = serde_json::from_slice(
+        &read_all(&fs, &["providers", "openai_responses", "models"], Fid(4)).await,
+    )
+    .unwrap();
+    assert_eq!(models["version"], 1);
+    assert_eq!(models["provider"], "openai_responses");
+    assert_eq!(models["default_model"], "gpt-5.4");
+    let model_slugs = models["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|model| model["slug"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        model_slugs.contains(&"gpt-5.4"),
+        "provider model catalog should expose known models: {models}"
+    );
+
+    let status: serde_json::Value = serde_json::from_slice(
+        &read_all(&fs, &["providers", "openai_responses", "status"], Fid(5)).await,
+    )
+    .unwrap();
+    assert_eq!(status["status"], "available");
+    assert_eq!(status["callable"], false);
+    assert_eq!(status["has_model_catalog"], true);
+
+    assert_eq!(
+        fs.walk(
+            Fid::ROOT,
+            Fid(6),
+            &[
+                "providers".into(),
+                "openai_responses".into(),
+                "clone".into()
+            ],
+        )
+        .await,
+        Err(ErrorCode::NotFound),
+        "provider directories are introspect-only; generations start on connections"
+    );
+}
+
+#[tokio::test]
+async fn connections_expose_provider_and_capabilities_without_credentials() {
+    let fs = llmfs();
+
+    let connection_listing =
+        String::from_utf8(read_all(&fs, &["connections", "default"], Fid(1)).await).unwrap();
+    for name in ["clone", "provider", "profile", "meter", "capabilities"] {
+        assert!(
+            connection_listing.lines().any(|line| line == name),
+            "connection dir should list {name}: {connection_listing:?}"
+        );
+    }
+
+    let provider =
+        String::from_utf8(read_all(&fs, &["connections", "default", "provider"], Fid(2)).await)
+            .unwrap();
+    assert_eq!(provider.trim(), "mock");
+
+    let profile: serde_json::Value = serde_json::from_slice(
+        &read_all(&fs, &["connections", "default", "profile"], Fid(3)).await,
+    )
+    .unwrap();
+    assert_eq!(profile["version"], 1);
+    assert_eq!(profile["connection"], "default");
+    assert_eq!(profile["provider"], "mock");
+    assert_eq!(profile["model"], serde_json::Value::Null);
+    assert_eq!(profile["credential_ref"], serde_json::Value::Null);
+    assert!(
+        profile
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| key != "credential" && key != "api_key"),
+        "connection profile must not expose credential plaintext: {profile}"
+    );
+
+    let capabilities: serde_json::Value = serde_json::from_slice(
+        &read_all(&fs, &["connections", "default", "capabilities"], Fid(4)).await,
+    )
+    .unwrap();
+    assert_eq!(capabilities["version"], 1);
+    assert_eq!(capabilities["connection"], "default");
+    assert_eq!(capabilities["provider"], "mock");
+    assert_eq!(
+        capabilities["capabilities"]["compatibility_tier"],
+        "TierAFullFidelityStateful"
+    );
+    assert_eq!(
+        capabilities["capabilities"]["supports_reasoning_effort_control"],
+        true
+    );
+    assert!(
+        capabilities
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| key != "credential" && key != "api_key"),
+        "connection introspection must not expose credential material: {capabilities}"
+    );
+}
+
+#[tokio::test]
+async fn connection_profiles_appear_and_disappear_as_endpoints() {
+    let fs = LlmFs::new();
+    assert_eq!(
+        String::from_utf8(read_all(&fs, &["connections"], Fid(1)).await).unwrap(),
+        ""
+    );
+
+    fs.register_connection_profile(
+        "work",
+        ConnectionProfile::new("openai_responses", "gpt-5.4", "credential:openai-main"),
+        Box::new(MockLlmProvider::new()),
+    );
+    let connections = String::from_utf8(read_all(&fs, &["connections"], Fid(2)).await).unwrap();
+    assert_eq!(connections, "work");
+
+    let profile: serde_json::Value =
+        serde_json::from_slice(&read_all(&fs, &["connections", "work", "profile"], Fid(3)).await)
+            .unwrap();
+    assert_eq!(profile["connection"], "work");
+    assert_eq!(profile["provider"], "openai_responses");
+    assert_eq!(profile["model"], "gpt-5.4");
+    assert_eq!(profile["credential_ref"], "credential:openai-main");
+
+    let provider =
+        String::from_utf8(read_all(&fs, &["connections", "work", "provider"], Fid(4)).await)
+            .unwrap();
+    assert_eq!(provider.trim(), "openai_responses");
+
+    fs.unregister_connection("work").await;
+    let connections = String::from_utf8(read_all(&fs, &["connections"], Fid(5)).await).unwrap();
+    assert_eq!(connections, "");
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(6), &["connections".into(), "work".into()],)
+            .await,
+        Err(ErrorCode::NotFound),
+        "removed connection endpoint is no longer walkable"
+    );
+}
+
+#[tokio::test]
+async fn connection_generation_limit_is_enforced_at_clone_open() {
+    let fs = LlmFs::new();
+    fs.register_connection_profile_with_limits(
+        "limited",
+        ConnectionProfile::new("openai_responses", "gpt-5.4", "credential:openai-main"),
+        ConnectionLimits::max_generations(1),
+        Box::new(MockLlmProvider::new()),
+    );
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(1),
+        &["connections".into(), "limited".into(), "clone".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &["connections".into(), "limited".into(), "clone".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs.open(Fid(2), OpenMode::ReadWrite).await,
+        Err(ErrorCode::NoAccess),
+        "rate-limit exhaustion is a dial-time open error"
+    );
+
+    let meter: serde_json::Value =
+        serde_json::from_slice(&read_all(&fs, &["connections", "limited", "meter"], Fid(3)).await)
+            .unwrap();
+    assert_eq!(meter["limits"]["max_generations"], 1);
+    assert_eq!(meter["meter"]["generation_starts"], 1);
+    assert_eq!(meter["meter"]["total_tokens"], 0);
+    assert_eq!(meter["meter"]["total_cost_microusd"], 0);
+}
+
+#[tokio::test]
 async fn writing_the_request_streams_tokens_to_events() {
     let fs = llmfs();
 
@@ -175,7 +398,10 @@ async fn a_malformed_request_is_rejected_at_clunk() {
 // discovery, qids, stat, and terminal-event guarantees.
 // ---------------------------------------------------------------------------
 
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+use alan_llm::{
+    GenerationRequest, GenerationResponse, LlmProvider, MessageRole, ReasoningEffort, StreamChunk,
+    TokenUsage,
+};
 use tokio::sync::mpsc;
 
 fn text_chunk(text: &str, is_finished: bool) -> StreamChunk {
@@ -201,6 +427,36 @@ struct StartupFailProvider;
 /// Returns a receiver that never yields (its sender is parked), so the Generation
 /// stays running until aborted.
 struct HangingProvider;
+/// Emits a finished chunk with provider usage metadata.
+struct UsageProvider;
+
+struct RecordingProvider {
+    requests: Arc<Mutex<Vec<GenerationRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for RecordingProvider {
+    async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        unimplemented!()
+    }
+    async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+        unimplemented!()
+    }
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+        self.requests.lock().unwrap().push(request);
+        let (tx, rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            let _ = tx.send(text_chunk("recorded", true)).await;
+        });
+        Ok(rx)
+    }
+    fn provider_name(&self) -> &'static str {
+        "recording"
+    }
+}
 
 #[async_trait::async_trait]
 impl LlmProvider for EarlyCloseProvider {
@@ -270,6 +526,37 @@ impl LlmProvider for HangingProvider {
     }
 }
 
+#[async_trait::async_trait]
+impl LlmProvider for UsageProvider {
+    async fn generate(&mut self, _: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        unimplemented!()
+    }
+    async fn chat(&mut self, _: Option<&str>, _: &str) -> anyhow::Result<String> {
+        unimplemented!()
+    }
+    async fn generate_stream(
+        &mut self,
+        _: GenerationRequest,
+    ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+        let (tx, rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            let mut chunk = text_chunk("usage", true);
+            chunk.usage = Some(TokenUsage {
+                prompt_tokens: 11,
+                cached_prompt_tokens: Some(3),
+                completion_tokens: 7,
+                total_tokens: 18,
+                reasoning_tokens: Some(5),
+            });
+            let _ = tx.send(chunk).await;
+        });
+        Ok(rx)
+    }
+    fn provider_name(&self) -> &'static str {
+        "usage"
+    }
+}
+
 fn llmfs_with(provider: impl LlmProvider + 'static) -> LlmFs {
     let fs = LlmFs::new();
     fs.register_connection("default", Box::new(provider));
@@ -306,10 +593,84 @@ async fn commit_request(fs: &LlmFs, gen_id: &str, fid: Fid, body: &[u8]) -> Resu
 }
 
 async fn status_of(fs: &LlmFs, gen_id: &str, fid: Fid) -> String {
-    String::from_utf8(read_all(fs, &["connections", "default", gen_id, "status"], fid).await)
+    status_doc_of(fs, gen_id, fid).await["status"]
+        .as_str()
         .unwrap()
-        .trim()
         .to_string()
+}
+
+async fn status_doc_of(fs: &LlmFs, gen_id: &str, fid: Fid) -> serde_json::Value {
+    serde_json::from_slice(&read_all(fs, &["connections", "default", gen_id, "status"], fid).await)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn versioned_request_dto_maps_to_generation_request() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let fs = llmfs_with(RecordingProvider {
+        requests: Arc::clone(&requests),
+    });
+    let gen_id = clone_gen(&fs, Fid(1)).await;
+
+    commit_request(
+        &fs,
+        &gen_id,
+        Fid(2),
+        br#"{
+            "version": 1,
+            "system": "system prompt",
+            "messages": [
+                {"role": "context", "content": "prior summary"},
+                {"role": "user", "content": "hello"},
+                {
+                    "role": "assistant",
+                    "content": "need a tool",
+                    "tool_calls": [
+                        {"id": "call-1", "name": "lookup", "arguments": {"q": "alan"}}
+                    ]
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+            ],
+            "tools": [
+                {
+                    "name": "lookup",
+                    "description": "look up data",
+                    "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+                }
+            ],
+            "temperature": 0.2,
+            "max_tokens": 123,
+            "reasoning": {"effort": "low"},
+            "extra_params": {"store": true}
+        }"#,
+    )
+    .await
+    .unwrap();
+    let _events = drain_events(&fs, &gen_id, Fid(3)).await;
+
+    let recorded = requests.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    let request = &recorded[0];
+    assert_eq!(request.system_prompt.as_deref(), Some("system prompt"));
+    assert_eq!(request.messages.len(), 4);
+    assert_eq!(request.messages[0].role, MessageRole::Context);
+    assert_eq!(request.messages[1].role, MessageRole::User);
+    assert_eq!(request.messages[2].role, MessageRole::Assistant);
+    assert_eq!(request.messages[3].role, MessageRole::Tool);
+    assert_eq!(
+        request.messages[2].tool_calls.as_ref().unwrap()[0].name,
+        "lookup"
+    );
+    assert_eq!(request.messages[3].tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(request.tools.len(), 1);
+    assert_eq!(request.tools[0].name, "lookup");
+    assert_eq!(request.temperature, Some(0.2));
+    assert_eq!(request.max_tokens, Some(123));
+    assert_eq!(request.reasoning.effort, Some(ReasoningEffort::Low));
+    assert_eq!(
+        request.extra_params.get("store"),
+        Some(&serde_json::Value::Bool(true))
+    );
 }
 
 #[tokio::test]
@@ -391,7 +752,12 @@ async fn reading_requires_a_read_open() {
     fs.walk(
         Fid::ROOT,
         Fid(2),
-        &["connections".into(), "default".into(), g, "status".into()],
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "status".into(),
+        ],
     )
     .await
     .unwrap();
@@ -460,6 +826,33 @@ async fn an_empty_request_is_rejected() {
     // Zero bytes written: an empty request is malformed.
     assert_eq!(fs.clunk(Fid(2)).await, Err(ErrorCode::BadRequest));
     assert_eq!(status_of(&fs, &g, Fid(3)).await, "rejected");
+}
+
+#[tokio::test]
+async fn invalid_v1_request_is_rejected_before_running() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let fs = llmfs_with(RecordingProvider {
+        requests: Arc::clone(&requests),
+    });
+    let g = clone_gen(&fs, Fid(1)).await;
+
+    assert_eq!(
+        commit_request(&fs, &g, Fid(2), br#"{"version":1,"messages":[]}"#).await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(status_of(&fs, &g, Fid(3)).await, "rejected");
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "invalid v1 documents must not reach the provider"
+    );
+
+    let events =
+        String::from_utf8(read_all(&fs, &["connections", "default", &g, "events"], Fid(4)).await)
+            .unwrap();
+    assert!(
+        events.contains("\"rejected\""),
+        "invalid v1 documents append a rejected event: {events:?}"
+    );
 }
 
 #[tokio::test]
@@ -565,12 +958,162 @@ async fn stat_reports_real_status_length() {
     fs.walk(
         Fid::ROOT,
         Fid(2),
-        &["connections".into(), "default".into(), g, "status".into()],
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "status".into(),
+        ],
     )
     .await
     .unwrap();
-    // "open\n" is 5 bytes — not the hardcoded 0.
-    assert_eq!(fs.stat(Fid(2)).await.unwrap().length, "open\n".len() as u64);
+    let stat_len = fs.stat(Fid(2)).await.unwrap().length;
+    let status =
+        String::from_utf8(read_all(&fs, &["connections", "default", &g, "status"], Fid(3)).await)
+            .unwrap();
+    assert_eq!(
+        stat_len,
+        status.len() as u64,
+        "status stat length matches the readable status document"
+    );
+}
+
+#[tokio::test]
+async fn status_exposes_progress_tokens_and_cost() {
+    let fs = llmfs_with(UsageProvider);
+    let g = clone_gen(&fs, Fid(1)).await;
+    fs.walk(
+        Fid::ROOT,
+        Fid(5),
+        &["connections".into(), "default".into(), "meter".into()],
+    )
+    .await
+    .unwrap();
+    let meter_v0 = fs.stat(Fid(5)).await.unwrap().qid.version;
+
+    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+        .await
+        .unwrap();
+    drain_events(&fs, &g, Fid(3)).await;
+
+    let status = status_doc_of(&fs, &g, Fid(4)).await;
+    assert_eq!(status["version"], 1);
+    assert_eq!(status["generation"], g);
+    assert_eq!(status["connection"], "default");
+    assert_eq!(status["status"], "done");
+    assert_eq!(status["progress"]["terminal"], true);
+    assert_eq!(status["tokens"]["available"], true);
+    assert_eq!(status["tokens"]["prompt_tokens"], 11);
+    assert_eq!(status["tokens"]["cached_prompt_tokens"], 3);
+    assert_eq!(status["tokens"]["completion_tokens"], 7);
+    assert_eq!(status["tokens"]["total_tokens"], 18);
+    assert_eq!(status["tokens"]["reasoning_tokens"], 5);
+    assert_eq!(status["cost"]["currency"], "USD");
+    assert_eq!(status["cost"]["amount_microusd"], 0);
+    assert_eq!(status["cost"]["metered"], false);
+    let meter_v1 = fs.stat(Fid(5)).await.unwrap().qid.version;
+    assert_ne!(
+        meter_v0, meter_v1,
+        "meter qid version changes when usage updates token totals"
+    );
+
+    let meter: serde_json::Value =
+        serde_json::from_slice(&read_all(&fs, &["connections", "default", "meter"], Fid(6)).await)
+            .unwrap();
+    assert_eq!(meter["meter"]["generation_starts"], 1);
+    assert_eq!(meter["meter"]["total_tokens"], 18);
+    assert_eq!(meter["meter"]["total_cost_microusd"], 0);
+}
+
+#[tokio::test]
+async fn terminal_generations_are_reaped_by_retention_policy() {
+    let fs = llmfs();
+    let mut ids = Vec::new();
+    for i in 0..17 {
+        let gen_id = clone_gen(&fs, Fid(10 + i * 3)).await;
+        commit_request(&fs, &gen_id, Fid(11 + i * 3), br#"{"user":"hi"}"#)
+            .await
+            .unwrap();
+        drain_events(&fs, &gen_id, Fid(12 + i * 3)).await;
+        ids.push(gen_id);
+    }
+
+    let open_gen = clone_gen(&fs, Fid(1000)).await;
+    let listing =
+        String::from_utf8(read_all(&fs, &["connections", "default"], Fid(1001)).await).unwrap();
+    assert!(
+        !listing.lines().any(|line| line == ids[0]),
+        "oldest terminal Generation should be reaped: {listing:?}"
+    );
+    assert!(
+        listing.lines().any(|line| line == ids[1]),
+        "recent terminal Generation should stay retained: {listing:?}"
+    );
+    assert!(
+        listing.lines().any(|line| line == open_gen),
+        "new open Generation should not be reaped: {listing:?}"
+    );
+    assert_eq!(
+        fs.walk(
+            Fid::ROOT,
+            Fid(1002),
+            &[
+                "connections".into(),
+                "default".into(),
+                ids[0].clone(),
+                "status".into(),
+            ],
+        )
+        .await,
+        Err(ErrorCode::NotFound),
+        "reaped Generation is no longer walkable"
+    );
+}
+
+#[tokio::test]
+async fn opened_events_stat_survives_retention_reap() {
+    let fs = llmfs();
+    let mut oldest = String::new();
+    let oldest_events_fid = Fid(12);
+
+    for i in 0..17 {
+        let gen_id = clone_gen(&fs, Fid(10 + i * 3)).await;
+        commit_request(&fs, &gen_id, Fid(11 + i * 3), br#"{"user":"hi"}"#)
+            .await
+            .unwrap();
+        drain_events(&fs, &gen_id, Fid(12 + i * 3)).await;
+        if i == 0 {
+            oldest = gen_id;
+        }
+    }
+
+    let _open_gen = clone_gen(&fs, Fid(1000)).await;
+    assert_eq!(
+        fs.walk(
+            Fid::ROOT,
+            Fid(1001),
+            &[
+                "connections".into(),
+                "default".into(),
+                oldest.clone(),
+                "status".into(),
+            ],
+        )
+        .await,
+        Err(ErrorCode::NotFound),
+        "oldest terminal Generation should be reaped"
+    );
+
+    let events = fs.read(oldest_events_fid, 0, 65536).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&events).contains("\"done\""),
+        "opened events fid still reads retained terminal bytes"
+    );
+    assert_eq!(
+        fs.stat(oldest_events_fid).await.unwrap().length,
+        events.len() as u64,
+        "opened events fid stat must report retained stream length after reap"
+    );
 }
 
 #[tokio::test]
@@ -706,6 +1249,79 @@ async fn a_running_generation_can_be_aborted() {
     fs.open(Fid(3), OpenMode::Write).await.unwrap();
     fs.write(Fid(3), 0, b"abort").await.unwrap();
     assert_eq!(status_of(&fs, &g, Fid(4)).await, "aborted");
+}
+
+#[tokio::test]
+async fn unregister_connection_aborts_active_generations() {
+    let fs = llmfs_with(HangingProvider);
+    let g = clone_gen(&fs, Fid(1)).await;
+    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(3),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "events".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(3), OpenMode::Read).await.unwrap();
+    fs.unregister_connection("default").await;
+
+    let events = String::from_utf8(fs.read(Fid(3), 0, 65536).await.unwrap()).unwrap();
+    assert!(
+        events.contains("\"aborted\""),
+        "unregister appends a terminal aborted event: {events:?}"
+    );
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(4), &["connections".into(), "default".into()])
+            .await,
+        Err(ErrorCode::NotFound),
+        "the connection endpoint is removed"
+    );
+
+    fs.register_connection("default", Box::new(MockLlmProvider::new()));
+    let listing =
+        String::from_utf8(read_all(&fs, &["connections", "default"], Fid(5)).await).unwrap();
+    assert!(
+        !listing.lines().any(|line| line == g),
+        "old aborted generation must not reappear under a re-registered connection: {listing:?}"
+    );
+}
+
+#[tokio::test]
+async fn unregister_connection_makes_in_flight_data_commit_fail() {
+    let fs = llmfs();
+    let g = clone_gen(&fs, Fid(1)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "data".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+
+    fs.unregister_connection("default").await;
+
+    assert_eq!(
+        fs.clunk(Fid(2)).await,
+        Err(ErrorCode::BadRequest),
+        "commit-on-clunk must not report success after unregister discards the Generation"
+    );
 }
 
 #[tokio::test]

@@ -8,8 +8,13 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
+tokio = { workspace = true }
 
 [dev-dependencies]
+alan-agentfs = { path = "../agentfs" }
 alan-kernel = { path = "../kernel" }
+alan-llm = { path = "../llm", features = ["mock"] }
+alan-llmfs = { path = "../llmfs" }
 async-trait.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true }
