@@ -39,3 +39,8 @@
   for review.
   Done 2026-07-03: opened #592 on top of `feat/northstar-ap-wire`; GitHub
   reports it is already ready for review.
+
+## 5. Archive Readiness
+
+- [ ] 5.1 After this change merges, sync `editable-buffer-interaction` into
+  `openspec/specs/` without delta markers before archiving the change.
