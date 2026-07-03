@@ -17,16 +17,29 @@ with `body`, `tag`, `ctl`, `addr`, and `event` files.
 - **THEN** the server returns UTF-8 text bytes representing the buffer content or
   command/status tag content
 
+#### Scenario: Successful text writes update the surface
+
+- **WHEN** a client successfully writes UTF-8 text to `body` or `tag`
+- **THEN** subsequent reads of that file return the updated text
+
+#### Scenario: Successful range replacement updates the body
+
+- **WHEN** a client successfully replaces text in a `body` range
+- **THEN** subsequent reads of `body` include the replacement at that range and
+  no longer return the replaced bytes at that range
+
 ### Requirement: Text ranges are addressable
 
 Alan OS SHALL represent the active text range through an `addr` file that can be
-read and written by clients with write authority.
+read and written by clients with write authority. The visible `addr` value SHALL
+include both the selected range and the revision of that address selection.
 
 #### Scenario: Client selects a body range
 
 - **WHEN** a client writes a valid range expression to `addr`
-- **THEN** subsequent reads of `addr` return that range and operations that
-  consume the active range use it
+- **THEN** subsequent reads of `addr` return that range with a new address
+  revision and operations that consume the active range can bind to that
+  revision
 
 #### Scenario: Stale range is rejected
 
@@ -34,6 +47,13 @@ read and written by clients with write authority.
   body revision is no longer current
 - **THEN** the operation fails with a typed aP error and does not apply to a
   different range
+
+#### Scenario: Stale address selection is rejected
+
+- **WHEN** a client commits an operation against an `addr` revision or range
+  that is no longer the current address selection
+- **THEN** the operation fails with a typed aP error and does not consume a
+  different client's selected range
 
 ### Requirement: Executable text uses explicit control operations
 
@@ -43,10 +63,18 @@ the caller's namespace capabilities.
 
 #### Scenario: Selected text is executed
 
-- **WHEN** a client writes an `exec` control operation for the active `addr`
-  range
+- **WHEN** a client writes an `exec` control operation carrying the expected
+  `addr` range and address revision
 - **THEN** Alan resolves the selected text through the normal shell/action/process
   path and records the execution in the buffer's `event` stream
+
+#### Scenario: Concurrent selection changes do not retarget execution
+
+- **WHEN** one client records an `addr` range and address revision, another
+  client changes `addr`, and the first client writes `exec` for the recorded
+  range and revision
+- **THEN** the operation fails with a typed aP error and does not execute text
+  from the other client's range
 
 #### Scenario: Execution does not bypass authority
 
