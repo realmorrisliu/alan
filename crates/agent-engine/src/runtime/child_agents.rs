@@ -83,6 +83,13 @@ impl ChildToolProcessRunner {
 #[async_trait::async_trait]
 impl alan_kernel::ProcessRunner for ChildToolProcessRunner {
     async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
+        if invocation
+            .namespace
+            .resolve(&invocation.exec.executable)
+            .is_err()
+        {
+            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
+        }
         let tool_name = invocation
             .exec
             .executable
@@ -2900,6 +2907,33 @@ Body
             tool_namespace.lines().any(|line| line == "/bin/alpha ro"),
             "child-spawned processes inherit mounted tools: {tool_namespace:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn child_tool_runner_rejects_unmounted_tool_executables() {
+        let mut child_tools = ToolRegistry::new();
+        child_tools.register(MarkerTool::new(
+            "alpha",
+            "mounted-only",
+            crate::tools::ToolLocality::Global,
+        ));
+        let runner = ChildToolProcessRunner::new(child_tools);
+        let invocation = alan_kernel::ProcessInvocation {
+            pid: alan_kernel::Pid(1),
+            parent: Some(alan_kernel::Pid(0)),
+            credentials: alan_kernel::Credentials::user("child-agent"),
+            namespace: alan_kernel::Namespace::new(),
+            exec: alan_kernel::ExecSpec {
+                executable: "/bin/alpha".to_string(),
+                args: vec!["{}".to_string()],
+                namespace: None,
+            },
+        };
+
+        let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
+
+        assert_eq!(outcome.exit_code, 127);
+        assert_eq!(outcome.output, b"executable is not mounted\n");
     }
 
     #[test]
