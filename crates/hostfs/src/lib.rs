@@ -172,6 +172,13 @@ impl FileServer for HostDirFs {
         if qid.kind == FileKind::Dir && matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
             return Err(ErrorCode::IsDirectory);
         }
+        let write_handle = if qid.kind == FileKind::File
+            && matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
+        {
+            Some(self.existing_write_handle(&rel)?)
+        } else {
+            None
+        };
         if let Some(fid_state) = fids.get_mut(&fid) {
             if fid_state.mode.is_some() {
                 return Err(ErrorCode::BadRequest);
@@ -181,6 +188,7 @@ impl FileServer for HostDirFs {
                 fid_state.write_buf = read_file_for_write_seed(handle.file)?;
             }
         }
+        drop(write_handle);
         Ok(qid)
     }
 
@@ -738,6 +746,34 @@ mod tests {
             .unwrap();
         let err = fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap_err();
         assert_eq!(err, ErrorCode::BadRequest);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_intent_open_rejects_host_file_without_write_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("readonly.txt");
+        std::fs::write(&path, "readonly").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["readonly.txt".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.open(Fid(1), OpenMode::Write).await.unwrap_err(),
+            ErrorCode::NoAccess
+        );
+
+        fs.walk(Fid::ROOT, Fid(2), &["readonly.txt".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap_err(),
+            ErrorCode::NoAccess
+        );
     }
 
     #[test]
