@@ -58,20 +58,27 @@ address selection.
 
 ### Requirement: Executable text uses explicit control operations
 
-Alan OS SHALL execute text from an editable buffer only through explicit `ctl`
-operations that resolve to normal Alan Shell, process, or routing behavior under
-the caller's namespace capability discipline. Until the ADR-0024 R1 amplification
-check lands, the mount set is an architectural discipline rather than a security
-property; native subprocesses such as shell commands cannot see the Alan
-namespace directly, so OS sandbox projection remains a permanent second
-enforcement mechanism for them.
+Alan OS SHALL execute text from an editable buffer only through explicit
+complete-document `ctl` operations that commit on `clunk` and resolve to normal
+Alan Shell, process, or routing behavior under the caller's namespace capability
+discipline. Until the ADR-0024 R1 amplification check lands, the mount set is an
+architectural discipline rather than a security property; native subprocesses
+such as shell commands cannot see the Alan namespace directly, so OS sandbox
+projection remains a permanent second enforcement mechanism for them.
 
 #### Scenario: Selected text is executed
 
-- **WHEN** a client writes an `exec` control operation carrying the expected
-  `addr` range, source `body` revision, and address revision
+- **WHEN** a client writes a complete `exec` control document carrying the
+  expected `addr` range, source `body` revision, and address revision and then
+  clunks `ctl`
 - **THEN** Alan resolves the selected text through the normal shell/action/process
   path and records the execution in the buffer's `event` stream
+
+#### Scenario: Partial control writes do not execute
+
+- **WHEN** a client writes only part of an `exec` control document to `ctl`
+- **THEN** Alan does not execute the selected text until the client completes the
+  control document and clunks `ctl`
 
 #### Scenario: Concurrent selection changes do not retarget execution
 

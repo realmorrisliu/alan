@@ -54,6 +54,9 @@ future macOS view can all operate the same buffer through files.
    edits, range changes, and executions. Successful `body`/`tag` writes and
    range replacements update the text returned by later reads; accepting an
    edit event while keeping stale text is not conforming behavior.
+   `ctl` is a complete-document write entry point: implementations accumulate
+   writes and act only when the client clunks the file, never while an `exec`
+   document may still be partial.
 
    Alternative considered: one monolithic JSON document. That is easy to parse
    but not file-native; it would make shell usage and agent inspection worse.
@@ -74,18 +77,18 @@ future macOS view can all operate the same buffer through files.
 
 4. **Execution is explicit and capability-bounded.**
 
-   Writing `exec` to `ctl` executes the expected range or supplied text through
-   normal Alan Shell / process / routefs mechanisms. For range execution, the
-   operation includes the range, body revision, and address revision observed by
-   the caller; if any no longer matches, the server rejects the operation
-   instead of executing another client's selection or mutated bytes. It must
-   produce an event and any side effect still depends on the process namespace,
-   descriptors, policy, and the ADR-0027 D3 qualification: until ADR-0024 R1
-   lands, the mount set is an architectural discipline rather than a security
-   property, and native subprocesses still need OS sandbox projection as a
-   permanent second enforcement mechanism because they cannot see Alan
-   namespaces directly. The buffer server does not become a privileged command
-   runner.
+   Writing and clunking an `exec` document in `ctl` executes the expected range
+   or supplied text through normal Alan Shell / process / routefs mechanisms.
+   For range execution, the operation includes the range, body revision, and
+   address revision observed by the caller; if any no longer matches, the server
+   rejects the operation instead of executing another client's selection or
+   mutated bytes. It must produce an event and any side effect still depends on
+   the process namespace, descriptors, policy, and the ADR-0027 D3
+   qualification: until ADR-0024 R1 lands, the mount set is an architectural
+   discipline rather than a security property, and native subprocesses still
+   need OS sandbox projection as a permanent second enforcement mechanism
+   because they cannot see Alan namespaces directly. The buffer server does not
+   become a privileged command runner.
 
    Alternative considered: every click or newline on command-looking text
    executes implicitly. That is faster but unsafe and hard to audit.
