@@ -1,10 +1,18 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use alan_agentfs::{AgentFs, AgentRootFs};
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode};
+use alan_ap::{ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Stat};
 use alan_kernel::{Access, Credentials, MountFs, Namespace, Pid, ProcFs};
 use alan_memfs::MemFs;
 use alan_shell::Shell;
+use async_trait::async_trait;
+use tokio::sync::Notify;
 
 fn namespace_shell_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc = Arc::new(ProcFs::new());
@@ -69,6 +77,25 @@ async fn agent_root_lists_only_proc_backed_agent_processes() {
     assert!(listing.iter().any(|entry| entry == &pid), "{listing:?}");
     assert!(listing.iter().any(|entry| entry == "root"), "{listing:?}");
     assert!(!listing.iter().any(|entry| entry == "999"), "{listing:?}");
+}
+
+#[tokio::test]
+async fn agent_root_qid_version_changes_with_listing() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+
+    let empty_qid = agent_root.stat(Fid::ROOT).await.unwrap().qid;
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let populated_qid = agent_root.stat(Fid::ROOT).await.unwrap().qid;
+    assert_eq!(empty_qid.kind, FileKind::Dir);
+    assert_eq!(empty_qid.path, populated_qid.path);
+    assert_ne!(empty_qid.version, populated_qid.version);
 }
 
 #[tokio::test]
@@ -244,6 +271,81 @@ async fn agent_root_namespaces_backing_qids_by_pid() {
 }
 
 #[tokio::test]
+async fn agent_root_rejects_creates_for_overlay_reserved_names() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(MemFs::new()))
+        .await;
+
+    let dir_fid = Fid(13_000);
+    agent_root
+        .walk(Fid::ROOT, dir_fid, std::slice::from_ref(&pid))
+        .await
+        .unwrap();
+    for (idx, name) in ["children", "status", "ctl"].into_iter().enumerate() {
+        assert_eq!(
+            agent_root
+                .create(dir_fid, Fid(13_001 + idx as u64), name, FileKind::File)
+                .await,
+            Err(ErrorCode::BadRequest),
+            "{name} should stay reserved for the overlay"
+        );
+    }
+    agent_root.clunk(dir_fid).await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_walk_rechecks_newfid_before_insert() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let backing = Arc::new(RacingWalkFs::new());
+    agent_root.bind_process(pid.clone(), backing.clone()).await;
+
+    let shared_fid = Fid(14_000);
+    let first = {
+        let agent_root = agent_root.clone();
+        let pid = pid.clone();
+        tokio::spawn(async move {
+            agent_root
+                .walk(Fid::ROOT, shared_fid, &[pid, "file".to_string()])
+                .await
+        })
+    };
+    let second = {
+        let agent_root = agent_root.clone();
+        tokio::spawn(async move {
+            agent_root
+                .walk(Fid::ROOT, shared_fid, &[pid, "file".to_string()])
+                .await
+        })
+    };
+    let first = first.await.unwrap();
+    let second = second.await.unwrap();
+    let ok_count = [first, second].into_iter().filter(Result::is_ok).count();
+    let collision_count = [first, second]
+        .into_iter()
+        .filter(|result| matches!(result, Err(ErrorCode::BadRequest)))
+        .count();
+
+    assert_eq!(ok_count, 1);
+    assert_eq!(collision_count, 1);
+    assert_eq!(
+        backing.bound_fid_count(),
+        1,
+        "the backing fid allocated by the losing walk should be clunked"
+    );
+    agent_root.clunk(shared_fid).await.unwrap();
+    assert_eq!(backing.bound_fid_count(), 0);
+}
+
+#[tokio::test]
 async fn agent_root_tracks_created_fids_forwarded_to_backing() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
@@ -315,4 +417,116 @@ async fn agent_root_releases_outer_fid_after_delegated_remove() {
         .walk(Fid::ROOT, remove_fid, std::slice::from_ref(&pid))
         .await
         .expect("remove releases the outer fid for reuse");
+}
+
+struct RacingWalkFs {
+    fids: Mutex<HashMap<Fid, ()>>,
+    started_walks: AtomicUsize,
+    release_walks: Notify,
+}
+
+impl RacingWalkFs {
+    fn new() -> Self {
+        Self {
+            fids: Mutex::new(HashMap::new()),
+            started_walks: AtomicUsize::new(0),
+            release_walks: Notify::new(),
+        }
+    }
+
+    fn bound_fid_count(&self) -> usize {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .len()
+    }
+
+    fn qid() -> Qid {
+        Qid {
+            kind: FileKind::File,
+            version: 0,
+            path: 0xF11E,
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for RacingWalkFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT || names.len() != 1 || names[0] != "file" {
+            return Err(ErrorCode::NotFound);
+        }
+        let started = self.started_walks.fetch_add(1, Ordering::SeqCst) + 1;
+        if started >= 2 {
+            self.release_walks.notify_waiters();
+        } else {
+            self.release_walks.notified().await;
+        }
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .insert(newfid, ());
+        Ok(Self::qid())
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .contains_key(&fid)
+        {
+            Ok(Self::qid())
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Ok(Vec::new())
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        if self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .contains_key(&fid)
+        {
+            Ok(Stat {
+                name: "file".to_string(),
+                qid: Self::qid(),
+                length: 0,
+                writable: true,
+            })
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunk(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid);
+        Ok(())
+    }
 }

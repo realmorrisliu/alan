@@ -309,6 +309,9 @@ impl AgentRootFs {
         name: &str,
         kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
+        if dir_fid == Fid::ROOT && is_agent_overlay_reserved_name(name) {
+            return Err(ErrorCode::BadRequest);
+        }
         let backing_fid = Fid(NEXT_BACKING_FID.fetch_add(1, Ordering::Relaxed));
         let qid = match backing.create(dir_fid, backing_fid, name, kind).await {
             Ok(qid) => qid,
@@ -416,11 +419,10 @@ impl FileServer for AgentRootFs {
             Node::ProcFile { .. } => return Err(ErrorCode::NotDirectory),
         };
         let qid = self.qid_for_node(&new_node).await?;
-        self.state
-            .lock()
-            .await
-            .fids
-            .insert(newfid, Entry { node: new_node });
+        if let Err(error) = self.insert_fid(newfid, new_node.clone()).await {
+            release_node(new_node).await;
+            return Err(error);
+        }
         Ok(qid)
     }
 
@@ -430,7 +432,8 @@ impl FileServer for AgentRootFs {
                 if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                     return Err(ErrorCode::NoAccess);
                 }
-                Ok(root_qid())
+                let listing = self.root_listing().await?;
+                Ok(root_qid(&listing))
             }
             Node::AgentChildren { pid } => {
                 if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
@@ -504,12 +507,15 @@ impl FileServer for AgentRootFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         match self.node(fid).await? {
-            Node::Root => Ok(Stat {
-                name: String::new(),
-                qid: root_qid(),
-                length: self.root_listing().await?.join("\n").len() as u64,
-                writable: false,
-            }),
+            Node::Root => {
+                let listing = self.root_listing().await?;
+                Ok(Stat {
+                    name: String::new(),
+                    qid: root_qid(&listing),
+                    length: listing.join("\n").len() as u64,
+                    writable: false,
+                })
+            }
             Node::AgentRoot { pid, backing } => {
                 let mut stat = backing.stat(Fid::ROOT).await?;
                 stat.qid = namespace_agent_qid(&pid, stat.qid);
@@ -620,7 +626,10 @@ impl AgentRootFs {
 
     async fn qid_for_node(&self, node: &Node) -> Result<Qid, ErrorCode> {
         match node {
-            Node::Root => Ok(root_qid()),
+            Node::Root => {
+                let listing = self.root_listing().await?;
+                Ok(root_qid(&listing))
+            }
             Node::AgentRoot { pid, backing } => backing
                 .stat(Fid::ROOT)
                 .await
@@ -715,6 +724,10 @@ fn is_proc_overlay_name(name: &str) -> bool {
     )
 }
 
+fn is_agent_overlay_reserved_name(name: &str) -> bool {
+    name == "children" || is_proc_overlay_name(name)
+}
+
 fn agent_children_qid(pid: &str, children: &[String]) -> Qid {
     Qid {
         kind: FileKind::Dir,
@@ -723,11 +736,27 @@ fn agent_children_qid(pid: &str, children: &[String]) -> Qid {
     }
 }
 
-fn root_qid() -> Qid {
+fn root_qid(listing: &[String]) -> Qid {
     Qid {
         kind: FileKind::Dir,
-        version: 0,
+        version: hash_value(&("agent-root-version", listing)) as u32,
         path: 0xA6E7,
+    }
+}
+
+async fn release_node(node: Node) {
+    match node {
+        Node::AgentFile {
+            backing,
+            backing_fid,
+            ..
+        } => {
+            let _ = backing.clunk(backing_fid).await;
+        }
+        Node::ProcFile { proc, proc_fid } => {
+            let _ = proc.clunk(proc_fid).await;
+        }
+        Node::Root | Node::AgentRoot { .. } | Node::AgentChildren { .. } => {}
     }
 }
 
