@@ -17,7 +17,7 @@ use alan_ap::{
     ErrorCode, Fid, FileKind, InProcessTransport, Offset, OpenMode, Qid, Request, Response,
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 /// A process-global fid allocator. aP fid state lives in the server keyed only by
@@ -334,6 +334,11 @@ pub struct StdioDriver {
     shell: Shell,
 }
 
+struct TailTask {
+    shutdown: oneshot::Sender<()>,
+    handle: JoinHandle<()>,
+}
+
 impl StdioDriver {
     /// Build a line driver over an aP-only [`Shell`].
     pub fn new(shell: Shell) -> Self {
@@ -353,7 +358,7 @@ impl StdioDriver {
     {
         let mut lines = input.lines();
         let (tail_tx, mut tail_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut tail_tasks: Vec<JoinHandle<()>> = Vec::new();
+        let mut tail_tasks: Vec<TailTask> = Vec::new();
 
         loop {
             tokio::select! {
@@ -373,13 +378,14 @@ impl StdioDriver {
             }
         }
 
+        for task in tail_tasks {
+            let _ = task.shutdown.send(());
+            let _ = task.handle.await;
+        }
         while let Ok(bytes) = tail_rx.try_recv() {
             output.write_all(&bytes).await?;
         }
         output.flush().await?;
-        for task in tail_tasks {
-            task.abort();
-        }
         Ok(())
     }
 
@@ -388,7 +394,7 @@ impl StdioDriver {
         line: &str,
         output: &mut W,
         tail_tx: &mpsc::UnboundedSender<Vec<u8>>,
-        tail_tasks: &mut Vec<JoinHandle<()>>,
+        tail_tasks: &mut Vec<TailTask>,
     ) -> Result<bool, DriverError>
     where
         W: AsyncWrite + Unpin,
@@ -428,7 +434,8 @@ impl StdioDriver {
             LineCommand::Tail(path) => {
                 let shell = self.shell.clone();
                 let tx = tail_tx.clone();
-                tail_tasks.push(tokio::spawn(async move {
+                let (shutdown, mut shutdown_rx) = oneshot::channel();
+                let handle = tokio::spawn(async move {
                     let mut tail = match shell.tail(&path).await {
                         Ok(tail) => tail,
                         Err(err) => {
@@ -437,21 +444,28 @@ impl StdioDriver {
                         }
                     };
                     loop {
-                        match tail.read(4096).await {
-                            Ok(bytes) if bytes.is_empty() => break,
-                            Ok(bytes) => {
-                                if tx.send(bytes).is_err() {
-                                    break;
+                        tokio::select! {
+                            biased;
+                            _ = &mut shutdown_rx => break,
+                            result = tail.read(4096) => {
+                                match result {
+                                    Ok(bytes) if bytes.is_empty() => break,
+                                    Ok(bytes) => {
+                                        if tx.send(bytes).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let _ = tx.send(format!("error: {err:?}\n").into_bytes());
+                                        break;
+                                    }
                                 }
-                            }
-                            Err(err) => {
-                                let _ = tx.send(format!("error: {err:?}\n").into_bytes());
-                                break;
                             }
                         }
                     }
                     let _ = tail.close().await;
-                }));
+                });
+                tail_tasks.push(TailTask { shutdown, handle });
             }
             LineCommand::Spawn(exec_spec) => match self.shell.spawn(&exec_spec).await {
                 Ok(pid) => {

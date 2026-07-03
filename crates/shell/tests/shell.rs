@@ -161,6 +161,112 @@ impl FileServer for EchoFs {
     }
 }
 
+struct CloseTrackingStreamFs {
+    stream: Stream,
+    fids: tokio::sync::Mutex<HashMap<Fid, bool>>,
+    opens: Arc<AtomicU64>,
+    clunks: Arc<AtomicU64>,
+}
+
+impl CloseTrackingStreamFs {
+    fn new(opens: Arc<AtomicU64>, clunks: Arc<AtomicU64>) -> Self {
+        Self {
+            stream: Stream::new(),
+            fids: tokio::sync::Mutex::new(HashMap::new()),
+            opens,
+            clunks,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl FileServer for CloseTrackingStreamFs {
+    async fn walk(&self, _fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        match names {
+            [] => {
+                self.fids.lock().await.insert(newfid, false);
+                Ok(qid(FileKind::Dir))
+            }
+            [name] if name == "stream" => {
+                self.fids.lock().await.insert(newfid, true);
+                Ok(qid(FileKind::Stream))
+            }
+            _ => Err(ErrorCode::NotFound),
+        }
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        let is_stream = *self
+            .fids
+            .lock()
+            .await
+            .get(&fid)
+            .ok_or(ErrorCode::NotFound)?;
+        if is_stream {
+            self.opens.fetch_add(1, Ordering::Relaxed);
+            Ok(qid(FileKind::Stream))
+        } else {
+            Ok(qid(FileKind::Dir))
+        }
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let is_stream = *self
+            .fids
+            .lock()
+            .await
+            .get(&fid)
+            .ok_or(ErrorCode::NotFound)?;
+        if is_stream {
+            Ok(self.stream.read(offset, count).await)
+        } else {
+            Ok(b"stream".to_vec())
+        }
+    }
+
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let is_stream = *self
+            .fids
+            .lock()
+            .await
+            .get(&fid)
+            .ok_or(ErrorCode::NotFound)?;
+        Ok(Stat {
+            name: String::new(),
+            qid: qid(if is_stream {
+                FileKind::Stream
+            } else {
+                FileKind::Dir
+            }),
+            length: if is_stream {
+                self.stream.len().await
+            } else {
+                b"stream".len() as u64
+            },
+            writable: false,
+        })
+    }
+
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        if self.fids.lock().await.remove(&fid).is_some() {
+            self.clunks.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn m1_input_is_echoed_back_through_files() {
     // M1: write into a file, read it back — the whole round trip is files.
@@ -286,6 +392,40 @@ async fn stdio_driver_tails_stream_while_accepting_input() {
 
     client.write_all(b"exit\n").await.unwrap();
     driver_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn stdio_driver_closes_tail_fids_on_exit() {
+    let opens = Arc::new(AtomicU64::new(0));
+    let clunks = Arc::new(AtomicU64::new(0));
+    let fs = Arc::new(CloseTrackingStreamFs::new(
+        Arc::clone(&opens),
+        Arc::clone(&clunks),
+    ));
+    let shell = Shell::new(InProcessTransport::new(fs));
+    let driver = StdioDriver::new(shell);
+    let (mut client, server) = tokio::io::duplex(4096);
+    let (server_read, server_write) = tokio::io::split(server);
+
+    let driver_task = tokio::spawn(async move {
+        driver
+            .run(BufReader::new(server_read), server_write)
+            .await
+            .expect("stdio driver should run");
+    });
+
+    client.write_all(b"tail /stream\n").await.unwrap();
+    for _ in 0..50 {
+        if opens.load(Ordering::Relaxed) > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(opens.load(Ordering::Relaxed), 1, "tail fid opened");
+
+    client.write_all(b"exit\n").await.unwrap();
+    driver_task.await.unwrap();
+    assert_eq!(clunks.load(Ordering::Relaxed), 1, "tail fid was closed");
 }
 
 /// A server whose writable `buf` file accepts at most 3 bytes per `write`, to
