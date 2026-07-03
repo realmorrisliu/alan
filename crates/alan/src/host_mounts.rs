@@ -44,20 +44,28 @@ pub fn apply_host_mount_declarations(
     validate_non_overlapping_declarations(declarations)?;
     let writable_roots = canonical_read_write_mount_roots(declarations)?;
     validate_read_only_mounts_not_covered_by_writable_roots(&writable_roots, declarations)?;
-    for declaration in declarations {
-        let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
-            .with_context(|| {
-                format!(
-                    "failed to mount host directory {} at {}",
-                    declaration.host_path.display(),
-                    declaration.namespace_path
-                )
-            })?;
-        namespace.mount(
-            &declaration.namespace_path,
-            InProcessTransport::new(Arc::new(hostfs)),
-            declaration.access,
-        );
+
+    let staged_mounts = declarations
+        .iter()
+        .map(|declaration| {
+            let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
+                .with_context(|| {
+                    format!(
+                        "failed to mount host directory {} at {}",
+                        declaration.host_path.display(),
+                        declaration.namespace_path
+                    )
+                })?;
+            Ok((
+                declaration.namespace_path.clone(),
+                InProcessTransport::new(Arc::new(hostfs)),
+                declaration.access,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    for (namespace_path, transport, access) in staged_mounts {
+        namespace.mount(&namespace_path, transport, access);
     }
     Ok(())
 }
@@ -193,7 +201,7 @@ fn host_paths_overlap(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_ap::{Fid, FileKind, OpenMode, Request, Response};
+    use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Request, Response};
     use alan_kernel::MountFs;
 
     #[tokio::test]
@@ -338,6 +346,38 @@ mod tests {
 
         let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
         assert!(err.to_string().contains("read-only host mount"));
+    }
+
+    #[tokio::test]
+    async fn apply_host_mount_declarations_is_all_or_nothing() {
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let not_directory = tempfile::NamedTempFile::new().unwrap();
+        let declarations = vec![
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            HostMountDeclaration::new(
+                "/mnt/not-directory",
+                not_directory.path().to_path_buf(),
+                Access::ReadOnly,
+            ),
+        ];
+        let mut namespace = Namespace::new();
+
+        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
+        assert!(err.to_string().contains("failed to mount host directory"));
+
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let walked = root
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(1),
+                names: ["mnt", "project", "notes.txt"]
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+            })
+            .await;
+        assert_eq!(walked.unwrap_err(), ErrorCode::NotFound);
     }
 
     #[test]
