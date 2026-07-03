@@ -5,7 +5,13 @@
 //! trip. If any aP type stops being wire-shaped (borrows, non-serializable
 //! fields), these tests fail before any wire transport exists.
 
-use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Qid, Request, Response, Stat};
+use std::io::Cursor;
+
+use alan_ap::{
+    ErrorCode, Fid, FileKind, MAX_WIRE_FRAME_BYTES, OpenMode, Qid, Request, Response, Stat,
+    WireError, read_request_frame,
+};
+use tokio::io::BufReader;
 
 fn roundtrip<T>(value: &T) -> T
 where
@@ -141,4 +147,30 @@ fn every_response_operation_survives_roundtrip() {
     for resp in responses {
         assert_eq!(roundtrip(&resp), resp);
     }
+}
+
+#[tokio::test]
+async fn oversized_request_frame_without_newline_is_rejected() {
+    let mut reader = BufReader::new(Cursor::new(vec![b'x'; MAX_WIRE_FRAME_BYTES + 1]));
+
+    assert!(matches!(
+        read_request_frame(&mut reader).await,
+        Err(WireError::FrameTooLarge {
+            max: MAX_WIRE_FRAME_BYTES
+        })
+    ));
+}
+
+#[tokio::test]
+async fn oversized_request_frame_with_newline_is_rejected() {
+    let mut frame = vec![b'x'; MAX_WIRE_FRAME_BYTES + 1];
+    frame.push(b'\n');
+    let mut reader = BufReader::new(Cursor::new(frame));
+
+    assert!(matches!(
+        read_request_frame(&mut reader).await,
+        Err(WireError::FrameTooLarge {
+            max: MAX_WIRE_FRAME_BYTES
+        })
+    ));
 }

@@ -17,6 +17,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};
 
+/// Maximum newline-delimited aP wire frame accepted by the v1 byte transport.
+pub const MAX_WIRE_FRAME_BYTES: usize = 1 << 20; // 1 MiB
+
 /// One aP operation request. Inputs are fids, paths (name components), byte
 /// buffers, offsets, and counts — nothing in-process-only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +125,8 @@ pub enum WireError {
     Closed,
     #[error("aP wire connection has an abandoned in-flight request")]
     Unsynchronized,
+    #[error("aP wire frame exceeds {max} bytes")]
+    FrameTooLarge { max: usize },
 }
 
 impl WireError {
@@ -129,7 +134,7 @@ impl WireError {
     /// imported file-server adapters.
     pub fn to_error_code(&self) -> ErrorCode {
         match self {
-            Self::Codec(_) => ErrorCode::BadRequest,
+            Self::Codec(_) | Self::FrameTooLarge { .. } => ErrorCode::BadRequest,
             Self::Io(_) | Self::Closed | Self::Unsynchronized => ErrorCode::Io,
         }
     }
@@ -214,9 +219,31 @@ where
     R: AsyncBufRead + Unpin,
 {
     let mut frame = Vec::new();
-    let read = reader.read_until(b'\n', &mut frame).await?;
-    if read == 0 {
-        return Ok(None);
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return if frame.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(frame))
+            };
+        }
+
+        let consumed = if let Some(newline) = available.iter().position(|byte| *byte == b'\n') {
+            newline + 1
+        } else {
+            available.len()
+        };
+        if frame.len().saturating_add(consumed) > MAX_WIRE_FRAME_BYTES {
+            return Err(WireError::FrameTooLarge {
+                max: MAX_WIRE_FRAME_BYTES,
+            });
+        }
+        frame.extend_from_slice(&available[..consumed]);
+        reader.consume(consumed);
+
+        if frame.last() == Some(&b'\n') {
+            return Ok(Some(frame));
+        }
     }
-    Ok(Some(frame))
 }
