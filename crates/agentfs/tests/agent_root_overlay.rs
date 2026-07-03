@@ -217,11 +217,17 @@ async fn agent_io_input_writes_to_the_proc_input_stream() {
         String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap(),
         "shared input"
     );
-    assert!(
-        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/events")).await.unwrap())
-            .unwrap()
-            .contains("input:12")
-    );
+    for path in [
+        format!("/agent/{pid}/io/events"),
+        format!("/agent/{pid}/events"),
+    ] {
+        assert!(
+            String::from_utf8(shell.cat(&path).await.unwrap())
+                .unwrap()
+                .contains("input:12"),
+            "{path} should publish a proc-owned input event"
+        );
+    }
 }
 
 #[tokio::test]

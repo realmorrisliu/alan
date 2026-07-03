@@ -55,11 +55,20 @@ enum Node {
     ProcFile {
         proc: Arc<dyn FileServer>,
         proc_fid: Fid,
+        pid: String,
+        names: Vec<String>,
     },
 }
 
 struct Entry {
     node: Node,
+}
+
+struct ProcCreateDir {
+    proc: Arc<dyn FileServer>,
+    dir_fid: Fid,
+    pid: String,
+    names: Vec<String>,
 }
 
 struct State {
@@ -311,6 +320,8 @@ impl AgentRootFs {
             Ok(_) => Ok(Node::ProcFile {
                 proc: self.proc.clone(),
                 proc_fid,
+                pid: pid.to_string(),
+                names: names.to_vec(),
             }),
             Err(e) => Err(e),
         }
@@ -320,11 +331,22 @@ impl AgentRootFs {
         &self,
         proc: Arc<dyn FileServer>,
         base_fid: Fid,
+        pid: String,
+        base_names: Vec<String>,
         names: &[String],
     ) -> Result<Node, ErrorCode> {
         let proc_fid = Fid(NEXT_PROC_FID.fetch_add(1, Ordering::Relaxed));
         match proc.walk(base_fid, proc_fid, names).await {
-            Ok(_) => Ok(Node::ProcFile { proc, proc_fid }),
+            Ok(_) => {
+                let mut child_names = base_names;
+                child_names.extend_from_slice(names);
+                Ok(Node::ProcFile {
+                    proc,
+                    proc_fid,
+                    pid,
+                    names: child_names,
+                })
+            }
             Err(e) => Err(e),
         }
     }
@@ -425,13 +447,12 @@ impl AgentRootFs {
     async fn create_proc_file(
         &self,
         newfid: Fid,
-        proc: Arc<dyn FileServer>,
-        dir_fid: Fid,
+        dir: ProcCreateDir,
         name: &str,
         kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
         let proc_fid = Fid(NEXT_PROC_FID.fetch_add(1, Ordering::Relaxed));
-        let qid = match proc.create(dir_fid, proc_fid, name, kind).await {
+        let qid = match dir.proc.create(dir.dir_fid, proc_fid, name, kind).await {
             Ok(qid) => qid,
             Err(e) => return Err(e),
         };
@@ -439,13 +460,15 @@ impl AgentRootFs {
             .insert_fid(
                 newfid,
                 Node::ProcFile {
-                    proc: proc.clone(),
+                    proc: dir.proc.clone(),
                     proc_fid,
+                    pid: dir.pid,
+                    names: proc_child_names(dir.names, name),
                 },
             )
             .await
         {
-            rollback_created_fid(&proc, proc_fid).await;
+            rollback_created_fid(&dir.proc, proc_fid).await;
             return Err(e);
         }
         Ok(qid)
@@ -458,6 +481,14 @@ impl AgentRootFs {
         }
         state.fids.insert(fid, Entry { node });
         Ok(())
+    }
+
+    async fn agent_event_sink_for(&self, pid: &str) -> Option<Arc<AgentFs>> {
+        let state = self.state.lock().await;
+        state
+            .agents
+            .get(pid)
+            .and_then(|agent| agent.event_sink.clone())
     }
 }
 
@@ -532,8 +563,14 @@ impl FileServer for AgentRootFs {
                 self.bind_agent_walk(newfid, pid, backing, backing_fid, names)
                     .await?
             }
-            Node::ProcFile { proc, proc_fid } => {
-                self.bind_proc_relative_walk(proc, proc_fid, names).await?
+            Node::ProcFile {
+                proc,
+                proc_fid,
+                pid,
+                names: proc_names,
+            } => {
+                self.bind_proc_relative_walk(proc, proc_fid, pid, proc_names, names)
+                    .await?
             }
         };
         let qid = self.qid_for_node(&new_node).await?;
@@ -619,7 +656,20 @@ impl FileServer for AgentRootFs {
                 backing_fid,
                 ..
             } => backing.write(backing_fid, offset, data).await,
-            Node::ProcFile { proc, proc_fid, .. } => proc.write(proc_fid, offset, data).await,
+            Node::ProcFile {
+                proc,
+                proc_fid,
+                pid,
+                names,
+            } => {
+                let count = proc.write(proc_fid, offset, data).await?;
+                if is_proc_io_input_path(&names)
+                    && let Some(agent) = self.agent_event_sink_for(&pid).await
+                {
+                    agent.append_input_event(count).await;
+                }
+                Ok(count)
+            }
         }
     }
 
@@ -692,9 +742,19 @@ impl FileServer for AgentRootFs {
                 self.create_agent_file(newfid, pid, backing, backing_fid, name, kind)
                     .await
             }
-            Node::ProcFile { proc, proc_fid, .. } => {
-                self.create_proc_file(newfid, proc, proc_fid, name, kind)
-                    .await
+            Node::ProcFile {
+                proc,
+                proc_fid,
+                pid,
+                names,
+            } => {
+                let dir = ProcCreateDir {
+                    proc,
+                    dir_fid: proc_fid,
+                    pid,
+                    names,
+                };
+                self.create_proc_file(newfid, dir, name, kind).await
             }
         }
     }
@@ -839,6 +899,15 @@ fn is_proc_overlay_name(name: &str) -> bool {
         name,
         "status" | "parent" | "credentials" | "exit" | "ctl" | "namespace" | "io"
     )
+}
+
+fn is_proc_io_input_path(names: &[String]) -> bool {
+    names == ["io", "input"]
+}
+
+fn proc_child_names(mut names: Vec<String>, child: &str) -> Vec<String> {
+    names.push(child.to_string());
+    names
 }
 
 fn is_agent_overlay_reserved_name(name: &str) -> bool {
