@@ -321,10 +321,7 @@ impl AgentRootFs {
                 backing,
                 backing_fid,
             }),
-            Err(e) => {
-                let _ = backing.clunk(backing_fid).await;
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -629,7 +626,13 @@ impl FileServer for AgentRootFs {
                     .await?
             }
         };
-        let qid = self.qid_for_node(&new_node).await?;
+        let qid = match self.qid_for_node(&new_node).await {
+            Ok(qid) => qid,
+            Err(error) => {
+                release_node(new_node).await;
+                return Err(error);
+            }
+        };
         if let Err(error) = self.insert_fid(newfid, new_node.clone()).await {
             release_node(new_node).await;
             return Err(error);

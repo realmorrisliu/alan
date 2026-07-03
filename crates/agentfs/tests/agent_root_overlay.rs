@@ -333,6 +333,51 @@ async fn failed_proc_overlay_walk_does_not_clunk_unbound_proc_fid() {
 }
 
 #[tokio::test]
+async fn failed_backing_walk_does_not_clunk_unbound_backing_fid() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let backing = Arc::new(FailedBackingWalkFs::new());
+    agent_root.bind_process(pid.clone(), backing.clone()).await;
+
+    assert_eq!(
+        agent_root
+            .walk(Fid::ROOT, Fid(9_350), &[pid, "file".to_string()])
+            .await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert!(
+        !backing.clunked_failed_fid(),
+        "failed backing walks do not bind their newfid, so cleanup must not clunk it"
+    );
+}
+
+#[tokio::test]
+async fn failed_stat_after_delegated_walk_releases_backing_fid() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    let backing = Arc::new(StatFailWalkFs::new());
+    agent_root.bind_process(pid.clone(), backing.clone()).await;
+
+    assert_eq!(
+        agent_root
+            .walk(Fid::ROOT, Fid(9_360), &[pid, "file".to_string()])
+            .await,
+        Err(ErrorCode::Io)
+    );
+    assert_eq!(
+        backing.bound_fid_count(),
+        0,
+        "a failed outer walk must release the delegated backing fid"
+    );
+}
+
+#[tokio::test]
 async fn agent_children_are_derived_from_proc_parentage() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
@@ -868,6 +913,173 @@ impl FileServer for ProcWalkCollisionFs {
             .lock()
             .expect("clunked fids lock should not be poisoned")
             .push(fid);
+        Ok(())
+    }
+}
+
+struct FailedBackingWalkFs {
+    failed_fids: Mutex<Vec<Fid>>,
+    clunked_fids: Mutex<Vec<Fid>>,
+}
+
+impl FailedBackingWalkFs {
+    fn new() -> Self {
+        Self {
+            failed_fids: Mutex::new(Vec::new()),
+            clunked_fids: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn clunked_failed_fid(&self) -> bool {
+        let failed = self
+            .failed_fids
+            .lock()
+            .expect("failed fids lock should not be poisoned");
+        let clunked = self
+            .clunked_fids
+            .lock()
+            .expect("clunked fids lock should not be poisoned");
+        failed.iter().any(|fid| clunked.contains(fid))
+    }
+}
+
+#[async_trait]
+impl FileServer for FailedBackingWalkFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid == Fid::ROOT && names == ["file"] {
+            self.failed_fids
+                .lock()
+                .expect("failed fids lock should not be poisoned")
+                .push(newfid);
+            Err(ErrorCode::BadRequest)
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunked_fids
+            .lock()
+            .expect("clunked fids lock should not be poisoned")
+            .push(fid);
+        Ok(())
+    }
+}
+
+struct StatFailWalkFs {
+    fids: Mutex<HashMap<Fid, ()>>,
+}
+
+impl StatFailWalkFs {
+    fn new() -> Self {
+        Self {
+            fids: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn bound_fid_count(&self) -> usize {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .len()
+    }
+
+    fn qid() -> Qid {
+        Qid {
+            kind: FileKind::File,
+            version: 0,
+            path: 0x57A7_F411,
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for StatFailWalkFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT || names != ["file"] {
+            return Err(ErrorCode::NotFound);
+        }
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .insert(newfid, ());
+        Ok(Self::qid())
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        if self
+            .fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .contains_key(&fid)
+        {
+            Err(ErrorCode::Io)
+        } else {
+            Err(ErrorCode::NotFound)
+        }
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunk(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid);
         Ok(())
     }
 }
