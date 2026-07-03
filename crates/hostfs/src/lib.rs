@@ -200,6 +200,7 @@ impl FileServer for HostDirFs {
                 HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
                 HostEntryKind::File => {
                     let handle = self.existing_write_handle(&rel)?;
+                    reject_multiply_linked_file(&handle.metadata)?;
                     self.qid_for_metadata(&handle.metadata)?
                 }
             },
@@ -210,6 +211,7 @@ impl FileServer for HostDirFs {
                     return Err(ErrorCode::IsDirectory);
                 }
                 let write_handle = self.existing_write_handle(&rel)?;
+                reject_multiply_linked_file(&write_handle.metadata)?;
                 drop(write_handle);
                 write_seed = Some(read_file_for_write_seed(handle.file)?);
                 qid
@@ -360,6 +362,7 @@ impl FileServer for HostDirFs {
             if !handle.metadata.is_file() {
                 return Err(ErrorCode::Unsupported);
             }
+            reject_multiply_linked_file(&handle.metadata)?;
             write_all_to_file(handle.file, &fid_state.write_buf)?;
         }
         Ok(())
@@ -676,6 +679,14 @@ fn file_kind(metadata: &std::fs::Metadata) -> Result<FileKind, ErrorCode> {
     }
 }
 
+fn reject_multiply_linked_file(metadata: &std::fs::Metadata) -> Result<(), ErrorCode> {
+    if metadata.is_file() && metadata.nlink() > 1 {
+        Err(ErrorCode::NoAccess)
+    } else {
+        Ok(())
+    }
+}
+
 fn qid_path(metadata: &std::fs::Metadata) -> u64 {
     let mut hasher = DefaultHasher::new();
     metadata.dev().hash(&mut hasher);
@@ -861,6 +872,57 @@ mod tests {
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_intent_open_rejects_multiply_linked_host_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = temp.path().join("linked.txt");
+        let outside_alias = outside.path().join("alias.txt");
+        std::fs::write(&path, "linked").unwrap();
+        std::fs::hard_link(&path, &outside_alias).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["linked.txt".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.open(Fid(1), OpenMode::Write).await.unwrap_err(),
+            ErrorCode::NoAccess
+        );
+
+        fs.walk(Fid::ROOT, Fid(2), &["linked.txt".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap_err(),
+            ErrorCode::NoAccess
+        );
+        assert_eq!(std::fs::read_to_string(outside_alias).unwrap(), "linked");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn clunk_rejects_multiply_linked_host_file_created_after_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = temp.path().join("target.txt");
+        let outside_alias = outside.path().join("alias.txt");
+        std::fs::write(&path, "safe").unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["target.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        fs.write(Fid(1), 0, b"changed").await.unwrap();
+        std::fs::hard_link(&path, &outside_alias).unwrap();
+
+        assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "safe");
+        assert_eq!(std::fs::read_to_string(outside_alias).unwrap(), "safe");
     }
 
     #[test]
