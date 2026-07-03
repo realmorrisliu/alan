@@ -18,8 +18,10 @@
 - [x] 1.3 Implement rule files (content/type match) with deterministic match
   order and a default dead-letter port.
   Done 2026-07-02: `rules/<name>` are plain JSON files, matched in lexical
-  `BTreeMap` order by message type and optional content substring; unmatched
-  messages go to the built-in `dead-letter` port.
+  `BTreeMap` order by message type and optional content substring. Create
+  reserves rule names until clunk, so concurrent same-name creates cannot both
+  succeed and silently overwrite each other. Unmatched messages go to the
+  built-in `dead-letter` port.
 - [x] 1.4 Implement destination ports as blocking-read streams.
   Done 2026-07-02: `ports/<name>` and `log` are aP `Stream`s with blocking-read
   semantics; port delivery appends one routed JSON record per message.
@@ -57,7 +59,8 @@
   and child namespace launch manifests include `/srv` plus `/mnt/route`. Kernel
   `MountFs` coverage verifies create forwarding and read-only create denial,
   and routefs coverage creates a rule through `/mnt/route/rules/<name>` before
-  routing a message through that mounted namespace.
+  routing a message through that mounted namespace. Routefs also covers
+  same-name create reservation and reservation release for abandoned creates.
 - [x] 4.2 Run `just verify`.
   Done 2026-07-02: `just verify` passed, including workspace fmt, clippy,
   tests, and smoke verification.

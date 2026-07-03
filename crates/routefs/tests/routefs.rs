@@ -191,6 +191,53 @@ async fn rule_files_are_cat_readable_and_match_by_content() {
 }
 
 #[tokio::test]
+async fn rule_create_reserves_the_name_until_clunk() {
+    let fs = RouteFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["rules".into()]).await.unwrap();
+    fs.create(Fid(1), Fid(2), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.create(Fid(1), Fid(3), "10-results", FileKind::File)
+            .await,
+        Err(ErrorCode::BadRequest),
+        "a pending rule create reserves its name"
+    );
+
+    let rule = serde_json::to_vec(&json!({
+        "version": 1,
+        "match_type": "result",
+        "port": "review"
+    }))
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, &rule).await.unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+    assert_eq!(
+        fs.create(Fid(1), Fid(4), "10-results", FileKind::File)
+            .await,
+        Err(ErrorCode::BadRequest),
+        "a committed rule keeps the name reserved"
+    );
+    fs.clunk(Fid(1)).await.unwrap();
+}
+
+#[tokio::test]
+async fn abandoned_rule_create_releases_the_reserved_name() {
+    let fs = RouteFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["rules".into()]).await.unwrap();
+    fs.create(Fid(1), Fid(2), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    fs.clunk(Fid(2)).await.unwrap();
+    fs.create(Fid(1), Fid(3), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    fs.clunk(Fid(3)).await.unwrap();
+    fs.clunk(Fid(1)).await.unwrap();
+}
+
+#[tokio::test]
 async fn no_match_routes_to_dead_letter_and_log_records_decision() {
     let fs = RouteFs::new();
     write_doc(&fs, &["send"], Fid(1), &[&message("citation", "source")])

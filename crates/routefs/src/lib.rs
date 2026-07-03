@@ -6,7 +6,7 @@
 //! and appends the routing decision to `log`. The sender emits a result type; it
 //! does not name the receiving actor.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 use alan_ap::{
@@ -147,6 +147,7 @@ struct RuleEntry {
 
 struct State {
     rules: BTreeMap<String, RuleEntry>,
+    pending_rules: BTreeSet<String>,
     ports: BTreeMap<String, Stream>,
     log: Stream,
     versions: VersionTable,
@@ -190,6 +191,7 @@ impl RouteFs {
         Self {
             state: Mutex::new(State {
                 rules: BTreeMap::new(),
+                pending_rules: BTreeSet::new(),
                 ports,
                 log: Stream::new(),
                 versions: VersionTable::new(),
@@ -288,6 +290,9 @@ impl State {
         if !valid_name(&name) {
             return Err(ErrorCode::BadRequest);
         }
+        if self.pending_rules.contains(&name) {
+            return Err(ErrorCode::BadRequest);
+        }
         spec.validate()?;
         let source = rule_source(&spec)?;
         let port = spec.port.clone();
@@ -340,6 +345,15 @@ impl State {
         stream.append(&bytes).await;
         self.log.append(&bytes).await;
         Ok(())
+    }
+
+    fn commit_pending_rule(&mut self, name: String, spec: RuleSpec) -> Result<(), ErrorCode> {
+        self.pending_rules.remove(&name);
+        self.install_rule(name, spec)
+    }
+
+    fn abandon_pending_rule(&mut self, name: &str) {
+        self.pending_rules.remove(name);
     }
 }
 
@@ -453,9 +467,13 @@ impl FileServer for RouteFs {
         if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        if !matches!(state.node_of(fid)?, Node::RulesDir) || state.rules.contains_key(name) {
+        if !matches!(state.node_of(fid)?, Node::RulesDir)
+            || state.rules.contains_key(name)
+            || state.pending_rules.contains(name)
+        {
             return Err(ErrorCode::BadRequest);
         }
+        state.pending_rules.insert(name.to_string());
         let node = Node::Rule(name.to_string());
         let qid = state.qid(&node);
         state.fids.insert(newfid, RouteFid::at(node));
@@ -468,7 +486,11 @@ impl FileServer for RouteFs {
         let Node::Rule(name) = node else {
             return Err(ErrorCode::Unsupported);
         };
-        state.rules.remove(&name).ok_or(ErrorCode::NotFound)?;
+        let removed = state.rules.remove(&name).is_some();
+        let reserved = state.pending_rules.remove(&name);
+        if !removed && !reserved {
+            return Err(ErrorCode::NotFound);
+        }
         state.versions.bump(node_identity(&Node::RulesDir).1);
         state.fids.remove(&fid);
         Ok(())
@@ -485,7 +507,11 @@ impl FileServer for RouteFs {
             Node::Rule(name) if f.wrote => {
                 let spec: RuleSpec =
                     serde_json::from_slice(&f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
-                state.install_rule(name, spec)
+                state.commit_pending_rule(name, spec)
+            }
+            Node::Rule(name) => {
+                state.abandon_pending_rule(&name);
+                Ok(())
             }
             _ => Ok(()),
         }
