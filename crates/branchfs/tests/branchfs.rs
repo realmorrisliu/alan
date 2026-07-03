@@ -157,6 +157,49 @@ async fn score_and_select_are_explicit_and_inspectable() {
 }
 
 #[tokio::test]
+async fn scoring_selected_branch_bumps_selected_qid_version() {
+    let fs = BranchFs::new();
+    fs.install_base_branch("base", [b"a\n".to_vec()])
+        .await
+        .unwrap();
+    write_ctl(
+        &fs,
+        Fid(1),
+        json!({"op": "fork", "id": "candidate-a", "from": "base", "delta": "b\n"}),
+    )
+    .await
+    .unwrap();
+    write_ctl(&fs, Fid(2), json!({"op": "select", "id": "candidate-a"}))
+        .await
+        .unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["selected".into()])
+        .await
+        .unwrap();
+    let before = fs.stat(Fid(3)).await.unwrap().qid.version;
+    fs.clunk(Fid(3)).await.unwrap();
+
+    write_ctl(
+        &fs,
+        Fid(4),
+        json!({"op": "score", "id": "candidate-a", "score": 0.91, "summary": "higher"}),
+    )
+    .await
+    .unwrap();
+
+    fs.walk(Fid::ROOT, Fid(5), &["selected".into()])
+        .await
+        .unwrap();
+    let after = fs.stat(Fid(5)).await.unwrap().qid.version;
+    fs.clunk(Fid(5)).await.unwrap();
+
+    assert!(after > before, "selected qid version did not advance");
+    let selected: Value =
+        serde_json::from_str(&read_text(&fs, &["selected"], Fid(6)).await).expect("selected json");
+    assert_eq!(selected["score"], 0.91);
+}
+
+#[tokio::test]
 async fn discard_hides_branch_but_retains_event() {
     let fs = BranchFs::new();
     fs.install_base_branch("base", [b"a\n".to_vec()])

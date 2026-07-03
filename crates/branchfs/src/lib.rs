@@ -344,6 +344,9 @@ impl State {
         let summary = branch.summary.clone();
         self.versions
             .bump(node_identity(&Node::Branch(id.clone())).1);
+        if self.selected.as_deref() == Some(&id) {
+            self.versions.bump(node_identity(&Node::Selected).1);
+        }
         self.append_event(EventRecord::Score {
             id: &id,
             score,
