@@ -63,7 +63,8 @@ operations that resolve to normal Alan Shell, process, or routing behavior under
 the caller's namespace capability discipline. Until the ADR-0024 R1 amplification
 check lands, the mount set is an architectural discipline rather than a security
 property; native subprocesses such as shell commands cannot see the Alan
-namespace directly and still require OS sandbox projection.
+namespace directly, so OS sandbox projection remains a permanent second
+enforcement mechanism for them.
 
 #### Scenario: Selected text is executed
 

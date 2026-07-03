@@ -82,9 +82,10 @@ future macOS view can all operate the same buffer through files.
    produce an event and any side effect still depends on the process namespace,
    descriptors, policy, and the ADR-0027 D3 qualification: until ADR-0024 R1
    lands, the mount set is an architectural discipline rather than a security
-   property, and native subprocesses still need OS sandbox projection because
-   they cannot see Alan namespaces directly. The buffer server does not become a
-   privileged command runner.
+   property, and native subprocesses still need OS sandbox projection as a
+   permanent second enforcement mechanism because they cannot see Alan
+   namespaces directly. The buffer server does not become a privileged command
+   runner.
 
    Alternative considered: every click or newline on command-looking text
    executes implicitly. That is faster but unsafe and hard to audit.
