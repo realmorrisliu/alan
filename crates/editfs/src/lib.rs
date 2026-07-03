@@ -256,6 +256,19 @@ impl State {
         Ok(bytes)
     }
 
+    fn write_seed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+        let bytes = match node {
+            Node::Body | Node::Tag => self.computed_bytes(node)?,
+            Node::Addr => format!(
+                "rev:{} {}..{}",
+                self.addr.body_revision, self.addr.start, self.addr.end
+            )
+            .into_bytes(),
+            _ => return Err(ErrorCode::Unsupported),
+        };
+        Ok(bytes)
+    }
+
     fn stream_for(&self, node: &Node) -> Option<Stream> {
         match node {
             Node::Event => Some(self.event.clone()),
@@ -381,7 +394,7 @@ impl FileServer for EditFs {
         let read_write_seed = if matches!(mode, OpenMode::ReadWrite)
             && matches!(node, Node::Body | Node::Tag | Node::Addr)
         {
-            Some(state.computed_bytes(&node)?)
+            Some(state.write_seed_bytes(&node)?)
         } else {
             None
         };

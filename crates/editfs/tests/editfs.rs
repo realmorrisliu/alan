@@ -114,6 +114,27 @@ async fn addr_selects_a_revision_bound_body_range() {
 }
 
 #[tokio::test]
+async fn readwrite_addr_seeds_writable_range_syntax() {
+    let fs = EditFs::new();
+    write_doc(&fs, &["body"], Fid(1), b"alpha beta")
+        .await
+        .unwrap();
+    write_doc(&fs, &["addr"], Fid(2), b"rev:1 0..5")
+        .await
+        .unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["addr".into()]).await.unwrap();
+    fs.open(Fid(3), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(3), 6, b"6..10").await.unwrap();
+    fs.clunk(Fid(3)).await.unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["addr"], Fid(4)).await,
+        "rev:1 addr:2 6..10"
+    );
+}
+
+#[tokio::test]
 async fn addr_write_rejects_non_current_body_revision() {
     let fs = EditFs::new();
     write_doc(&fs, &["body"], Fid(1), b"alpha").await.unwrap();
