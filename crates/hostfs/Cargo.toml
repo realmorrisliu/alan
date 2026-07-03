@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 alan-ap = { path = "../ap" }
 async-trait.workspace = true
+libc.workspace = true
 tokio = { workspace = true }
 
 [dev-dependencies]

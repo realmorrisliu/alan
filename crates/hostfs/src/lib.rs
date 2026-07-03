@@ -7,8 +7,12 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
-use std::io::{Read as _, SeekFrom};
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -34,6 +38,7 @@ impl HostDirAccess {
 /// Host-directory-backed aP file server.
 pub struct HostDirFs {
     root: PathBuf,
+    root_dir: std::fs::File,
     access: HostDirAccess,
     fids: Mutex<HashMap<Fid, HostFid>>,
 }
@@ -52,8 +57,10 @@ impl HostDirFs {
         if !root.is_dir() {
             return Err(ErrorCode::NotDirectory);
         }
+        let root_dir = open_root_dir(&root)?;
         Ok(Self {
             root,
+            root_dir,
             access,
             fids: Mutex::new(HashMap::new()),
         })
@@ -76,43 +83,25 @@ impl HostDirFs {
             .ok_or(ErrorCode::NotFound)
     }
 
-    fn candidate_path(&self, rel: &[String]) -> Result<PathBuf, ErrorCode> {
-        validate_rel(rel)?;
-        Ok(rel
-            .iter()
-            .fold(self.root.clone(), |path, name| path.join(name)))
+    fn existing_handle(&self, rel: &[String]) -> Result<HostHandle, ErrorCode> {
+        open_existing_handle(&self.root_dir, rel, libc::O_RDONLY)
     }
 
-    fn existing_path(&self, rel: &[String]) -> Result<PathBuf, ErrorCode> {
-        let candidate = self.candidate_path(rel)?;
-        let resolved = std::fs::canonicalize(candidate).map_err(|_| ErrorCode::NotFound)?;
-        ensure_under_root(&self.root, &resolved)?;
-        Ok(resolved)
+    fn existing_write_handle(&self, rel: &[String]) -> Result<HostHandle, ErrorCode> {
+        open_existing_handle(&self.root_dir, rel, libc::O_WRONLY)
     }
 
-    fn create_path(&self, parent: &[String], name: &str) -> Result<PathBuf, ErrorCode> {
+    fn parent_handle(&self, rel: &[String], name: &str) -> Result<HostHandle, ErrorCode> {
         validate_name(name)?;
-        let parent_path = self.existing_path(parent)?;
-        if !parent_path.is_dir() {
+        let parent = self.existing_handle(rel)?;
+        if !parent.metadata.is_dir() {
             return Err(ErrorCode::NotDirectory);
         }
-        let candidate = parent_path.join(name);
-        if candidate.exists() {
-            return Err(ErrorCode::BadRequest);
-        }
-        ensure_under_root(&self.root, &candidate)?;
-        Ok(candidate)
+        Ok(parent)
     }
 
-    fn qid_for_path(&self, path: &Path) -> Result<Qid, ErrorCode> {
-        let metadata = std::fs::metadata(path).map_err(|_| ErrorCode::NotFound)?;
-        let kind = if metadata.is_dir() {
-            FileKind::Dir
-        } else if metadata.is_file() {
-            FileKind::File
-        } else {
-            return Err(ErrorCode::Unsupported);
-        };
+    fn qid_for_metadata(&self, metadata: &std::fs::Metadata) -> Result<Qid, ErrorCode> {
+        let kind = file_kind(metadata)?;
         let version = metadata
             .modified()
             .ok()
@@ -122,8 +111,23 @@ impl HostDirFs {
         Ok(Qid {
             kind,
             version,
-            path: qid_path(path),
+            path: qid_path(metadata),
         })
+    }
+
+    fn symlink_qid_for_rel(&self, rel: &[String]) -> Result<Qid, ErrorCode> {
+        if !self.access.writable() {
+            return Err(ErrorCode::NoAccess);
+        }
+        let (parent, name) = open_parent_for_entry(&self.root_dir, rel)?;
+        match entry_kind_at(parent.file.as_raw_fd(), &name)? {
+            HostEntryKind::Symlink => Ok(Qid {
+                kind: FileKind::File,
+                version: 0,
+                path: qid_path_for_rel(rel),
+            }),
+            HostEntryKind::Dir | HostEntryKind::File => Err(ErrorCode::NoAccess),
+        }
     }
 }
 
@@ -135,13 +139,16 @@ impl FileServer for HostDirFs {
             return Err(ErrorCode::BadRequest);
         }
         let mut rel = Self::rel_for_fid(&fids, fid)?;
-        let base = self.existing_path(&rel)?;
+        let base = self.existing_handle(&rel)?;
         if !names.is_empty() && !base.is_dir() {
             return Err(ErrorCode::NotDirectory);
         }
         rel.extend(names.iter().cloned());
-        let path = self.existing_path(&rel)?;
-        let qid = self.qid_for_path(&path)?;
+        let qid = match self.existing_handle(&rel) {
+            Ok(handle) => self.qid_for_metadata(&handle.metadata)?,
+            Err(ErrorCode::NoAccess) => self.symlink_qid_for_rel(&rel)?,
+            Err(error) => return Err(error),
+        };
         fids.insert(
             newfid,
             HostFid {
@@ -160,8 +167,8 @@ impl FileServer for HostDirFs {
         }
         let mut fids = self.fids.lock().await;
         let rel = Self::rel_for_fid(&fids, fid)?;
-        let path = self.existing_path(&rel)?;
-        let qid = self.qid_for_path(&path)?;
+        let handle = self.existing_handle(&rel)?;
+        let qid = self.qid_for_metadata(&handle.metadata)?;
         if qid.kind == FileKind::Dir && matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
             return Err(ErrorCode::IsDirectory);
         }
@@ -171,7 +178,7 @@ impl FileServer for HostDirFs {
             }
             fid_state.mode = Some(mode);
             if matches!(mode, OpenMode::ReadWrite) && qid.kind == FileKind::File {
-                fid_state.write_buf = read_file_for_write_seed(&path)?;
+                fid_state.write_buf = read_file_for_write_seed(handle.file)?;
             }
         }
         Ok(qid)
@@ -188,11 +195,11 @@ impl FileServer for HostDirFs {
         let rel = Self::rel_for_fid(&fids, fid)?;
         drop(fids);
 
-        let path = self.existing_path(&rel)?;
-        let bytes = if path.is_dir() {
-            directory_listing(&path).await?
-        } else if path.is_file() {
-            return read_file_range(&path, offset, count).await;
+        let handle = self.existing_handle(&rel)?;
+        let bytes = if handle.metadata.is_dir() {
+            directory_listing(handle.file)?
+        } else if handle.metadata.is_file() {
+            return read_file_range(handle.file, offset, count).await;
         } else {
             return Err(ErrorCode::Unsupported);
         };
@@ -208,8 +215,8 @@ impl FileServer for HostDirFs {
         if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
-        let path = self.existing_path(&fid_state.rel)?;
-        if !path.is_file() {
+        let handle = self.existing_handle(&fid_state.rel)?;
+        if !handle.metadata.is_file() {
             return Err(ErrorCode::Unsupported);
         }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
@@ -230,19 +237,18 @@ impl FileServer for HostDirFs {
         let rel = Self::rel_for_fid(&fids, fid)?;
         drop(fids);
 
-        let path = self.existing_path(&rel)?;
-        let metadata = std::fs::metadata(&path).map_err(|_| ErrorCode::NotFound)?;
-        let qid = self.qid_for_path(&path)?;
-        let length = if metadata.is_file() {
-            metadata.len()
+        let handle = self.existing_handle(&rel)?;
+        let qid = self.qid_for_metadata(&handle.metadata)?;
+        let length = if handle.metadata.is_file() {
+            handle.metadata.len()
         } else {
-            directory_listing(&path).await?.len() as u64
+            directory_listing(handle.file)?.len() as u64
         };
         Ok(Stat {
             name: rel.last().cloned().unwrap_or_default(),
             qid,
             length,
-            writable: self.access.writable() && metadata.is_file(),
+            writable: self.access.writable() && qid.kind == FileKind::File,
         })
     }
 
@@ -261,21 +267,18 @@ impl FileServer for HostDirFs {
             return Err(ErrorCode::BadRequest);
         }
         let parent_rel = Self::rel_for_fid(&fids, fid)?;
-        let path = self.create_path(&parent_rel, name)?;
+        let parent = self.parent_handle(&parent_rel, name)?;
         match kind {
-            FileKind::Dir => std::fs::create_dir(&path).map_err(|_| ErrorCode::Io)?,
+            FileKind::Dir => mkdir_child(parent.file.as_raw_fd(), name)?,
             FileKind::File => {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)
-                    .map_err(|_| ErrorCode::Io)?;
+                create_child_file(parent.file.as_raw_fd(), name)?;
             }
             FileKind::Stream | FileKind::Clone => return Err(ErrorCode::Unsupported),
         }
         let mut rel = parent_rel;
         rel.push(name.to_string());
-        let qid = self.qid_for_path(&path)?;
+        let handle = self.existing_handle(&rel)?;
+        let qid = self.qid_for_metadata(&handle.metadata)?;
         fids.insert(
             newfid,
             HostFid {
@@ -297,21 +300,7 @@ impl FileServer for HostDirFs {
         }
         let mut fids = self.fids.lock().await;
         let rel = Self::rel_for_fid(&fids, fid)?;
-        let path = self.candidate_path(&rel)?;
-        let metadata = std::fs::symlink_metadata(&path).map_err(|_| ErrorCode::NotFound)?;
-        if metadata.file_type().is_symlink() {
-            std::fs::remove_file(&path).map_err(|_| ErrorCode::Io)?;
-        } else if metadata.is_dir() {
-            let resolved = std::fs::canonicalize(&path).map_err(|_| ErrorCode::NotFound)?;
-            ensure_under_root(&self.root, &resolved)?;
-            std::fs::remove_dir(&path).map_err(|_| ErrorCode::Io)?;
-        } else if metadata.is_file() {
-            let resolved = std::fs::canonicalize(&path).map_err(|_| ErrorCode::NotFound)?;
-            ensure_under_root(&self.root, &resolved)?;
-            std::fs::remove_file(&path).map_err(|_| ErrorCode::Io)?;
-        } else {
-            return Err(ErrorCode::Unsupported);
-        }
+        remove_entry(&self.root_dir, &rel)?;
         fids.remove(&fid);
         Ok(())
     }
@@ -323,13 +312,11 @@ impl FileServer for HostDirFs {
         let mut fids = self.fids.lock().await;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         if fid_state.wrote {
-            let path = self.existing_path(&fid_state.rel)?;
-            if !path.is_file() {
+            let handle = self.existing_write_handle(&fid_state.rel)?;
+            if !handle.metadata.is_file() {
                 return Err(ErrorCode::Unsupported);
             }
-            tokio::fs::write(path, fid_state.write_buf)
-                .await
-                .map_err(|_| ErrorCode::Io)?;
+            write_all_to_file(handle.file, &fid_state.write_buf)?;
         }
         Ok(())
     }
@@ -343,39 +330,251 @@ fn validate_rel(rel: &[String]) -> Result<(), ErrorCode> {
 }
 
 fn validate_name(name: &str) -> Result<(), ErrorCode> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\n') {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\n')
+        || name.contains('\0')
+    {
         return Err(ErrorCode::BadRequest);
     }
     Ok(())
 }
 
-fn ensure_under_root(root: &Path, path: &Path) -> Result<(), ErrorCode> {
-    if path.starts_with(root) {
-        Ok(())
-    } else {
-        Err(ErrorCode::NoAccess)
+struct HostHandle {
+    file: std::fs::File,
+    metadata: std::fs::Metadata,
+}
+
+impl HostHandle {
+    fn is_dir(&self) -> bool {
+        self.metadata.is_dir()
     }
 }
 
-async fn directory_listing(path: &Path) -> Result<Vec<u8>, ErrorCode> {
-    let mut entries = tokio::fs::read_dir(path).await.map_err(|_| ErrorCode::Io)?;
+fn open_existing_handle(
+    root_dir: &std::fs::File,
+    rel: &[String],
+    final_access: libc::c_int,
+) -> Result<HostHandle, ErrorCode> {
+    validate_rel(rel)?;
+    let mut current = root_dir.try_clone().map_err(|_| ErrorCode::Io)?;
+    let mut metadata = current.metadata().map_err(|_| ErrorCode::Io)?;
+    if rel.is_empty() {
+        return Ok(HostHandle {
+            file: current,
+            metadata,
+        });
+    }
+
+    for (index, name) in rel.iter().enumerate() {
+        if !metadata.is_dir() {
+            return Err(ErrorCode::NotDirectory);
+        }
+        let is_last = index + 1 == rel.len();
+        let flags = if is_last {
+            final_access | libc::O_CLOEXEC | libc::O_NOFOLLOW
+        } else {
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
+        };
+        let child = openat_file(current.as_raw_fd(), name, flags, 0)?;
+        metadata = child.metadata().map_err(|_| ErrorCode::Io)?;
+        current = child;
+    }
+
+    Ok(HostHandle {
+        file: current,
+        metadata,
+    })
+}
+
+fn open_parent_for_entry(
+    root_dir: &std::fs::File,
+    rel: &[String],
+) -> Result<(HostHandle, String), ErrorCode> {
+    let (name, parent_rel) = rel.split_last().ok_or(ErrorCode::Unsupported)?;
+    validate_name(name)?;
+    let parent = open_existing_handle(root_dir, parent_rel, libc::O_RDONLY)?;
+    if !parent.metadata.is_dir() {
+        return Err(ErrorCode::NotDirectory);
+    }
+    Ok((parent, name.clone()))
+}
+
+fn mkdir_child(parent_fd: RawFd, name: &str) -> Result<(), ErrorCode> {
+    let name = c_name(name)?;
+    let result = unsafe { libc::mkdirat(parent_fd, name.as_ptr(), 0o777) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(map_create_error(std::io::Error::last_os_error()))
+    }
+}
+
+fn create_child_file(parent_fd: RawFd, name: &str) -> Result<(), ErrorCode> {
+    let file = openat_file(
+        parent_fd,
+        name,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        0o666,
+    )?;
+    drop(file);
+    Ok(())
+}
+
+fn remove_entry(root_dir: &std::fs::File, rel: &[String]) -> Result<(), ErrorCode> {
+    let (parent, name) = open_parent_for_entry(root_dir, rel)?;
+    match entry_kind_at(parent.file.as_raw_fd(), &name)? {
+        HostEntryKind::File | HostEntryKind::Symlink => {
+            unlink_child(parent.file.as_raw_fd(), &name, 0)
+        }
+        HostEntryKind::Dir => unlink_child(parent.file.as_raw_fd(), &name, libc::AT_REMOVEDIR),
+    }
+}
+
+fn unlink_child(parent_fd: RawFd, name: &str, flags: libc::c_int) -> Result<(), ErrorCode> {
+    let name = c_name(name)?;
+    let result = unsafe { libc::unlinkat(parent_fd, name.as_ptr(), flags) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(map_remove_error(std::io::Error::last_os_error()))
+    }
+}
+
+enum HostEntryKind {
+    Dir,
+    File,
+    Symlink,
+}
+
+fn entry_kind_at(parent_fd: RawFd, name: &str) -> Result<HostEntryKind, ErrorCode> {
+    let name = c_name(name)?;
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let result = unsafe {
+        libc::fstatat(
+            parent_fd,
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result != 0 {
+        return Err(map_open_error(std::io::Error::last_os_error()));
+    }
+    let stat = unsafe { stat.assume_init() };
+    let mode = stat.st_mode as libc::mode_t;
+    match mode & libc::S_IFMT {
+        libc::S_IFDIR => Ok(HostEntryKind::Dir),
+        libc::S_IFREG => Ok(HostEntryKind::File),
+        libc::S_IFLNK => Ok(HostEntryKind::Symlink),
+        _ => Err(ErrorCode::Unsupported),
+    }
+}
+
+fn openat_file(
+    parent_fd: RawFd,
+    name: &str,
+    flags: libc::c_int,
+    mode: libc::mode_t,
+) -> Result<std::fs::File, ErrorCode> {
+    let name = c_name(name)?;
+    let fd = unsafe { libc::openat(parent_fd, name.as_ptr(), flags, mode as libc::c_uint) };
+    if fd < 0 {
+        return Err(map_open_error(std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+fn open_root_dir(path: &Path) -> Result<std::fs::File, ErrorCode> {
+    let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| ErrorCode::BadRequest)?;
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(map_open_error(std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+fn c_name(name: &str) -> Result<CString, ErrorCode> {
+    validate_name(name)?;
+    CString::new(name).map_err(|_| ErrorCode::BadRequest)
+}
+
+fn map_open_error(error: std::io::Error) -> ErrorCode {
+    match error.raw_os_error() {
+        Some(code) if code == libc::ENOENT => ErrorCode::NotFound,
+        Some(code) if code == libc::ENOTDIR => ErrorCode::NotDirectory,
+        Some(code) if code == libc::ELOOP => ErrorCode::NoAccess,
+        Some(code) if code == libc::EACCES || code == libc::EPERM => ErrorCode::NoAccess,
+        _ => ErrorCode::Io,
+    }
+}
+
+fn map_create_error(error: std::io::Error) -> ErrorCode {
+    match error.raw_os_error() {
+        Some(code) if code == libc::EEXIST => ErrorCode::BadRequest,
+        Some(code) if code == libc::ENOENT => ErrorCode::NotFound,
+        Some(code) if code == libc::ENOTDIR => ErrorCode::NotDirectory,
+        Some(code) if code == libc::ELOOP => ErrorCode::NoAccess,
+        Some(code) if code == libc::EACCES || code == libc::EPERM => ErrorCode::NoAccess,
+        _ => ErrorCode::Io,
+    }
+}
+
+fn map_remove_error(error: std::io::Error) -> ErrorCode {
+    match error.raw_os_error() {
+        Some(code) if code == libc::ENOENT => ErrorCode::NotFound,
+        Some(code) if code == libc::ENOTDIR => ErrorCode::NotDirectory,
+        Some(code) if code == libc::EACCES || code == libc::EPERM => ErrorCode::NoAccess,
+        _ => ErrorCode::Io,
+    }
+}
+
+fn directory_listing(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
+    let fd = file.into_raw_fd();
+    let dir = unsafe { libc::fdopendir(fd) };
+    if dir.is_null() {
+        unsafe {
+            libc::close(fd);
+        }
+        return Err(ErrorCode::Io);
+    }
     let mut names = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|_| ErrorCode::Io)? {
-        let name = entry.file_name();
-        names.push(name.to_string_lossy().to_string());
+    loop {
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        names.push(String::from_utf8_lossy(name.to_bytes()).to_string());
+    }
+    let close_result = unsafe { libc::closedir(dir) };
+    if close_result != 0 {
+        return Err(ErrorCode::Io);
     }
     names.sort();
     Ok(names.join("\n").into_bytes())
 }
 
-async fn read_file_range(path: &Path, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+async fn read_file_range(
+    file: std::fs::File,
+    offset: Offset,
+    count: u32,
+) -> Result<Vec<u8>, ErrorCode> {
     let count = count as usize;
     if count > MAX_BUFFERED_FILE_BYTES {
         return Err(ErrorCode::BadRequest);
     }
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .map_err(|_| ErrorCode::Io)?;
+    let mut file = tokio::fs::File::from_std(file);
     file.seek(SeekFrom::Start(offset))
         .await
         .map_err(|_| ErrorCode::Io)?;
@@ -385,8 +584,7 @@ async fn read_file_range(path: &Path, offset: Offset, count: u32) -> Result<Vec<
     Ok(bytes)
 }
 
-fn read_file_for_write_seed(path: &Path) -> Result<Vec<u8>, ErrorCode> {
-    let file = std::fs::File::open(path).map_err(|_| ErrorCode::Io)?;
+fn read_file_for_write_seed(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
     let mut limited = file.take(MAX_BUFFERED_FILE_BYTES as u64 + 1);
     let mut bytes = Vec::new();
     limited.read_to_end(&mut bytes).map_err(|_| ErrorCode::Io)?;
@@ -396,9 +594,32 @@ fn read_file_for_write_seed(path: &Path) -> Result<Vec<u8>, ErrorCode> {
     Ok(bytes)
 }
 
-fn qid_path(path: &Path) -> u64 {
+fn write_all_to_file(mut file: std::fs::File, bytes: &[u8]) -> Result<(), ErrorCode> {
+    file.set_len(0).map_err(|_| ErrorCode::Io)?;
+    file.seek(SeekFrom::Start(0)).map_err(|_| ErrorCode::Io)?;
+    file.write_all(bytes).map_err(|_| ErrorCode::Io)
+}
+
+fn file_kind(metadata: &std::fs::Metadata) -> Result<FileKind, ErrorCode> {
+    if metadata.is_dir() {
+        Ok(FileKind::Dir)
+    } else if metadata.is_file() {
+        Ok(FileKind::File)
+    } else {
+        Err(ErrorCode::Unsupported)
+    }
+}
+
+fn qid_path(metadata: &std::fs::Metadata) -> u64 {
     let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
+    metadata.dev().hash(&mut hasher);
+    metadata.ino().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn qid_path_for_rel(rel: &[String]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    rel.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -571,6 +792,83 @@ mod tests {
                 .unwrap_err(),
             ErrorCode::NoAccess
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_rejects_symlink_replacement_after_open() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("notes.txt"), "safe").unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadOnly).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["notes.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Read).await.unwrap();
+        std::fs::remove_file(temp.path().join("notes.txt")).unwrap();
+        symlink(
+            outside.path().join("secret.txt"),
+            temp.path().join("notes.txt"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs.read(Fid(1), 0, 1024).await.unwrap_err(),
+            ErrorCode::NoAccess
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn clunk_rejects_symlink_replacement_before_commit() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_secret = outside.path().join("secret.txt");
+        std::fs::write(temp.path().join("draft.txt"), "safe").unwrap();
+        std::fs::write(&outside_secret, "secret").unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["draft.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        fs.write(Fid(1), 0, b"changed").await.unwrap();
+        std::fs::remove_file(temp.path().join("draft.txt")).unwrap();
+        symlink(&outside_secret, temp.path().join("draft.txt")).unwrap();
+
+        assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
+        assert_eq!(std::fs::read_to_string(outside_secret).unwrap(), "secret");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn create_rejects_symlink_parent_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("dir")).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["dir".to_string()])
+            .await
+            .unwrap();
+        std::fs::remove_dir(temp.path().join("dir")).unwrap();
+        symlink(outside.path(), temp.path().join("dir")).unwrap();
+
+        assert_eq!(
+            fs.create(Fid(1), Fid(2), "escaped.txt", FileKind::File)
+                .await
+                .unwrap_err(),
+            ErrorCode::NoAccess
+        );
+        assert!(!outside.path().join("escaped.txt").exists());
     }
 
     #[cfg(unix)]
