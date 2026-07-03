@@ -31,7 +31,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode,
+    ProcessOutputEventSink, ProcessOutputEventSource, Qid, Stat, Stream,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -129,6 +130,7 @@ struct State {
     /// One output stream per committed process (the kernel owns the file; the
     /// process's execution, in user space, writes to it).
     outputs: HashMap<Pid, Stream>,
+    output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
 }
 
 #[derive(Clone)]
@@ -161,6 +163,7 @@ impl ProcFs {
                 table: ProcessTable::new(),
                 fids: HashMap::new(),
                 outputs: HashMap::new(),
+                output_observers: HashMap::new(),
             })),
             view_id: next_view_id(),
             root_node: Node::Root,
@@ -259,6 +262,38 @@ impl ProcFs {
             view_id: self.view_id,
             fid,
         }
+    }
+
+    async fn notify_output_observers(&self, pid: Pid, count: u32) {
+        let observers = {
+            let state = self.state.lock().await;
+            state
+                .output_observers
+                .get(&pid)
+                .cloned()
+                .unwrap_or_default()
+        };
+        let pid = pid.0.to_string();
+        for observer in observers {
+            observer.output_appended(&pid, count).await;
+        }
+    }
+}
+
+#[async_trait]
+impl ProcessOutputEventSource for ProcFs {
+    async fn subscribe_process_output(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessOutputEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let mut state = self.state.lock().await;
+        if state.table.get(pid).is_none() {
+            return Err(ErrorCode::NotFound);
+        }
+        state.output_observers.entry(pid).or_default().push(sink);
+        Ok(())
     }
 }
 
@@ -476,7 +511,7 @@ impl FileServer for ProcFs {
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let output = {
+        let (pid, output) = {
             let mut state = self.state.lock().await;
             let fid_key = self.fid_key(fid);
             let node = state.node_of(fid_key, &self.root_node)?;
@@ -524,17 +559,22 @@ impl FileServer for ProcFs {
                     if !has_write_intent {
                         return Err(ErrorCode::NoAccess);
                     }
-                    state
-                        .outputs
-                        .get(&pid)
-                        .cloned()
-                        .ok_or(ErrorCode::NotFound)?
+                    (
+                        pid,
+                        state
+                            .outputs
+                            .get(&pid)
+                            .cloned()
+                            .ok_or(ErrorCode::NotFound)?,
+                    )
                 }
                 _ => return Err(ErrorCode::Unsupported),
             }
         };
         output.append(data).await;
-        Ok(data.len() as u32)
+        let count = data.len() as u32;
+        self.notify_output_observers(pid, count).await;
+        Ok(count)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
@@ -622,7 +662,7 @@ impl FileServer for ProcFs {
                         state.outputs.insert(committed, output.clone());
                         self.runner
                             .clone()
-                            .map(|runner| (runner, output, invocation))
+                            .map(|runner| (runner, output, invocation, self.clone()))
                     }
                     Err(_) => {
                         // Reject at commit and discard the fid-private slot — it was
@@ -635,12 +675,14 @@ impl FileServer for ProcFs {
                 None
             }
         };
-        if let Some((runner, output, invocation)) = runner_launch {
+        if let Some((runner, output, invocation, events)) = runner_launch {
             let state = self.state.clone();
             tokio::spawn(async move {
                 let outcome = runner.run(invocation.clone()).await;
                 if !outcome.output.is_empty() {
+                    let count = outcome.output.len() as u32;
                     output.append(&outcome.output).await;
+                    events.notify_output_observers(invocation.pid, count).await;
                 }
                 let mut state = state.lock().await;
                 state.table.exit(invocation.pid, outcome.exit_code);

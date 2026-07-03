@@ -10,6 +10,7 @@
 use std::{
     any::Any,
     collections::HashMap,
+    collections::HashSet,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     sync::{
@@ -18,7 +19,10 @@ use std::{
     },
 };
 
-use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessOutputEventSink,
+    ProcessOutputEventSource, Qid, Stat,
+};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -56,7 +60,6 @@ enum Node {
     ProcFile {
         proc: Arc<dyn FileServer>,
         proc_fid: Fid,
-        output_events: Option<Arc<AgentFs>>,
     },
 }
 
@@ -66,6 +69,7 @@ struct Entry {
 
 struct State {
     agents: HashMap<String, AgentRegistration>,
+    output_event_pids: HashSet<String>,
     root_pid: Option<String>,
     fids: HashMap<Fid, Entry>,
 }
@@ -77,18 +81,37 @@ struct State {
 /// per-agent state is served by the registered backing `AgentFs` handles.
 pub struct AgentRootFs {
     proc: Arc<dyn FileServer>,
-    state: Mutex<State>,
+    output_events: Option<Arc<dyn ProcessOutputEventSource>>,
+    state: Arc<Mutex<State>>,
 }
 
 impl AgentRootFs {
     pub fn new(proc: Arc<dyn FileServer>) -> Self {
         Self {
             proc,
-            state: Mutex::new(State {
+            output_events: None,
+            state: Arc::new(Mutex::new(State {
                 agents: HashMap::new(),
+                output_event_pids: HashSet::new(),
                 root_pid: None,
                 fids: HashMap::new(),
-            }),
+            })),
+        }
+    }
+
+    pub fn new_with_process_output_events(
+        proc: Arc<dyn FileServer>,
+        output_events: Arc<dyn ProcessOutputEventSource>,
+    ) -> Self {
+        Self {
+            proc,
+            output_events: Some(output_events),
+            state: Arc::new(Mutex::new(State {
+                agents: HashMap::new(),
+                output_event_pids: HashSet::new(),
+                root_pid: None,
+                fids: HashMap::new(),
+            })),
         }
     }
 
@@ -99,9 +122,10 @@ impl AgentRootFs {
     {
         let pid = pid.into();
         let event_sink = agent_event_sink(&agent);
+        let has_event_sink = event_sink.is_some();
         let backing: Arc<dyn FileServer> = agent;
         let parent_pid = self.proc_parent_of(&pid).await.ok().flatten();
-        let parent_events = {
+        let (parent_events, subscribe_output_events) = {
             let mut state = self.state.lock().await;
             state.agents.insert(
                 pid.clone(),
@@ -110,15 +134,31 @@ impl AgentRootFs {
                     event_sink,
                 },
             );
-            parent_pid.and_then(|parent_pid| {
+            let parent_events = parent_pid.and_then(|parent_pid| {
                 state
                     .agents
                     .get(&parent_pid)
                     .and_then(|agent| agent.event_sink.clone())
-            })
+            });
+            let subscribe_output_events = has_event_sink
+                && self.output_events.is_some()
+                && state.output_event_pids.insert(pid.clone());
+            (parent_events, subscribe_output_events)
         };
         if let Some(parent) = parent_events {
             parent.append_child_event(&pid).await;
+        }
+        if subscribe_output_events && let Some(output_events) = self.output_events.clone() {
+            let sink = Arc::new(AgentOutputEventSink {
+                state: self.state.clone(),
+            });
+            if output_events
+                .subscribe_process_output(&pid, sink)
+                .await
+                .is_err()
+            {
+                self.state.lock().await.output_event_pids.remove(&pid);
+            }
         }
     }
 
@@ -284,11 +324,6 @@ impl AgentRootFs {
             Ok(_) => Ok(Node::ProcFile {
                 proc: self.proc.clone(),
                 proc_fid,
-                output_events: if is_proc_io_output_path(names) {
-                    self.event_sink_for_pid(pid).await
-                } else {
-                    None
-                },
             }),
             Err(e) => {
                 let _ = self.proc.clunk(proc_fid).await;
@@ -353,15 +388,6 @@ impl AgentRootFs {
         Ok(names)
     }
 
-    async fn event_sink_for_pid(&self, pid: &str) -> Option<Arc<AgentFs>> {
-        self.state
-            .lock()
-            .await
-            .agents
-            .get(pid)
-            .and_then(|agent| agent.event_sink.clone())
-    }
-
     async fn create_agent_file(
         &self,
         newfid: Fid,
@@ -421,7 +447,6 @@ impl AgentRootFs {
                 Node::ProcFile {
                     proc: proc.clone(),
                     proc_fid,
-                    output_events: None,
                 },
             )
             .await
@@ -448,6 +473,26 @@ where
 {
     let erased: Arc<dyn Any + Send + Sync> = agent.clone();
     Arc::downcast::<AgentFs>(erased).ok()
+}
+
+struct AgentOutputEventSink {
+    state: Arc<Mutex<State>>,
+}
+
+#[async_trait]
+impl ProcessOutputEventSink for AgentOutputEventSink {
+    async fn output_appended(&self, pid: &str, count: u32) {
+        let event_sink = {
+            let state = self.state.lock().await;
+            state
+                .agents
+                .get(pid)
+                .and_then(|agent| agent.event_sink.clone())
+        };
+        if let Some(agent) = event_sink {
+            agent.append_output_event(count).await;
+        }
+    }
 }
 
 async fn rollback_created_fid(server: &Arc<dyn FileServer>, fid: Fid) {
@@ -612,17 +657,7 @@ impl FileServer for AgentRootFs {
                 backing_fid,
                 ..
             } => backing.write(backing_fid, offset, data).await,
-            Node::ProcFile {
-                proc,
-                proc_fid,
-                output_events,
-            } => {
-                let count = proc.write(proc_fid, offset, data).await?;
-                if let Some(events) = output_events {
-                    events.append_output_event(count).await;
-                }
-                Ok(count)
-            }
+            Node::ProcFile { proc, proc_fid, .. } => proc.write(proc_fid, offset, data).await,
         }
     }
 

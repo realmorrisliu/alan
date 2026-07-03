@@ -60,6 +60,26 @@ pub trait FileServer: Send + Sync {
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode>;
 }
 
+/// Receiver for process-output append notifications.
+///
+/// This is intentionally generic aP-adjacent plumbing: the kernel can publish
+/// `/proc/<pid>/io/output` stream changes without knowing which user-space file
+/// server, if any, projects those changes into a higher-level view.
+#[async_trait]
+pub trait ProcessOutputEventSink: Send + Sync {
+    async fn output_appended(&self, pid: &str, count: u32);
+}
+
+/// Optional event source implemented by file servers that own process output.
+#[async_trait]
+pub trait ProcessOutputEventSource: Send + Sync {
+    async fn subscribe_process_output(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessOutputEventSink>,
+    ) -> Result<(), ErrorCode>;
+}
+
 /// The in-process fast path: dispatches a wire [`Request`] to a [`FileServer`]
 /// and returns its [`Response`] with no serialization (§5.6).
 #[derive(Clone)]

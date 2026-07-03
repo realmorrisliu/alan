@@ -5,11 +5,15 @@
 //! public), write the exec spec, and `clunk` to commit — so an aP-only client
 //! needs no side API to launch a process.
 
-use alan_ap::{ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, Request, Response};
+use alan_ap::{
+    ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, ProcessOutputEventSink,
+    ProcessOutputEventSource, Request, Response,
+};
 use alan_kernel::{
     Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
 };
 use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 fn proc() -> ProcFs {
     ProcFs::new()
@@ -67,6 +71,77 @@ impl ProcessRunner for EchoRunner {
         let mut output = invocation.exec.args.join(" ").into_bytes();
         output.push(b'\n');
         ProcessOutcome::exited(0, output)
+    }
+}
+
+struct DelayedOutputRunner {
+    output: Vec<u8>,
+    release: Notify,
+}
+
+impl DelayedOutputRunner {
+    fn new(output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+            release: Notify::new(),
+        }
+    }
+
+    fn release(&self) {
+        self.release.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessRunner for DelayedOutputRunner {
+    async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+        self.release.notified().await;
+        ProcessOutcome::exited(0, self.output.clone())
+    }
+}
+
+struct RecordingOutputSink {
+    records: Mutex<Vec<(String, u32)>>,
+    notify: Notify,
+}
+
+impl RecordingOutputSink {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait_for(&self, expected: usize) -> Vec<(String, u32)> {
+        for _ in 0..50 {
+            let records = self
+                .records
+                .lock()
+                .expect("output records lock should not be poisoned")
+                .clone();
+            if records.len() >= expected {
+                return records;
+            }
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(10), self.notify.notified())
+                    .await;
+        }
+        self.records
+            .lock()
+            .expect("output records lock should not be poisoned")
+            .clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessOutputEventSink for RecordingOutputSink {
+    async fn output_appended(&self, pid: &str, count: u32) {
+        self.records
+            .lock()
+            .expect("output records lock should not be poisoned")
+            .push((pid.to_string(), count));
+        self.notify.notify_waiters();
     }
 }
 
@@ -464,6 +539,29 @@ async fn proc_output_accepts_write_intent() {
 }
 
 #[tokio::test]
+async fn proc_output_observers_see_direct_writes() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "output".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(sink.wait_for(1).await, vec![(pid, 10)]);
+}
+
+#[tokio::test]
 async fn registered_runner_writes_process_output_and_exit() {
     let fs = ProcFs::new().with_runner(Arc::new(EchoRunner));
     let mut namespace = Namespace::new();
@@ -505,6 +603,21 @@ async fn registered_runner_writes_process_output_and_exit() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("runner did not exit process {pid}");
+}
+
+#[tokio::test]
+async fn proc_output_observers_see_runner_output() {
+    let runner = Arc::new(DelayedOutputRunner::new("runner output\n"));
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let pid = spawn(&fs, Fid(10)).await;
+    let sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    runner.release();
+
+    assert_eq!(sink.wait_for(1).await, vec![(pid, 14)]);
 }
 
 // Spawning requires write intent: opening /proc/clone read-only is rejected, and
