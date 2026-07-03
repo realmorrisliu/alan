@@ -107,6 +107,19 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
         assert_file_bytes(&root, Fid(1), &["mnt", "project", "notes.txt"], b"hello").await;
+        create_file_bytes(
+            &root,
+            Fid(2),
+            Fid(3),
+            &["mnt", "project"],
+            "created.txt",
+            b"created through mount",
+        )
+        .await;
+        assert_eq!(
+            std::fs::read(host.path().join("created.txt")).unwrap(),
+            b"created through mount"
+        );
 
         let spec =
             sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &[declaration]).unwrap();
@@ -189,5 +202,50 @@ mod tests {
             panic!("unexpected read response");
         };
         assert_eq!(data, expected);
+    }
+
+    async fn create_file_bytes(
+        root: &InProcessTransport,
+        dir_fid: Fid,
+        file_fid: Fid,
+        dir_path: &[&str],
+        name: &str,
+        bytes: &[u8],
+    ) {
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: dir_fid,
+            names: dir_path.iter().map(|name| (*name).to_string()).collect(),
+        })
+        .await
+        .unwrap();
+        let response = root
+            .call(Request::Create {
+                fid: dir_fid,
+                newfid: file_fid,
+                name: name.to_string(),
+                kind: FileKind::File,
+            })
+            .await
+            .unwrap();
+        let Response::Create { qid } = response else {
+            panic!("unexpected create response");
+        };
+        assert_eq!(qid.kind, FileKind::File);
+        root.call(Request::Open {
+            fid: file_fid,
+            mode: OpenMode::Write,
+        })
+        .await
+        .unwrap();
+        root.call(Request::Write {
+            fid: file_fid,
+            offset: 0,
+            data: bytes.to_vec(),
+        })
+        .await
+        .unwrap();
+        root.call(Request::Clunk { fid: file_fid }).await.unwrap();
+        root.call(Request::Clunk { fid: dir_fid }).await.unwrap();
     }
 }

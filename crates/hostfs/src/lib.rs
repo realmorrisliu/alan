@@ -8,11 +8,15 @@
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::io::{Read as _, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 use async_trait::async_trait;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Mutex;
+
+const MAX_BUFFERED_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostDirAccess {
@@ -166,7 +170,7 @@ impl FileServer for HostDirFs {
             }
             fid_state.mode = Some(mode);
             if matches!(mode, OpenMode::ReadWrite) && qid.kind == FileKind::File {
-                fid_state.write_buf = std::fs::read(path).map_err(|_| ErrorCode::Io)?;
+                fid_state.write_buf = read_file_for_write_seed(&path)?;
             }
         }
         Ok(qid)
@@ -187,7 +191,7 @@ impl FileServer for HostDirFs {
         let bytes = if path.is_dir() {
             directory_listing(&path).await?
         } else if path.is_file() {
-            tokio::fs::read(path).await.map_err(|_| ErrorCode::Io)?
+            return read_file_range(&path, offset, count).await;
         } else {
             return Err(ErrorCode::Unsupported);
         };
@@ -209,6 +213,9 @@ impl FileServer for HostDirFs {
         }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        if end > MAX_BUFFERED_FILE_BYTES {
+            return Err(ErrorCode::BadRequest);
+        }
         if fid_state.write_buf.len() < end {
             fid_state.write_buf.resize(end, 0);
         }
@@ -353,6 +360,34 @@ async fn directory_listing(path: &Path) -> Result<Vec<u8>, ErrorCode> {
     Ok(names.join("\n").into_bytes())
 }
 
+async fn read_file_range(path: &Path, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+    let count = count as usize;
+    if count > MAX_BUFFERED_FILE_BYTES {
+        return Err(ErrorCode::BadRequest);
+    }
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| ErrorCode::Io)?;
+    file.seek(SeekFrom::Start(offset))
+        .await
+        .map_err(|_| ErrorCode::Io)?;
+    let mut bytes = vec![0; count];
+    let read = file.read(&mut bytes).await.map_err(|_| ErrorCode::Io)?;
+    bytes.truncate(read);
+    Ok(bytes)
+}
+
+fn read_file_for_write_seed(path: &Path) -> Result<Vec<u8>, ErrorCode> {
+    let file = std::fs::File::open(path).map_err(|_| ErrorCode::Io)?;
+    let mut limited = file.take(MAX_BUFFERED_FILE_BYTES as u64 + 1);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).map_err(|_| ErrorCode::Io)?;
+    if bytes.len() > MAX_BUFFERED_FILE_BYTES {
+        return Err(ErrorCode::BadRequest);
+    }
+    Ok(bytes)
+}
+
 fn qid_path(path: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
@@ -391,6 +426,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ranged_reads_do_not_require_full_file_buffering() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("large.txt"), b"0123456789abcdef").unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadOnly).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["large.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Read).await.unwrap();
+        let bytes = fs.read(Fid(1), 10, 3).await.unwrap();
+        assert_eq!(bytes, b"abc");
+    }
+
+    #[tokio::test]
     async fn lists_directory_in_stable_order() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("b.txt"), "").unwrap();
@@ -422,6 +471,37 @@ mod tests {
             .unwrap();
         fs.remove(Fid(2)).await.unwrap();
         assert!(!temp.path().join("draft.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn rejects_sparse_writes_beyond_buffer_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.create(Fid::ROOT, Fid(1), "draft.txt", FileKind::File)
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        let offset = Offset::try_from(MAX_BUFFERED_FILE_BYTES + 1).unwrap();
+        let err = fs.write(Fid(1), offset, b"x").await.unwrap_err();
+        assert_eq!(err, ErrorCode::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn readwrite_rejects_seed_files_beyond_buffer_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("large.txt");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_BUFFERED_FILE_BYTES as u64 + 1)
+            .unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["large.txt".to_string()])
+            .await
+            .unwrap();
+        let err = fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap_err();
+        assert_eq!(err, ErrorCode::BadRequest);
     }
 
     #[tokio::test]
