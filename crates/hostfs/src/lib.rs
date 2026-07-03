@@ -454,7 +454,16 @@ fn open_existing_handle(
         }
         let is_last = index + 1 == rel.len();
         let flags = if is_last {
-            final_access | libc::O_CLOEXEC | libc::O_NOFOLLOW
+            match entry_kind_at(current.as_raw_fd(), name)? {
+                HostEntryKind::Dir => {
+                    if final_access != libc::O_RDONLY {
+                        return Err(ErrorCode::IsDirectory);
+                    }
+                    final_access | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
+                }
+                HostEntryKind::File => final_access | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
+            }
         } else {
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
         };
@@ -882,6 +891,26 @@ mod tests {
         fs.open(Fid(1), OpenMode::Read).await.unwrap();
         let bytes = fs.read(Fid(1), 10, 3).await.unwrap();
         assert_eq!(bytes, b"abc");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn walk_rejects_fifo_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fifo = temp.path().join("pipe");
+        let fifo_path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadOnly).unwrap();
+
+        let walked = tokio::time::timeout(
+            Duration::from_millis(100),
+            fs.walk(Fid::ROOT, Fid(1), &["pipe".to_string()]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(walked.unwrap_err(), ErrorCode::Unsupported);
     }
 
     #[tokio::test]
