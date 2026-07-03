@@ -35,6 +35,11 @@ pub(super) enum TurnExecutionOutcome {
 
 const COMPACTION_TIMEOUT_SECS: u64 = 30;
 
+struct TimedCompactionResult {
+    result: Result<CompactionOutcome>,
+    timed_out: bool,
+}
+
 #[derive(Debug, Clone)]
 struct GenerationConnectionContext {
     provider: String,
@@ -328,6 +333,45 @@ fn resolve_responses_continuation(
 
 fn should_skip_auto_compaction_for_responses_continuation(_state: &mut RuntimeLoopState) -> bool {
     false
+}
+
+async fn maybe_compact_context_with_turn_timeout<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    request: &CompactionRequest,
+    parent_cancel: &CancellationToken,
+    timeout: std::time::Duration,
+) -> TimedCompactionResult
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let compaction_cancel = CancellationToken::new();
+    let timeout = tokio::time::sleep(timeout);
+    tokio::pin!(timeout);
+    let compaction = maybe_compact_context_with_cancel(state, emit, request, &compaction_cancel);
+    tokio::pin!(compaction);
+
+    tokio::select! {
+        result = &mut compaction => TimedCompactionResult {
+            result,
+            timed_out: false,
+        },
+        _ = parent_cancel.cancelled() => {
+            compaction_cancel.cancel();
+            TimedCompactionResult {
+                result: compaction.await,
+                timed_out: false,
+            }
+        }
+        _ = &mut timeout => {
+            compaction_cancel.cancel();
+            TimedCompactionResult {
+                result: compaction.await,
+                timed_out: true,
+            }
+        }
+    }
 }
 
 fn responses_attachment_input_part(
@@ -877,19 +921,25 @@ where
                 user_input_for_skills.as_deref(),
                 turn_recall_bundle.as_deref(),
             ));
-        match tokio::time::timeout(
+        let compaction = maybe_compact_context_with_turn_timeout(
+            state,
+            emit,
+            &compaction_request,
+            cancel,
             tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-            maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
         )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
+        .await;
+        match compaction.result {
+            Ok(_) => {}
+            Err(e) if compaction.timed_out => {
+                debug!(error = %e, "Context compaction stopped after timeout cancellation");
+            }
+            Err(e) => {
                 warn!(error = %e, "Context compaction failed");
             }
-            Err(_) => {
-                warn!("Context compaction timeout - continuing without compaction");
-            }
+        }
+        if compaction.timed_out {
+            warn!("Context compaction timeout - continuing without compaction");
         }
     }
     if check_turn_cancelled(state, emit, cancel).await? {
@@ -1425,25 +1475,31 @@ where
 
     let compaction_request = CompactionRequest::automatic_mid_turn()
         .with_additional_prompt_tokens(additional_prompt_tokens);
-    match tokio::time::timeout(
+    let compaction = maybe_compact_context_with_turn_timeout(
+        state,
+        emit,
+        &compaction_request,
+        cancel,
         tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-        maybe_compact_context_with_cancel(state, emit, &compaction_request, cancel),
     )
-    .await
-    {
-        Ok(Ok(CompactionOutcome::Applied(outcome))) => {
+    .await;
+    match compaction.result {
+        Ok(CompactionOutcome::Applied(outcome)) => {
             state
                 .turn_state
                 .record_auto_mid_turn_compaction(outcome.output_prompt_tokens);
         }
-        Ok(Ok(CompactionOutcome::Skipped(_))) => {}
-        Ok(Ok(CompactionOutcome::Failed(_))) => {}
-        Ok(Err(e)) => {
+        Ok(CompactionOutcome::Skipped(_)) => {}
+        Ok(CompactionOutcome::Failed(_)) => {}
+        Err(e) if compaction.timed_out => {
+            debug!(error = %e, "Mid-turn context compaction stopped after timeout cancellation");
+        }
+        Err(e) => {
             warn!(error = %e, "Mid-turn context compaction failed");
         }
-        Err(_) => {
-            warn!("Mid-turn context compaction timeout - continuing without compaction");
-        }
+    }
+    if compaction.timed_out {
+        warn!("Mid-turn context compaction timeout - continuing without compaction");
     }
 
     Ok(())
@@ -1748,6 +1804,41 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "content_mock"
+        }
+    }
+
+    struct BlockingStreamProvider {
+        started: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for BlockingStreamProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Err(anyhow::anyhow!("blocking provider uses streaming"))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("blocking stream provider".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            self.started.notify_one();
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tokio::spawn(async move {
+                let _hold = tx;
+                std::future::pending::<()>().await;
+            });
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "blocking_stream"
         }
     }
 
@@ -2285,6 +2376,13 @@ mod tests {
         provider: P,
         tools: ToolRegistry,
     ) -> RuntimeLoopState {
+        create_test_state_with_provider_and_tools_and_shell(provider, tools).0
+    }
+
+    fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>(
+        provider: P,
+        tools: ToolRegistry,
+    ) -> (RuntimeLoopState, alan_shell::Shell) {
         let config = Config {
             openai_responses_model: "mock-model".to_string(),
             ..Default::default()
@@ -2336,13 +2434,17 @@ mod tests {
             ..RuntimeConfig::default()
         };
 
-        RuntimeLoopState {
+        let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
             session,
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(
-                crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+                crate::runtime::NamespaceRuntimeEnvironment::new(
+                    root.clone(),
+                    "/agent/1",
+                    "default",
+                ),
             ),
             tool_catalog: tools,
             core_config: config,
@@ -2350,7 +2452,8 @@ mod tests {
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
-        }
+        };
+        (state, alan_shell::Shell::new(root))
     }
 
     async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -> usize {
@@ -3609,6 +3712,50 @@ description: {description}
                 .contains_key("previous_response_id")
         );
         assert!(!requests[0].extra_params.contains_key("context_management"));
+    }
+
+    #[tokio::test]
+    async fn compaction_timeout_aborts_namespace_generation_before_continuing() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let (mut state, shell) = create_test_state_with_provider_and_tools_and_shell(
+            BlockingStreamProvider {
+                started: Arc::clone(&started),
+            },
+            ToolRegistry::new(),
+        );
+        state.runtime_config.compaction_trigger_messages = 0;
+        state.runtime_config.context_window_tokens = 1;
+        state.runtime_config.compaction_soft_trigger_ratio = 0.0;
+        state.runtime_config.compaction_hard_trigger_ratio = 0.0;
+        state.runtime_config.compaction_trigger_ratio = 0.0;
+        state.runtime_config.compaction_keep_last = 1;
+        state.session.add_user_message("Earlier input");
+        let earlier_output = "Earlier output".repeat(20);
+        state.session.add_assistant_message(&earlier_output, None);
+
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        let request = CompactionRequest::automatic_pre_turn();
+        let result = maybe_compact_context_with_turn_timeout(
+            &mut state,
+            &mut emit,
+            &request,
+            &cancel,
+            std::time::Duration::from_millis(250),
+        )
+        .await;
+
+        assert!(result.timed_out);
+        assert!(matches!(result.result, Ok(CompactionOutcome::Skipped(_))));
+        let status = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g0/status")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(status["status"], "aborted");
     }
 
     #[tokio::test]

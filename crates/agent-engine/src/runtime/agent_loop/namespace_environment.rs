@@ -509,20 +509,28 @@ impl NamespaceRuntimeEnvironment {
                 }
             }
         };
-        let action_status = if result.exit_code == 0 {
+        let action_exit_code = logical_tool_action_exit_code(&result);
+        let action_status = if action_exit_code == 0 {
             "completed"
         } else {
             "failed"
         };
-        let result_doc = serde_json::json!({
-            "exit_code": result.exit_code,
-        })
-        .to_string();
+        let mut result_doc = serde_json::json!({
+            "exit_code": action_exit_code,
+        });
+        if action_exit_code != result.exit_code
+            && let Some(object) = result_doc.as_object_mut()
+        {
+            object.insert(
+                "process_exit_code".to_string(),
+                serde_json::json!(result.exit_code),
+            );
+        }
         let action_id = self
             .write_action(
                 NamespaceActionRecord::new(tool_name, action_status)
                     .with_output(result.output.clone())
-                    .with_result(result_doc)
+                    .with_result(result_doc.to_string())
                     .with_approval("not_required")
                     .with_process(format!("/proc/{pid}")),
             )
@@ -531,7 +539,7 @@ impl NamespaceRuntimeEnvironment {
             action_id,
             pid,
             output: result.output,
-            exit_code: result.exit_code,
+            exit_code: action_exit_code,
         })
     }
 
@@ -602,6 +610,40 @@ impl NamespaceRuntimeEnvironment {
 struct NamespaceProcessResult {
     output: String,
     exit_code: i32,
+}
+
+fn logical_tool_action_exit_code(result: &NamespaceProcessResult) -> i32 {
+    let trimmed = result.output.trim();
+    if trimmed.is_empty() {
+        return result.exit_code;
+    }
+
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return result.exit_code;
+    };
+    let payload_exit_code = payload
+        .get("exit_code")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|code| i32::try_from(code).ok());
+    let payload_success = payload.get("success").and_then(serde_json::Value::as_bool);
+
+    if matches!(payload_success, Some(false)) {
+        return payload_exit_code
+            .filter(|code| *code != 0)
+            .unwrap_or(if result.exit_code != 0 {
+                result.exit_code
+            } else {
+                1
+            });
+    }
+
+    if let Some(exit_code) = payload_exit_code
+        && exit_code != 0
+    {
+        return exit_code;
+    }
+
+    result.exit_code
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1728,6 +1770,18 @@ mod tests {
         }
     }
 
+    struct LogicalFailureRunner;
+
+    #[async_trait::async_trait]
+    impl ProcessRunner for LogicalFailureRunner {
+        async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+            ProcessOutcome::exited(
+                0,
+                b"{\"success\":false,\"exit_code\":2,\"error\":\"command failed\"}\n".to_vec(),
+            )
+        }
+    }
+
     struct AbortObservedRunner {
         started: Arc<Notify>,
         dropped: Arc<Notify>,
@@ -2631,6 +2685,33 @@ mod tests {
             String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
             "/proc/1"
         );
+    }
+
+    #[tokio::test]
+    async fn run_tool_action_projects_logical_payload_failure_as_failed_action() {
+        let (environment, shell) = tool_test_environment(Arc::new(LogicalFailureRunner));
+
+        let action = environment
+            .run_tool_action("bash", "/bin/bash", ["{}"])
+            .await
+            .unwrap();
+
+        assert_eq!(action.pid, "1");
+        assert_eq!(action.action_id, "a0");
+        assert_eq!(action.exit_code, 2);
+        assert_eq!(
+            String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+            "0"
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat("/agent/1/actions/a0/status").await.unwrap()).unwrap(),
+            "failed"
+        );
+        let result =
+            String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(result["exit_code"], 2);
+        assert_eq!(result["process_exit_code"], 0);
     }
 
     #[tokio::test]
