@@ -74,9 +74,10 @@ thesis is leaking.
 - **Ring 3 — Composition.** Chartered but barely started:
   `add-content-addressed-knowledge` (Venti idea), `add-message-routing`
   (Plumber idea), aP wire transport (9P network transparency).
-- **Ring 4 — Interaction.** Recorded in ADR-0026 D4, no change created:
-  an editable-buffer layer above `io/` where any text can be executed and the
-  UI surface is itself a file server. Absorb the idea, not Acme's literal UI.
+- **Ring 4 — Interaction.** Owned by
+  `define-editable-buffer-interaction`: an editable-buffer layer above `io/`
+  where any text can be executed and the UI surface is itself a file server.
+  Absorb the idea, not Acme's literal UI.
 - **Ring 5 — Ecosystem.** Chartered in the product constitution: apps get AI
   by opening bounded descriptors and spawning agent processes.
 
