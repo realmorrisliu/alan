@@ -314,12 +314,28 @@ impl FileServer for HostDirFs {
         let rel = Self::rel_for_fid(&fids, fid)?;
         drop(fids);
 
-        let handle = self.existing_handle(&rel)?;
-        let qid = self.qid_for_metadata(&handle.metadata)?;
-        let length = if handle.metadata.is_file() {
-            handle.metadata.len()
-        } else {
-            directory_listing(handle.file)?.len() as u64
+        if rel.is_empty() {
+            let handle = self.existing_handle(&rel)?;
+            let qid = self.qid_for_metadata(&handle.metadata)?;
+            let length = directory_listing(handle.file)?.len() as u64;
+            return Ok(Stat {
+                name: String::new(),
+                qid,
+                length,
+                writable: false,
+            });
+        }
+
+        let stat = entry_stat_for_rel_no_follow(&self.root_dir, &rel)?;
+        let kind = entry_kind_from_stat(&stat)?;
+        let qid = qid_for_entry_stat(&stat)?;
+        let length = match kind {
+            HostEntryKind::File => u64::try_from(stat.st_size).map_err(|_| ErrorCode::Io)?,
+            HostEntryKind::Dir => {
+                let handle = self.existing_handle(&rel)?;
+                directory_listing(handle.file)?.len() as u64
+            }
+            HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
         };
         Ok(Stat {
             name: rel.last().cloned().unwrap_or_default(),
@@ -585,6 +601,14 @@ fn entry_stat_at(parent_fd: RawFd, name: &str) -> Result<libc::stat, ErrorCode> 
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
     Ok(unsafe { stat.assume_init() })
+}
+
+fn entry_stat_for_rel_no_follow(
+    root_dir: &std::fs::File,
+    rel: &[String],
+) -> Result<libc::stat, ErrorCode> {
+    let (parent, name) = open_parent_for_entry(root_dir, rel)?;
+    entry_stat_at(parent.file.as_raw_fd(), &name)
 }
 
 fn entry_kind_from_stat(stat: &libc::stat) -> Result<HostEntryKind, ErrorCode> {
@@ -1030,6 +1054,29 @@ mod tests {
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stat_allows_host_file_without_read_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("writeonly.txt");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["writeonly.txt".to_string()])
+            .await
+            .unwrap();
+        let stat = fs.stat(Fid(1)).await.unwrap();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(stat.name, "writeonly.txt");
+        assert_eq!(stat.qid.kind, FileKind::File);
+        assert_eq!(stat.length, 3);
+        assert!(stat.writable);
     }
 
     #[cfg(unix)]
