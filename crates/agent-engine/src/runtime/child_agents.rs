@@ -367,7 +367,28 @@ where
         &child_namespace_plan.llm_connection_name()?,
         Box::new(ChildLlmProvider::new(llm_client)),
     );
-    let mut handles = ChildNamespaceLaunchHandles::new(agentfs, InProcessTransport::new(llmfs));
+    let routefs = Arc::new(alan_routefs::RouteFs::new());
+    let srvfs = Arc::new(alan_kernel::SrvFs::new());
+    srvfs
+        .post(
+            alan_routefs::SRV_HANDLE,
+            InProcessTransport::new(routefs.clone()),
+            alan_kernel::Access::ReadWrite,
+        )
+        .await;
+    let (route_tree, route_access) = srvfs
+        .lookup(alan_routefs::SRV_HANDLE)
+        .await
+        .context("lookup child routefs handle after posting /srv/route")?;
+    if route_access != alan_kernel::Access::ReadWrite {
+        bail!("child routefs handle must be mounted read-write");
+    }
+    let mut handles = ChildNamespaceLaunchHandles::new(
+        agentfs,
+        InProcessTransport::new(llmfs),
+        InProcessTransport::new(srvfs),
+        route_tree,
+    );
     for mount in &child_namespace_plan.bin_tool_mounts {
         handles = handles.with_bin_tool(
             mount.clone(),
@@ -1291,6 +1312,8 @@ struct ChildNamespaceAssemblyPlan {
     agent_mount: String,
     llm_mount: String,
     llm_connection_name: String,
+    srv_mount: String,
+    route_mount: String,
     bin_tool_mounts: Vec<String>,
     workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
@@ -1326,6 +1349,8 @@ impl ChildNamespaceAssemblyPlan {
         let mut mounts = vec![
             ExecNamespaceMount::new(self.agent_mount.clone(), ExecNamespaceAccess::ReadWrite),
             ExecNamespaceMount::new(self.llm_mount.clone(), ExecNamespaceAccess::ReadWrite),
+            ExecNamespaceMount::new(self.route_mount.clone(), ExecNamespaceAccess::ReadWrite),
+            ExecNamespaceMount::new(self.srv_mount.clone(), ExecNamespaceAccess::ReadOnly),
         ];
         mounts.extend(
             self.bin_tool_mounts
@@ -1358,15 +1383,24 @@ impl ChildNamespaceAssemblyPlan {
 struct ChildNamespaceLaunchHandles {
     agent_tree: Arc<alan_agentfs::AgentFs>,
     llm_connection: InProcessTransport,
+    srv: InProcessTransport,
+    route: InProcessTransport,
     bin_tools: Vec<(String, InProcessTransport)>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl ChildNamespaceLaunchHandles {
-    fn new(agent_tree: Arc<alan_agentfs::AgentFs>, llm_connection: InProcessTransport) -> Self {
+    fn new(
+        agent_tree: Arc<alan_agentfs::AgentFs>,
+        llm_connection: InProcessTransport,
+        srv: InProcessTransport,
+        route: InProcessTransport,
+    ) -> Self {
         Self {
             agent_tree,
             llm_connection,
+            srv,
+            route,
             bin_tools: Vec::new(),
         }
     }
@@ -1533,6 +1567,16 @@ fn child_namespace_from_launch_handles(
         handles.llm_connection.clone(),
         alan_kernel::Access::ReadWrite,
     );
+    namespace.mount(
+        &plan.srv_mount,
+        handles.srv.clone(),
+        alan_kernel::Access::ReadOnly,
+    );
+    namespace.mount(
+        &plan.route_mount,
+        handles.route.clone(),
+        alan_kernel::Access::ReadWrite,
+    );
     for (mount, tree) in &handles.bin_tools {
         namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
     }
@@ -1564,6 +1608,8 @@ fn build_child_namespace_assembly_plan(
         agent_mount: "/agent".to_string(),
         llm_mount: "/mnt/llm".to_string(),
         llm_connection_name: llm_connection.to_string(),
+        srv_mount: "/srv".to_string(),
+        route_mount: alan_routefs::MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
         workspace_root: workspace_root.clone(),
         cwd,
@@ -2381,6 +2427,12 @@ Body
             KernelAccess::ReadWrite,
         );
         namespace.mount(&plan.llm_mount, memfs_transport(), KernelAccess::ReadWrite);
+        namespace.mount(&plan.srv_mount, memfs_transport(), KernelAccess::ReadOnly);
+        namespace.mount(
+            &plan.route_mount,
+            memfs_transport(),
+            KernelAccess::ReadWrite,
+        );
         for mount in &plan.bin_tool_mounts {
             namespace.mount(mount, memfs_transport(), KernelAccess::ReadOnly);
         }
@@ -2663,6 +2715,8 @@ Body
         assert_eq!(plan.agent_mount, "/agent");
         assert_eq!(plan.llm_mount, "/mnt/llm");
         assert_eq!(plan.llm_connection_name().unwrap(), "child-main");
+        assert_eq!(plan.srv_mount, "/srv");
+        assert_eq!(plan.route_mount, "/mnt/route");
         assert!(plan.bin_tool_mounts.is_empty());
         assert_eq!(plan.workspace_root, None);
     }
@@ -2685,6 +2739,8 @@ Body
 
         assert_eq!(plan.llm_mount, "/mnt/llm");
         assert_eq!(plan.llm_connection_name().unwrap(), "default");
+        assert_eq!(plan.srv_mount, "/srv");
+        assert_eq!(plan.route_mount, "/mnt/route");
         assert_eq!(plan.workspace_root, Some(temp.path().join("repo")));
         assert_eq!(plan.cwd, Some(temp.path().join("repo")));
         assert_eq!(plan.bin_tool_mounts, vec!["/bin/alpha"]);
@@ -2712,7 +2768,9 @@ Body
                 "namespace": {
                     "mounts": [
                         {"path": "/agent", "access": "rw"},
-                        {"path": "/mnt/llm", "access": "rw"}
+                        {"path": "/mnt/llm", "access": "rw"},
+                        {"path": "/mnt/route", "access": "rw"},
+                        {"path": "/srv", "access": "ro"}
                     ]
                 }
             })
@@ -2745,7 +2803,9 @@ Body
                 "mounts": [
                     {"path": "/agent", "access": "rw"},
                     {"path": "/bin/alpha", "access": "ro"},
-                    {"path": "/mnt/llm", "access": "rw"}
+                    {"path": "/mnt/llm", "access": "rw"},
+                    {"path": "/mnt/route", "access": "rw"},
+                    {"path": "/srv", "access": "ro"}
                 ]
             })
         );
@@ -2831,6 +2891,8 @@ Body
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
+            memfs_transport(),
+            memfs_transport(),
         )
         .with_bin_tool("/bin/alpha", memfs_transport());
 
@@ -2877,6 +2939,14 @@ Body
             "llm connection is present: {namespace:?}"
         );
         assert!(
+            namespace.lines().any(|line| line == "/mnt/route rw"),
+            "routefs tree is present: {namespace:?}"
+        );
+        assert!(
+            namespace.lines().any(|line| line == "/srv ro"),
+            "service handle registry is present: {namespace:?}"
+        );
+        assert!(
             namespace.lines().any(|line| line == "/bin/alpha ro"),
             "allowed tool mount is present: {namespace:?}"
         );
@@ -2902,6 +2972,14 @@ Body
         assert!(
             tool_namespace.lines().any(|line| line == "/mnt/llm rw"),
             "child-spawned processes inherit the llm connection: {tool_namespace:?}"
+        );
+        assert!(
+            tool_namespace.lines().any(|line| line == "/mnt/route rw"),
+            "child-spawned processes inherit routefs: {tool_namespace:?}"
+        );
+        assert!(
+            tool_namespace.lines().any(|line| line == "/srv ro"),
+            "child-spawned processes inherit /srv handles: {tool_namespace:?}"
         );
         assert!(
             tool_namespace.lines().any(|line| line == "/bin/alpha ro"),

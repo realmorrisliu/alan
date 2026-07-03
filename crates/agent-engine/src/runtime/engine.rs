@@ -1154,6 +1154,8 @@ async fn build_root_namespace_environment(
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection("default", Box::new(RuntimeLlmProvider::new(llm_client)));
+    let routefs = Arc::new(alan_routefs::RouteFs::new());
+    let srvfs = Arc::new(alan_kernel::SrvFs::new());
 
     let procfs = alan_kernel::ProcFs::new();
     let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
@@ -1165,12 +1167,8 @@ async fn build_root_namespace_environment(
         agent_root_tree.clone(),
         alan_kernel::Access::ReadWrite,
     );
-    mount_llmfs_standard_handles(
-        &mut process_namespace,
-        Arc::new(alan_kernel::SrvFs::new()),
-        llmfs,
-    )
-    .await?;
+    mount_llmfs_standard_handles(&mut process_namespace, srvfs.clone(), llmfs).await?;
+    mount_routefs_standard_handles(&mut process_namespace, srvfs, routefs).await?;
     for tool_name in &tool_names {
         process_namespace.mount(
             &format!("/bin/{tool_name}"),
@@ -1230,6 +1228,31 @@ async fn mount_llmfs_standard_handles(
         .await
         .context("lookup llmfs handle after posting /srv/llm")?;
     namespace.mount(LLM_MOUNT, llm_tree, llm_access);
+    Ok(())
+}
+
+async fn mount_routefs_standard_handles(
+    namespace: &mut alan_kernel::Namespace,
+    srvfs: Arc<alan_kernel::SrvFs>,
+    routefs: Arc<alan_routefs::RouteFs>,
+) -> Result<()> {
+    srvfs
+        .post(
+            alan_routefs::SRV_HANDLE,
+            InProcessTransport::new(routefs),
+            alan_kernel::Access::ReadWrite,
+        )
+        .await;
+    namespace.mount(
+        SRV_MOUNT,
+        InProcessTransport::new(srvfs.clone()),
+        alan_kernel::Access::ReadOnly,
+    );
+    let (route_tree, route_access) = srvfs
+        .lookup(alan_routefs::SRV_HANDLE)
+        .await
+        .context("lookup routefs handle after posting /srv/route")?;
+    namespace.mount(alan_routefs::MOUNT_PATH, route_tree, route_access);
     Ok(())
 }
 
@@ -1923,6 +1946,51 @@ mod tests {
         assert!(llm_root.iter().any(|entry| entry == "providers"));
         let connections = shell.ls("/mnt/llm/connections").await.unwrap();
         assert_eq!(connections, vec!["default".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn root_namespace_environment_posts_routefs_and_mounts_route_tree() {
+        let environment = build_root_namespace_environment(
+            LlmClient::new(MockLlmProvider::new()),
+            crate::tools::ToolRegistry::new(),
+        )
+        .await
+        .unwrap();
+        let RuntimeEnvironment::Namespace { namespace, .. } = environment;
+        let shell = alan_shell::Shell::new(namespace.root_transport());
+
+        let srv_entries = shell.ls("/srv").await.unwrap();
+        assert!(srv_entries.iter().any(|entry| entry == "llm"));
+        assert!(srv_entries.iter().any(|entry| entry == "route"));
+        assert_eq!(shell.cat("/srv/route").await.unwrap(), b"route");
+        assert_eq!(
+            shell.ls("/srv/route").await,
+            Err(alan_ap::ErrorCode::NotDirectory),
+            "/srv/route is the rendezvous handle, not the routefs state tree"
+        );
+
+        let route_root = shell.ls("/mnt/route").await.unwrap();
+        for entry in ["send", "rules", "ports", "log"] {
+            assert!(
+                route_root.iter().any(|mounted| mounted == entry),
+                "{route_root:?}"
+            );
+        }
+
+        let message = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "type": "status",
+            "content": "ready"
+        }))
+        .unwrap();
+        shell.write("/mnt/route/send", &message).await.unwrap();
+        let dead_letter =
+            String::from_utf8(shell.cat("/mnt/route/ports/dead-letter").await.unwrap()).unwrap();
+        assert!(
+            dead_letter.contains(r#""rule":"dead-letter""#),
+            "{dead_letter}"
+        );
+        assert!(dead_letter.contains(r#""type":"status""#), "{dead_letter}");
     }
 
     #[test]

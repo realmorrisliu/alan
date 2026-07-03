@@ -11,6 +11,7 @@ alan-agent-protocol.workspace = true
 alan-kernel = { path = "../kernel" }
 alan-llm.workspace = true
 alan-llmfs = { path = "../llmfs" }
+alan-routefs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 serde.workspace = true

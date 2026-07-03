@@ -174,6 +174,11 @@ impl NamespaceRuntimeEnvironment {
         &self.llm_connection
     }
 
+    #[cfg(test)]
+    pub(crate) fn root_transport(&self) -> InProcessTransport {
+        self.root.clone()
+    }
+
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {
         let path = format!("/mnt/llm/connections/{}/capabilities", self.llm_connection);
         let client = self.client();

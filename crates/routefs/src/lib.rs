@@ -78,7 +78,7 @@ impl RuleSpec {
         Ok(())
     }
 
-    fn matches(&self, message: &WireMessage) -> bool {
+    fn matches(&self, message: &MessageDocument) -> bool {
         let type_matches = self
             .match_type
             .as_deref()
@@ -91,14 +91,42 @@ impl RuleSpec {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-struct WireMessage {
-    version: u16,
-    #[serde(rename = "type")]
+#[derive(Debug, Clone)]
+struct MessageDocument {
     message_type: String,
     content: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    title: Option<String>,
+    raw: serde_json::Value,
+}
+
+impl MessageDocument {
+    fn parse(bytes: &[u8]) -> Result<Self, ErrorCode> {
+        let raw: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
+        let object = raw.as_object().ok_or(ErrorCode::BadRequest)?;
+        let version = object
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .ok_or(ErrorCode::BadRequest)?;
+        let message_type = object
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ErrorCode::BadRequest)?
+            .to_string();
+        let content = object
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ErrorCode::BadRequest)?
+            .to_string();
+        if version != 1 || message_type.is_empty() {
+            return Err(ErrorCode::BadRequest);
+        }
+        Ok(Self {
+            message_type,
+            content,
+            raw,
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -108,7 +136,7 @@ struct RoutedRecord<'a> {
     rule: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'a str>,
-    message: &'a WireMessage,
+    message: &'a serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
@@ -278,11 +306,7 @@ impl State {
     }
 
     async fn route_message(&mut self, bytes: &[u8]) -> Result<(), ErrorCode> {
-        let message: WireMessage =
-            serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
-        if message.version != 1 || message.message_type.is_empty() {
-            return Err(ErrorCode::BadRequest);
-        }
+        let message = MessageDocument::parse(bytes)?;
 
         let decision = self
             .rules
@@ -309,7 +333,7 @@ impl State {
             port: &port,
             rule: &rule_name,
             reason: reason.as_deref(),
-            message: &message,
+            message: &message.raw,
         };
         let bytes = routed_record_bytes(&record)?;
         let stream = self.ports.get(&port).ok_or(ErrorCode::NotFound)?.clone();

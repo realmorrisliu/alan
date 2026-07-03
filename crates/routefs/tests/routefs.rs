@@ -84,6 +84,51 @@ async fn typed_message_routes_by_rule_on_send_clunk() {
 }
 
 #[tokio::test]
+async fn routed_record_preserves_the_full_message_document() {
+    let fs = RouteFs::new();
+    fs.install_rule("10-results", RuleSpec::for_type("result", "review"))
+        .await
+        .unwrap();
+
+    write_doc(
+        &fs,
+        &["send"],
+        Fid(1),
+        &[&serde_json::to_vec(&json!({
+            "version": 1,
+            "type": "result",
+            "content": "needs_human_judgment",
+            "result_id": "res-42",
+            "payload": {
+                "status": "blocked",
+                "artifacts": ["patch.diff", "report.json"]
+            },
+            "metadata": {
+                "producer": "root-agent",
+                "confidence": 0.62
+            }
+        }))
+        .unwrap()],
+    )
+    .await
+    .unwrap();
+
+    let routed = read_text(&fs, &["ports", "review"], Fid(2)).await;
+    let record: serde_json::Value = serde_json::from_str(routed.trim()).unwrap();
+    assert_eq!(record["message"]["result_id"], json!("res-42"));
+    assert_eq!(record["message"]["payload"]["status"], json!("blocked"));
+    assert_eq!(
+        record["message"]["payload"]["artifacts"][1],
+        json!("report.json")
+    );
+    assert_eq!(
+        record["message"]["metadata"]["producer"],
+        json!("root-agent")
+    );
+    assert_eq!(record["message"]["metadata"]["confidence"], json!(0.62));
+}
+
+#[tokio::test]
 async fn send_does_not_route_before_clunk() {
     let fs = Arc::new(RouteFs::new());
     fs.install_rule("10-patches", RuleSpec::for_type("patch", "review"))
