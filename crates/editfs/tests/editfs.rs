@@ -104,7 +104,10 @@ async fn addr_selects_a_revision_bound_body_range() {
         .await
         .unwrap();
 
-    assert_eq!(read_text(&fs, &["addr"], Fid(3)).await, "rev:1 6..10");
+    assert_eq!(
+        read_text(&fs, &["addr"], Fid(3)).await,
+        "rev:1 addr:1 6..10"
+    );
     let events = read_text(&fs, &["event"], Fid(4)).await;
     assert!(events.contains(r#""type":"address""#), "{events}");
     assert!(events.contains(r#""start":6"#), "{events}");
@@ -119,7 +122,7 @@ async fn addr_write_rejects_non_current_body_revision() {
         .await
         .unwrap_err();
     assert_eq!(future, ErrorCode::BadRequest);
-    assert_eq!(read_text(&fs, &["addr"], Fid(3)).await, "rev:0 0..0");
+    assert_eq!(read_text(&fs, &["addr"], Fid(3)).await, "rev:0 addr:0 0..0");
 
     write_doc(&fs, &["body"], Fid(4), b"alpha beta")
         .await
@@ -128,7 +131,7 @@ async fn addr_write_rejects_non_current_body_revision() {
         .await
         .unwrap_err();
     assert_eq!(stale, ErrorCode::BadRequest);
-    assert_eq!(read_text(&fs, &["addr"], Fid(6)).await, "rev:0 0..0");
+    assert_eq!(read_text(&fs, &["addr"], Fid(6)).await, "rev:0 addr:0 0..0");
 }
 
 #[tokio::test]
@@ -140,10 +143,36 @@ async fn stale_addr_is_rejected_when_exec_consumes_it() {
         .unwrap();
     write_doc(&fs, &["body"], Fid(3), b"second").await.unwrap();
 
-    let err = write_doc(&fs, &["ctl"], Fid(4), b"exec").await.unwrap_err();
+    let err = write_doc(&fs, &["ctl"], Fid(4), b"exec rev:1 addr:1 0..5")
+        .await
+        .unwrap_err();
     assert_eq!(err, ErrorCode::BadRequest);
 
     let events = read_text(&fs, &["event"], Fid(5)).await;
+    assert!(!events.contains(r#""type":"exec""#), "{events}");
+}
+
+#[tokio::test]
+async fn exec_rejects_stale_address_revision_after_another_selection() {
+    let fs = EditFs::with_execution_policy(ExecutionPolicy::AcceptAll);
+    write_doc(&fs, &["body"], Fid(1), b"alpha beta")
+        .await
+        .unwrap();
+    write_doc(&fs, &["addr"], Fid(2), b"rev:1 0..5")
+        .await
+        .unwrap();
+    let first_snapshot = read_text(&fs, &["addr"], Fid(3)).await;
+    assert_eq!(first_snapshot, "rev:1 addr:1 0..5");
+
+    write_doc(&fs, &["addr"], Fid(4), b"rev:1 6..10")
+        .await
+        .unwrap();
+    let err = write_doc(&fs, &["ctl"], Fid(5), b"exec rev:1 addr:1 0..5")
+        .await
+        .unwrap_err();
+    assert_eq!(err, ErrorCode::BadRequest);
+
+    let events = read_text(&fs, &["event"], Fid(6)).await;
     assert!(!events.contains(r#""type":"exec""#), "{events}");
 }
 
@@ -156,7 +185,7 @@ async fn exec_records_accepted_and_denied_policy_outcomes() {
     write_doc(&accepted, &["addr"], Fid(2), b"rev:1 0..10")
         .await
         .unwrap();
-    write_doc(&accepted, &["ctl"], Fid(3), b"exec")
+    write_doc(&accepted, &["ctl"], Fid(3), b"exec rev:1 addr:1 0..10")
         .await
         .unwrap();
     let accepted_events = read_text(&accepted, &["event"], Fid(4)).await;
@@ -180,7 +209,7 @@ async fn exec_records_accepted_and_denied_policy_outcomes() {
     write_doc(&denied, &["addr"], Fid(12), b"rev:1 0..8")
         .await
         .unwrap();
-    let err = write_doc(&denied, &["ctl"], Fid(13), b"exec")
+    let err = write_doc(&denied, &["ctl"], Fid(13), b"exec rev:1 addr:1 0..8")
         .await
         .unwrap_err();
     assert_eq!(err, ErrorCode::NoAccess);

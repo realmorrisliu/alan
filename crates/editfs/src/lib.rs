@@ -55,44 +55,88 @@ enum ExecutionStatus {
 /// A revision-bound byte range in `body`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AddressRange {
-    pub revision: u64,
+    pub body_revision: u64,
+    pub addr_revision: u64,
     pub start: usize,
     pub end: usize,
 }
 
 impl AddressRange {
-    fn collapsed(revision: u64) -> Self {
+    fn collapsed(body_revision: u64) -> Self {
         Self {
-            revision,
+            body_revision,
+            addr_revision: 0,
             start: 0,
             end: 0,
         }
     }
 
-    fn parse(source: &str) -> Result<Self, ErrorCode> {
-        let trimmed = source.trim();
-        let (revision, range) = trimmed
+    fn parse_addr_write(source: &str) -> Result<Self, ErrorCode> {
+        let (body_revision, start, end) = parse_body_revision_range(source.trim())?;
+        Ok(Self {
+            body_revision,
+            addr_revision: 0,
+            start,
+            end,
+        })
+    }
+
+    fn parse_exec(source: &str) -> Result<Self, ErrorCode> {
+        let trimmed = source
+            .trim()
+            .strip_prefix("exec ")
+            .ok_or(ErrorCode::BadRequest)?;
+        let (body_revision, rest) = trimmed
             .strip_prefix("rev:")
             .and_then(|rest| rest.split_once(' '))
             .ok_or(ErrorCode::BadRequest)?;
-        let revision = revision.parse::<u64>().map_err(|_| ErrorCode::BadRequest)?;
-        let (start, end) = range.split_once("..").ok_or(ErrorCode::BadRequest)?;
-        let start = start.parse::<usize>().map_err(|_| ErrorCode::BadRequest)?;
-        let end = end.parse::<usize>().map_err(|_| ErrorCode::BadRequest)?;
-        if start > end {
-            return Err(ErrorCode::BadRequest);
-        }
+        let body_revision = body_revision
+            .parse::<u64>()
+            .map_err(|_| ErrorCode::BadRequest)?;
+        let (addr_revision, range) = rest
+            .strip_prefix("addr:")
+            .and_then(|rest| rest.split_once(' '))
+            .ok_or(ErrorCode::BadRequest)?;
+        let addr_revision = addr_revision
+            .parse::<u64>()
+            .map_err(|_| ErrorCode::BadRequest)?;
+        let (start, end) = parse_range(range)?;
         Ok(Self {
-            revision,
+            body_revision,
+            addr_revision,
             start,
             end,
         })
     }
 }
 
+fn parse_body_revision_range(source: &str) -> Result<(u64, usize, usize), ErrorCode> {
+    let (revision, range) = source
+        .strip_prefix("rev:")
+        .and_then(|rest| rest.split_once(' '))
+        .ok_or(ErrorCode::BadRequest)?;
+    let revision = revision.parse::<u64>().map_err(|_| ErrorCode::BadRequest)?;
+    let (start, end) = parse_range(range)?;
+    Ok((revision, start, end))
+}
+
+fn parse_range(source: &str) -> Result<(usize, usize), ErrorCode> {
+    let (start, end) = source.split_once("..").ok_or(ErrorCode::BadRequest)?;
+    let start = start.parse::<usize>().map_err(|_| ErrorCode::BadRequest)?;
+    let end = end.parse::<usize>().map_err(|_| ErrorCode::BadRequest)?;
+    if start > end {
+        return Err(ErrorCode::BadRequest);
+    }
+    Ok((start, end))
+}
+
 impl std::fmt::Display for AddressRange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "rev:{} {}..{}", self.revision, self.start, self.end)
+        write!(
+            f,
+            "rev:{} addr:{} {}..{}",
+            self.body_revision, self.addr_revision, self.start, self.end
+        )
     }
 }
 
@@ -203,7 +247,10 @@ impl State {
             Node::Body => self.body.as_bytes().to_vec(),
             Node::Tag => self.tag.as_bytes().to_vec(),
             Node::Addr => self.addr.to_string().into_bytes(),
-            Node::Ctl => b"# editfs ctl: write 'exec' and clunk to execute addr\n".to_vec(),
+            Node::Ctl => {
+                b"# editfs ctl: write 'exec rev:<body> addr:<addr> <start>..<end>' and clunk\n"
+                    .to_vec()
+            }
             Node::Event => return Err(ErrorCode::Unsupported),
         };
         Ok(bytes)
@@ -247,11 +294,12 @@ impl State {
 
     async fn commit_addr(&mut self, bytes: Vec<u8>) -> Result<(), ErrorCode> {
         let text = String::from_utf8(bytes).map_err(|_| ErrorCode::BadRequest)?;
-        let addr = AddressRange::parse(&text)?;
-        if addr.revision != self.body_revision {
+        let mut addr = AddressRange::parse_addr_write(&text)?;
+        if addr.body_revision != self.body_revision {
             return Err(ErrorCode::BadRequest);
         }
         self.validate_range_shape(&addr)?;
+        addr.addr_revision = self.addr.addr_revision + 1;
         self.addr = addr.clone();
         self.versions.bump(node_identity(&Node::Addr).1);
         self.append_event(EventRecord::Address { range: addr })
@@ -260,10 +308,8 @@ impl State {
 
     async fn commit_ctl(&mut self, bytes: Vec<u8>) -> Result<(), ErrorCode> {
         let text = String::from_utf8(bytes).map_err(|_| ErrorCode::BadRequest)?;
-        match text.trim() {
-            "exec" => self.exec_addr().await,
-            _ => Err(ErrorCode::BadRequest),
-        }
+        let addr = AddressRange::parse_exec(&text)?;
+        self.exec_addr(addr).await
     }
 
     fn validate_range_shape(&self, addr: &AddressRange) -> Result<(), ErrorCode> {
@@ -276,9 +322,8 @@ impl State {
         Ok(())
     }
 
-    async fn exec_addr(&mut self) -> Result<(), ErrorCode> {
-        let addr = self.addr.clone();
-        if addr.revision != self.body_revision {
+    async fn exec_addr(&mut self, addr: AddressRange) -> Result<(), ErrorCode> {
+        if addr != self.addr || addr.body_revision != self.body_revision {
             return Err(ErrorCode::BadRequest);
         }
         self.validate_range_shape(&addr)?;
