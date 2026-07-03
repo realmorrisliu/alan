@@ -60,6 +60,51 @@ async fn removing_a_memory_file_removes_its_namespace_authority() {
 }
 
 #[tokio::test]
+async fn stale_writer_clunk_after_remove_does_not_resurrect_file() {
+    let fs = MemFs::new();
+    create_file(&fs, "scratch", Fid(1), b"temporary").await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["scratch".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"stale").await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["scratch".into()])
+        .await
+        .unwrap();
+    fs.remove(Fid(3)).await.unwrap();
+
+    assert_eq!(fs.clunk(Fid(2)).await, Err(ErrorCode::NotFound));
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(4), &["scratch".into()]).await,
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(fs.materialize("scratch").await, Err(ErrorCode::NotFound));
+}
+
+#[tokio::test]
+async fn stale_writer_clunk_after_recreate_does_not_overwrite_new_file() {
+    let fs = MemFs::new();
+    create_file(&fs, "scratch", Fid(1), b"temporary").await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["scratch".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"stale").await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["scratch".into()])
+        .await
+        .unwrap();
+    fs.remove(Fid(3)).await.unwrap();
+    create_file(&fs, "scratch", Fid(4), b"fresh").await;
+
+    assert_eq!(fs.clunk(Fid(2)).await, Err(ErrorCode::NotFound));
+    assert_eq!(read_file(&fs, "scratch", Fid(5)).await, b"fresh");
+}
+
+#[tokio::test]
 async fn read_write_range_writes_preserve_unwritten_bytes() {
     let fs = MemFs::new();
     create_file(&fs, "facts", Fid(1), b"abcdef").await;

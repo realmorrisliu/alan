@@ -26,10 +26,12 @@ struct State {
     files: BTreeMap<String, MemoryFile>,
     versions: VersionTable,
     fids: HashMap<Fid, MemFid>,
+    next_file_generation: u64,
 }
 
 struct MemoryFile {
     root: BoundRoot,
+    generation: u64,
 }
 
 struct MemFid {
@@ -37,6 +39,7 @@ struct MemFid {
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
     wrote: bool,
+    file_generation: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -60,6 +63,7 @@ impl MemFs {
                 files: BTreeMap::new(),
                 versions: VersionTable::new(),
                 fids: HashMap::new(),
+                next_file_generation: 1,
             }),
         }
     }
@@ -87,15 +91,11 @@ impl MemFs {
         if !valid_name(&name) {
             return Err(ErrorCode::BadRequest);
         }
-        let binding = state
-            .store
-            .bind_root(root_name(&name), root, RootAccess::ReadWrite)
-            .map_err(map_knowledge_error)?;
-        state
-            .files
-            .insert(name.clone(), MemoryFile { root: binding });
-        state.versions.bump(node_identity(&Node::Root).1);
-        state.versions.bump(node_identity(&Node::File(name)).1);
+        let generation = match state.files.get(&name) {
+            Some(file) => file.generation,
+            None => state.next_generation(),
+        };
+        state.bind_file_root(name, root, generation)?;
         Ok(())
     }
 
@@ -133,17 +133,64 @@ impl State {
             .map_err(map_knowledge_error)
     }
 
-    fn put_file(&mut self, name: String, bytes: &[u8]) -> Result<(), ErrorCode> {
+    fn next_generation(&mut self) -> u64 {
+        let generation = self.next_file_generation;
+        self.next_file_generation = self.next_file_generation.wrapping_add(1);
+        generation
+    }
+
+    fn put_file(&mut self, name: String, bytes: &[u8]) -> Result<u64, ErrorCode> {
+        let generation = match self.files.get(&name) {
+            Some(file) => file.generation,
+            None => self.next_generation(),
+        };
+        self.put_file_at_generation(name, bytes, generation)?;
+        Ok(generation)
+    }
+
+    fn put_existing_file(
+        &mut self,
+        name: String,
+        expected_generation: u64,
+        bytes: &[u8],
+    ) -> Result<(), ErrorCode> {
+        let file = self.files.get(&name).ok_or(ErrorCode::NotFound)?;
+        if file.generation != expected_generation {
+            return Err(ErrorCode::NotFound);
+        }
+        self.put_file_at_generation(name, bytes, expected_generation)
+    }
+
+    fn put_file_at_generation(
+        &mut self,
+        name: String,
+        bytes: &[u8],
+        generation: u64,
+    ) -> Result<(), ErrorCode> {
         let root = self
             .store
             .checkpoint_from_bytes([bytes])
             .map_err(map_knowledge_error)?;
+        self.bind_file_root(name, root, generation)
+    }
+
+    fn bind_file_root(
+        &mut self,
+        name: String,
+        root: ContentHash,
+        generation: u64,
+    ) -> Result<(), ErrorCode> {
         let binding = self
             .store
             .bind_root(root_name(&name), root, RootAccess::ReadWrite)
             .map_err(map_knowledge_error)?;
-        self.files
-            .insert(name.clone(), MemoryFile { root: binding });
+        self.files.insert(
+            name.clone(),
+            MemoryFile {
+                root: binding,
+                generation,
+            },
+        );
         self.versions.bump(node_identity(&Node::Root).1);
         self.versions.bump(node_identity(&Node::File(name)).1);
         Ok(())
@@ -166,6 +213,10 @@ impl FileServer for MemFs {
             Node::Root => return Err(ErrorCode::NotDirectory),
             Node::File(_) => return Err(ErrorCode::NotDirectory),
         };
+        let file_generation = match &node {
+            Node::Root => None,
+            Node::File(name) => Some(state.files.get(name).ok_or(ErrorCode::NotFound)?.generation),
+        };
         let qid = state.qid(&node);
         state.fids.insert(
             newfid,
@@ -174,6 +225,7 @@ impl FileServer for MemFs {
                 mode: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                file_generation,
             },
         );
         Ok(qid)
@@ -296,7 +348,7 @@ impl FileServer for MemFs {
             return Err(ErrorCode::BadRequest);
         }
         let node = Node::File(name.to_string());
-        state.put_file(name.to_string(), b"")?;
+        let file_generation = state.put_file(name.to_string(), b"")?;
         let qid = state.qid(&node);
         state.fids.insert(
             newfid,
@@ -305,6 +357,7 @@ impl FileServer for MemFs {
                 mode: None,
                 write_buf: Vec::new(),
                 wrote: false,
+                file_generation: Some(file_generation),
             },
         );
         Ok(qid)
@@ -322,6 +375,7 @@ impl FileServer for MemFs {
             .unbind_root(&root_name(&name))
             .map_err(map_knowledge_error)?;
         state.versions.bump(node_identity(&Node::Root).1);
+        state.versions.bump(node_identity(&Node::File(name)).1);
         state.fids.remove(&fid);
         Ok(())
     }
@@ -335,7 +389,8 @@ impl FileServer for MemFs {
         if let Node::File(name) = f.node
             && f.wrote
         {
-            state.put_file(name, &f.write_buf)?;
+            let generation = f.file_generation.ok_or(ErrorCode::NotFound)?;
+            state.put_existing_file(name, generation, &f.write_buf)?;
         }
         Ok(())
     }
