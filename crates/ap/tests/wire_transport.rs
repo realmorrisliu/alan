@@ -10,9 +10,10 @@ use std::{
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, ImportedFileServer, MAX_WIRE_FRAME_BYTES, Offset,
     OpenMode, Qid, Request, Response, Stat, Stream, decode_request_frame, decode_response_frame,
-    encode_request_frame, encode_response_frame, export_file_server,
+    encode_request_frame, encode_response_frame, export_file_server, read_response_frame,
+    write_request_frame,
 };
-use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf, duplex};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWriteExt, BufReader, ReadBuf, duplex};
 use tokio::sync::{Mutex, Notify};
 
 fn qid(kind: FileKind, path: u64) -> Qid {
@@ -421,100 +422,55 @@ async fn cancelled_in_flight_call_does_not_desynchronize_next_request() {
     server_task.abort();
 }
 
-struct BlockingReadFile {
-    read_started: Arc<Notify>,
-    read_dropped: Arc<Notify>,
-}
-
-#[async_trait::async_trait]
-impl FileServer for BlockingReadFile {
-    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
-        Err(ErrorCode::NotFound)
-    }
-
-    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
-        Err(ErrorCode::Unsupported)
-    }
-
-    async fn read(&self, _fid: Fid, _offset: Offset, _count: u32) -> Result<Vec<u8>, ErrorCode> {
-        struct DropNotify(Arc<Notify>);
-
-        impl Drop for DropNotify {
-            fn drop(&mut self) {
-                self.0.notify_one();
-            }
-        }
-
-        self.read_started.notify_one();
-        let _drop_notify = DropNotify(Arc::clone(&self.read_dropped));
-        std::future::pending().await
-    }
-
-    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
-        Err(ErrorCode::NoAccess)
-    }
-
-    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
-        Err(ErrorCode::NotFound)
-    }
-
-    async fn create(
-        &self,
-        _fid: Fid,
-        _newfid: Fid,
-        _name: &str,
-        _kind: FileKind,
-    ) -> Result<Qid, ErrorCode> {
-        Err(ErrorCode::Unsupported)
-    }
-
-    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
-        Err(ErrorCode::Unsupported)
-    }
-
-    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
-async fn export_cancels_blocking_call_when_peer_disconnects() {
+async fn export_finishes_in_flight_request_after_request_eof() {
     let (client_stream, server_stream) = duplex(4096);
-    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
     let (server_read, server_write) = tokio::io::split(server_stream);
 
-    let read_started = Arc::new(Notify::new());
-    let read_dropped = Arc::new(Notify::new());
-    let server: Arc<dyn FileServer> = Arc::new(BlockingReadFile {
-        read_started: Arc::clone(&read_started),
-        read_dropped: Arc::clone(&read_dropped),
+    let stream = Stream::new();
+    let server: Arc<dyn FileServer> = Arc::new(StreamFile {
+        stream: stream.clone(),
+        read_started: None,
     });
     let server_task = tokio::spawn(export_file_server(
         server,
         BufReader::new(server_read),
         server_write,
     ));
-    let imported = Arc::new(ImportedFileServer::new(
-        BufReader::new(client_read),
-        client_write,
-    ));
+    let mut client_reader = BufReader::new(client_read);
 
-    let reader = Arc::clone(&imported);
-    let read_task = tokio::spawn(async move { reader.read(Fid(1), 0, 64).await });
-    tokio::time::timeout(Duration::from_millis(500), read_started.notified())
-        .await
-        .expect("remote read request did not reach exported server");
+    write_request_frame(
+        &mut client_write,
+        &Request::Read {
+            fid: Fid(1),
+            offset: 0,
+            count: 64,
+        },
+    )
+    .await
+    .unwrap();
+    client_write.shutdown().await.unwrap();
+    drop(client_write);
 
-    drop(imported);
-    read_task.abort();
-    let _ = read_task.await;
+    stream.append(b"half-close response").await;
+    let response = tokio::time::timeout(
+        Duration::from_millis(500),
+        read_response_frame(&mut client_reader),
+    )
+    .await
+    .expect("half-closed client did not receive response")
+    .unwrap();
+    assert_eq!(
+        response,
+        Some(Ok(Response::Read {
+            data: b"half-close response".to_vec()
+        }))
+    );
 
-    tokio::time::timeout(Duration::from_millis(500), read_dropped.notified())
-        .await
-        .expect("exported blocking read was not cancelled after peer disconnect");
     let result = tokio::time::timeout(Duration::from_millis(500), server_task)
         .await
-        .expect("export task did not exit after peer disconnect")
+        .expect("export task did not exit after request EOF")
         .expect("export task panicked");
     assert!(result.is_ok(), "{result:?}");
 }

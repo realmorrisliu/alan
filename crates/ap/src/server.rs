@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::wire::{
@@ -224,20 +224,12 @@ where
 {
     let transport = InProcessTransport::new(server);
     let (request_tx, mut request_rx) = mpsc::channel(1);
-    let (reader_closed_tx, mut reader_closed_rx) = watch::channel(false);
-    let reader_task = AbortOnDrop::new(tokio::spawn(read_export_requests(
-        reader,
-        request_tx,
-        reader_closed_tx,
-    )));
+    let reader_task = AbortOnDrop::new(tokio::spawn(read_export_requests(reader, request_tx)));
 
     let result = async {
         while let Some(message) = request_rx.recv().await {
             let ExportReaderMessage::Request(request) = message?;
-            let result = tokio::select! {
-                result = transport.call(request) => result,
-                _ = reader_closed_rx.changed() => return Ok(()),
-            };
+            let result = transport.call(request).await;
             write_response_frame(&mut writer, &result).await?;
         }
         Ok(())
@@ -282,7 +274,6 @@ enum ExportReaderMessage {
 async fn read_export_requests<R>(
     mut reader: R,
     request_tx: mpsc::Sender<Result<ExportReaderMessage, WireError>>,
-    reader_closed_tx: watch::Sender<bool>,
 ) where
     R: AsyncBufRead + Unpin,
 {
@@ -304,7 +295,6 @@ async fn read_export_requests<R>(
             }
         }
     }
-    let _ = reader_closed_tx.send(true);
 }
 
 /// Client side of one aP wire connection.
