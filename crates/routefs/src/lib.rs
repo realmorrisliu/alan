@@ -505,8 +505,13 @@ impl FileServer for RouteFs {
         match f.node {
             Node::Send if f.wrote => state.route_message(&f.write_buf).await,
             Node::Rule(name) if f.wrote => {
-                let spec: RuleSpec =
-                    serde_json::from_slice(&f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+                let spec: RuleSpec = match serde_json::from_slice(&f.write_buf) {
+                    Ok(spec) => spec,
+                    Err(_) => {
+                        state.abandon_pending_rule(&name);
+                        return Err(ErrorCode::BadRequest);
+                    }
+                };
                 state.commit_pending_rule(name, spec)
             }
             Node::Rule(name) => {

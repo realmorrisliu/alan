@@ -60,7 +60,8 @@
   `MountFs` coverage verifies create forwarding and read-only create denial,
   and routefs coverage creates a rule through `/mnt/route/rules/<name>` before
   routing a message through that mounted namespace. Routefs also covers
-  same-name create reservation and reservation release for abandoned creates.
+  same-name create reservation and reservation release for abandoned or invalid
+  creates.
 - [x] 4.2 Run `just verify`.
   Done 2026-07-02: `just verify` passed, including workspace fmt, clippy,
   tests, and smoke verification.

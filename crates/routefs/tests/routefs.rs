@@ -238,6 +238,24 @@ async fn abandoned_rule_create_releases_the_reserved_name() {
 }
 
 #[tokio::test]
+async fn invalid_rule_json_releases_the_reserved_name() {
+    let fs = RouteFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["rules".into()]).await.unwrap();
+    fs.create(Fid(1), Fid(2), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, b"{not-json").await.unwrap();
+    assert_eq!(fs.clunk(Fid(2)).await, Err(ErrorCode::BadRequest));
+
+    fs.create(Fid(1), Fid(3), "10-results", FileKind::File)
+        .await
+        .unwrap();
+    fs.clunk(Fid(3)).await.unwrap();
+    fs.clunk(Fid(1)).await.unwrap();
+}
+
+#[tokio::test]
 async fn no_match_routes_to_dead_letter_and_log_records_decision() {
     let fs = RouteFs::new();
     write_doc(&fs, &["send"], Fid(1), &[&message("citation", "source")])
