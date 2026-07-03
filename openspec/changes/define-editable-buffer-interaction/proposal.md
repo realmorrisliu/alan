@@ -13,7 +13,9 @@ copying Acme's UI details or mixing the idea into the M0-M2 `io/` + `ctl` path.
 - Specify the durable file shape: `body`, `tag`, `ctl`, `addr`, and `event`
   semantics adapted to Alan, not literal Acme behavior.
 - Define what "execute text" means in Alan: a selected text range resolves to an
-  explicit shell/action/process operation through normal namespace capabilities.
+  explicit shell/action/process operation through normal namespace capability
+  discipline, with the ADR-0027 D3 caveat that native subprocesses require OS
+  sandbox projection until the ADR-0024 R1 amplification check lands.
 - Preserve symmetry: humans and agents can both read, edit, observe, and drive
   the same surface through files.
 - Keep this change scoped to the contract and first non-UI harness; native macOS

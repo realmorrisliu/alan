@@ -49,23 +49,24 @@ future macOS view can all operate the same buffer through files.
 
    A buffer directory exposes `body`, `tag`, `ctl`, `addr`, and `event`.
    `body` is editable text, `tag` is a small command/status text surface, `addr`
-   names the active range together with an address-selection revision, `ctl`
-   commits operations, and `event` records edits, range changes, and
-   executions. Successful `body`/`tag` writes and range replacements update the
-   text returned by later reads; accepting an edit event while keeping stale
-   text is not conforming behavior.
+   names the active range together with the source `body` revision and an
+   address-selection revision, `ctl` commits operations, and `event` records
+   edits, range changes, and executions. Successful `body`/`tag` writes and
+   range replacements update the text returned by later reads; accepting an
+   edit event while keeping stale text is not conforming behavior.
 
    Alternative considered: one monolithic JSON document. That is easy to parse
    but not file-native; it would make shell usage and agent inspection worse.
 
 3. **Represent selection as address state, not hidden UI state.**
 
-   `addr` contains a stable range expression over `body` content plus an
-   address revision. Reads reveal the current range snapshot; writes propose a
-   new range and advance the address revision; `ctl` operations that consume the
-   range carry the expected range and revision so execution binds atomically to
-   the selection the caller observed. A UI selection is only one client
-   projection of `addr`.
+   `addr` contains a stable range expression over `body` content plus the body
+   revision observed when that range was selected and an address revision. Reads
+   reveal the current range snapshot; writes propose a new range and advance the
+   address revision; `ctl` operations that consume the range carry the expected
+   range, body revision, and address revision so execution binds atomically to
+   the selection and bytes the caller observed. A UI selection is only one
+   client projection of `addr`.
 
    Alternative considered: let the native UI own selection and publish events
    after the fact. That breaks the symmetry goal because agents cannot drive the
@@ -75,20 +76,24 @@ future macOS view can all operate the same buffer through files.
 
    Writing `exec` to `ctl` executes the expected range or supplied text through
    normal Alan Shell / process / routefs mechanisms. For range execution, the
-   operation includes the range and address revision observed by the caller; if
-   either no longer matches, the server rejects the operation instead of
-   executing another client's selection. It must produce an event and any side
-   effect still depends on the process namespace, descriptors, and policy. The
-   buffer server does not become a privileged command runner.
+   operation includes the range, body revision, and address revision observed by
+   the caller; if any no longer matches, the server rejects the operation
+   instead of executing another client's selection or mutated bytes. It must
+   produce an event and any side effect still depends on the process namespace,
+   descriptors, policy, and the ADR-0027 D3 qualification: until ADR-0024 R1
+   lands, the mount set is an architectural discipline rather than a security
+   property, and native subprocesses still need OS sandbox projection because
+   they cannot see Alan namespaces directly. The buffer server does not become a
+   privileged command runner.
 
    Alternative considered: every click or newline on command-looking text
    executes implicitly. That is faster but unsafe and hard to audit.
 
 ## Risks / Trade-offs
 
-- [Risk] Text execution can hide side effects in prose. -> Mitigation: execution
-  is an explicit `ctl` operation, records an event, and uses normal capability
-  checks.
+- [Risk] Text execution can hide side effects in prose. -> Mitigation:
+  execution is an explicit `ctl` operation, records an event, uses normal
+  capability checks, and keeps the R1 / OS sandbox boundary explicit.
 - [Risk] A buffer file server could fork from terminal/shell conventions. ->
   Mitigation: first implementation is headless and uses Alan Shell/process
   adapters below it rather than owning a parallel command system.

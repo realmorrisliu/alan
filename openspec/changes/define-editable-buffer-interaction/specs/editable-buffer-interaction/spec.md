@@ -32,26 +32,27 @@ with `body`, `tag`, `ctl`, `addr`, and `event` files.
 
 Alan OS SHALL represent the active text range through an `addr` file that can be
 read and written by clients with write authority. The visible `addr` value SHALL
-include both the selected range and the revision of that address selection.
+include the selected range, the source `body` revision, and the revision of that
+address selection.
 
 #### Scenario: Client selects a body range
 
 - **WHEN** a client writes a valid range expression to `addr`
-- **THEN** subsequent reads of `addr` return that range with a new address
-  revision and operations that consume the active range can bind to that
-  revision
+- **THEN** subsequent reads of `addr` return that range with the current `body`
+  revision and a new address revision, and operations that consume the active
+  range can bind to both revisions
 
 #### Scenario: Stale range is rejected
 
-- **WHEN** a client commits an operation against an `addr` range whose source
-  body revision is no longer current
+- **WHEN** a client commits an operation against an `addr` range whose expected
+  source `body` revision is no longer current
 - **THEN** the operation fails with a typed aP error and does not apply to a
   different range
 
 #### Scenario: Stale address selection is rejected
 
-- **WHEN** a client commits an operation against an `addr` revision or range
-  that is no longer the current address selection
+- **WHEN** a client commits an operation against an `addr` revision, source
+  `body` revision, or range that is no longer the current address selection
 - **THEN** the operation fails with a typed aP error and does not consume a
   different client's selected range
 
@@ -59,22 +60,33 @@ include both the selected range and the revision of that address selection.
 
 Alan OS SHALL execute text from an editable buffer only through explicit `ctl`
 operations that resolve to normal Alan Shell, process, or routing behavior under
-the caller's namespace capabilities.
+the caller's namespace capability discipline. Until the ADR-0024 R1 amplification
+check lands, the mount set is an architectural discipline rather than a security
+property; native subprocesses such as shell commands cannot see the Alan
+namespace directly and still require OS sandbox projection.
 
 #### Scenario: Selected text is executed
 
 - **WHEN** a client writes an `exec` control operation carrying the expected
-  `addr` range and address revision
+  `addr` range, source `body` revision, and address revision
 - **THEN** Alan resolves the selected text through the normal shell/action/process
   path and records the execution in the buffer's `event` stream
 
 #### Scenario: Concurrent selection changes do not retarget execution
 
-- **WHEN** one client records an `addr` range and address revision, another
-  client changes `addr`, and the first client writes `exec` for the recorded
-  range and revision
+- **WHEN** one client records an `addr` range, source `body` revision, and
+  address revision, another client changes `addr`, and the first client writes
+  `exec` for the recorded range and revisions
 - **THEN** the operation fails with a typed aP error and does not execute text
   from the other client's range
+
+#### Scenario: Concurrent body edits do not retarget execution
+
+- **WHEN** one client records an `addr` range, source `body` revision, and
+  address revision, another client edits `body` without changing `addr`, and the
+  first client writes `exec` for the recorded range and revisions
+- **THEN** the operation fails with a typed aP error and does not execute the
+  mutated text at that range
 
 #### Scenario: Execution does not bypass authority
 
@@ -82,6 +94,13 @@ the caller's namespace capabilities.
   namespace or policy context
 - **THEN** execution is denied or yields through the normal policy path rather
   than being granted by the buffer surface
+
+#### Scenario: Native process execution keeps the OS sandbox boundary
+
+- **WHEN** selected text resolves to a native subprocess such as a shell command
+- **THEN** Alan projects the caller's allowed authority into the OS sandbox layer
+  instead of assuming the subprocess can inspect or enforce the Alan namespace
+  directly
 
 ### Requirement: Buffer activity is observable as events
 
