@@ -75,6 +75,8 @@ impl AgentConformanceChecker {
         let mut report = ConformanceReport::new(path);
         self.check_generic_process_into(path, &mut report).await;
         for (rel, kind) in [
+            ("io/input", FileKind::Stream),
+            ("io/events", FileKind::Stream),
             ("events", FileKind::Stream),
             ("machine", FileKind::Dir),
             ("machine/tape", FileKind::Stream),
@@ -150,9 +152,7 @@ impl AgentConformanceChecker {
     async fn check_generic_process_into(&self, path: &str, report: &mut ConformanceReport) {
         for (rel, kind) in [
             ("io", FileKind::Dir),
-            ("io/input", FileKind::Stream),
             ("io/output", FileKind::Stream),
-            ("io/events", FileKind::Stream),
             ("status", FileKind::File),
             ("ctl", FileKind::File),
         ] {
@@ -191,6 +191,7 @@ impl AgentConformanceChecker {
             let checker = self.clone();
             tokio::spawn(async move { checker.read(event_fid, offset, 4096).await })
         };
+        let mut reader = reader;
 
         match self.walk_open(&clone_path, OpenMode::ReadWrite).await {
             Ok((clone_fid, _)) => {
@@ -198,6 +199,8 @@ impl AgentConformanceChecker {
                 let _ = self.clunk(clone_fid).await;
             }
             Err(error) => {
+                reader.abort();
+                let _ = reader.await;
                 report.push(
                     clone_path,
                     format!("cannot clone container child: {error:?}"),
@@ -207,17 +210,21 @@ impl AgentConformanceChecker {
             }
         }
 
-        match tokio::time::timeout(Duration::from_millis(250), reader).await {
+        match tokio::time::timeout(Duration::from_millis(250), &mut reader).await {
             Ok(Ok(Ok(bytes))) if !bytes.is_empty() => {}
             Ok(Ok(Ok(_))) => report.push(events_path, "events stream returned no bytes"),
             Ok(Ok(Err(error))) => {
                 report.push(events_path, format!("events stream read failed: {error:?}"))
             }
             Ok(Err(error)) => report.push(events_path, format!("events read task failed: {error}")),
-            Err(_) => report.push(
-                events_path,
-                "events stream did not unblock after clone allocation",
-            ),
+            Err(_) => {
+                reader.abort();
+                let _ = reader.await;
+                report.push(
+                    events_path,
+                    "events stream did not unblock after clone allocation",
+                );
+            }
         }
         let _ = self.clunk(event_fid).await;
     }
