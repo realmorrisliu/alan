@@ -5,11 +5,19 @@
 //! public), write the exec spec, and `clunk` to commit — so an aP-only client
 //! needs no side API to launch a process.
 
-use alan_ap::{ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, Request, Response};
+use alan_ap::{
+    ErrorCode, Fid, FileServer, InProcessTransport, OpenMode, ProcessEvent, ProcessEventSink,
+    ProcessEventSource, ProcessInputEventSink, ProcessInputEventSource, ProcessOutputEventSink,
+    ProcessOutputEventSource, Request, Response,
+};
 use alan_kernel::{
     Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::Notify;
 
 fn proc() -> ProcFs {
     ProcFs::new()
@@ -67,6 +75,190 @@ impl ProcessRunner for EchoRunner {
         let mut output = invocation.exec.args.join(" ").into_bytes();
         output.push(b'\n');
         ProcessOutcome::exited(0, output)
+    }
+}
+
+struct DelayedOutputRunner {
+    output: Vec<u8>,
+    release: Notify,
+}
+
+impl DelayedOutputRunner {
+    fn new(output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+            release: Notify::new(),
+        }
+    }
+
+    fn release(&self) {
+        self.release.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessRunner for DelayedOutputRunner {
+    async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+        self.release.notified().await;
+        ProcessOutcome::exited(0, self.output.clone())
+    }
+}
+
+struct RecordingOutputSink {
+    records: Mutex<Vec<(String, u32)>>,
+    notify: Notify,
+}
+
+impl RecordingOutputSink {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait_for(&self, expected: usize) -> Vec<(String, u32)> {
+        for _ in 0..50 {
+            let records = self
+                .records
+                .lock()
+                .expect("output records lock should not be poisoned")
+                .clone();
+            if records.len() >= expected {
+                return records;
+            }
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(10), self.notify.notified())
+                    .await;
+        }
+        self.records
+            .lock()
+            .expect("output records lock should not be poisoned")
+            .clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessOutputEventSink for RecordingOutputSink {
+    async fn output_appended(&self, pid: &str, count: u32) {
+        self.records
+            .lock()
+            .expect("output records lock should not be poisoned")
+            .push((pid.to_string(), count));
+        self.notify.notify_waiters();
+    }
+}
+
+struct RecordingInputSink {
+    records: Mutex<Vec<(String, u32)>>,
+    notify: Notify,
+}
+
+impl RecordingInputSink {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait_for(&self, expected: usize) -> Vec<(String, u32)> {
+        for _ in 0..50 {
+            let records = self
+                .records
+                .lock()
+                .expect("input records lock should not be poisoned")
+                .clone();
+            if records.len() >= expected {
+                return records;
+            }
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(10), self.notify.notified())
+                    .await;
+        }
+        self.records
+            .lock()
+            .expect("input records lock should not be poisoned")
+            .clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessInputEventSink for RecordingInputSink {
+    async fn input_appended(&self, pid: &str, count: u32) {
+        self.records
+            .lock()
+            .expect("input records lock should not be poisoned")
+            .push((pid.to_string(), count));
+        self.notify.notify_waiters();
+    }
+}
+
+struct BlockingProcessEventSink {
+    records: Mutex<Vec<ProcessEvent>>,
+    first_started: AtomicBool,
+    first_entered: Notify,
+    release_first: Notify,
+    notify: Notify,
+}
+
+impl BlockingProcessEventSink {
+    fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+            first_started: AtomicBool::new(false),
+            first_entered: Notify::new(),
+            release_first: Notify::new(),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait_for(&self, expected: usize) -> Vec<ProcessEvent> {
+        for _ in 0..50 {
+            let records = self
+                .records
+                .lock()
+                .expect("process event records lock should not be poisoned")
+                .clone();
+            if records.len() >= expected {
+                return records;
+            }
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(10), self.notify.notified())
+                    .await;
+        }
+        self.records
+            .lock()
+            .expect("process event records lock should not be poisoned")
+            .clone()
+    }
+
+    async fn wait_until_first_replay_enters(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            self.first_entered.notified(),
+        )
+        .await
+        .expect("first replay event should enter the sink");
+    }
+
+    fn release_first_replay(&self) {
+        self.release_first.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessEventSink for BlockingProcessEventSink {
+    async fn process_event(&self, _pid: &str, event: ProcessEvent) {
+        if !self.first_started.swap(true, Ordering::SeqCst) {
+            self.first_entered.notify_waiters();
+            self.release_first.notified().await;
+        }
+        self.records
+            .lock()
+            .expect("process event records lock should not be poisoned")
+            .push(event);
+        self.notify.notify_waiters();
     }
 }
 
@@ -227,6 +419,115 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
     assert_eq!(
         recorded_parent, child,
         "grandchild spawned through child /proc must record the child as parent"
+    );
+}
+
+#[tokio::test]
+async fn late_io_event_subscribers_replay_existing_events() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let input_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(input_fid, OpenMode::Write).await.unwrap();
+    fs.write(input_fid, 0, b"early input").await.unwrap();
+    fs.clunk(input_fid).await.unwrap();
+
+    let output_fid = Fid(12);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(output_fid, OpenMode::Write).await.unwrap();
+    fs.write(output_fid, 0, b"early output").await.unwrap();
+    fs.clunk(output_fid).await.unwrap();
+
+    let input_sink = Arc::new(RecordingInputSink::new());
+    fs.subscribe_process_input(&pid, input_sink.clone())
+        .await
+        .unwrap();
+    assert_eq!(input_sink.wait_for(1).await, vec![(pid.clone(), 11)]);
+
+    let output_sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, output_sink.clone())
+        .await
+        .unwrap();
+    assert_eq!(output_sink.wait_for(1).await, vec![(pid, 12)]);
+}
+
+#[tokio::test]
+async fn process_event_replay_precedes_live_events_for_late_subscribers() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let output_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(output_fid, OpenMode::Write).await.unwrap();
+    fs.write(output_fid, 0, b"early output").await.unwrap();
+    fs.clunk(output_fid).await.unwrap();
+
+    let sink = Arc::new(BlockingProcessEventSink::new());
+    let subscribe_fs = fs.clone();
+    let subscribe_pid = pid.clone();
+    let subscribe_sink = sink.clone();
+    let subscription = tokio::spawn(async move {
+        subscribe_fs
+            .subscribe_process_events(&subscribe_pid, subscribe_sink)
+            .await
+            .unwrap();
+    });
+    sink.wait_until_first_replay_enters().await;
+
+    let live_fs = fs.clone();
+    let live_pid = pid.clone();
+    let live_write = tokio::spawn(async move {
+        let input_fid = Fid(12);
+        live_fs
+            .walk(
+                Fid::ROOT,
+                input_fid,
+                &[live_pid, "io".to_string(), "input".to_string()],
+            )
+            .await
+            .unwrap();
+        live_fs.open(input_fid, OpenMode::Write).await.unwrap();
+        live_fs.write(input_fid, 0, b"live input").await.unwrap();
+        live_fs.clunk(input_fid).await.unwrap();
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !live_write.is_finished(),
+        "live event delivery should wait while retained event replay is active"
+    );
+
+    sink.release_first_replay();
+    subscription.await.unwrap();
+    live_write.await.unwrap();
+
+    assert_eq!(
+        sink.wait_for(3).await,
+        vec![
+            ProcessEvent::Status {
+                status: "running".to_string()
+            },
+            ProcessEvent::Output { count: 12 },
+            ProcessEvent::Input { count: 10 },
+        ]
     );
 }
 
@@ -437,6 +738,132 @@ async fn proc_output_serves_the_stream() {
 }
 
 #[tokio::test]
+async fn proc_io_lists_generic_streams() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let listing = String::from_utf8(read_at(&fs, &[&pid, "io"], Fid(11)).await.unwrap()).unwrap();
+
+    assert_eq!(
+        listing.lines().collect::<Vec<_>>(),
+        vec!["input", "output", "events"]
+    );
+}
+
+#[tokio::test]
+async fn proc_input_accepts_write_intent_and_records_io_event() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "input".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(read_at(&fs, &[&pid, "io", "input"], Fid(12)).await.unwrap()).unwrap(),
+        "hello proc"
+    );
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "events"], Fid(13))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "input:10\n"
+    );
+}
+
+#[tokio::test]
+async fn proc_output_accepts_write_intent() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "output".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "output"], Fid(12))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "hello proc"
+    );
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "events"], Fid(13))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "output:10\n"
+    );
+}
+
+#[tokio::test]
+async fn proc_output_observers_see_direct_writes() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "output".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(sink.wait_for(1).await, vec![(pid, 10)]);
+}
+
+#[tokio::test]
+async fn proc_input_observers_see_direct_writes() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let sink = Arc::new(RecordingInputSink::new());
+    fs.subscribe_process_input(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(sink.wait_for(1).await, vec![(pid, 10)]);
+}
+
+#[tokio::test]
 async fn registered_runner_writes_process_output_and_exit() {
     let fs = ProcFs::new().with_runner(Arc::new(EchoRunner));
     let mut namespace = Namespace::new();
@@ -470,6 +897,13 @@ async fn registered_runner_writes_process_output_and_exit() {
             )
             .unwrap();
             assert_eq!(output, "hello tool\n");
+            let io_events = String::from_utf8(
+                read_at(&fs, &[&pid, "io", "events"], Fid(202))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(io_events, "output:11\n");
             let exit =
                 String::from_utf8(read_at(&fs, &[&pid, "exit"], Fid(201)).await.unwrap()).unwrap();
             assert_eq!(exit, "0");
@@ -478,6 +912,21 @@ async fn registered_runner_writes_process_output_and_exit() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("runner did not exit process {pid}");
+}
+
+#[tokio::test]
+async fn proc_output_observers_see_runner_output() {
+    let runner = Arc::new(DelayedOutputRunner::new("runner output\n"));
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let pid = spawn(&fs, Fid(10)).await;
+    let sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    runner.release();
+
+    assert_eq!(sink.wait_for(1).await, vec![(pid, 14)]);
 }
 
 // Spawning requires write intent: opening /proc/clone read-only is rejected, and

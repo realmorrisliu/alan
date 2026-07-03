@@ -116,6 +116,10 @@ name = "alan-agentfs"
 version = "0.1.0"
 dependencies = [
  "alan-ap",
+ "alan-kernel",
+ "alan-knowledge",
+ "alan-memfs",
+ "alan-shell",
  "async-trait",
  "tokio",
 ]
@@ -164,6 +168,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alan-knowledge"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "alan-llm"
 version = "0.1.0"
 dependencies = [
@@ -196,6 +211,16 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "alan-memfs"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "alan-knowledge",
+ "async-trait",
  "tokio",
 ]
 

@@ -8,5 +8,11 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
+alan-knowledge.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true }
+
+[dev-dependencies]
+alan-kernel = { path = "../kernel" }
+alan-memfs = { path = "../memfs" }
+alan-shell = { path = "../shell" }

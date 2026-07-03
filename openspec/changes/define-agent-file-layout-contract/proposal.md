@@ -30,6 +30,9 @@ already provide.
 - Define the request as a view assembled from namespace files, tape compaction
   as a view over `machine/tape`, and an agent's tools as the `/bin` visible in
   its namespace.
+- Define the referenced external file-server boundaries for LLM provider access,
+  Memory Stores, Tools, and Skills, without taking ownership of their detailed
+  protocols.
 - Define requests and responses as files, and the durable agent identity (home
   tree) that makes a restarted agent resume.
 - Define the namespace's **access discipline** — consolidated here as the single
@@ -46,9 +49,10 @@ already provide.
 - `agent-file-layout-contract`: the OS-level file-layout convention for agents —
   process layout, agent superset, `ctl` control, `/agent` as a `/proc` view, the
   LLM-stream consumer model, namespace-assembled requests, tools-as-`/bin`,
-  request/response files, the durable home tree, and the namespace access
-  discipline (ctl scoping, the generation tape lease, actor-keyed authority +
-  interpose, the external-writer protocol-layer prerequisite, self-description).
+  referenced LLM/memory/tool/skill file-server boundaries, request/response
+  files, the durable home tree, and the namespace access discipline (ctl
+  scoping, the generation tape lease, actor-keyed authority + interpose, the
+  external-writer protocol-layer prerequisite, self-description).
 
 ### Modified Capabilities
 
@@ -79,6 +83,7 @@ and its access discipline. Two overlapping efforts are folded in here:
   conforms to this contract; conformance — not a kernel flag — is what makes its
   processes operable as agents.
 - Affected planning: LLM providers, memory, tools, and skills are separate
-  user-space file servers referenced by this contract but specified elsewhere.
+  user-space file servers referenced here at their mount/descriptor boundaries
+  but specified in detail by their owning OpenSpec capabilities.
 - Affected ADRs: implements ADR-0024 D1, D2, D4, and the agent-facing parts of
   D6, D7, and D8. Depends on `define-plan9-kernel-substrate`.

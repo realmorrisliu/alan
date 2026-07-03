@@ -13,7 +13,9 @@
 //!     credentials         # uname
 //!     exit                # exit code once exited, else ""
 //!     ctl                 # write "interrupt"/"cancel" (generic process control)
+//!     io/input            # the process's input stream
 //!     io/output           # the process's output stream
+//!     io/events           # IO-scoped input/output event stream
 //! ```
 //!
 //! Process creation is pure aP: opening `clone` allocates a fid-private pending
@@ -31,7 +33,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat, Stream,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, ProcessEvent,
+    ProcessEventSink, ProcessEventSource, ProcessInputEventSink, ProcessInputEventSource,
+    ProcessIoEventKind, ProcessIoEventSink, ProcessIoEventSource, ProcessOutputEventSink,
+    ProcessOutputEventSource, Qid, Stat, Stream,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -85,7 +90,9 @@ enum Node {
     Exit(Pid),
     Ctl(Pid),
     IoDir(Pid),
+    Input(Pid),
     Output(Pid),
+    IoEvents(Pid),
     NamespaceInfo(Pid),
 }
 
@@ -126,9 +133,54 @@ static NEXT_PROCFS_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 struct State {
     table: ProcessTable,
     fids: HashMap<ProcFidKey, ProcFid>,
-    /// One output stream per committed process (the kernel owns the file; the
-    /// process's execution, in user space, writes to it).
+    /// Generic IO streams per committed process. The kernel owns the files; user
+    /// space supplies the execution semantics layered above them.
+    inputs: HashMap<Pid, Stream>,
     outputs: HashMap<Pid, Stream>,
+    io_events: HashMap<Pid, Stream>,
+    event_history: HashMap<Pid, Vec<ProcessEvent>>,
+    event_observers: HashMap<Pid, Vec<Arc<OrderedProcessEventObserver>>>,
+    io_observers: HashMap<Pid, Vec<Arc<OrderedProcessIoEventObserver>>>,
+    input_observers: HashMap<Pid, Vec<Arc<dyn ProcessInputEventSink>>>,
+    output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
+}
+
+struct OrderedProcessEventObserver {
+    sink: Arc<dyn ProcessEventSink>,
+    replay: Mutex<()>,
+}
+
+impl OrderedProcessEventObserver {
+    fn new(sink: Arc<dyn ProcessEventSink>) -> Self {
+        Self {
+            sink,
+            replay: Mutex::new(()),
+        }
+    }
+
+    async fn deliver(&self, pid: &str, event: ProcessEvent) {
+        let _replay = self.replay.lock().await;
+        self.sink.process_event(pid, event).await;
+    }
+}
+
+struct OrderedProcessIoEventObserver {
+    sink: Arc<dyn ProcessIoEventSink>,
+    replay: Mutex<()>,
+}
+
+impl OrderedProcessIoEventObserver {
+    fn new(sink: Arc<dyn ProcessIoEventSink>) -> Self {
+        Self {
+            sink,
+            replay: Mutex::new(()),
+        }
+    }
+
+    async fn deliver(&self, pid: &str, kind: ProcessIoEventKind, count: u32) {
+        let _replay = self.replay.lock().await;
+        self.sink.io_appended(pid, kind, count).await;
+    }
 }
 
 #[derive(Clone)]
@@ -160,7 +212,14 @@ impl ProcFs {
             state: Arc::new(Mutex::new(State {
                 table: ProcessTable::new(),
                 fids: HashMap::new(),
+                inputs: HashMap::new(),
                 outputs: HashMap::new(),
+                io_events: HashMap::new(),
+                event_history: HashMap::new(),
+                event_observers: HashMap::new(),
+                io_observers: HashMap::new(),
+                input_observers: HashMap::new(),
+                output_observers: HashMap::new(),
             })),
             view_id: next_view_id(),
             root_node: Node::Root,
@@ -260,6 +319,204 @@ impl ProcFs {
             fid,
         }
     }
+
+    async fn publish_process_event(&self, pid: Pid, event: ProcessEvent) {
+        let (event_observers, io_observers, input_observers, output_observers) = {
+            let mut state = self.state.lock().await;
+            state
+                .event_history
+                .entry(pid)
+                .or_default()
+                .push(event.clone());
+            (
+                state.event_observers.get(&pid).cloned().unwrap_or_default(),
+                state.io_observers.get(&pid).cloned().unwrap_or_default(),
+                state.input_observers.get(&pid).cloned().unwrap_or_default(),
+                state
+                    .output_observers
+                    .get(&pid)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        };
+        let pid = pid.0.to_string();
+        match &event {
+            ProcessEvent::Input { count } => {
+                for observer in input_observers {
+                    observer.input_appended(&pid, *count).await;
+                }
+                for observer in io_observers {
+                    observer
+                        .deliver(&pid, ProcessIoEventKind::Input, *count)
+                        .await;
+                }
+            }
+            ProcessEvent::Output { count } => {
+                for observer in output_observers {
+                    observer.output_appended(&pid, *count).await;
+                }
+                for observer in io_observers {
+                    observer
+                        .deliver(&pid, ProcessIoEventKind::Output, *count)
+                        .await;
+                }
+            }
+            ProcessEvent::Status { .. } => {}
+        }
+        for observer in event_observers {
+            observer.deliver(&pid, event.clone()).await;
+        }
+    }
+}
+
+#[async_trait]
+impl ProcessOutputEventSource for ProcFs {
+    async fn subscribe_process_output(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessOutputEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state
+                .event_history
+                .get(&pid)
+                .into_iter()
+                .flatten()
+                .filter_map(|event| match event {
+                    ProcessEvent::Input { .. } | ProcessEvent::Status { .. } => None,
+                    ProcessEvent::Output { count } => Some(*count),
+                })
+                .collect::<Vec<_>>();
+            state
+                .output_observers
+                .entry(pid)
+                .or_default()
+                .push(sink.clone());
+            (pid.0.to_string(), replay)
+        };
+        for count in replay {
+            sink.output_appended(&pid_text, count).await;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ProcessInputEventSource for ProcFs {
+    async fn subscribe_process_input(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessInputEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state
+                .event_history
+                .get(&pid)
+                .into_iter()
+                .flatten()
+                .filter_map(|event| match event {
+                    ProcessEvent::Input { count } => Some(*count),
+                    ProcessEvent::Output { .. } | ProcessEvent::Status { .. } => None,
+                })
+                .collect::<Vec<_>>();
+            state
+                .input_observers
+                .entry(pid)
+                .or_default()
+                .push(sink.clone());
+            (pid.0.to_string(), replay)
+        };
+        for count in replay {
+            sink.input_appended(&pid_text, count).await;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ProcessIoEventSource for ProcFs {
+    async fn subscribe_process_io(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessIoEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let observer = Arc::new(OrderedProcessIoEventObserver::new(sink));
+        let observer_for_state = observer.clone();
+        let replay_sink = observer.sink.clone();
+        let replay_guard = observer.replay.lock().await;
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state
+                .event_history
+                .get(&pid)
+                .into_iter()
+                .flatten()
+                .filter_map(|event| match event {
+                    ProcessEvent::Input { count } => Some((ProcessIoEventKind::Input, *count)),
+                    ProcessEvent::Output { count } => Some((ProcessIoEventKind::Output, *count)),
+                    ProcessEvent::Status { .. } => None,
+                })
+                .collect::<Vec<_>>();
+            state
+                .io_observers
+                .entry(pid)
+                .or_default()
+                .push(observer_for_state);
+            (pid.0.to_string(), replay)
+        };
+        for (kind, count) in replay {
+            replay_sink.io_appended(&pid_text, kind, count).await;
+        }
+        drop(replay_guard);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ProcessEventSource for ProcFs {
+    async fn subscribe_process_events(
+        &self,
+        pid: &str,
+        sink: Arc<dyn ProcessEventSink>,
+    ) -> Result<(), ErrorCode> {
+        let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
+        let observer = Arc::new(OrderedProcessEventObserver::new(sink));
+        let observer_for_state = observer.clone();
+        let replay_sink = observer.sink.clone();
+        let replay_guard = observer.replay.lock().await;
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state.event_history.get(&pid).cloned().unwrap_or_default();
+            state
+                .event_observers
+                .entry(pid)
+                .or_default()
+                .push(observer_for_state);
+            (pid.0.to_string(), replay)
+        };
+        for event in replay {
+            replay_sink.process_event(&pid_text, event).await;
+        }
+        drop(replay_guard);
+        Ok(())
+    }
 }
 
 impl State {
@@ -283,6 +540,7 @@ impl State {
         let version = match node {
             Node::Root => self.table.listing_generation(),
             Node::Clone | Node::Output(_) => 0,
+            Node::Input(_) | Node::IoEvents(_) => 0,
             Node::Proc(p)
             | Node::IoDir(p)
             | Node::Status(p)
@@ -321,7 +579,12 @@ impl State {
                 "namespace" => Ok(Node::NamespaceInfo(*pid)),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::IoDir(pid) if name == "output" => Ok(Node::Output(*pid)),
+            Node::IoDir(pid) => match name {
+                "input" => Ok(Node::Input(*pid)),
+                "output" => Ok(Node::Output(*pid)),
+                "events" => Ok(Node::IoEvents(*pid)),
+                _ => Err(ErrorCode::NotFound),
+            },
             _ => Err(ErrorCode::NotDirectory),
         }
     }
@@ -337,7 +600,7 @@ impl State {
             Node::Proc(_) => "status\nparent\ncredentials\nexit\nctl\nio\nnamespace"
                 .to_string()
                 .into_bytes(),
-            Node::IoDir(_) => b"output".to_vec(),
+            Node::IoDir(_) => b"input\noutput\nevents".to_vec(),
             Node::Status(pid) => match self.table.get(*pid).map(|p| p.status) {
                 Some(Status::Running) => b"running\n".to_vec(),
                 Some(Status::Exited) => b"exited\n".to_vec(),
@@ -377,12 +640,30 @@ impl State {
                     .join("\n")
                     .into_bytes()
             }
-            // `clone`/`ctl` are write surfaces; `output` is a stream served
-            // directly in `read`, not here.
-            Node::Clone | Node::Ctl(_) | Node::Output(_) => return Err(ErrorCode::Unsupported),
+            // `clone`/`ctl` are write surfaces; IO streams are served directly in
+            // `read`, not here.
+            Node::Clone | Node::Ctl(_) | Node::Input(_) | Node::Output(_) | Node::IoEvents(_) => {
+                return Err(ErrorCode::Unsupported);
+            }
         };
         Ok(bytes)
     }
+}
+
+enum ProcStreamWrite {
+    Input {
+        pid: Pid,
+        stream: Stream,
+        events: Stream,
+    },
+    Output {
+        pid: Pid,
+        stream: Stream,
+        events: Stream,
+    },
+    Status {
+        pid: Pid,
+    },
 }
 
 #[async_trait]
@@ -450,10 +731,10 @@ impl FileServer for ProcFs {
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        // A process's output is a stream: clone it out and serve a blocking read
-        // without holding the state lock (so tailing one process never stalls
-        // the whole `/proc`).
-        let output = {
+        // A process's IO files are streams: clone them out and serve blocking
+        // reads without holding the state lock (so tailing one process never
+        // stalls the whole `/proc`).
+        let stream = {
             let state = self.state.lock().await;
             let fid_key = self.fid_key(fid);
             // An opened clone fid reads back its pending pid (the allocated name).
@@ -464,61 +745,138 @@ impl FileServer for ProcFs {
             }
             let node = state.node_of(fid_key, &self.root_node)?;
             match node {
+                Node::Input(pid) => state.inputs.get(&pid).cloned().ok_or(ErrorCode::NotFound)?,
                 Node::Output(pid) => state
                     .outputs
+                    .get(&pid)
+                    .cloned()
+                    .ok_or(ErrorCode::NotFound)?,
+                Node::IoEvents(pid) => state
+                    .io_events
                     .get(&pid)
                     .cloned()
                     .ok_or(ErrorCode::NotFound)?,
                 other => return Ok(slice(state.file_bytes(&other)?, offset, count)),
             }
         };
-        Ok(output.read(offset, count).await)
+        Ok(stream.read(offset, count).await)
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let mut state = self.state.lock().await;
-        let fid_key = self.fid_key(fid);
-        let node = state.node_of(fid_key, &self.root_node)?;
-        // Write surfaces require write authority established at open.
-        let has_write_intent = state
-            .fids
-            .get(&fid_key)
-            .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
-        match node {
-            // Exec-spec document for a clone fid: buffer at the given offset until
-            // clunk (commit-on-clunk; honor offsets, bound size, reject overflow).
-            Node::Clone => {
-                if !has_write_intent {
-                    return Err(ErrorCode::NoAccess);
+        let stream_write = {
+            let mut state = self.state.lock().await;
+            let fid_key = self.fid_key(fid);
+            let node = state.node_of(fid_key, &self.root_node)?;
+            // Write surfaces require write authority established at open.
+            let has_write_intent = state
+                .fids
+                .get(&fid_key)
+                .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
+            match node {
+                // Exec-spec document for a clone fid: buffer at the given offset until
+                // clunk (commit-on-clunk; honor offsets, bound size, reject overflow).
+                Node::Clone => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
+                    if f.clone_pid.is_none() {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+                    if end > MAX_EXEC_SPEC_BYTES {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    if f.write_buf.len() < end {
+                        f.write_buf.resize(end, 0);
+                    }
+                    f.write_buf[start..end].copy_from_slice(data);
+                    return Ok(data.len() as u32);
                 }
-                let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
-                if f.clone_pid.is_none() {
-                    return Err(ErrorCode::BadRequest);
+                // Generic process control (interrupt/cancel) routes through ctl.
+                Node::Ctl(pid) => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    match data {
+                        b"cancel" | b"interrupt" => state.table.exit(pid, 130),
+                        _ => return Err(ErrorCode::BadRequest),
+                    }
+                    ProcStreamWrite::Status { pid }
                 }
-                let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                if end > MAX_EXEC_SPEC_BYTES {
-                    return Err(ErrorCode::BadRequest);
+                // Process input is a stream owned by `/proc`; parents, shells,
+                // and hosts write to it, and process descriptors read from it.
+                Node::Input(pid) => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    ProcStreamWrite::Input {
+                        pid,
+                        stream: state.inputs.get(&pid).cloned().ok_or(ErrorCode::NotFound)?,
+                        events: state
+                            .io_events
+                            .get(&pid)
+                            .cloned()
+                            .ok_or(ErrorCode::NotFound)?,
+                    }
                 }
-                if f.write_buf.len() < end {
-                    f.write_buf.resize(end, 0);
+                // Process output is a stream owned by `/proc`; process descriptors
+                // write to it, and readers tail it through `io/output`.
+                Node::Output(pid) => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    ProcStreamWrite::Output {
+                        pid,
+                        stream: state
+                            .outputs
+                            .get(&pid)
+                            .cloned()
+                            .ok_or(ErrorCode::NotFound)?,
+                        events: state
+                            .io_events
+                            .get(&pid)
+                            .cloned()
+                            .ok_or(ErrorCode::NotFound)?,
+                    }
                 }
-                f.write_buf[start..end].copy_from_slice(data);
-                Ok(data.len() as u32)
+                _ => return Err(ErrorCode::Unsupported),
             }
-            // Generic process control (interrupt/cancel) routes through ctl.
-            Node::Ctl(pid) => {
-                if !has_write_intent {
-                    return Err(ErrorCode::NoAccess);
-                }
-                match data {
-                    b"cancel" | b"interrupt" => state.table.exit(pid, 130),
-                    _ => return Err(ErrorCode::BadRequest),
-                }
-                Ok(data.len() as u32)
+        };
+        let count = data.len() as u32;
+        match stream_write {
+            ProcStreamWrite::Input {
+                pid,
+                stream,
+                events,
+            } => {
+                stream.append(data).await;
+                append_io_event(&events, "input", count).await;
+                self.publish_process_event(pid, ProcessEvent::Input { count })
+                    .await;
             }
-            _ => Err(ErrorCode::Unsupported),
+            ProcStreamWrite::Output {
+                pid,
+                stream,
+                events,
+            } => {
+                stream.append(data).await;
+                append_io_event(&events, "output", count).await;
+                self.publish_process_event(pid, ProcessEvent::Output { count })
+                    .await;
+            }
+            ProcStreamWrite::Status { pid } => {
+                self.publish_process_event(
+                    pid,
+                    ProcessEvent::Status {
+                        status: "exited".to_string(),
+                    },
+                )
+                .await;
+            }
         }
+        Ok(count)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
@@ -527,7 +885,15 @@ impl FileServer for ProcFs {
         // Report the readable byte length so clients can size reads; write-only
         // surfaces (clone/ctl) are 0, and a process output is its retained length.
         let length = match &node {
+            Node::Input(pid) => match state.inputs.get(pid) {
+                Some(stream) => stream.len().await,
+                None => 0,
+            },
             Node::Output(pid) => match state.outputs.get(pid) {
+                Some(stream) => stream.len().await,
+                None => 0,
+            },
+            Node::IoEvents(pid) => match state.io_events.get(pid) {
                 Some(stream) => stream.len().await,
                 None => 0,
             },
@@ -561,7 +927,7 @@ impl FileServer for ProcFs {
         if fid == Fid::ROOT && !matches!(self.root_node, Node::Clone) {
             return Ok(());
         }
-        let runner_launch = {
+        let committed_process = {
             let mut state = self.state.lock().await;
             let Some(f) = state.fids.remove(&self.fid_key(fid)) else {
                 return Err(ErrorCode::NotFound);
@@ -602,11 +968,18 @@ impl FileServer for ProcFs {
                             namespace: process.namespace.clone(),
                             exec: process.exec.clone(),
                         };
+                        let input = Stream::new();
                         let output = Stream::new();
+                        let io_events = Stream::new();
+                        state.inputs.insert(committed, input);
                         state.outputs.insert(committed, output.clone());
-                        self.runner
+                        state.io_events.insert(committed, io_events.clone());
+                        state.event_history.insert(committed, Vec::new());
+                        let runner_launch = self
+                            .runner
                             .clone()
-                            .map(|runner| (runner, output, invocation))
+                            .map(|runner| (runner, output, io_events, invocation, self.clone()));
+                        Some((committed, runner_launch))
                     }
                     Err(_) => {
                         // Reject at commit and discard the fid-private slot — it was
@@ -619,16 +992,40 @@ impl FileServer for ProcFs {
                 None
             }
         };
-        if let Some((runner, output, invocation)) = runner_launch {
-            let state = self.state.clone();
-            tokio::spawn(async move {
-                let outcome = runner.run(invocation.clone()).await;
-                if !outcome.output.is_empty() {
-                    output.append(&outcome.output).await;
-                }
-                let mut state = state.lock().await;
-                state.table.exit(invocation.pid, outcome.exit_code);
-            });
+        if let Some((committed, runner_launch)) = committed_process {
+            self.publish_process_event(
+                committed,
+                ProcessEvent::Status {
+                    status: "running".to_string(),
+                },
+            )
+            .await;
+            if let Some((runner, output, io_events, invocation, events)) = runner_launch {
+                let state = self.state.clone();
+                tokio::spawn(async move {
+                    let outcome = runner.run(invocation.clone()).await;
+                    if !outcome.output.is_empty() {
+                        let count = outcome.output.len() as u32;
+                        output.append(&outcome.output).await;
+                        append_io_event(&io_events, "output", count).await;
+                        events
+                            .publish_process_event(invocation.pid, ProcessEvent::Output { count })
+                            .await;
+                    }
+                    {
+                        let mut state = state.lock().await;
+                        state.table.exit(invocation.pid, outcome.exit_code);
+                    }
+                    events
+                        .publish_process_event(
+                            invocation.pid,
+                            ProcessEvent::Status {
+                                status: "exited".to_string(),
+                            },
+                        )
+                        .await;
+                });
+            }
         }
         Ok(())
     }
@@ -663,11 +1060,16 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::Exit(p) => (FileKind::File, tagged(7, *p)),
         Node::Ctl(p) => (FileKind::File, tagged(8, *p)),
         Node::NamespaceInfo(p) => (FileKind::File, tagged(9, *p)),
+        Node::Input(p) => (FileKind::Stream, tagged(10, *p)),
+        Node::IoEvents(p) => (FileKind::Stream, tagged(11, *p)),
     }
 }
 
 fn is_writable(node: &Node) -> bool {
-    matches!(node, Node::Clone | Node::Ctl(_))
+    matches!(
+        node,
+        Node::Clone | Node::Ctl(_) | Node::Input(_) | Node::Output(_)
+    )
 }
 
 fn next_view_id() -> u64 {
@@ -682,4 +1084,9 @@ fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
     bytes[start..end].to_vec()
+}
+
+async fn append_io_event(events: &Stream, kind: &str, count: u32) {
+    let record = format!("{kind}:{count}\n");
+    events.append(record.as_bytes()).await;
 }

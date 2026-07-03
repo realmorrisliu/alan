@@ -2327,6 +2327,7 @@ mod tests {
                     checkpoint_type: "tool_escalation".to_string(),
                     summary: "approve side effect".to_string(),
                     choice: Some("approved".to_string()),
+                    knowledge_root: None,
                     timestamp: "2026-01-29T14:30:54Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
@@ -2351,6 +2352,7 @@ mod tests {
                     checkpoint_type: "effect_replay_confirmation".to_string(),
                     summary: "reject side effect".to_string(),
                     choice: Some("rejected".to_string()),
+                    knowledge_root: None,
                     timestamp: "2026-01-29T14:30:56Z".to_string(),
                 }),
             ];
