@@ -437,6 +437,33 @@ async fn proc_output_serves_the_stream() {
 }
 
 #[tokio::test]
+async fn proc_output_accepts_write_intent() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "output".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "output"], Fid(12))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "hello proc"
+    );
+}
+
+#[tokio::test]
 async fn registered_runner_writes_process_output_and_exit() {
     let fs = ProcFs::new().with_runner(Arc::new(EchoRunner));
     let mut namespace = Namespace::new();

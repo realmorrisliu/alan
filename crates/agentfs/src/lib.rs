@@ -235,6 +235,13 @@ impl AgentFs {
             .append(format!("child:{child_pid}\n").as_bytes())
             .await;
     }
+
+    pub(crate) async fn append_output_event(&self, count: u32) {
+        let state = self.state.lock().await;
+        let record = format!("output:{count}\n");
+        state.io_events.append(record.as_bytes()).await;
+        state.events.append(record.as_bytes()).await;
+    }
 }
 
 impl State {

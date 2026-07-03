@@ -476,49 +476,65 @@ impl FileServer for ProcFs {
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let mut state = self.state.lock().await;
-        let fid_key = self.fid_key(fid);
-        let node = state.node_of(fid_key, &self.root_node)?;
-        // Write surfaces require write authority established at open.
-        let has_write_intent = state
-            .fids
-            .get(&fid_key)
-            .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
-        match node {
-            // Exec-spec document for a clone fid: buffer at the given offset until
-            // clunk (commit-on-clunk; honor offsets, bound size, reject overflow).
-            Node::Clone => {
-                if !has_write_intent {
-                    return Err(ErrorCode::NoAccess);
+        let output = {
+            let mut state = self.state.lock().await;
+            let fid_key = self.fid_key(fid);
+            let node = state.node_of(fid_key, &self.root_node)?;
+            // Write surfaces require write authority established at open.
+            let has_write_intent = state
+                .fids
+                .get(&fid_key)
+                .is_some_and(|f| matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)));
+            match node {
+                // Exec-spec document for a clone fid: buffer at the given offset until
+                // clunk (commit-on-clunk; honor offsets, bound size, reject overflow).
+                Node::Clone => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
+                    if f.clone_pid.is_none() {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+                    if end > MAX_EXEC_SPEC_BYTES {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    if f.write_buf.len() < end {
+                        f.write_buf.resize(end, 0);
+                    }
+                    f.write_buf[start..end].copy_from_slice(data);
+                    return Ok(data.len() as u32);
                 }
-                let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
-                if f.clone_pid.is_none() {
-                    return Err(ErrorCode::BadRequest);
+                // Generic process control (interrupt/cancel) routes through ctl.
+                Node::Ctl(pid) => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    match data {
+                        b"cancel" | b"interrupt" => state.table.exit(pid, 130),
+                        _ => return Err(ErrorCode::BadRequest),
+                    }
+                    return Ok(data.len() as u32);
                 }
-                let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                if end > MAX_EXEC_SPEC_BYTES {
-                    return Err(ErrorCode::BadRequest);
+                // Process output is a stream owned by `/proc`; process descriptors
+                // write to it, and readers tail it through `io/output`.
+                Node::Output(pid) => {
+                    if !has_write_intent {
+                        return Err(ErrorCode::NoAccess);
+                    }
+                    state
+                        .outputs
+                        .get(&pid)
+                        .cloned()
+                        .ok_or(ErrorCode::NotFound)?
                 }
-                if f.write_buf.len() < end {
-                    f.write_buf.resize(end, 0);
-                }
-                f.write_buf[start..end].copy_from_slice(data);
-                Ok(data.len() as u32)
+                _ => return Err(ErrorCode::Unsupported),
             }
-            // Generic process control (interrupt/cancel) routes through ctl.
-            Node::Ctl(pid) => {
-                if !has_write_intent {
-                    return Err(ErrorCode::NoAccess);
-                }
-                match data {
-                    b"cancel" | b"interrupt" => state.table.exit(pid, 130),
-                    _ => return Err(ErrorCode::BadRequest),
-                }
-                Ok(data.len() as u32)
-            }
-            _ => Err(ErrorCode::Unsupported),
-        }
+        };
+        output.append(data).await;
+        Ok(data.len() as u32)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
@@ -667,7 +683,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
 }
 
 fn is_writable(node: &Node) -> bool {
-    matches!(node, Node::Clone | Node::Ctl(_))
+    matches!(node, Node::Clone | Node::Ctl(_) | Node::Output(_))
 }
 
 fn next_view_id() -> u64 {

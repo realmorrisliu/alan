@@ -119,10 +119,58 @@ async fn agent_root_alias_forwards_to_the_root_agent_surface() {
         String::from_utf8(shell.cat(&format!("/agent/{pid}/io/output")).await.unwrap()).unwrap(),
         "hello root"
     );
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/io/output")).await.unwrap()).unwrap(),
+        "hello root"
+    );
     assert!(matches!(
         shell.ls(&format!("/proc/{pid}/machine")).await,
         Err(ErrorCode::NotFound)
     ));
+}
+
+#[tokio::test]
+async fn agent_io_output_writes_to_the_proc_output_stream() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let io_fid = Fid(9_100);
+    let output_fid = Fid(9_101);
+    agent_root
+        .walk(Fid::ROOT, io_fid, &[pid.clone(), "io".to_string()])
+        .await
+        .unwrap();
+    agent_root
+        .walk(io_fid, output_fid, &["output".to_string()])
+        .await
+        .unwrap();
+    agent_root.open(output_fid, OpenMode::Write).await.unwrap();
+    agent_root
+        .write(output_fid, 0, b"shared output")
+        .await
+        .unwrap();
+    agent_root.clunk(output_fid).await.unwrap();
+    agent_root.clunk(io_fid).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/io/output")).await.unwrap()).unwrap(),
+        "shared output"
+    );
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/output")).await.unwrap()).unwrap(),
+        "shared output"
+    );
+    assert!(
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap())
+            .unwrap()
+            .contains("output:13")
+    );
 }
 
 #[tokio::test]
@@ -341,7 +389,7 @@ async fn agent_root_rejects_creates_for_overlay_reserved_names() {
         .walk(Fid::ROOT, dir_fid, std::slice::from_ref(&pid))
         .await
         .unwrap();
-    for (idx, name) in ["children", "status", "ctl"].into_iter().enumerate() {
+    for (idx, name) in ["children", "status", "ctl", "io"].into_iter().enumerate() {
         assert_eq!(
             agent_root
                 .create(dir_fid, Fid(13_001 + idx as u64), name, FileKind::File)

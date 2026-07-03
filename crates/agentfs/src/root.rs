@@ -43,6 +43,11 @@ enum Node {
     AgentChildren {
         pid: String,
     },
+    AgentIoDir {
+        pid: String,
+        backing: Arc<dyn FileServer>,
+        backing_fid: Fid,
+    },
     AgentFile {
         pid: String,
         backing: Arc<dyn FileServer>,
@@ -51,6 +56,7 @@ enum Node {
     ProcFile {
         proc: Arc<dyn FileServer>,
         proc_fid: Fid,
+        output_events: Option<Arc<AgentFs>>,
     },
 }
 
@@ -216,12 +222,20 @@ impl AgentRootFs {
             if names.first().is_some_and(|name| name == "children") {
                 return self.bind_agent_child_walk(newfid, &pid, &names[1..]).await;
             }
+            if is_proc_io_output_path(names) {
+                return self.bind_proc_walk(newfid, &pid, names).await;
+            }
             if names.first().is_some_and(|name| is_proc_overlay_name(name)) {
                 return self.bind_proc_walk(newfid, &pid, names).await;
             }
         }
         let backing_fid = Fid(NEXT_BACKING_FID.fetch_add(1, Ordering::Relaxed));
         match backing.walk(base_fid, backing_fid, names).await {
+            Ok(_) if is_agent_io_dir_path(base_fid, names) => Ok(Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+            }),
             Ok(_) => Ok(Node::AgentFile {
                 pid,
                 backing,
@@ -270,6 +284,11 @@ impl AgentRootFs {
             Ok(_) => Ok(Node::ProcFile {
                 proc: self.proc.clone(),
                 proc_fid,
+                output_events: if is_proc_io_output_path(names) {
+                    self.event_sink_for_pid(pid).await
+                } else {
+                    None
+                },
             }),
             Err(e) => {
                 let _ = self.proc.clunk(proc_fid).await;
@@ -334,6 +353,15 @@ impl AgentRootFs {
         Ok(names)
     }
 
+    async fn event_sink_for_pid(&self, pid: &str) -> Option<Arc<AgentFs>> {
+        self.state
+            .lock()
+            .await
+            .agents
+            .get(pid)
+            .and_then(|agent| agent.event_sink.clone())
+    }
+
     async fn create_agent_file(
         &self,
         newfid: Fid,
@@ -393,6 +421,7 @@ impl AgentRootFs {
                 Node::ProcFile {
                     proc: proc.clone(),
                     proc_fid,
+                    output_events: None,
                 },
             )
             .await
@@ -456,6 +485,21 @@ impl FileServer for AgentRootFs {
                     .await?
             }
             Node::AgentChildren { pid } => self.bind_agent_child_walk(newfid, &pid, names).await?,
+            Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+            } => {
+                if names.first().is_some_and(|name| name == "output") {
+                    let mut proc_names = Vec::with_capacity(names.len() + 1);
+                    proc_names.push("io".to_string());
+                    proc_names.extend_from_slice(names);
+                    self.bind_proc_walk(newfid, &pid, &proc_names).await?
+                } else {
+                    self.bind_agent_walk(newfid, pid, backing, backing_fid, names)
+                        .await?
+                }
+            }
             Node::AgentFile {
                 pid,
                 backing,
@@ -494,6 +538,15 @@ impl FileServer for AgentRootFs {
                 .open(Fid::ROOT, mode)
                 .await
                 .map(|qid| namespace_agent_qid(&pid, qid)),
+            Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+                ..
+            } => backing
+                .open(backing_fid, mode)
+                .await
+                .map(|qid| namespace_agent_qid(&pid, qid)),
             Node::AgentFile {
                 pid,
                 backing,
@@ -503,7 +556,7 @@ impl FileServer for AgentRootFs {
                 .open(backing_fid, mode)
                 .await
                 .map(|qid| namespace_agent_qid(&pid, qid)),
-            Node::ProcFile { proc, proc_fid } => proc.open(proc_fid, mode).await,
+            Node::ProcFile { proc, proc_fid, .. } => proc.open(proc_fid, mode).await,
         }
     }
 
@@ -530,12 +583,17 @@ impl FileServer for AgentRootFs {
                 offset,
                 count,
             )),
+            Node::AgentIoDir {
+                backing,
+                backing_fid,
+                ..
+            } => backing.read(backing_fid, offset, count).await,
             Node::AgentFile {
                 backing,
                 backing_fid,
                 ..
             } => backing.read(backing_fid, offset, count).await,
-            Node::ProcFile { proc, proc_fid } => proc.read(proc_fid, offset, count).await,
+            Node::ProcFile { proc, proc_fid, .. } => proc.read(proc_fid, offset, count).await,
         }
     }
 
@@ -544,12 +602,27 @@ impl FileServer for AgentRootFs {
             Node::Root => Err(ErrorCode::NoAccess),
             Node::AgentChildren { .. } => Err(ErrorCode::NoAccess),
             Node::AgentRoot { backing, .. } => backing.write(Fid::ROOT, offset, data).await,
+            Node::AgentIoDir {
+                backing,
+                backing_fid,
+                ..
+            } => backing.write(backing_fid, offset, data).await,
             Node::AgentFile {
                 backing,
                 backing_fid,
                 ..
             } => backing.write(backing_fid, offset, data).await,
-            Node::ProcFile { proc, proc_fid } => proc.write(proc_fid, offset, data).await,
+            Node::ProcFile {
+                proc,
+                proc_fid,
+                output_events,
+            } => {
+                let count = proc.write(proc_fid, offset, data).await?;
+                if let Some(events) = output_events {
+                    events.append_output_event(count).await;
+                }
+                Ok(count)
+            }
         }
     }
 
@@ -579,6 +652,16 @@ impl FileServer for AgentRootFs {
                     writable: false,
                 })
             }
+            Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+                ..
+            } => {
+                let mut stat = backing.stat(backing_fid).await?;
+                stat.qid = namespace_agent_qid(&pid, stat.qid);
+                Ok(stat)
+            }
             Node::AgentFile {
                 pid,
                 backing,
@@ -589,7 +672,7 @@ impl FileServer for AgentRootFs {
                 stat.qid = namespace_agent_qid(&pid, stat.qid);
                 Ok(stat)
             }
-            Node::ProcFile { proc, proc_fid } => proc.stat(proc_fid).await,
+            Node::ProcFile { proc, proc_fid, .. } => proc.stat(proc_fid).await,
         }
     }
 
@@ -613,6 +696,15 @@ impl FileServer for AgentRootFs {
                 self.create_agent_file(newfid, pid, backing, Fid::ROOT, name, kind)
                     .await
             }
+            Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+                ..
+            } => {
+                self.create_agent_file(newfid, pid, backing, backing_fid, name, kind)
+                    .await
+            }
             Node::AgentFile {
                 pid,
                 backing,
@@ -622,7 +714,7 @@ impl FileServer for AgentRootFs {
                 self.create_agent_file(newfid, pid, backing, backing_fid, name, kind)
                     .await
             }
-            Node::ProcFile { proc, proc_fid } => {
+            Node::ProcFile { proc, proc_fid, .. } => {
                 self.create_proc_file(newfid, proc, proc_fid, name, kind)
                     .await
             }
@@ -637,12 +729,17 @@ impl FileServer for AgentRootFs {
             Node::Root => Err(ErrorCode::Unsupported),
             Node::AgentChildren { .. } => Err(ErrorCode::Unsupported),
             Node::AgentRoot { backing, .. } => backing.remove(Fid::ROOT).await,
+            Node::AgentIoDir {
+                backing,
+                backing_fid,
+                ..
+            } => backing.remove(backing_fid).await,
             Node::AgentFile {
                 backing,
                 backing_fid,
                 ..
             } => backing.remove(backing_fid).await,
-            Node::ProcFile { proc, proc_fid } => proc.remove(proc_fid).await,
+            Node::ProcFile { proc, proc_fid, .. } => proc.remove(proc_fid).await,
         }?;
         self.state.lock().await.fids.remove(&fid);
         Ok(())
@@ -654,12 +751,17 @@ impl FileServer for AgentRootFs {
         }
         let entry = self.state.lock().await.fids.remove(&fid);
         match entry.map(|entry| entry.node) {
+            Some(Node::AgentIoDir {
+                backing,
+                backing_fid,
+                ..
+            }) => backing.clunk(backing_fid).await,
             Some(Node::AgentFile {
                 backing,
                 backing_fid,
                 ..
             }) => backing.clunk(backing_fid).await,
-            Some(Node::ProcFile { proc, proc_fid }) => proc.clunk(proc_fid).await,
+            Some(Node::ProcFile { proc, proc_fid, .. }) => proc.clunk(proc_fid).await,
             Some(Node::Root | Node::AgentRoot { .. } | Node::AgentChildren { .. }) => Ok(()),
             None => Err(ErrorCode::NotFound),
         }
@@ -686,6 +788,15 @@ impl AgentRootFs {
                 let listing = self.agent_child_listing(pid).await?;
                 Ok(agent_children_qid(pid, &listing))
             }
+            Node::AgentIoDir {
+                pid,
+                backing,
+                backing_fid,
+                ..
+            } => backing
+                .stat(*backing_fid)
+                .await
+                .map(|stat| namespace_agent_qid(pid, stat.qid)),
             Node::AgentFile {
                 pid,
                 backing,
@@ -695,7 +806,9 @@ impl AgentRootFs {
                 .stat(*backing_fid)
                 .await
                 .map(|stat| namespace_agent_qid(pid, stat.qid)),
-            Node::ProcFile { proc, proc_fid } => proc.stat(*proc_fid).await.map(|stat| stat.qid),
+            Node::ProcFile { proc, proc_fid, .. } => {
+                proc.stat(*proc_fid).await.map(|stat| stat.qid)
+            }
         }
     }
 }
@@ -773,7 +886,15 @@ fn is_proc_overlay_name(name: &str) -> bool {
 }
 
 fn is_agent_overlay_reserved_name(name: &str) -> bool {
-    name == "children" || is_proc_overlay_name(name)
+    matches!(name, "children" | "io") || is_proc_overlay_name(name)
+}
+
+fn is_agent_io_dir_path(base_fid: Fid, names: &[String]) -> bool {
+    base_fid == Fid::ROOT && names.len() == 1 && names[0] == "io"
+}
+
+fn is_proc_io_output_path(names: &[String]) -> bool {
+    names.len() >= 2 && names[0] == "io" && names[1] == "output"
 }
 
 fn agent_children_qid(pid: &str, children: &[String]) -> Qid {
@@ -794,14 +915,19 @@ fn root_qid(listing: &[String]) -> Qid {
 
 async fn release_node(node: Node) {
     match node {
-        Node::AgentFile {
+        Node::AgentIoDir {
+            backing,
+            backing_fid,
+            ..
+        }
+        | Node::AgentFile {
             backing,
             backing_fid,
             ..
         } => {
             let _ = backing.clunk(backing_fid).await;
         }
-        Node::ProcFile { proc, proc_fid } => {
+        Node::ProcFile { proc, proc_fid, .. } => {
             let _ = proc.clunk(proc_fid).await;
         }
         Node::Root | Node::AgentRoot { .. } | Node::AgentChildren { .. } => {}
