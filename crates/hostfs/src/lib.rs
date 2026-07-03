@@ -48,8 +48,30 @@ pub struct HostDirFs {
 struct HostFid {
     rel: Vec<String>,
     mode: Option<OpenMode>,
+    write_identity: Option<HostFileIdentity>,
     write_buf: Vec<u8>,
     wrote: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HostFileIdentity {
+    dev: u64,
+    ino: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+    len: u64,
+}
+
+impl HostFileIdentity {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            len: metadata.len(),
+        }
+    }
 }
 
 impl HostDirFs {
@@ -178,6 +200,7 @@ impl FileServer for HostDirFs {
             HostFid {
                 rel,
                 mode: None,
+                write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
             },
@@ -192,6 +215,7 @@ impl FileServer for HostDirFs {
         let mut fids = self.fids.lock().await;
         let rel = Self::rel_for_fid(&fids, fid)?;
         let mut write_seed = None;
+        let mut write_identity = None;
         let qid = match mode {
             OpenMode::Read => {
                 let handle = self.existing_handle(&rel)?;
@@ -203,6 +227,7 @@ impl FileServer for HostDirFs {
                 HostEntryKind::File => {
                     let handle = self.existing_write_handle(&rel)?;
                     reject_multiply_linked_file(&handle.metadata)?;
+                    write_identity = Some(HostFileIdentity::from_metadata(&handle.metadata));
                     self.qid_for_metadata(&handle.metadata)?
                 }
             },
@@ -212,10 +237,13 @@ impl FileServer for HostDirFs {
                 if qid.kind == FileKind::Dir {
                     return Err(ErrorCode::IsDirectory);
                 }
+                let read_identity = HostFileIdentity::from_metadata(&handle.metadata);
                 let write_handle = self.existing_write_handle(&rel)?;
                 reject_multiply_linked_file(&write_handle.metadata)?;
+                ensure_same_file_identity(&write_handle.metadata, read_identity)?;
                 drop(write_handle);
                 write_seed = Some(read_file_for_write_seed(handle.file)?);
+                write_identity = Some(read_identity);
                 qid
             }
         };
@@ -224,6 +252,7 @@ impl FileServer for HostDirFs {
                 return Err(ErrorCode::BadRequest);
             }
             fid_state.mode = Some(mode);
+            fid_state.write_identity = write_identity;
             if let Some(seed) = write_seed {
                 fid_state.write_buf = seed;
             }
@@ -332,6 +361,7 @@ impl FileServer for HostDirFs {
             HostFid {
                 rel,
                 mode: None,
+                write_identity: None,
                 write_buf: Vec::new(),
                 wrote: false,
             },
@@ -360,7 +390,13 @@ impl FileServer for HostDirFs {
         let mut fids = self.fids.lock().await;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         if fid_state.wrote {
-            atomic_replace_file(&self.root_dir, &fid_state.rel, &fid_state.write_buf)?;
+            let identity = fid_state.write_identity.ok_or(ErrorCode::BadRequest)?;
+            atomic_replace_file(
+                &self.root_dir,
+                &fid_state.rel,
+                identity,
+                &fid_state.write_buf,
+            )?;
         }
         Ok(())
     }
@@ -704,9 +740,21 @@ fn reject_multiply_linked_file(metadata: &std::fs::Metadata) -> Result<(), Error
     }
 }
 
+fn ensure_same_file_identity(
+    metadata: &std::fs::Metadata,
+    expected: HostFileIdentity,
+) -> Result<(), ErrorCode> {
+    if HostFileIdentity::from_metadata(metadata) == expected {
+        Ok(())
+    } else {
+        Err(ErrorCode::NoAccess)
+    }
+}
+
 fn atomic_replace_file(
     root_dir: &std::fs::File,
     rel: &[String],
+    expected_identity: HostFileIdentity,
     bytes: &[u8],
 ) -> Result<(), ErrorCode> {
     let (parent, name) = open_parent_for_entry(root_dir, rel)?;
@@ -721,6 +769,7 @@ fn atomic_replace_file(
         return Err(ErrorCode::Unsupported);
     }
     reject_multiply_linked_file(&existing_metadata)?;
+    ensure_same_file_identity(&existing_metadata, expected_identity)?;
     let mode = existing_metadata.mode() & 0o7777;
     drop(existing);
 
@@ -1003,6 +1052,25 @@ mod tests {
         assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "safe");
         assert_eq!(std::fs::read_to_string(outside_alias).unwrap(), "safe");
+    }
+
+    #[tokio::test]
+    async fn clunk_rejects_host_file_replaced_after_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("target.txt");
+        std::fs::write(&path, "safe").unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["target.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        fs.write(Fid(1), 0, b"changed").await.unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "external").unwrap();
+
+        assert_eq!(fs.clunk(Fid(1)).await.unwrap_err(), ErrorCode::NoAccess);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "external");
     }
 
     #[cfg(unix)]
