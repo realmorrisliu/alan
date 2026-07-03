@@ -1154,14 +1154,14 @@ impl FileServer for LlmFs {
                 Node::GenData(id)
                     if matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) =>
                 {
-                    let generation = state.gens.get(&id).cloned();
+                    let generation = state.gens.get(&id).cloned().ok_or(ErrorCode::BadRequest)?;
                     Some((f.write_buf, generation))
                 }
                 _ => None,
             }
         };
 
-        let Some((buf, Some(generation))) = commit else {
+        let Some((buf, generation)) = commit else {
             return Ok(());
         };
 

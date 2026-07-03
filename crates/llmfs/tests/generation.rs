@@ -1296,6 +1296,35 @@ async fn unregister_connection_aborts_active_generations() {
 }
 
 #[tokio::test]
+async fn unregister_connection_makes_in_flight_data_commit_fail() {
+    let fs = llmfs();
+    let g = clone_gen(&fs, Fid(1)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(2),
+        &[
+            "connections".into(),
+            "default".into(),
+            g.clone(),
+            "data".into(),
+        ],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+
+    fs.unregister_connection("default").await;
+
+    assert_eq!(
+        fs.clunk(Fid(2)).await,
+        Err(ErrorCode::BadRequest),
+        "commit-on-clunk must not report success after unregister discards the Generation"
+    );
+}
+
+#[tokio::test]
 async fn an_early_closed_stream_ends_with_a_terminal_error() {
     let fs = llmfs_with(EarlyCloseProvider);
     let g = clone_gen(&fs, Fid(1)).await;
