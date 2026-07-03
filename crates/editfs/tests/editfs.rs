@@ -60,6 +60,28 @@ async fn body_and_tag_commit_on_clunk_and_emit_events() {
 }
 
 #[tokio::test]
+async fn readwrite_edits_preserve_existing_body_and_tag_bytes() {
+    let fs = EditFs::new();
+    write_doc(&fs, &["body"], Fid(1), b"abcdef").await.unwrap();
+    write_doc(&fs, &["tag"], Fid(2), b"status-line")
+        .await
+        .unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["body".into()]).await.unwrap();
+    fs.open(Fid(3), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(3), 2, b"XY").await.unwrap();
+    fs.clunk(Fid(3)).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(4), &["tag".into()]).await.unwrap();
+    fs.open(Fid(4), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(4), 7, b"row").await.unwrap();
+    fs.clunk(Fid(4)).await.unwrap();
+
+    assert_eq!(read_text(&fs, &["body"], Fid(5)).await, "abXYef");
+    assert_eq!(read_text(&fs, &["tag"], Fid(6)).await, "status-rowe");
+}
+
+#[tokio::test]
 async fn invalid_utf8_is_rejected_without_changing_visible_content() {
     let fs = EditFs::new();
     write_doc(&fs, &["body"], Fid(1), b"stable").await.unwrap();

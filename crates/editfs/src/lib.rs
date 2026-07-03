@@ -333,9 +333,19 @@ impl FileServer for EditFs {
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
             return Err(ErrorCode::NoAccess);
         }
+        let read_write_seed = if matches!(mode, OpenMode::ReadWrite)
+            && matches!(node, Node::Body | Node::Tag | Node::Addr)
+        {
+            Some(state.computed_bytes(&node)?)
+        } else {
+            None
+        };
         if fid != Fid::ROOT {
             let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
             f.mode = Some(mode);
+            if let Some(seed) = read_write_seed {
+                f.write_buf = seed;
+            }
         }
         Ok(state.qid(&node))
     }
