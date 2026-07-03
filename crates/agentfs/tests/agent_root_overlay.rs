@@ -181,6 +181,50 @@ async fn agent_io_output_writes_to_the_proc_output_stream() {
 }
 
 #[tokio::test]
+async fn agent_io_input_writes_to_the_proc_input_stream() {
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let io_fid = Fid(9_150);
+    let input_fid = Fid(9_151);
+    agent_root
+        .walk(Fid::ROOT, io_fid, &[pid.clone(), "io".to_string()])
+        .await
+        .unwrap();
+    agent_root
+        .walk(io_fid, input_fid, &["input".to_string()])
+        .await
+        .unwrap();
+    agent_root.open(input_fid, OpenMode::Write).await.unwrap();
+    agent_root
+        .write(input_fid, 0, b"shared input")
+        .await
+        .unwrap();
+    agent_root.clunk(input_fid).await.unwrap();
+    agent_root.clunk(io_fid).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/io/input")).await.unwrap()).unwrap(),
+        "shared input"
+    );
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap(),
+        "shared input"
+    );
+    assert!(
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/events")).await.unwrap())
+            .unwrap()
+            .contains("input:12")
+    );
+}
+
+#[tokio::test]
 async fn direct_proc_output_writes_publish_agent_events() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
