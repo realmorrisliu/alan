@@ -129,6 +129,24 @@ impl HostDirFs {
             HostEntryKind::Dir | HostEntryKind::File => Err(ErrorCode::NoAccess),
         }
     }
+
+    fn qid_for_rel_no_follow(&self, rel: &[String]) -> Result<Qid, ErrorCode> {
+        if rel.is_empty() {
+            return self.qid_for_metadata(&self.root_dir.metadata().map_err(|_| ErrorCode::Io)?);
+        }
+        let (parent, name) = open_parent_for_entry(&self.root_dir, rel)?;
+        let stat = entry_stat_at(parent.file.as_raw_fd(), &name)?;
+        qid_for_entry_stat(&stat)
+    }
+
+    fn entry_kind_for_rel(&self, rel: &[String]) -> Result<HostEntryKind, ErrorCode> {
+        validate_rel(rel)?;
+        if rel.is_empty() {
+            return Ok(HostEntryKind::Dir);
+        }
+        let (parent, name) = open_parent_for_entry(&self.root_dir, rel)?;
+        entry_kind_at(parent.file.as_raw_fd(), &name)
+    }
 }
 
 #[async_trait]
@@ -146,7 +164,11 @@ impl FileServer for HostDirFs {
         rel.extend(names.iter().cloned());
         let qid = match self.existing_handle(&rel) {
             Ok(handle) => self.qid_for_metadata(&handle.metadata)?,
-            Err(ErrorCode::NoAccess) => self.symlink_qid_for_rel(&rel)?,
+            Err(ErrorCode::NoAccess) => match self.qid_for_rel_no_follow(&rel) {
+                Ok(qid) => qid,
+                Err(ErrorCode::NoAccess) => self.symlink_qid_for_rel(&rel)?,
+                Err(error) => return Err(error),
+            },
             Err(error) => return Err(error),
         };
         fids.insert(
@@ -167,28 +189,41 @@ impl FileServer for HostDirFs {
         }
         let mut fids = self.fids.lock().await;
         let rel = Self::rel_for_fid(&fids, fid)?;
-        let handle = self.existing_handle(&rel)?;
-        let qid = self.qid_for_metadata(&handle.metadata)?;
-        if qid.kind == FileKind::Dir && matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
-            return Err(ErrorCode::IsDirectory);
-        }
-        let write_handle = if qid.kind == FileKind::File
-            && matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
-        {
-            Some(self.existing_write_handle(&rel)?)
-        } else {
-            None
+        let mut write_seed = None;
+        let qid = match mode {
+            OpenMode::Read => {
+                let handle = self.existing_handle(&rel)?;
+                self.qid_for_metadata(&handle.metadata)?
+            }
+            OpenMode::Write => match self.entry_kind_for_rel(&rel)? {
+                HostEntryKind::Dir => return Err(ErrorCode::IsDirectory),
+                HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
+                HostEntryKind::File => {
+                    let handle = self.existing_write_handle(&rel)?;
+                    self.qid_for_metadata(&handle.metadata)?
+                }
+            },
+            OpenMode::ReadWrite => {
+                let handle = self.existing_handle(&rel)?;
+                let qid = self.qid_for_metadata(&handle.metadata)?;
+                if qid.kind == FileKind::Dir {
+                    return Err(ErrorCode::IsDirectory);
+                }
+                let write_handle = self.existing_write_handle(&rel)?;
+                drop(write_handle);
+                write_seed = Some(read_file_for_write_seed(handle.file)?);
+                qid
+            }
         };
         if let Some(fid_state) = fids.get_mut(&fid) {
             if fid_state.mode.is_some() {
                 return Err(ErrorCode::BadRequest);
             }
             fid_state.mode = Some(mode);
-            if matches!(mode, OpenMode::ReadWrite) && qid.kind == FileKind::File {
-                fid_state.write_buf = read_file_for_write_seed(handle.file)?;
+            if let Some(seed) = write_seed {
+                fid_state.write_buf = seed;
             }
         }
-        drop(write_handle);
         Ok(qid)
     }
 
@@ -223,9 +258,10 @@ impl FileServer for HostDirFs {
         if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
-        let handle = self.existing_handle(&fid_state.rel)?;
-        if !handle.metadata.is_file() {
-            return Err(ErrorCode::Unsupported);
+        match self.entry_kind_for_rel(&fid_state.rel)? {
+            HostEntryKind::File => {}
+            HostEntryKind::Dir => return Err(ErrorCode::IsDirectory),
+            HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
         }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
@@ -451,6 +487,7 @@ fn unlink_child(parent_fd: RawFd, name: &str, flags: libc::c_int) -> Result<(), 
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HostEntryKind {
     Dir,
     File,
@@ -458,6 +495,11 @@ enum HostEntryKind {
 }
 
 fn entry_kind_at(parent_fd: RawFd, name: &str) -> Result<HostEntryKind, ErrorCode> {
+    let stat = entry_stat_at(parent_fd, name)?;
+    entry_kind_from_stat(&stat)
+}
+
+fn entry_stat_at(parent_fd: RawFd, name: &str) -> Result<libc::stat, ErrorCode> {
     let name = c_name(name)?;
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     let result = unsafe {
@@ -471,7 +513,10 @@ fn entry_kind_at(parent_fd: RawFd, name: &str) -> Result<HostEntryKind, ErrorCod
     if result != 0 {
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
-    let stat = unsafe { stat.assume_init() };
+    Ok(unsafe { stat.assume_init() })
+}
+
+fn entry_kind_from_stat(stat: &libc::stat) -> Result<HostEntryKind, ErrorCode> {
     let mode = stat.st_mode as libc::mode_t;
     match mode & libc::S_IFMT {
         libc::S_IFDIR => Ok(HostEntryKind::Dir),
@@ -479,6 +524,19 @@ fn entry_kind_at(parent_fd: RawFd, name: &str) -> Result<HostEntryKind, ErrorCod
         libc::S_IFLNK => Ok(HostEntryKind::Symlink),
         _ => Err(ErrorCode::Unsupported),
     }
+}
+
+fn qid_for_entry_stat(stat: &libc::stat) -> Result<Qid, ErrorCode> {
+    let kind = match entry_kind_from_stat(stat)? {
+        HostEntryKind::Dir => FileKind::Dir,
+        HostEntryKind::File => FileKind::File,
+        HostEntryKind::Symlink => return Err(ErrorCode::NoAccess),
+    };
+    Ok(Qid {
+        kind,
+        version: 0,
+        path: qid_path_from_stat(stat),
+    })
 }
 
 fn openat_file(
@@ -622,6 +680,13 @@ fn qid_path(metadata: &std::fs::Metadata) -> u64 {
     let mut hasher = DefaultHasher::new();
     metadata.dev().hash(&mut hasher);
     metadata.ino().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn qid_path_from_stat(stat: &libc::stat) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    stat.st_dev.hash(&mut hasher);
+    stat.st_ino.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -774,6 +839,28 @@ mod tests {
             fs.open(Fid(2), OpenMode::ReadWrite).await.unwrap_err(),
             ErrorCode::NoAccess
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_open_allows_host_file_without_read_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("writeonly.txt");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["writeonly.txt".to_string()])
+            .await
+            .unwrap();
+        fs.open(Fid(1), OpenMode::Write).await.unwrap();
+        fs.write(Fid(1), 0, b"new").await.unwrap();
+        fs.clunk(Fid(1)).await.unwrap();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "new");
     }
 
     #[test]
