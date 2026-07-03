@@ -65,6 +65,7 @@ pub fn sandbox_spec_from_host_mounts(
     declarations: &[HostMountDeclaration],
 ) -> Result<SandboxSpec> {
     validate_non_overlapping_declarations(declarations)?;
+    let mut effective_writable_roots = vec![canonical_host_path_or_original(&workspace_root)];
     let mut spec = SandboxSpec {
         writable_roots: vec![workspace_root],
         read_denylist: Vec::new(),
@@ -81,14 +82,52 @@ pub fn sandbox_spec_from_host_mounts(
             )
         })?;
         if !spec.writable_roots.contains(&host_path) {
-            spec.writable_roots.push(host_path);
+            spec.writable_roots.push(host_path.clone());
+        }
+        if !effective_writable_roots.contains(&host_path) {
+            effective_writable_roots.push(host_path);
         }
     }
+    validate_read_only_mounts_not_covered_by_writable_roots(
+        &effective_writable_roots,
+        declarations,
+    )?;
     Ok(spec)
 }
 
 fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
+}
+
+fn canonical_host_path_or_original(path: &Path) -> PathBuf {
+    canonical_host_path(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn validate_read_only_mounts_not_covered_by_writable_roots(
+    writable_roots: &[PathBuf],
+    declarations: &[HostMountDeclaration],
+) -> Result<()> {
+    for declaration in declarations {
+        if declaration.access != Access::ReadOnly {
+            continue;
+        }
+        let host_path = canonical_host_path(&declaration.host_path).with_context(|| {
+            format!(
+                "failed to project read-only host mount {}",
+                declaration.host_path.display()
+            )
+        })?;
+        for writable_root in writable_roots {
+            if host_paths_overlap(&host_path, writable_root) {
+                anyhow::bail!(
+                    "read-only host mount {} overlaps writable root {}",
+                    host_path.display(),
+                    writable_root.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_non_overlapping_declarations(declarations: &[HostMountDeclaration]) -> Result<()> {
@@ -136,6 +175,10 @@ fn normalized_namespace_components(path: &str) -> Result<Vec<&str>> {
 fn namespace_paths_overlap(left: &[&str], right: &[&str]) -> bool {
     left.len() <= right.len() && right.starts_with(left)
         || right.len() <= left.len() && left.starts_with(right)
+}
+
+fn host_paths_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
 }
 
 #[cfg(test)]
@@ -239,6 +282,38 @@ mod tests {
         let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
             .unwrap_err();
         assert!(err.to_string().contains("overlapping host mount"));
+    }
+
+    #[test]
+    fn read_only_mount_inside_workspace_writable_root_is_rejected() {
+        let workspace = tempfile::tempdir().unwrap();
+        let docs = workspace.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let declarations = vec![HostMountDeclaration::new(
+            "/mnt/docs",
+            docs,
+            Access::ReadOnly,
+        )];
+
+        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
+            .unwrap_err();
+        assert!(err.to_string().contains("read-only host mount"));
+    }
+
+    #[test]
+    fn read_only_mount_inside_writable_host_mount_is_rejected() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        let docs = host.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let declarations = vec![
+            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            HostMountDeclaration::new("/mnt/docs", docs, Access::ReadOnly),
+        ];
+
+        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
+            .unwrap_err();
+        assert!(err.to_string().contains("read-only host mount"));
     }
 
     #[test]
