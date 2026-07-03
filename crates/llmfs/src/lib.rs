@@ -1078,24 +1078,36 @@ impl FileServer for LlmFs {
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let node = self.node_of(fid)?;
         // Resolve the qid and length under the lock; for the `events` stream, clone
         // it out and await its length *without* the lock held.
-        let (qid, len) = {
+        let (qid, len, writable) = {
             let state = self.state.lock().unwrap();
+            let (node, opened_events) = if fid == Fid::ROOT {
+                (Node::Root, None)
+            } else {
+                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                (f.node.clone(), f.events.clone())
+            };
             let qid = state.qid(&node);
             let len = match &node {
-                Node::GenEvents(id) => match state.gens.get(id) {
-                    Some(g) => Len::Events(g.events.clone()),
-                    None => Len::Now(0),
-                },
+                Node::GenEvents(id) => {
+                    if let Some(events) = opened_events {
+                        Len::Events(events)
+                    } else {
+                        match state.gens.get(id) {
+                            Some(g) => Len::Events(g.events.clone()),
+                            None => Len::Now(0),
+                        }
+                    }
+                }
                 other => Len::Now(
                     computed_bytes(&state, other)
                         .map(|b| b.len() as u64)
                         .unwrap_or(0),
                 ),
             };
-            (qid, len)
+            let writable = is_writable(&node);
+            (qid, len, writable)
         };
         let length = match len {
             Len::Now(n) => n,
@@ -1105,7 +1117,7 @@ impl FileServer for LlmFs {
             name: String::new(),
             qid,
             length,
-            writable: is_writable(&node),
+            writable,
         })
     }
 

@@ -1071,6 +1071,52 @@ async fn terminal_generations_are_reaped_by_retention_policy() {
 }
 
 #[tokio::test]
+async fn opened_events_stat_survives_retention_reap() {
+    let fs = llmfs();
+    let mut oldest = String::new();
+    let oldest_events_fid = Fid(12);
+
+    for i in 0..17 {
+        let gen_id = clone_gen(&fs, Fid(10 + i * 3)).await;
+        commit_request(&fs, &gen_id, Fid(11 + i * 3), br#"{"user":"hi"}"#)
+            .await
+            .unwrap();
+        drain_events(&fs, &gen_id, Fid(12 + i * 3)).await;
+        if i == 0 {
+            oldest = gen_id;
+        }
+    }
+
+    let _open_gen = clone_gen(&fs, Fid(1000)).await;
+    assert_eq!(
+        fs.walk(
+            Fid::ROOT,
+            Fid(1001),
+            &[
+                "connections".into(),
+                "default".into(),
+                oldest.clone(),
+                "status".into(),
+            ],
+        )
+        .await,
+        Err(ErrorCode::NotFound),
+        "oldest terminal Generation should be reaped"
+    );
+
+    let events = fs.read(oldest_events_fid, 0, 65536).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&events).contains("\"done\""),
+        "opened events fid still reads retained terminal bytes"
+    );
+    assert_eq!(
+        fs.stat(oldest_events_fid).await.unwrap().length,
+        events.len() as u64,
+        "opened events fid stat must report retained stream length after reap"
+    );
+}
+
+#[tokio::test]
 async fn a_reused_fid_is_rejected() {
     let fs = llmfs();
     fs.walk(Fid::ROOT, Fid(1), &["connections".into()])
