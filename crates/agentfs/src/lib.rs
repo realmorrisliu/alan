@@ -95,7 +95,6 @@ struct State {
     action_events: Stream,
     tape: Stream,
     knowledge: KnowledgeStore,
-    tape_blocks: Vec<ContentHash>,
     tape_root: ContentHash,
     requests: BTreeMap<String, Request>,
     actions: BTreeMap<String, Action>,
@@ -195,7 +194,6 @@ impl AgentFs {
                 action_events: Stream::new(),
                 tape: Stream::new(),
                 knowledge,
-                tape_blocks: Vec::new(),
                 tape_root,
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
@@ -408,11 +406,9 @@ impl State {
     }
 
     fn append_tape_block(&mut self, data: &[u8]) -> Result<(), ErrorCode> {
-        let block = self.knowledge.put_block(data);
-        self.tape_blocks.push(block);
         let root = self
             .knowledge
-            .checkpoint_from_blocks(self.tape_blocks.clone())
+            .fork_append_bytes(&self.tape_root, [data])
             .map_err(map_knowledge_error)?;
         self.knowledge
             .bind_root(TAPE_ROOT_NAME, root.clone(), RootAccess::ReadWrite)
@@ -900,4 +896,25 @@ fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
     bytes[start..end].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tape_checkpoint_appends_one_delta_node_per_write() {
+        let fs = AgentFs::new();
+        let mut state = fs.state.lock().await;
+        let initial_nodes = state.knowledge.node_count();
+
+        state.append_tape_block(b"turn-1\n").unwrap();
+        let after_first = state.knowledge.node_count();
+        state.append_tape_block(b"turn-2\n").unwrap();
+        let after_second = state.knowledge.node_count();
+
+        assert_eq!(after_first, initial_nodes + 1);
+        assert_eq!(after_second, after_first + 1);
+        assert_eq!(state.materialized_tape().unwrap(), b"turn-1\nturn-2\n");
+    }
 }

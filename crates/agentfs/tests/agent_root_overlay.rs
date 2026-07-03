@@ -221,6 +221,26 @@ async fn direct_proc_output_writes_publish_agent_events() {
 }
 
 #[tokio::test]
+async fn failed_proc_overlay_walk_does_not_clunk_unbound_proc_fid() {
+    let proc = Arc::new(ProcWalkCollisionFs::new());
+    let proc_server: Arc<dyn FileServer> = proc.clone();
+    let agent_root = AgentRootFs::new(proc_server);
+
+    agent_root.bind_process("1", Arc::new(AgentFs::new())).await;
+
+    assert_eq!(
+        agent_root
+            .walk(Fid::ROOT, Fid(9_300), &["1".into(), "status".into()])
+            .await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert!(
+        !proc.clunked_failed_fid(),
+        "failed proc walks do not bind their newfid, so cleanup must not clunk it"
+    );
+}
+
+#[tokio::test]
 async fn agent_children_are_derived_from_proc_parentage() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
@@ -659,6 +679,105 @@ async fn agent_root_releases_outer_fid_after_delegated_remove() {
         .walk(Fid::ROOT, remove_fid, std::slice::from_ref(&pid))
         .await
         .expect("remove releases the outer fid for reuse");
+}
+
+struct ProcWalkCollisionFs {
+    failed_fids: Mutex<Vec<Fid>>,
+    clunked_fids: Mutex<Vec<Fid>>,
+}
+
+impl ProcWalkCollisionFs {
+    fn new() -> Self {
+        Self {
+            failed_fids: Mutex::new(Vec::new()),
+            clunked_fids: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn clunked_failed_fid(&self) -> bool {
+        let failed = self
+            .failed_fids
+            .lock()
+            .expect("failed fids lock should not be poisoned");
+        let clunked = self
+            .clunked_fids
+            .lock()
+            .expect("clunked fids lock should not be poisoned");
+        failed.iter().any(|fid| clunked.contains(fid))
+    }
+
+    fn qid() -> Qid {
+        Qid {
+            kind: FileKind::Dir,
+            version: 0,
+            path: 0xC011_1510,
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for ProcWalkCollisionFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT {
+            return Err(ErrorCode::NotFound);
+        }
+        match names {
+            [pid] if pid == "1" => Ok(Self::qid()),
+            [pid, name] if pid == "1" && name == "status" => {
+                self.failed_fids
+                    .lock()
+                    .expect("failed fids lock should not be poisoned")
+                    .push(newfid);
+                Err(ErrorCode::BadRequest)
+            }
+            [pid, name] if pid == "1" && name == "parent" => {
+                self.failed_fids
+                    .lock()
+                    .expect("failed fids lock should not be poisoned")
+                    .push(newfid);
+                Err(ErrorCode::NotFound)
+            }
+            _ => Err(ErrorCode::NotFound),
+        }
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunked_fids
+            .lock()
+            .expect("clunked fids lock should not be poisoned")
+            .push(fid);
+        Ok(())
+    }
 }
 
 struct RacingWalkFs {

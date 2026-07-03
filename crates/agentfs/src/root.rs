@@ -325,10 +325,7 @@ impl AgentRootFs {
                 proc: self.proc.clone(),
                 proc_fid,
             }),
-            Err(e) => {
-                let _ = self.proc.clunk(proc_fid).await;
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -436,10 +433,7 @@ impl AgentRootFs {
         let proc_fid = Fid(NEXT_PROC_FID.fetch_add(1, Ordering::Relaxed));
         let qid = match proc.create(dir_fid, proc_fid, name, kind).await {
             Ok(qid) => qid,
-            Err(e) => {
-                let _ = proc.clunk(proc_fid).await;
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         };
         if let Err(e) = self
             .insert_fid(
@@ -854,10 +848,7 @@ async fn read_file_text(
     raw_fid: u64,
 ) -> Result<String, ErrorCode> {
     let fid = Fid(raw_fid);
-    if let Err(e) = server.walk(Fid::ROOT, fid, names).await {
-        let _ = server.clunk(fid).await;
-        return Err(e);
-    }
+    server.walk(Fid::ROOT, fid, names).await?;
     let result = match server.open(fid, OpenMode::Read).await {
         Ok(_) => {
             let length = match server.stat(fid).await {

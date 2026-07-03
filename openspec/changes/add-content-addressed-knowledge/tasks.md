@@ -47,13 +47,14 @@
   while a fresh ephemeral store rejects the same root because it did not persist
   the backing blocks/nodes. Tests cover both durable resume and ephemeral
   non-resume behavior.
-- [x] 3.3 Map current tape/rollout/checkpoint persistence onto root-hash
+- [ ] 3.3 Map current tape/rollout/checkpoint persistence onto root-hash
   checkpoints in the `introduce-alan-kernel-runtime` projection.
-  Done 2026-07-02: `NamespaceTurnRuntime`/`NamespaceRuntimeEnvironment` can read
-  the current `machine/tape` root hash from `machine/checkpoints/current`, and
-  rollout `CheckpointRecord`s now carry an optional `knowledge_root` while
-  preserving legacy JSON compatibility when absent. Tests cover namespace turn
-  root lookup and checkpoint persistence with a root hash.
+  Partial 2026-07-02: `agentfs` exposes the current `machine/tape` root hash at
+  `machine/checkpoints/current`, and rollout `CheckpointRecord`s carry an
+  optional `knowledge_root` while preserving legacy JSON compatibility when
+  absent. Remaining: production checkpoint recording still needs to read the
+  namespace-native current checkpoint root and call the knowledge-root recorder
+  path instead of `record_checkpoint_nowait`.
 
 ## 4. Verification
 
