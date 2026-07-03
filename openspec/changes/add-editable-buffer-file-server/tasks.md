@@ -21,13 +21,14 @@
 
 ## 3. Address And Control
 
-- [x] 3.1 Implement `addr` reads/writes using `rev:<revision> <start>..<end>`.
-  Done 2026-07-03: `AddressRange` parses and displays the revision-bound range
-  syntax.
-- [x] 3.2 Reject stale or invalid address ranges when `ctl exec` consumes the
-  active range.
-  Done 2026-07-03: `ctl exec` requires current body revision and UTF-8-safe range
-  boundaries.
+- [x] 3.1 Implement `addr` writes using `rev:<revision> <start>..<end>` and
+  reads using `rev:<revision> addr:<addr-revision> <start>..<end>`.
+  Done 2026-07-03: `AddressRange` parses revision-bound range writes and
+  displays the selected range snapshot with an address revision.
+- [x] 3.2 Reject stale or invalid address snapshots when `ctl exec` consumes the
+  caller-supplied range.
+  Done 2026-07-03: `ctl exec` requires the current body revision, current
+  address revision, exact active range, and UTF-8-safe range boundaries.
 - [x] 3.3 Implement explicit `ctl exec` with default-denied and test-accepted
   execution policies.
   Done 2026-07-03: `ExecutionPolicy::DenyAll` is default and `AcceptAll` is

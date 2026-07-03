@@ -30,8 +30,10 @@ visible only when the writing fid is clunked.
 
 ### Requirement: Address ranges are revision-bound
 
-Alan SHALL store the active body range in `addr` using `rev:<revision>
-<start>..<end>` syntax.
+Alan SHALL store the active body range in `addr` using `rev:<body-revision>
+<start>..<end>` write syntax. Reads SHALL return the selected body revision,
+address revision, and range as `rev:<body-revision> addr:<addr-revision>
+<start>..<end>`.
 
 #### Scenario: Address range is selected
 
@@ -43,26 +45,30 @@ Alan SHALL store the active body range in `addr` using `rev:<revision>
 #### Scenario: Stale address fails at execution
 
 - **WHEN** the body revision changes after an address range is selected
-- **AND** a client writes `exec` to `ctl` and clunks the fid
+- **AND** a client writes `exec rev:<body-revision> addr:<addr-revision>
+  <start>..<end>` to `ctl` and clunks the fid
 - **THEN** the clunk fails with `ErrorCode::BadRequest`
 - **AND** no command text from the stale range is executed
 
 ### Requirement: Explicit exec records accepted and denied outcomes
 
-Alan SHALL handle `ctl exec` as an explicit policy-gated operation over the
-active `addr` range and SHALL record the outcome in `event`.
+Alan SHALL handle `ctl exec` as an explicit policy-gated operation over a
+caller-supplied `addr` snapshot that must match the active `addr` range and
+body revision. Alan SHALL record the outcome in `event`.
 
 #### Scenario: Execution is accepted by policy
 
 - **WHEN** the editfs execution policy accepts the selected command text
-- **AND** a client writes `exec` to `ctl` and clunks the fid
+- **AND** a client writes `exec rev:<body-revision> addr:<addr-revision>
+  <start>..<end>` to `ctl` and clunks the fid
 - **THEN** the `event` stream records an execution event with status `accepted`
   and the selected command text
 
 #### Scenario: Execution is denied by policy
 
 - **WHEN** the editfs execution policy denies the selected command text
-- **AND** a client writes `exec` to `ctl` and clunks the fid
+- **AND** a client writes `exec rev:<body-revision> addr:<addr-revision>
+  <start>..<end>` to `ctl` and clunks the fid
 - **THEN** the `event` stream records an execution event with status `denied`
   and the selected command text
 

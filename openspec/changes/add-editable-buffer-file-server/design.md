@@ -14,8 +14,8 @@ files with commit-on-clunk, and blocking-read `Stream`s for observation.
 
 - Add `alan-editfs` as a user-space aP file-server crate.
 - Serve one buffer directory exposing `body`, `tag`, `addr`, `ctl`, and `event`.
-- Support body/tag edits, revision-bound address ranges, explicit `ctl exec`,
-  and observable JSON-line events.
+- Support body/tag edits, revision-bound address ranges, snapshot-bearing
+  `ctl exec`, and observable JSON-line events.
 - Keep execution policy injectable and default-denied so the buffer never becomes
   a privileged command runner.
 
@@ -44,16 +44,20 @@ files with commit-on-clunk, and blocking-read `Stream`s for observation.
 
 3. **`addr` uses revision-bound byte ranges.**
 
-   V1 format is `rev:<revision> <start>..<end>`. The revision must match the
-   current body revision when `ctl exec` consumes the range. This proves stale
-   range rejection without inventing a full editor address language.
+   V1 write format is `rev:<body-revision> <start>..<end>`. Reads include the
+   selected body revision, address revision, and range as
+   `rev:<body-revision> addr:<addr-revision> <start>..<end>`. A `ctl exec`
+   document carries that full snapshot so execution can reject stale body
+   revisions, stale address revisions, and retargeted ranges without inventing a
+   full editor address language.
 
-4. **`ctl exec` is explicit and policy-gated.**
+4. **`ctl exec` is explicit, snapshot-bearing, and policy-gated.**
 
-   Writing `exec` to `ctl` executes the active `addr` range through an injected
-   `ExecutionPolicy`. The default policy denies all execution. A test policy can
-   accept so we verify both accepted and denied event records without running a
-   real shell command.
+   Writing `exec rev:<body> addr:<addr> <start>..<end>` to `ctl` executes only
+   if the supplied snapshot exactly matches the current active `addr` range and
+   body revision, then records the injected `ExecutionPolicy` outcome. The
+   default policy denies all execution. A test policy can accept so we verify
+   both accepted and denied event records without running a real shell command.
 
 5. **Events are JSON lines on a blocking-read stream.**
 

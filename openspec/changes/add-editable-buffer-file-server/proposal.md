@@ -12,8 +12,9 @@ step is a headless `editfs` file server that proves `body` / `tag` / `addr` /
   `event` files.
 - Support editable UTF-8 `body` and `tag` files with revisioned body content.
 - Support an `addr` file for revision-bound byte ranges over `body`.
-- Support explicit `exec` through `ctl`, recording accepted or denied execution
-  events without granting authority or running privileged side effects.
+- Support snapshot-bearing explicit `exec` through `ctl`, recording accepted or
+  denied execution events without granting authority or running privileged side
+  effects.
 - Append edit, address, and execution records to an observable blocking-read
   `event` stream.
 - Keep the slice headless: no macOS UI, mouse behavior, syntax styling, or shell

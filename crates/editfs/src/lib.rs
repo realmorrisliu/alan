@@ -3,7 +3,7 @@
 //! The server exposes one editable buffer with `body`, `tag`, `addr`, `ctl`, and
 //! `event` files. It proves the Ring 4 editable-buffer contract without native UI
 //! or real shell execution: text edits are committed on clunk, address ranges are
-//! revision-bound, explicit `ctl exec` is policy-gated, and all activity is
+//! revision-bound, snapshot-bearing `ctl exec` is policy-gated, and all activity is
 //! observable through a retained blocking-read event stream.
 
 use std::collections::HashMap;
@@ -25,8 +25,8 @@ pub const MOUNT_PATH: &str = "/mnt/edit";
 
 /// Minimal execution policy for the headless v1 server.
 ///
-/// This does not execute shell commands. It records whether an explicit `ctl
-/// exec` would be accepted by the mounted policy boundary, keeping the file
+/// This does not execute shell commands. It records whether a snapshot-bearing
+/// `ctl exec` would be accepted by the mounted policy boundary, keeping the file
 /// contract testable without granting hidden authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionPolicy {
