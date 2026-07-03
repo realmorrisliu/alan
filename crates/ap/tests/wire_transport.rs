@@ -521,6 +521,57 @@ impl FileServer for RecordingWriteFile {
     }
 }
 
+struct FailSecondWriteFile {
+    writes: Mutex<Vec<(Offset, Vec<u8>)>>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for FailSecondWriteFile {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: Offset, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn write(&self, _fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        let mut writes = self.writes.lock().await;
+        if writes.is_empty() {
+            writes.push((offset, data.to_vec()));
+            Ok(data.len() as u32)
+        } else {
+            Err(ErrorCode::NoAccess)
+        }
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn imported_large_write_is_split_into_bounded_remote_frames() {
     let (client_stream, server_stream) = duplex(1024 * 1024);
@@ -556,6 +607,35 @@ async fn imported_large_write_is_split_into_bounded_remote_frames() {
         reconstructed.extend_from_slice(chunk);
     }
     assert_eq!(reconstructed, data);
+
+    drop(imported);
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn imported_large_write_reports_partial_count_after_later_chunk_failure() {
+    let (client_stream, server_stream) = duplex(1024 * 1024);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let server = Arc::new(FailSecondWriteFile {
+        writes: Mutex::new(Vec::new()),
+    });
+    let server_task = tokio::spawn(export_file_server(
+        server.clone(),
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let imported = ImportedFileServer::new(BufReader::new(client_read), client_write);
+    let data = vec![255; MAX_WIRE_FRAME_BYTES];
+
+    let accepted = imported.write(Fid(1), 11, &data).await.unwrap();
+
+    let writes = server.writes.lock().await;
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, 11);
+    assert_eq!(accepted as usize, writes[0].1.len());
+    assert!((accepted as usize) < data.len());
 
     drop(imported);
     server_task.abort();

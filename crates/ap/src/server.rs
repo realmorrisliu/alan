@@ -430,23 +430,36 @@ where
         }
 
         let mut accepted_total = 0usize;
+        let accepted_count = |accepted_total: usize| {
+            u32::try_from(accepted_total).map_err(|_| ErrorCode::BadRequest)
+        };
         for chunk in data.chunks(MAX_WIRE_PAYLOAD_CHUNK_BYTES) {
             let chunk_offset = offset
                 .checked_add(accepted_total as u64)
                 .ok_or(ErrorCode::BadRequest)?;
-            let accepted = match self
+            let response = match self
                 .remote_call(Request::Write {
                     fid,
                     offset: chunk_offset,
                     data: chunk.to_vec(),
                 })
-                .await?
+                .await
             {
+                Ok(response) => response,
+                Err(_) if accepted_total > 0 => return accepted_count(accepted_total),
+                Err(error) => return Err(error),
+            };
+            let accepted = match response {
                 Response::Write { count } => count as usize,
+                _ if accepted_total > 0 => return accepted_count(accepted_total),
                 _ => return Err(ErrorCode::BadRequest),
             };
             if accepted > chunk.len() {
-                return Err(ErrorCode::BadRequest);
+                return if accepted_total > 0 {
+                    accepted_count(accepted_total)
+                } else {
+                    Err(ErrorCode::BadRequest)
+                };
             }
             accepted_total = accepted_total
                 .checked_add(accepted)
@@ -455,7 +468,7 @@ where
                 break;
             }
         }
-        u32::try_from(accepted_total).map_err(|_| ErrorCode::BadRequest)
+        accepted_count(accepted_total)
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {

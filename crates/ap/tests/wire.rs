@@ -9,7 +9,7 @@ use std::io::Cursor;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, MAX_WIRE_FRAME_BYTES, OpenMode, Qid, Request, Response, Stat,
-    WireError, read_request_frame,
+    WireError, encode_request_frame, read_request_frame,
 };
 use tokio::io::BufReader;
 
@@ -172,5 +172,17 @@ async fn oversized_request_frame_with_newline_is_rejected() {
         Err(WireError::FrameTooLarge {
             max: MAX_WIRE_FRAME_BYTES
         })
+    ));
+}
+
+#[tokio::test]
+async fn request_frame_without_newline_is_rejected() {
+    let mut frame = encode_request_frame(&Request::Stat { fid: Fid(1) }).unwrap();
+    assert_eq!(frame.pop(), Some(b'\n'));
+    let mut reader = BufReader::new(Cursor::new(frame));
+
+    assert!(matches!(
+        read_request_frame(&mut reader).await,
+        Err(WireError::TruncatedFrame)
     ));
 }

@@ -127,6 +127,8 @@ pub enum WireError {
     Unsynchronized,
     #[error("aP wire frame exceeds {max} bytes")]
     FrameTooLarge { max: usize },
+    #[error("aP wire frame ended before newline delimiter")]
+    TruncatedFrame,
 }
 
 impl WireError {
@@ -134,7 +136,9 @@ impl WireError {
     /// imported file-server adapters.
     pub fn to_error_code(&self) -> ErrorCode {
         match self {
-            Self::Codec(_) | Self::FrameTooLarge { .. } => ErrorCode::BadRequest,
+            Self::Codec(_) | Self::FrameTooLarge { .. } | Self::TruncatedFrame => {
+                ErrorCode::BadRequest
+            }
             Self::Io(_) | Self::Closed | Self::Unsynchronized => ErrorCode::Io,
         }
     }
@@ -225,7 +229,7 @@ where
             return if frame.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(frame))
+                Err(WireError::TruncatedFrame)
             };
         }
 
