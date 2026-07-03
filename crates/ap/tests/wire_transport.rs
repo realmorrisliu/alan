@@ -9,6 +9,7 @@ use alan_ap::{
     encode_response_frame, export_file_server,
 };
 use tokio::io::{BufReader, duplex};
+use tokio::sync::Notify;
 
 fn qid(kind: FileKind, path: u64) -> Qid {
     Qid {
@@ -198,6 +199,7 @@ async fn imported_tree_dispatches_to_exported_server() {
 
 struct StreamFile {
     stream: Stream,
+    read_started: Option<Arc<Notify>>,
 }
 
 #[async_trait::async_trait]
@@ -216,6 +218,9 @@ impl FileServer for StreamFile {
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
         if fid == Fid(1) {
+            if let Some(read_started) = &self.read_started {
+                read_started.notify_one();
+            }
             Ok(self.stream.read(offset, count).await)
         } else {
             Err(ErrorCode::NotFound)
@@ -267,6 +272,7 @@ async fn imported_stream_read_blocks_until_remote_stream_has_data() {
     let stream = Stream::new();
     let server: Arc<dyn FileServer> = Arc::new(StreamFile {
         stream: stream.clone(),
+        read_started: None,
     });
     let server_task = tokio::spawn(export_file_server(
         server,
@@ -295,6 +301,51 @@ async fn imported_stream_read_blocks_until_remote_stream_has_data() {
         .expect("imported stream read did not wake")
         .expect("reader task panicked");
     assert_eq!(got, Ok(b"late bytes".to_vec()));
+
+    drop(imported);
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn cancelled_in_flight_call_does_not_desynchronize_next_request() {
+    let (client_stream, server_stream) = duplex(4096);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let stream = Stream::new();
+    let read_started = Arc::new(Notify::new());
+    let server: Arc<dyn FileServer> = Arc::new(StreamFile {
+        stream: stream.clone(),
+        read_started: Some(Arc::clone(&read_started)),
+    });
+    let server_task = tokio::spawn(export_file_server(
+        server,
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let imported = Arc::new(ImportedFileServer::new(
+        BufReader::new(client_read),
+        client_write,
+    ));
+
+    imported.open(Fid(1), OpenMode::Read).await.unwrap();
+    let reader = Arc::clone(&imported);
+    let handle = tokio::spawn(async move { reader.read(Fid(1), 0, 64).await });
+    tokio::time::timeout(Duration::from_millis(500), read_started.notified())
+        .await
+        .expect("remote read request did not reach exported server");
+
+    handle.abort();
+    assert!(
+        handle
+            .await
+            .expect_err("reader task should have been cancelled")
+            .is_cancelled()
+    );
+
+    stream.append(b"abandoned response").await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(imported.stat(Fid(1)).await, Err(ErrorCode::Io));
 
     drop(imported);
     server_task.abort();

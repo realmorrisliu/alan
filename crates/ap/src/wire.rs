@@ -120,6 +120,8 @@ pub enum WireError {
     Codec(#[from] serde_json::Error),
     #[error("aP wire peer closed before a response frame")]
     Closed,
+    #[error("aP wire connection has an abandoned in-flight request")]
+    Unsynchronized,
 }
 
 impl WireError {
@@ -128,7 +130,7 @@ impl WireError {
     pub fn to_error_code(&self) -> ErrorCode {
         match self {
             Self::Codec(_) => ErrorCode::BadRequest,
-            Self::Io(_) | Self::Closed => ErrorCode::Io,
+            Self::Io(_) | Self::Closed | Self::Unsynchronized => ErrorCode::Io,
         }
     }
 }

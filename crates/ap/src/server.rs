@@ -230,6 +230,7 @@ where
 pub struct WireTransportClient<R, W> {
     reader: R,
     writer: W,
+    in_flight: bool,
 }
 
 impl<R, W> WireTransportClient<R, W>
@@ -238,11 +239,30 @@ where
     W: AsyncWrite + Unpin,
 {
     pub fn new(reader: R, writer: W) -> Self {
-        Self { reader, writer }
+        Self {
+            reader,
+            writer,
+            in_flight: false,
+        }
     }
 
     /// Send one request and return the exact remote operation result.
     pub async fn call_result(
+        &mut self,
+        request: Request,
+    ) -> Result<Result<Response, ErrorCode>, WireError> {
+        if self.in_flight {
+            return Err(WireError::Unsynchronized);
+        }
+        self.in_flight = true;
+        let result = self.call_result_in_flight(request).await;
+        if result.is_ok() {
+            self.in_flight = false;
+        }
+        result
+    }
+
+    async fn call_result_in_flight(
         &mut self,
         request: Request,
     ) -> Result<Result<Response, ErrorCode>, WireError> {
