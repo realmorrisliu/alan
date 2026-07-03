@@ -170,7 +170,7 @@ impl Sandbox {
         }
     }
 
-    /// Check if a path is within the workspace
+    /// Check if a path is within the workspace seed root or another writable root.
     pub fn is_in_workspace(&self, path: &Path) -> bool {
         // Try to get absolute path
         let absolute_path = if path.is_absolute() {
@@ -179,35 +179,29 @@ impl Sandbox {
             self.workspace_root().join(path)
         };
 
-        // Get canonical workspace (may fail if doesn't exist)
-        let canonical_workspace = self
-            .canonicalize(self.workspace_root())
-            .unwrap_or_else(|_| dunce::simplified(self.workspace_root()).to_path_buf());
-
         // For existing paths, use canonical path
         if absolute_path.exists() {
             let canonical_path = self
                 .canonicalize(&absolute_path)
                 .unwrap_or_else(|_| dunce::simplified(&absolute_path).to_path_buf());
-            return canonical_path.starts_with(&canonical_workspace);
+            return self.is_under_writable_root(&canonical_path);
         }
 
-        // For new files, check that all existing parent directories are within workspace
+        // For new files, check that existing parent directories are within an
+        // allowed writable root.
         let mut current = absolute_path.parent();
         while let Some(parent) = current {
             if parent.exists() {
                 let canonical_parent = self
                     .canonicalize(parent)
                     .unwrap_or_else(|_| dunce::simplified(parent).to_path_buf());
-                return canonical_parent.starts_with(&canonical_workspace);
+                return self.is_under_writable_root(&canonical_parent);
             }
             current = parent.parent();
         }
 
-        // If no parent exists, check if the path itself starts with workspace
-        dunce::simplified(&absolute_path)
-            .to_string_lossy()
-            .starts_with(&canonical_workspace.to_string_lossy().to_string())
+        // If no parent exists, check if the path itself starts with a writable root.
+        self.is_under_writable_root(&lexically_normalize_path(&absolute_path))
     }
 
     /// Read a file within the workspace
@@ -554,27 +548,45 @@ impl Sandbox {
     }
 
     fn protected_subpath_component(&self, path: &Path) -> Option<&'static str> {
-        let canonical_workspace = self
-            .canonicalize(self.workspace_root())
-            .unwrap_or_else(|_| lexically_normalize_path(self.workspace_root()));
-        let normalized_workspace = lexically_normalize_path(self.workspace_root());
         let resolved_path = self.resolved_path_with_existing_parents(path);
-        let relative = resolved_path
-            .strip_prefix(&canonical_workspace)
-            .or_else(|_| resolved_path.strip_prefix(&normalized_workspace))
-            .ok()?;
-        if is_allowed_protected_relative_path(relative) {
-            return None;
-        }
-        relative.components().find_map(|component| match component {
-            Component::Normal(name) => {
-                let candidate = name.to_str()?;
-                PROTECTED_SUBPATHS
-                    .iter()
-                    .copied()
-                    .find(|protected| *protected == candidate)
+        for root in &self.spec.writable_roots {
+            let canonical_root = self
+                .canonicalize(root)
+                .unwrap_or_else(|_| lexically_normalize_path(root));
+            let normalized_root = lexically_normalize_path(root);
+            let Ok(relative) = resolved_path
+                .strip_prefix(&canonical_root)
+                .or_else(|_| resolved_path.strip_prefix(&normalized_root))
+            else {
+                continue;
+            };
+            if is_allowed_protected_relative_path(relative) {
+                return None;
             }
-            _ => None,
+            if let Some(component) = relative.components().find_map(|component| match component {
+                Component::Normal(name) => {
+                    let candidate = name.to_str()?;
+                    PROTECTED_SUBPATHS
+                        .iter()
+                        .copied()
+                        .find(|protected| *protected == candidate)
+                }
+                _ => None,
+            }) {
+                return Some(component);
+            }
+        }
+        None
+    }
+
+    fn is_under_writable_root(&self, path: &Path) -> bool {
+        let normalized_path = lexically_normalize_path(path);
+        self.spec.writable_roots.iter().any(|root| {
+            let canonical_root = self
+                .canonicalize(root)
+                .unwrap_or_else(|_| lexically_normalize_path(root));
+            let normalized_root = lexically_normalize_path(root);
+            path.starts_with(&canonical_root) || normalized_path.starts_with(&normalized_root)
         })
     }
 
