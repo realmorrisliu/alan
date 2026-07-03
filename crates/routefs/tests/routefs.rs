@@ -291,6 +291,53 @@ async fn stale_rule_fid_does_not_release_a_replacement_reservation() {
 }
 
 #[tokio::test]
+async fn stale_rule_fid_writes_after_recreate_are_rejected() {
+    let fs = RouteFs::new();
+    create_rule(
+        &fs,
+        "10-results",
+        Fid(1),
+        json!({"version":1,"match_type":"result","port":"old"}),
+    )
+    .await;
+
+    fs.walk(Fid::ROOT, Fid(2), &["rules".into(), "10-results".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Write).await.unwrap();
+    let stale_rule =
+        serde_json::to_vec(&json!({"version":1,"match_type":"result","port":"stale"})).unwrap();
+    fs.write(Fid(2), 0, &stale_rule).await.unwrap();
+
+    fs.walk(Fid::ROOT, Fid(3), &["rules".into(), "10-results".into()])
+        .await
+        .unwrap();
+    fs.walk(Fid::ROOT, Fid(4), &["rules".into(), "10-results".into()])
+        .await
+        .unwrap();
+    fs.remove(Fid(4)).await.unwrap();
+    create_rule(
+        &fs,
+        "10-results",
+        Fid(5),
+        json!({"version":1,"match_type":"result","port":"fresh"}),
+    )
+    .await;
+
+    assert_eq!(
+        fs.open(Fid(3), OpenMode::Write).await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(fs.clunk(Fid(2)).await, Err(ErrorCode::BadRequest));
+
+    write_doc(&fs, &["send"], Fid(6), &[&message("result", "done")])
+        .await
+        .unwrap();
+    let fresh = read_text(&fs, &["ports", "fresh"], Fid(7)).await;
+    assert!(fresh.contains(r#""port":"fresh""#), "{fresh}");
+}
+
+#[tokio::test]
 async fn no_match_routes_to_dead_letter_and_log_records_decision() {
     let fs = RouteFs::new();
     write_doc(&fs, &["send"], Fid(1), &[&message("citation", "source")])

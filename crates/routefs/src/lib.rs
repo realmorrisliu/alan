@@ -160,6 +160,7 @@ struct RouteFid {
     write_buf: Vec<u8>,
     wrote: bool,
     pending_rule_create: bool,
+    observed_rule_version: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -287,6 +288,25 @@ impl State {
         }
     }
 
+    fn current_rule_version(&self, name: &str) -> Option<u32> {
+        self.rules.contains_key(name).then(|| {
+            self.versions
+                .get(node_identity(&Node::Rule(name.to_string())).1)
+        })
+    }
+
+    fn ensure_current_rule_fid(&self, f: &RouteFid, name: &str) -> Result<(), ErrorCode> {
+        if f.pending_rule_create {
+            return Ok(());
+        }
+        let observed = f.observed_rule_version.ok_or(ErrorCode::BadRequest)?;
+        let current = self.current_rule_version(name).ok_or(ErrorCode::NotFound)?;
+        if observed != current {
+            return Err(ErrorCode::BadRequest);
+        }
+        Ok(())
+    }
+
     fn install_rule(&mut self, name: String, spec: RuleSpec) -> Result<(), ErrorCode> {
         if !valid_name(&name) {
             return Err(ErrorCode::BadRequest);
@@ -370,7 +390,7 @@ impl FileServer for RouteFs {
             node = state.child(&node, name)?;
         }
         let qid = state.qid(&node);
-        state.fids.insert(newfid, RouteFid::at(node));
+        state.fids.insert(newfid, RouteFid::at(node, qid));
         Ok(qid)
     }
 
@@ -382,6 +402,12 @@ impl FileServer for RouteFs {
         }
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
             return Err(ErrorCode::NoAccess);
+        }
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
+            && let Node::Rule(name) = &node
+        {
+            let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            state.ensure_current_rule_fid(f, name)?;
         }
         if fid != Fid::ROOT {
             let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
@@ -413,18 +439,22 @@ impl FileServer for RouteFs {
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
         let node = state.node_of(fid)?;
-        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+        let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
         if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
         if !matches!(node, Node::Send | Node::Rule(_)) {
             return Err(ErrorCode::Unsupported);
         }
+        if let Node::Rule(name) = &node {
+            state.ensure_current_rule_fid(f, name)?;
+        }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
         if end > MAX_DOC_BYTES {
             return Err(ErrorCode::BadRequest);
         }
+        let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
         if f.write_buf.len() < end {
             f.write_buf.resize(end, 0);
         }
@@ -483,14 +513,18 @@ impl FileServer for RouteFs {
 
     async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.node_of(fid)?;
+        let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+        let node = f.node.clone();
         let Node::Rule(name) = node else {
             return Err(ErrorCode::Unsupported);
         };
-        let removed = state.rules.remove(&name).is_some();
-        let reserved = state.pending_rules.remove(&name);
-        if !removed && !reserved {
-            return Err(ErrorCode::NotFound);
+        if f.pending_rule_create {
+            if !state.pending_rules.remove(&name) {
+                return Err(ErrorCode::NotFound);
+            }
+        } else {
+            state.ensure_current_rule_fid(f, &name)?;
+            state.rules.remove(&name).ok_or(ErrorCode::NotFound)?;
         }
         state.versions.bump(node_identity(&Node::RulesDir).1);
         state.fids.remove(&fid);
@@ -515,10 +549,11 @@ impl FileServer for RouteFs {
                 };
                 state.commit_pending_rule(name, spec)
             }
-            Node::Rule(name) if f.wrote => {
+            Node::Rule(ref name) if f.wrote => {
+                state.ensure_current_rule_fid(&f, name)?;
                 let spec: RuleSpec =
                     serde_json::from_slice(&f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
-                state.install_rule(name, spec)
+                state.install_rule(name.clone(), spec)
             }
             Node::Rule(name) if f.pending_rule_create => {
                 state.abandon_pending_rule(&name);
@@ -530,13 +565,15 @@ impl FileServer for RouteFs {
 }
 
 impl RouteFid {
-    fn at(node: Node) -> Self {
+    fn at(node: Node, qid: Qid) -> Self {
+        let observed_rule_version = matches!(node, Node::Rule(_)).then_some(qid.version);
         Self {
             node,
             mode: None,
             write_buf: Vec::new(),
             wrote: false,
             pending_rule_create: false,
+            observed_rule_version,
         }
     }
 
@@ -547,6 +584,7 @@ impl RouteFid {
             write_buf: Vec::new(),
             wrote: false,
             pending_rule_create: true,
+            observed_rule_version: None,
         }
     }
 }
