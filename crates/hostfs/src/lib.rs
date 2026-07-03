@@ -297,10 +297,17 @@ impl FileServer for HostDirFs {
         }
         let mut fids = self.fids.lock().await;
         let rel = Self::rel_for_fid(&fids, fid)?;
-        let path = self.existing_path(&rel)?;
-        if path.is_dir() {
+        let path = self.candidate_path(&rel)?;
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| ErrorCode::NotFound)?;
+        if metadata.file_type().is_symlink() {
+            std::fs::remove_file(&path).map_err(|_| ErrorCode::Io)?;
+        } else if metadata.is_dir() {
+            let resolved = std::fs::canonicalize(&path).map_err(|_| ErrorCode::NotFound)?;
+            ensure_under_root(&self.root, &resolved)?;
             std::fs::remove_dir(&path).map_err(|_| ErrorCode::Io)?;
-        } else if path.is_file() {
+        } else if metadata.is_file() {
+            let resolved = std::fs::canonicalize(&path).map_err(|_| ErrorCode::NotFound)?;
+            ensure_under_root(&self.root, &resolved)?;
             std::fs::remove_file(&path).map_err(|_| ErrorCode::Io)?;
         } else {
             return Err(ErrorCode::Unsupported);
@@ -564,6 +571,27 @@ mod tests {
                 .unwrap_err(),
             ErrorCode::NoAccess
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_unlinks_symlink_entry_without_removing_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let alias = temp.path().join("alias.txt");
+        std::fs::write(&target, "target").unwrap();
+        symlink("target.txt", &alias).unwrap();
+        let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+
+        fs.walk(Fid::ROOT, Fid(1), &["alias.txt".to_string()])
+            .await
+            .unwrap();
+        fs.remove(Fid(1)).await.unwrap();
+
+        assert!(!alias.exists());
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "target");
     }
 
     #[tokio::test]
