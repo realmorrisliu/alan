@@ -1412,19 +1412,18 @@ impl NamespaceClient {
     }
 
     async fn read_all_opened(&self, fid: Fid) -> Result<Vec<u8>> {
+        let length = self.stat(fid).await?.length;
         let mut offset = 0_u64;
         let mut data = Vec::new();
-        loop {
-            let chunk = self.read_at(fid, offset, 64 * 1024).await?;
+        while offset < length {
+            let remaining = length - offset;
+            let count = remaining.min(64 * 1024) as u32;
+            let chunk = self.read_at(fid, offset, count).await?;
             if chunk.is_empty() {
-                break;
+                bail!("file ended before stat length was reached");
             }
             offset += chunk.len() as u64;
-            let reached_short_read = chunk.len() < 64 * 1024;
             data.extend_from_slice(&chunk);
-            if reached_short_read {
-                break;
-            }
         }
         Ok(data)
     }
@@ -1686,6 +1685,15 @@ mod tests {
     impl ProcessRunner for LargeOutputRunner {
         async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
             ProcessOutcome::exited(0, vec![b'x'; 70 * 1024])
+        }
+    }
+
+    struct ExactChunkOutputRunner;
+
+    #[async_trait::async_trait]
+    impl ProcessRunner for ExactChunkOutputRunner {
+        async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+            ProcessOutcome::exited(0, vec![b'y'; 64 * 1024])
         }
     }
 
@@ -2696,6 +2704,23 @@ mod tests {
 
         assert_eq!(action.output.len(), 70 * 1024);
         assert!(action.output.bytes().all(|byte| byte == b'x'));
+        assert_eq!(action.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn run_tool_action_reads_exact_chunk_output_without_waiting_for_more() {
+        let (environment, _shell) = tool_test_environment(Arc::new(ExactChunkOutputRunner));
+
+        let action = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            environment.run_tool_action("exact", "/bin/exact", Vec::<String>::new()),
+        )
+        .await
+        .expect("exact chunk output should not wait at the live stream edge")
+        .unwrap();
+
+        assert_eq!(action.output.len(), 64 * 1024);
+        assert!(action.output.bytes().all(|byte| byte == b'y'));
         assert_eq!(action.exit_code, 0);
     }
 
