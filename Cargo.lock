@@ -67,12 +67,7 @@ name = "alan-agent-engine"
 version = "0.1.0"
 dependencies = [
  "alan-agent-protocol",
- "alan-agentfs",
- "alan-ap",
- "alan-kernel",
  "alan-llm",
- "alan-llmfs",
- "alan-shell",
  "anyhow",
  "async-trait",
  "chrono",
@@ -123,6 +118,7 @@ dependencies = [
  "alan-ap",
  "alan-kernel",
  "alan-knowledge",
+ "alan-memfs",
  "alan-shell",
  "async-trait",
  "tokio",
