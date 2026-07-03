@@ -137,8 +137,15 @@ struct State {
     inputs: HashMap<Pid, Stream>,
     outputs: HashMap<Pid, Stream>,
     io_events: HashMap<Pid, Stream>,
+    io_event_history: HashMap<Pid, Vec<ProcessIoEvent>>,
     input_observers: HashMap<Pid, Vec<Arc<dyn ProcessInputEventSink>>>,
     output_observers: HashMap<Pid, Vec<Arc<dyn ProcessOutputEventSink>>>,
+}
+
+#[derive(Clone, Copy)]
+enum ProcessIoEvent {
+    Input(u32),
+    Output(u32),
 }
 
 #[derive(Clone)]
@@ -173,6 +180,7 @@ impl ProcFs {
                 inputs: HashMap::new(),
                 outputs: HashMap::new(),
                 io_events: HashMap::new(),
+                io_event_history: HashMap::new(),
                 input_observers: HashMap::new(),
                 output_observers: HashMap::new(),
             })),
@@ -275,9 +283,14 @@ impl ProcFs {
         }
     }
 
-    async fn notify_output_observers(&self, pid: Pid, count: u32) {
+    async fn publish_output_event(&self, pid: Pid, count: u32) {
         let observers = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
+            state
+                .io_event_history
+                .entry(pid)
+                .or_default()
+                .push(ProcessIoEvent::Output(count));
             state
                 .output_observers
                 .get(&pid)
@@ -290,9 +303,14 @@ impl ProcFs {
         }
     }
 
-    async fn notify_input_observers(&self, pid: Pid, count: u32) {
+    async fn publish_input_event(&self, pid: Pid, count: u32) {
         let observers = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
+            state
+                .io_event_history
+                .entry(pid)
+                .or_default()
+                .push(ProcessIoEvent::Input(count));
             state.input_observers.get(&pid).cloned().unwrap_or_default()
         };
         let pid = pid.0.to_string();
@@ -310,11 +328,31 @@ impl ProcessOutputEventSource for ProcFs {
         sink: Arc<dyn ProcessOutputEventSink>,
     ) -> Result<(), ErrorCode> {
         let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
-        let mut state = self.state.lock().await;
-        if state.table.get(pid).is_none() {
-            return Err(ErrorCode::NotFound);
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state
+                .io_event_history
+                .get(&pid)
+                .into_iter()
+                .flatten()
+                .filter_map(|event| match event {
+                    ProcessIoEvent::Input(_) => None,
+                    ProcessIoEvent::Output(count) => Some(*count),
+                })
+                .collect::<Vec<_>>();
+            state
+                .output_observers
+                .entry(pid)
+                .or_default()
+                .push(sink.clone());
+            (pid.0.to_string(), replay)
+        };
+        for count in replay {
+            sink.output_appended(&pid_text, count).await;
         }
-        state.output_observers.entry(pid).or_default().push(sink);
         Ok(())
     }
 }
@@ -327,11 +365,31 @@ impl ProcessInputEventSource for ProcFs {
         sink: Arc<dyn ProcessInputEventSink>,
     ) -> Result<(), ErrorCode> {
         let pid = parse_pid(pid).ok_or(ErrorCode::BadRequest)?;
-        let mut state = self.state.lock().await;
-        if state.table.get(pid).is_none() {
-            return Err(ErrorCode::NotFound);
+        let (pid_text, replay) = {
+            let mut state = self.state.lock().await;
+            if state.table.get(pid).is_none() {
+                return Err(ErrorCode::NotFound);
+            }
+            let replay = state
+                .io_event_history
+                .get(&pid)
+                .into_iter()
+                .flatten()
+                .filter_map(|event| match event {
+                    ProcessIoEvent::Input(count) => Some(*count),
+                    ProcessIoEvent::Output(_) => None,
+                })
+                .collect::<Vec<_>>();
+            state
+                .input_observers
+                .entry(pid)
+                .or_default()
+                .push(sink.clone());
+            (pid.0.to_string(), replay)
+        };
+        for count in replay {
+            sink.input_appended(&pid_text, count).await;
         }
-        state.input_observers.entry(pid).or_default().push(sink);
         Ok(())
     }
 }
@@ -667,7 +725,7 @@ impl FileServer for ProcFs {
             } => {
                 stream.append(data).await;
                 append_io_event(&events, "input", count).await;
-                self.notify_input_observers(pid, count).await;
+                self.publish_input_event(pid, count).await;
             }
             ProcStreamWrite::Output {
                 pid,
@@ -676,7 +734,7 @@ impl FileServer for ProcFs {
             } => {
                 stream.append(data).await;
                 append_io_event(&events, "output", count).await;
-                self.notify_output_observers(pid, count).await;
+                self.publish_output_event(pid, count).await;
             }
         }
         Ok(count)
@@ -777,6 +835,7 @@ impl FileServer for ProcFs {
                         state.inputs.insert(committed, input);
                         state.outputs.insert(committed, output.clone());
                         state.io_events.insert(committed, io_events.clone());
+                        state.io_event_history.insert(committed, Vec::new());
                         self.runner
                             .clone()
                             .map(|runner| (runner, output, io_events, invocation, self.clone()))
@@ -800,7 +859,7 @@ impl FileServer for ProcFs {
                     let count = outcome.output.len() as u32;
                     output.append(&outcome.output).await;
                     append_io_event(&io_events, "output", count).await;
-                    events.notify_output_observers(invocation.pid, count).await;
+                    events.publish_output_event(invocation.pid, count).await;
                 }
                 let mut state = state.lock().await;
                 state.table.exit(invocation.pid, outcome.exit_code);

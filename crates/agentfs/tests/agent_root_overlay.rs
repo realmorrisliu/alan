@@ -11,7 +11,10 @@ use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, ProcessInputEventSource,
     ProcessOutputEventSource, Qid, Stat,
 };
-use alan_kernel::{Access, Credentials, MountFs, Namespace, Pid, ProcFs};
+use alan_kernel::{
+    Access, Credentials, MountFs, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome,
+    ProcessRunner,
+};
 use alan_memfs::MemFs;
 use alan_shell::Shell;
 use async_trait::async_trait;
@@ -19,6 +22,12 @@ use tokio::sync::Notify;
 
 fn namespace_shell_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc = Arc::new(ProcFs::new());
+    namespace_shell_with_agent_root_for_proc(proc)
+}
+
+fn namespace_shell_with_agent_root_for_proc(
+    proc: Arc<ProcFs>,
+) -> (InProcessTransport, Shell, Arc<AgentRootFs>, Arc<ProcFs>) {
     let proc_server: Arc<dyn FileServer> = proc.clone();
     let proc_input_events: Arc<dyn ProcessInputEventSource> = proc.clone();
     let proc_output_events: Arc<dyn ProcessOutputEventSource> = proc.clone();
@@ -44,6 +53,25 @@ fn namespace_shell_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRoo
     (root.clone(), Shell::new(root), agent_root, proc)
 }
 
+struct ImmediateOutputRunner {
+    output: Vec<u8>,
+}
+
+impl ImmediateOutputRunner {
+    fn new(output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl ProcessRunner for ImmediateOutputRunner {
+    async fn run(&self, _invocation: ProcessInvocation) -> ProcessOutcome {
+        ProcessOutcome::exited(0, self.output.clone())
+    }
+}
+
 async fn spawn_on_proc(proc: &ProcFs, fid: Fid) -> String {
     proc.walk(Fid::ROOT, fid, &["clone".into()])
         .await
@@ -57,6 +85,17 @@ async fn spawn_on_proc(proc: &ProcFs, fid: Fid) -> String {
         .expect("write exec");
     proc.clunk(fid).await.expect("commit process");
     pid
+}
+
+async fn wait_for_file_contains(shell: &Shell, path: &str, needle: &str) {
+    for _ in 0..50 {
+        let text = String::from_utf8(shell.cat(path).await.unwrap()).unwrap();
+        if text.contains(needle) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{path} did not contain {needle:?}");
 }
 
 #[tokio::test]
@@ -310,6 +349,30 @@ async fn direct_proc_input_writes_publish_agent_events() {
             "{path} should publish a direct proc input event"
         );
     }
+}
+
+#[tokio::test]
+async fn bind_process_replays_existing_proc_io_events() {
+    let proc = Arc::new(
+        ProcFs::new().with_runner(Arc::new(ImmediateOutputRunner::new("early runner output"))),
+    );
+    let (_, shell, agent_root, _) = namespace_shell_with_agent_root_for_proc(proc);
+    let pid = shell
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .await
+        .unwrap();
+    wait_for_file_contains(&shell, &format!("/proc/{pid}/io/events"), "output:19").await;
+
+    agent_root
+        .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+
+    let events =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+    assert!(
+        events.contains("output:19"),
+        "late-bound agent aggregate should replay existing proc IO events: {events:?}"
+    );
 }
 
 #[tokio::test]

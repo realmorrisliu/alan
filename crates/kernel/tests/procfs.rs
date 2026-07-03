@@ -351,6 +351,48 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
 }
 
 #[tokio::test]
+async fn late_io_event_subscribers_replay_existing_events() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let input_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(input_fid, OpenMode::Write).await.unwrap();
+    fs.write(input_fid, 0, b"early input").await.unwrap();
+    fs.clunk(input_fid).await.unwrap();
+
+    let output_fid = Fid(12);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(output_fid, OpenMode::Write).await.unwrap();
+    fs.write(output_fid, 0, b"early output").await.unwrap();
+    fs.clunk(output_fid).await.unwrap();
+
+    let input_sink = Arc::new(RecordingInputSink::new());
+    fs.subscribe_process_input(&pid, input_sink.clone())
+        .await
+        .unwrap();
+    assert_eq!(input_sink.wait_for(1).await, vec![(pid.clone(), 11)]);
+
+    let output_sink = Arc::new(RecordingOutputSink::new());
+    fs.subscribe_process_output(&pid, output_sink.clone())
+        .await
+        .unwrap();
+    assert_eq!(output_sink.wait_for(1).await, vec![(pid, 12)]);
+}
+
+#[tokio::test]
 async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());
