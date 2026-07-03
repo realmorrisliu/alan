@@ -72,6 +72,7 @@ dependencies = [
  "alan-kernel",
  "alan-llm",
  "alan-llmfs",
+ "alan-routefs",
  "alan-shell",
  "anyhow",
  "async-trait",
@@ -226,6 +227,19 @@ dependencies = [
  "alan-ap",
  "alan-knowledge",
  "async-trait",
+ "tokio",
+]
+
+[[package]]
+name = "alan-routefs"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "alan-kernel",
+ "alan-shell",
+ "async-trait",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
