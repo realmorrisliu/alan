@@ -2,13 +2,17 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, ImportedFileServer, MAX_WIRE_FRAME_BYTES, Offset,
     OpenMode, Qid, Request, Response, Stat, Stream, decode_request_frame, decode_response_frame,
     encode_request_frame, encode_response_frame, export_file_server,
 };
-use tokio::io::{BufReader, duplex};
+use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf, duplex};
 use tokio::sync::{Mutex, Notify};
 
 fn qid(kind: FileKind, path: u64) -> Qid {
@@ -16,6 +20,51 @@ fn qid(kind: FileKind, path: u64) -> Qid {
         kind,
         version: 0,
         path,
+    }
+}
+
+struct DropNotifyReader<R> {
+    inner: R,
+    dropped: Arc<Notify>,
+}
+
+impl<R> DropNotifyReader<R> {
+    fn new(inner: R, dropped: Arc<Notify>) -> Self {
+        Self { inner, dropped }
+    }
+}
+
+impl<R> Drop for DropNotifyReader<R> {
+    fn drop(&mut self) {
+        self.dropped.notify_one();
+    }
+}
+
+impl<R> AsyncRead for DropNotifyReader<R>
+where
+    R: AsyncRead + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<R> AsyncBufRead for DropNotifyReader<R>
+where
+    R: AsyncBufRead + Unpin,
+{
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.inner).poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        let this = self.get_mut();
+        Pin::new(&mut this.inner).consume(amt);
     }
 }
 
@@ -195,6 +244,27 @@ async fn imported_tree_dispatches_to_exported_server() {
 
     drop(imported);
     server_task.abort();
+}
+
+#[tokio::test]
+async fn aborting_export_drops_the_background_reader() {
+    let (client_stream, server_stream) = duplex(4096);
+    let (_client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let reader_dropped = Arc::new(Notify::new());
+    let reader = DropNotifyReader::new(BufReader::new(server_read), Arc::clone(&reader_dropped));
+    let server: Arc<dyn FileServer> = Arc::new(OneFile);
+    let server_task = tokio::spawn(export_file_server(server, reader, server_write));
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    server_task.abort();
+    let _ = server_task.await;
+
+    tokio::time::timeout(Duration::from_millis(500), reader_dropped.notified())
+        .await
+        .expect("export abort left the background reader task alive");
+    drop(client_write);
 }
 
 struct StreamFile {

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc, watch};
+use tokio::task::JoinHandle;
 
 use crate::wire::{
     MAX_WIRE_FRAME_BYTES, read_request_frame, read_response_frame, write_request_frame,
@@ -224,17 +225,54 @@ where
     let transport = InProcessTransport::new(server);
     let (request_tx, mut request_rx) = mpsc::channel(1);
     let (reader_closed_tx, mut reader_closed_rx) = watch::channel(false);
-    tokio::spawn(read_export_requests(reader, request_tx, reader_closed_tx));
+    let reader_task = AbortOnDrop::new(tokio::spawn(read_export_requests(
+        reader,
+        request_tx,
+        reader_closed_tx,
+    )));
 
-    while let Some(message) = request_rx.recv().await {
-        let ExportReaderMessage::Request(request) = message?;
-        let result = tokio::select! {
-            result = transport.call(request) => result,
-            _ = reader_closed_rx.changed() => return Ok(()),
-        };
-        write_response_frame(&mut writer, &result).await?;
+    let result = async {
+        while let Some(message) = request_rx.recv().await {
+            let ExportReaderMessage::Request(request) = message?;
+            let result = tokio::select! {
+                result = transport.call(request) => result,
+                _ = reader_closed_rx.changed() => return Ok(()),
+            };
+            write_response_frame(&mut writer, &result).await?;
+        }
+        Ok(())
     }
-    Ok(())
+    .await;
+
+    reader_task.abort_and_join().await;
+    result
+}
+
+struct AbortOnDrop {
+    handle: Option<JoinHandle<()>>,
+}
+
+impl AbortOnDrop {
+    fn new(handle: JoinHandle<()>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    async fn abort_and_join(mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
+    }
 }
 
 enum ExportReaderMessage {
