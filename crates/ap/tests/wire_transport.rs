@@ -534,3 +534,85 @@ async fn imported_large_write_is_split_into_bounded_remote_frames() {
     drop(imported);
     server_task.abort();
 }
+
+struct LargeReadFile {
+    requested_counts: Mutex<Vec<u32>>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for LargeReadFile {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::NotFound)
+    }
+
+    async fn open(&self, _fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        self.requested_counts.lock().await.push(count);
+        Ok(vec![255; count as usize])
+    }
+
+    async fn write(&self, _fid: Fid, _offset: Offset, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+
+    async fn stat(&self, _fid: Fid) -> Result<Stat, ErrorCode> {
+        Ok(Stat {
+            name: "large".into(),
+            qid: qid(FileKind::File, 1),
+            length: MAX_WIRE_FRAME_BYTES as u64,
+            writable: false,
+        })
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn clunk(&self, _fid: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn imported_large_read_caps_remote_count_to_bounded_frame() {
+    let (client_stream, server_stream) = duplex(1024 * 1024);
+    let (client_read, client_write) = tokio::io::split(client_stream);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+
+    let server = Arc::new(LargeReadFile {
+        requested_counts: Mutex::new(Vec::new()),
+    });
+    let server_task = tokio::spawn(export_file_server(
+        server.clone(),
+        BufReader::new(server_read),
+        server_write,
+    ));
+    let imported = ImportedFileServer::new(BufReader::new(client_read), client_write);
+
+    let data = imported
+        .read(Fid(1), 0, MAX_WIRE_FRAME_BYTES as u32)
+        .await
+        .unwrap();
+    assert!(data.len() < MAX_WIRE_FRAME_BYTES);
+    assert_eq!(
+        server.requested_counts.lock().await.as_slice(),
+        &[data.len() as u32]
+    );
+    assert_eq!(imported.stat(Fid(1)).await.unwrap().name, "large");
+
+    drop(imported);
+    server_task.abort();
+}

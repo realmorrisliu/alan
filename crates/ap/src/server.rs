@@ -19,7 +19,7 @@ use crate::wire::{
 };
 use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat, WireError};
 
-const MAX_WIRE_WRITE_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
+const MAX_WIRE_PAYLOAD_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
 
 /// A file server: the backing implementation of one mountable tree.
 ///
@@ -376,6 +376,7 @@ where
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let count = count.min(MAX_WIRE_PAYLOAD_CHUNK_BYTES as u32);
         match self
             .remote_call(Request::Read { fid, offset, count })
             .await?
@@ -401,7 +402,7 @@ where
         }
 
         let mut accepted_total = 0usize;
-        for chunk in data.chunks(MAX_WIRE_WRITE_CHUNK_BYTES) {
+        for chunk in data.chunks(MAX_WIRE_PAYLOAD_CHUNK_BYTES) {
             let chunk_offset = offset
                 .checked_add(accepted_total as u64)
                 .ok_or(ErrorCode::BadRequest)?;
