@@ -75,8 +75,6 @@ impl AgentConformanceChecker {
         let mut report = ConformanceReport::new(path);
         self.check_generic_process_into(path, &mut report).await;
         for (rel, kind) in [
-            ("io/input", FileKind::Stream),
-            ("io/events", FileKind::Stream),
             ("events", FileKind::Stream),
             ("machine", FileKind::Dir),
             ("machine/tape", FileKind::Stream),
@@ -152,7 +150,9 @@ impl AgentConformanceChecker {
     async fn check_generic_process_into(&self, path: &str, report: &mut ConformanceReport) {
         for (rel, kind) in [
             ("io", FileKind::Dir),
+            ("io/input", FileKind::Stream),
             ("io/output", FileKind::Stream),
+            ("io/events", FileKind::Stream),
             ("status", FileKind::File),
             ("ctl", FileKind::File),
         ] {

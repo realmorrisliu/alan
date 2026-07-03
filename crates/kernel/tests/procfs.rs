@@ -512,6 +512,50 @@ async fn proc_output_serves_the_stream() {
 }
 
 #[tokio::test]
+async fn proc_io_lists_generic_streams() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    let listing = String::from_utf8(read_at(&fs, &[&pid, "io"], Fid(11)).await.unwrap()).unwrap();
+
+    assert_eq!(
+        listing.lines().collect::<Vec<_>>(),
+        vec!["input", "output", "events"]
+    );
+}
+
+#[tokio::test]
+async fn proc_input_accepts_write_intent_and_records_io_event() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(11),
+        &[pid.clone(), "io".into(), "input".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(11), OpenMode::Write).await.unwrap();
+    fs.write(Fid(11), 0, b"hello proc").await.unwrap();
+    fs.clunk(Fid(11)).await.unwrap();
+
+    assert_eq!(
+        String::from_utf8(read_at(&fs, &[&pid, "io", "input"], Fid(12)).await.unwrap()).unwrap(),
+        "hello proc"
+    );
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "events"], Fid(13))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "input:10\n"
+    );
+}
+
+#[tokio::test]
 async fn proc_output_accepts_write_intent() {
     let fs = proc();
     let pid = spawn(&fs, Fid(10)).await;
@@ -535,6 +579,15 @@ async fn proc_output_accepts_write_intent() {
         )
         .unwrap(),
         "hello proc"
+    );
+    assert_eq!(
+        String::from_utf8(
+            read_at(&fs, &[&pid, "io", "events"], Fid(13))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "output:10\n"
     );
 }
 
@@ -595,6 +648,13 @@ async fn registered_runner_writes_process_output_and_exit() {
             )
             .unwrap();
             assert_eq!(output, "hello tool\n");
+            let io_events = String::from_utf8(
+                read_at(&fs, &[&pid, "io", "events"], Fid(202))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(io_events, "output:11\n");
             let exit =
                 String::from_utf8(read_at(&fs, &[&pid, "exit"], Fid(201)).await.unwrap()).unwrap();
             assert_eq!(exit, "0");

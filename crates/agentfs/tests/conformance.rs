@@ -69,6 +69,33 @@ async fn conformance_checker_accepts_procfs_generic_process_layout() {
 }
 
 #[tokio::test]
+async fn conformance_checker_rejects_generic_process_missing_input_and_events() {
+    let checker = AgentConformanceChecker::new(InProcessTransport::new(Arc::new(
+        IncompleteGenericProcessFs::new(),
+    )));
+
+    let report = checker.check_generic_process("/proc/1").await;
+    let paths = report
+        .issues
+        .iter()
+        .map(|issue| issue.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        paths.contains(&"/proc/1/io/input"),
+        "generic process checks must require io/input: {report:?}"
+    );
+    assert!(
+        paths.contains(&"/proc/1/io/events"),
+        "generic process checks must require io/events: {report:?}"
+    );
+    assert!(
+        !paths.contains(&"/proc/1/io/output"),
+        "the incomplete fixture still provides io/output: {report:?}"
+    );
+}
+
+#[tokio::test]
 async fn conformance_checker_verifies_dynamic_container_event_streams() {
     let (root, shell, agent_root) = namespace_with_agent_root();
     let pid = shell
@@ -228,6 +255,112 @@ impl FileServer for HangingContainerEventFs {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IncompleteGenericNode {
+    Proc,
+    Io,
+    Output,
+    Status,
+    Ctl,
+}
+
+struct IncompleteGenericProcessFs {
+    fids: Mutex<HashMap<Fid, IncompleteGenericNode>>,
+}
+
+impl IncompleteGenericProcessFs {
+    fn new() -> Self {
+        Self {
+            fids: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn node_for(&self, fid: Fid) -> Result<IncompleteGenericNode, ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .get(&fid)
+            .copied()
+            .ok_or(ErrorCode::NotFound)
+    }
+}
+
+#[async_trait]
+impl FileServer for IncompleteGenericProcessFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        if fid != Fid::ROOT {
+            return Err(ErrorCode::NotFound);
+        }
+        let node = match names {
+            [proc, pid] if proc == "proc" && pid == "1" => IncompleteGenericNode::Proc,
+            [proc, pid, io] if proc == "proc" && pid == "1" && io == "io" => {
+                IncompleteGenericNode::Io
+            }
+            [proc, pid, io, output]
+                if proc == "proc" && pid == "1" && io == "io" && output == "output" =>
+            {
+                IncompleteGenericNode::Output
+            }
+            [proc, pid, status] if proc == "proc" && pid == "1" && status == "status" => {
+                IncompleteGenericNode::Status
+            }
+            [proc, pid, ctl] if proc == "proc" && pid == "1" && ctl == "ctl" => {
+                IncompleteGenericNode::Ctl
+            }
+            _ => return Err(ErrorCode::NotFound),
+        };
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .insert(newfid, node);
+        Ok(qid_for_incomplete_generic_node(node))
+    }
+
+    async fn open(&self, fid: Fid, _mode: OpenMode) -> Result<Qid, ErrorCode> {
+        self.node_for(fid).map(qid_for_incomplete_generic_node)
+    }
+
+    async fn read(&self, _fid: Fid, _offset: u64, _count: u32) -> Result<Vec<u8>, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn write(&self, _fid: Fid, _offset: u64, _data: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let node = self.node_for(fid)?;
+        Ok(Stat {
+            name: String::new(),
+            qid: qid_for_incomplete_generic_node(node),
+            length: 0,
+            writable: matches!(node, IncompleteGenericNode::Ctl),
+        })
+    }
+
+    async fn create(
+        &self,
+        _fid: Fid,
+        _newfid: Fid,
+        _name: &str,
+        _kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.clunk(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.fids
+            .lock()
+            .expect("fid map lock should not be poisoned")
+            .remove(&fid);
+        Ok(())
+    }
+}
+
 struct ActiveEventReadGuard {
     active_event_reads: Arc<AtomicUsize>,
 }
@@ -253,6 +386,21 @@ fn qid_for_hanging_node(node: HangingNode) -> Qid {
     let path = match node {
         HangingNode::EventStream => 1,
         HangingNode::CloneFile => 2,
+    };
+    Qid {
+        kind,
+        version: 0,
+        path,
+    }
+}
+
+fn qid_for_incomplete_generic_node(node: IncompleteGenericNode) -> Qid {
+    let (kind, path) = match node {
+        IncompleteGenericNode::Proc => (FileKind::Dir, 100),
+        IncompleteGenericNode::Io => (FileKind::Dir, 101),
+        IncompleteGenericNode::Output => (FileKind::Stream, 102),
+        IncompleteGenericNode::Status => (FileKind::File, 103),
+        IncompleteGenericNode::Ctl => (FileKind::File, 104),
     };
     Qid {
         kind,
