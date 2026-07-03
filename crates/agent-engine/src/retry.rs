@@ -25,7 +25,12 @@ pub fn backoff_delay(attempt: u32) -> Duration {
 
 /// Check whether an LLM/provider error looks transient enough to retry.
 pub fn is_retryable(error: &anyhow::Error) -> bool {
-    let error_str = error.to_string().to_lowercase();
+    let error_str = error
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
 
     let retryable_patterns = [
         "timeout",

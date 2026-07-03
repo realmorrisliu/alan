@@ -178,9 +178,9 @@ impl RuntimeLoopState {
         cancel_message: &'static str,
     ) -> Result<crate::llm::GenerationResponse> {
         let namespace = self.namespace_environment().clone();
-        tokio::select! {
-            _ = cancel.cancelled() => Err(anyhow::anyhow!(cancel_message)),
-            result = namespace.generate(&request) => result,
+        match namespace.generate_controlled(&request, 0, cancel).await {
+            Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
+            result => result,
         }
     }
 
@@ -200,24 +200,9 @@ impl RuntimeLoopState {
 
             let namespace = self.namespace_environment().clone();
             let attempt_request = request.clone();
-            let generate = async move { namespace.generate(&attempt_request).await };
-            let result = if timeout_secs == 0 {
-                tokio::select! {
-                    _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                    result = generate => result,
-                }
-            } else {
-                tokio::select! {
-                    _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
-                    result = tokio::time::timeout(
-                        tokio::time::Duration::from_secs(timeout_secs),
-                        generate,
-                    ) => match result {
-                        Ok(result) => result,
-                        Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
-                    },
-                }
-            };
+            let result = namespace
+                .generate_controlled(&attempt_request, timeout_secs, cancel)
+                .await;
 
             match result {
                 Ok(response) => return Ok(response),
@@ -574,6 +559,7 @@ mod tests {
         CompactionTrigger, MemoryFlushResult,
     };
     use alan_ap::{Fid, FileServer, OpenMode};
+    use alan_shell::Shell;
     use serde_json::json;
     use std::{
         collections::VecDeque,
@@ -673,12 +659,16 @@ mod tests {
     }
 
     fn runtime_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+        runtime_state_with_environment(namespace_environment_with_provider(provider))
+    }
+
+    fn runtime_state_with_environment(environment: RuntimeEnvironment) -> RuntimeLoopState {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
             session: Session::new(),
             current_submission_id: None,
-            environment: namespace_environment_with_provider(provider),
+            environment,
             tool_catalog: ToolRegistry::new(),
             core_config: Config::default(),
             runtime_config: super::RuntimeConfig::default(),
@@ -818,6 +808,55 @@ mod tests {
 
         fn provider_name(&self) -> &'static str {
             "mock"
+        }
+    }
+
+    struct TimeoutThenSucceedStreamProvider {
+        attempts: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl TimeoutThenSucceedStreamProvider {
+        fn new(attempts: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+            Self { attempts }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for TimeoutThenSucceedStreamProvider {
+        async fn generate(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<GenerationResponse> {
+            Err(anyhow::anyhow!(
+                "timeout-then-succeed provider uses streaming"
+            ))
+        }
+
+        async fn chat(&mut self, _system: Option<&str>, _user: &str) -> anyhow::Result<String> {
+            Ok("timeout-then-succeed stream provider".to_string())
+        }
+
+        async fn generate_stream(
+            &mut self,
+            _request: GenerationRequest,
+        ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+            let attempt = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if attempt == 0 {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                tokio::spawn(async move {
+                    let _hold = tx;
+                    std::future::pending::<()>().await;
+                });
+                return Ok(rx);
+            }
+
+            Ok(finished_stream(generation_response("recovered")))
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "timeout_then_succeed_stream"
         }
     }
 
@@ -1016,6 +1055,41 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.content, "recovered");
+    }
+
+    #[tokio::test]
+    async fn namespace_generation_aborts_timed_out_generation_before_retry() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (root, _procfs) = namespace_root_with_provider(TimeoutThenSucceedStreamProvider::new(
+            Arc::clone(&attempts),
+        ));
+        let shell = Shell::new(root.clone());
+        let mut state = runtime_state_with_environment(RuntimeEnvironment::namespace(
+            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        ));
+        let cancel = CancellationToken::new();
+
+        let response = state
+            .generate_response_with_retry(
+                GenerationRequest::new().with_user_message("hello"),
+                1,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.content, "recovered");
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let status = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g0/status")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(status["status"], "aborted");
     }
 
     fn memory_flush_json_response() -> String {

@@ -273,6 +273,37 @@ impl NamespaceRuntimeEnvironment {
         Ok(response)
     }
 
+    pub async fn generate_controlled(
+        &self,
+        request: &GenerationRequest,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<GenerationResponse> {
+        let request_doc = LlmRequestDoc::from_generation_request(request)?;
+        let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
+        let client = NamespaceClient::new(self.root.clone());
+        let generation_id = start_generation_controlled(
+            &client,
+            &self.llm_connection,
+            &request_bytes,
+            timeout_secs,
+            cancel,
+        )
+        .await?;
+        let read_response = read_generation_response(&client, &self.llm_connection, &generation_id);
+        let response = run_generation_read_with_controls(
+            read_response,
+            &client,
+            &self.llm_connection,
+            &generation_id,
+            timeout_secs,
+            cancel,
+        )
+        .await
+        .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        Ok(response)
+    }
+
     pub async fn generate_with_text_events<E, F>(
         &self,
         request: &GenerationRequest,

@@ -134,10 +134,6 @@ where
             .await;
         }
         Op::Interrupt => {
-            state
-                .namespace_environment()
-                .write_process_control("interrupt")
-                .await?;
             cancel_current_task(state, emit).await?;
         }
 
@@ -1876,7 +1872,7 @@ Use this skill when asked.
     }
 
     #[tokio::test]
-    async fn test_handle_interrupt_op_routes_namespace_control_through_proc_ctl() {
+    async fn test_handle_interrupt_op_keeps_agent_process_running() {
         let (environment, shell) = namespace_environment_with_live_process_for_test().await;
         let mut state = create_test_state();
         state.environment = environment;
@@ -1895,7 +1891,7 @@ Use this skill when asked.
         assert!(!state.session.has_active_task);
         assert_eq!(
             String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
-            "exited\n"
+            "running\n"
         );
         let agent_events = String::from_utf8(shell.cat("/agent/1/events").await.unwrap()).unwrap();
         assert!(
