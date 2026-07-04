@@ -20,6 +20,7 @@ use std::fmt;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +46,16 @@ impl SandboxBackendKind {
         }
     }
 
+    /// Whether native subprocess paths are host-projected or namespace-reified.
+    pub const fn path_mode(self) -> &'static str {
+        match self {
+            SandboxBackendKind::LinuxReifiedNamespace => "reified_namespace_paths",
+            SandboxBackendKind::Seatbelt
+            | SandboxBackendKind::Landlock
+            | SandboxBackendKind::WorkspacePathGuard => "projected_host_paths",
+        }
+    }
+
     /// Whether this backend enforces confinement at the OS level.
     pub const fn is_os_enforced(self) -> bool {
         matches!(
@@ -64,9 +75,11 @@ impl SandboxBackendKind {
 
     /// Whether the backend confines bash strongly enough to run shell wrappers
     /// and reviewer-route escalated bash: the workspace filesystem boundary AND
-    /// network are kernel-enforced (Seatbelt). Landlock does not qualify — it
-    /// cannot guarantee network confinement on older kernels — so it keeps the
-    /// full shape parser and routes escalated bash to a human.
+    /// network are kernel-enforced (Seatbelt). Landlock does not qualify because
+    /// network confinement is kernel-conditional, and Linux reified namespace
+    /// does not qualify until protected subpaths are carved out of the writable
+    /// workspace mount. Conservative backends keep the full shape parser and
+    /// route escalated bash to a human.
     ///
     /// NOTE: protected subpaths (`.git`/`.alan`/`.agents`) are NOT kernel-confined
     /// (denying `.git` breaks git itself). Their integrity rests on the path-guard
@@ -74,10 +87,7 @@ impl SandboxBackendKind {
     /// writes by approved code (git porcelain, a reviewer-approved test runner)
     /// are trusted — see the residual-gap audit.
     pub const fn permits_autonomous_bash(self) -> bool {
-        matches!(
-            self,
-            SandboxBackendKind::Seatbelt | SandboxBackendKind::LinuxReifiedNamespace
-        )
+        matches!(self, SandboxBackendKind::Seatbelt)
     }
 }
 
@@ -161,6 +171,8 @@ pub struct LinuxReificationCapabilityReport {
     pub user_namespace: LinuxReificationCapability,
     /// Mount namespace creation.
     pub mount_namespace: LinuxReificationCapability,
+    /// PID namespace creation for timeout cleanup of all descendants.
+    pub pid_namespace: LinuxReificationCapability,
     /// Bind-mount support inside the new namespace.
     pub bind_mount: LinuxReificationCapability,
     /// Read-only remount support for bound paths.
@@ -171,25 +183,54 @@ pub struct LinuxReificationCapabilityReport {
     pub network_confinement: LinuxReificationCapability,
 }
 
+/// Requirement states used to build a Linux reification capability report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxReificationCapabilities {
+    pub linux_host: LinuxReificationCapability,
+    pub user_namespace: LinuxReificationCapability,
+    pub mount_namespace: LinuxReificationCapability,
+    pub pid_namespace: LinuxReificationCapability,
+    pub bind_mount: LinuxReificationCapability,
+    pub read_only_remount: LinuxReificationCapability,
+    pub scratch_tmp_mount: LinuxReificationCapability,
+    pub network_confinement: LinuxReificationCapability,
+}
+
+/// Selection readiness for the Linux reified namespace backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxReifiedNamespaceBackendReadiness {
+    pub capability_report: LinuxReificationCapabilityReport,
+    pub runner_smoke: LinuxReificationCapability,
+    pub toolchain_smoke: LinuxReificationCapability,
+    pub selected_backend: SandboxBackendKind,
+}
+
+impl LinuxReifiedNamespaceBackendReadiness {
+    /// Stable fields for startup/debug audits.
+    pub fn audit_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = self.capability_report.audit_fields();
+        fields.extend([
+            ("runner_smoke", self.runner_smoke.audit_value()),
+            ("toolchain_smoke", self.toolchain_smoke.audit_value()),
+            ("selected_backend", self.selected_backend.name().to_string()),
+            ("path_mode", self.selected_backend.path_mode().to_string()),
+        ]);
+        fields
+    }
+}
+
 impl LinuxReificationCapabilityReport {
     /// Build a report from explicit requirement states.
-    pub fn new(
-        linux_host: LinuxReificationCapability,
-        user_namespace: LinuxReificationCapability,
-        mount_namespace: LinuxReificationCapability,
-        bind_mount: LinuxReificationCapability,
-        read_only_remount: LinuxReificationCapability,
-        scratch_tmp_mount: LinuxReificationCapability,
-        network_confinement: LinuxReificationCapability,
-    ) -> Self {
+    pub fn new(capabilities: LinuxReificationCapabilities) -> Self {
         Self {
-            linux_host,
-            user_namespace,
-            mount_namespace,
-            bind_mount,
-            read_only_remount,
-            scratch_tmp_mount,
-            network_confinement,
+            linux_host: capabilities.linux_host,
+            user_namespace: capabilities.user_namespace,
+            mount_namespace: capabilities.mount_namespace,
+            pid_namespace: capabilities.pid_namespace,
+            bind_mount: capabilities.bind_mount,
+            read_only_remount: capabilities.read_only_remount,
+            scratch_tmp_mount: capabilities.scratch_tmp_mount,
+            network_confinement: capabilities.network_confinement,
         }
     }
 
@@ -203,6 +244,7 @@ impl LinuxReificationCapabilityReport {
         let fs_requirements_available = self.linux_host.is_available()
             && self.user_namespace.is_available()
             && self.mount_namespace.is_available()
+            && self.pid_namespace.is_available()
             && self.bind_mount.is_available()
             && self.read_only_remount.is_available()
             && self.scratch_tmp_mount.is_available();
@@ -247,11 +289,12 @@ impl LinuxReificationCapabilityReport {
         fields
     }
 
-    fn capabilities(&self) -> [(&'static str, &LinuxReificationCapability); 7] {
+    fn capabilities(&self) -> [(&'static str, &LinuxReificationCapability); 8] {
         [
             ("linux_host", &self.linux_host),
             ("user_namespace", &self.user_namespace),
             ("mount_namespace", &self.mount_namespace),
+            ("pid_namespace", &self.pid_namespace),
             ("bind_mount", &self.bind_mount),
             ("read_only_remount", &self.read_only_remount),
             ("scratch_tmp_mount", &self.scratch_tmp_mount),
@@ -294,7 +337,35 @@ pub fn preferred_linux_backend_with_reification(
     report: &LinuxReificationCapabilityReport,
     landlock_is_available: bool,
 ) -> SandboxBackendKind {
-    if report.is_selectable() {
+    preferred_linux_backend_with_reification_and_runner(
+        report,
+        &LinuxReificationCapability::available(),
+        landlock_is_available,
+    )
+}
+
+/// Choose a Linux backend from capability and runner-smoke evidence.
+pub fn preferred_linux_backend_with_reification_and_runner(
+    report: &LinuxReificationCapabilityReport,
+    runner_smoke: &LinuxReificationCapability,
+    landlock_is_available: bool,
+) -> SandboxBackendKind {
+    let toolchain_smoke = LinuxReificationCapability::available();
+    preferred_linux_backend_with_reification_runner_and_toolchain(
+        report,
+        runner_smoke,
+        &toolchain_smoke,
+        landlock_is_available,
+    )
+}
+
+fn preferred_linux_backend_with_reification_runner_and_toolchain(
+    report: &LinuxReificationCapabilityReport,
+    runner_smoke: &LinuxReificationCapability,
+    toolchain_smoke: &LinuxReificationCapability,
+    landlock_is_available: bool,
+) -> SandboxBackendKind {
+    if report.is_selectable() && runner_smoke.is_available() && toolchain_smoke.is_available() {
         SandboxBackendKind::LinuxReifiedNamespace
     } else if landlock_is_available {
         SandboxBackendKind::Landlock
@@ -303,18 +374,73 @@ pub fn preferred_linux_backend_with_reification(
     }
 }
 
+/// Cached readiness for selecting the Linux reified namespace backend.
+pub fn linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    static READINESS: OnceLock<LinuxReifiedNamespaceBackendReadiness> = OnceLock::new();
+    READINESS
+        .get_or_init(probe_linux_reified_namespace_backend_readiness)
+        .clone()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    let capability_report = probe_linux_reification();
+    let runner_smoke = LinuxReificationCapability::unavailable("not a linux host");
+    let toolchain_smoke = LinuxReificationCapability::unavailable("not a linux host");
+    let selected_backend = preferred_linux_backend_with_reification_runner_and_toolchain(
+        &capability_report,
+        &runner_smoke,
+        &toolchain_smoke,
+        false,
+    );
+    LinuxReifiedNamespaceBackendReadiness {
+        capability_report,
+        runner_smoke,
+        toolchain_smoke,
+        selected_backend,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
+    let capability_report = probe_linux_reification();
+    let runner_smoke = if capability_report.is_selectable() {
+        super::reified_namespace::smoke_linux_reified_namespace_runner()
+    } else {
+        LinuxReificationCapability::unavailable("capability probe did not select reification")
+    };
+    let toolchain_smoke = if runner_smoke.is_available() {
+        super::reified_namespace::smoke_linux_reified_namespace_user_path()
+    } else {
+        LinuxReificationCapability::unavailable("runner smoke did not pass")
+    };
+    let selected_backend = preferred_linux_backend_with_reification_runner_and_toolchain(
+        &capability_report,
+        &runner_smoke,
+        &toolchain_smoke,
+        landlock_available(),
+    );
+    LinuxReifiedNamespaceBackendReadiness {
+        capability_report,
+        runner_smoke,
+        toolchain_smoke,
+        selected_backend,
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let reason = "not a linux host";
-    LinuxReificationCapabilityReport::new(
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-        LinuxReificationCapability::unavailable(reason),
-    )
+    LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+        linux_host: LinuxReificationCapability::unavailable(reason),
+        user_namespace: LinuxReificationCapability::unavailable(reason),
+        mount_namespace: LinuxReificationCapability::unavailable(reason),
+        pid_namespace: LinuxReificationCapability::unavailable(reason),
+        bind_mount: LinuxReificationCapability::unavailable(reason),
+        read_only_remount: LinuxReificationCapability::unavailable(reason),
+        scratch_tmp_mount: LinuxReificationCapability::unavailable(reason),
+        network_confinement: LinuxReificationCapability::unavailable(reason),
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -331,6 +457,21 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
         run_linux_probe_command(
             "mount namespace",
             linux_unshare_command(&["--user", "--map-root-user", "--mount"]),
+        )
+    } else {
+        LinuxReificationCapability::unavailable("requires available user namespace")
+    };
+
+    let pid_namespace = if user_namespace.is_available() {
+        run_linux_probe_command(
+            "pid namespace",
+            linux_unshare_command(&[
+                "--user",
+                "--map-root-user",
+                "--pid",
+                "--fork",
+                "--kill-child=SIGKILL",
+            ]),
         )
     } else {
         LinuxReificationCapability::unavailable("requires available user namespace")
@@ -374,15 +515,16 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
         LinuxReificationCapability::unavailable("requires available mount namespace")
     };
 
-    LinuxReificationCapabilityReport::new(
+    LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
         linux_host,
         user_namespace,
         mount_namespace,
+        pid_namespace,
         bind_mount,
         read_only_remount,
         scratch_tmp_mount,
         network_confinement,
-    )
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -569,6 +711,22 @@ pub fn active_backend_name() -> &'static str {
     detect_backend().name()
 }
 
+/// Path semantics for the active execution backend.
+pub fn active_backend_path_mode() -> &'static str {
+    detect_backend().path_mode()
+}
+
+/// Detect the strongest projection backend, ignoring Linux reification.
+pub fn detect_projection_backend() -> SandboxBackendKind {
+    if cfg!(target_os = "macos") && seatbelt_available() {
+        SandboxBackendKind::Seatbelt
+    } else if cfg!(target_os = "linux") && landlock_available() {
+        SandboxBackendKind::Landlock
+    } else {
+        SandboxBackendKind::WorkspacePathGuard
+    }
+}
+
 /// Detect the strongest available backend for the host.
 ///
 /// Conservative by design: returns an OS backend only when its tooling is
@@ -576,8 +734,8 @@ pub fn active_backend_name() -> &'static str {
 pub fn detect_backend() -> SandboxBackendKind {
     if cfg!(target_os = "macos") && seatbelt_available() {
         SandboxBackendKind::Seatbelt
-    } else if cfg!(target_os = "linux") && landlock_available() {
-        SandboxBackendKind::Landlock
+    } else if cfg!(target_os = "linux") {
+        linux_reified_namespace_backend_readiness().selected_backend
     } else {
         SandboxBackendKind::WorkspacePathGuard
     }
@@ -879,6 +1037,26 @@ mod tests {
     }
 
     #[test]
+    fn backend_path_modes_are_stable() {
+        assert_eq!(
+            SandboxBackendKind::Seatbelt.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::Landlock.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::WorkspacePathGuard.path_mode(),
+            "projected_host_paths"
+        );
+        assert_eq!(
+            SandboxBackendKind::LinuxReifiedNamespace.path_mode(),
+            "reified_namespace_paths"
+        );
+    }
+
+    #[test]
     fn seatbelt_profile_confines_writes_and_denies_network() {
         let writable_roots = vec![PathBuf::from("/work/space")];
         let profile = seatbelt_profile(&writable_roots, &[], false);
@@ -1084,27 +1262,39 @@ mod tests {
         assert!(matches!(
             kind,
             SandboxBackendKind::Seatbelt
+                | SandboxBackendKind::LinuxReifiedNamespace
                 | SandboxBackendKind::Landlock
                 | SandboxBackendKind::WorkspacePathGuard
         ));
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
-    fn detect_backend_does_not_select_linux_reified_namespace_yet() {
+    fn detect_backend_does_not_select_linux_reified_namespace_on_non_linux() {
         assert_ne!(detect_backend(), SandboxBackendKind::LinuxReifiedNamespace);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detect_backend_matches_linux_reified_namespace_readiness() {
+        assert_eq!(
+            detect_backend(),
+            linux_reified_namespace_backend_readiness().selected_backend
+        );
     }
 
     #[test]
     fn linux_reification_report_formats_audit_fields() {
-        let report = LinuxReificationCapabilityReport::new(
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            unavailable_capability("network namespace unavailable"),
-        );
+        let report = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: available_capability(),
+            user_namespace: available_capability(),
+            mount_namespace: available_capability(),
+            pid_namespace: available_capability(),
+            bind_mount: available_capability(),
+            read_only_remount: available_capability(),
+            scratch_tmp_mount: available_capability(),
+            network_confinement: unavailable_capability("network namespace unavailable"),
+        });
 
         assert_eq!(report.backend_name(), "linux_reified_namespace");
         assert_eq!(report.status(), LinuxReificationStatus::Degraded);
@@ -1116,6 +1306,7 @@ mod tests {
                 ("linux_host", "available".to_string()),
                 ("user_namespace", "available".to_string()),
                 ("mount_namespace", "available".to_string()),
+                ("pid_namespace", "available".to_string()),
                 ("bind_mount", "available".to_string()),
                 ("read_only_remount", "available".to_string()),
                 ("scratch_tmp_mount", "available".to_string()),
@@ -1128,23 +1319,24 @@ mod tests {
         assert_eq!(
             report.to_string(),
             "linux_reified_namespace: degraded (linux_host=available, \
-             user_namespace=available, mount_namespace=available, bind_mount=available, \
-             read_only_remount=available, scratch_tmp_mount=available, \
+             user_namespace=available, mount_namespace=available, pid_namespace=available, \
+             bind_mount=available, read_only_remount=available, scratch_tmp_mount=available, \
              network_confinement=unavailable(network namespace unavailable))"
         );
     }
 
     #[test]
     fn linux_reification_report_lists_unavailable_reasons() {
-        let report = LinuxReificationCapabilityReport::new(
-            unavailable_capability("not a linux host"),
-            unavailable_capability("not a linux host"),
-            unavailable_capability("requires available user namespace"),
-            unavailable_capability("requires available mount namespace"),
-            available_capability(),
-            available_capability(),
-            unavailable_capability("network namespace unavailable"),
-        );
+        let report = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: unavailable_capability("not a linux host"),
+            user_namespace: unavailable_capability("not a linux host"),
+            mount_namespace: unavailable_capability("requires available user namespace"),
+            pid_namespace: unavailable_capability("requires available user namespace"),
+            bind_mount: unavailable_capability("requires available mount namespace"),
+            read_only_remount: available_capability(),
+            scratch_tmp_mount: available_capability(),
+            network_confinement: unavailable_capability("network namespace unavailable"),
+        });
 
         assert_eq!(
             report.unavailable_reasons(),
@@ -1152,6 +1344,7 @@ mod tests {
                 "linux_host: not a linux host".to_string(),
                 "user_namespace: not a linux host".to_string(),
                 "mount_namespace: requires available user namespace".to_string(),
+                "pid_namespace: requires available user namespace".to_string(),
                 "bind_mount: requires available mount namespace".to_string(),
                 "network_confinement: network namespace unavailable".to_string(),
             ]
@@ -1170,6 +1363,7 @@ mod tests {
                 "linux_host: not a linux host".to_string(),
                 "user_namespace: not a linux host".to_string(),
                 "mount_namespace: not a linux host".to_string(),
+                "pid_namespace: not a linux host".to_string(),
                 "bind_mount: not a linux host".to_string(),
                 "read_only_remount: not a linux host".to_string(),
                 "scratch_tmp_mount: not a linux host".to_string(),
@@ -1186,15 +1380,16 @@ mod tests {
             SandboxBackendKind::LinuxReifiedNamespace
         );
 
-        let incomplete = LinuxReificationCapabilityReport::new(
-            available_capability(),
-            unavailable_capability("user namespaces disabled"),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-        );
+        let incomplete = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: available_capability(),
+            user_namespace: unavailable_capability("user namespaces disabled"),
+            mount_namespace: available_capability(),
+            pid_namespace: available_capability(),
+            bind_mount: available_capability(),
+            read_only_remount: available_capability(),
+            scratch_tmp_mount: available_capability(),
+            network_confinement: available_capability(),
+        });
         assert_eq!(
             preferred_linux_backend_with_reification(&incomplete, true),
             SandboxBackendKind::Landlock
@@ -1204,19 +1399,101 @@ mod tests {
             SandboxBackendKind::WorkspacePathGuard
         );
 
-        let degraded = LinuxReificationCapabilityReport::new(
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            unavailable_capability("network confinement unavailable"),
-        );
+        let degraded = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: available_capability(),
+            user_namespace: available_capability(),
+            mount_namespace: available_capability(),
+            pid_namespace: available_capability(),
+            bind_mount: available_capability(),
+            read_only_remount: available_capability(),
+            scratch_tmp_mount: available_capability(),
+            network_confinement: unavailable_capability("network confinement unavailable"),
+        });
         assert_eq!(
             preferred_linux_backend_with_reification(&degraded, true),
             SandboxBackendKind::Landlock
         );
+    }
+
+    #[test]
+    fn linux_reification_selection_requires_runner_smoke() {
+        let complete = complete_linux_reification_report();
+        let runner_smoke = unavailable_capability("runner smoke failed");
+
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(&complete, &runner_smoke, true),
+            SandboxBackendKind::Landlock
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(&complete, &runner_smoke, false),
+            SandboxBackendKind::WorkspacePathGuard
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_and_runner(
+                &complete,
+                &available_capability(),
+                true
+            ),
+            SandboxBackendKind::LinuxReifiedNamespace
+        );
+    }
+
+    #[test]
+    fn linux_reification_selection_requires_toolchain_smoke() {
+        let complete = complete_linux_reification_report();
+        let runner_smoke = available_capability();
+        let toolchain_smoke = unavailable_capability("current PATH cannot be preserved");
+
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &toolchain_smoke,
+                true
+            ),
+            SandboxBackendKind::Landlock
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &toolchain_smoke,
+                false
+            ),
+            SandboxBackendKind::WorkspacePathGuard
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &available_capability(),
+                true
+            ),
+            SandboxBackendKind::LinuxReifiedNamespace
+        );
+    }
+
+    #[test]
+    fn linux_reification_readiness_audit_names_selected_backend_and_path_mode() {
+        let readiness = LinuxReifiedNamespaceBackendReadiness {
+            capability_report: complete_linux_reification_report(),
+            runner_smoke: unavailable_capability("runner smoke failed"),
+            toolchain_smoke: unavailable_capability("current PATH cannot be preserved"),
+            selected_backend: SandboxBackendKind::Landlock,
+        };
+
+        let fields = readiness.audit_fields();
+
+        assert!(fields.contains(&(
+            "runner_smoke",
+            "unavailable(runner smoke failed)".to_string()
+        )));
+        assert!(fields.contains(&(
+            "toolchain_smoke",
+            "unavailable(current PATH cannot be preserved)".to_string()
+        )));
+        assert!(fields.contains(&("selected_backend", "landlock".to_string())));
+        assert!(fields.contains(&("path_mode", "projected_host_paths".to_string())));
     }
 
     fn pre_refactor_single_workspace_profile(workspace_root: &Path, allow_network: bool) -> String {
@@ -1263,14 +1540,15 @@ mod tests {
     }
 
     fn complete_linux_reification_report() -> LinuxReificationCapabilityReport {
-        LinuxReificationCapabilityReport::new(
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-            available_capability(),
-        )
+        LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: available_capability(),
+            user_namespace: available_capability(),
+            mount_namespace: available_capability(),
+            pid_namespace: available_capability(),
+            bind_mount: available_capability(),
+            read_only_remount: available_capability(),
+            scratch_tmp_mount: available_capability(),
+            network_confinement: available_capability(),
+        })
     }
 }

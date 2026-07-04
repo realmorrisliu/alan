@@ -234,6 +234,7 @@ pub(super) fn evaluate_tool_policy(
     confinement: SandboxConfinement,
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::active_backend_name();
+    let path_mode = crate::tools::active_backend_path_mode().to_string();
     // The bash-shape preflight is the workspace-path-guard parser standing in for
     // confinement. With a kernel-enforced OS sandbox active, confinement is
     // independent of command syntax, so this syntactic deny must not block
@@ -251,6 +252,7 @@ pub(super) fn evaluate_tool_policy(
                 reason: Some(reason),
                 capability: capability_label(capability).to_string(),
                 sandbox_backend: sandbox_backend.to_string(),
+                path_mode: Some(path_mode.clone()),
             },
         };
     }
@@ -373,6 +375,7 @@ pub(super) fn evaluate_tool_policy(
                 reason: policy_reason.clone(),
                 capability: capability_kind,
                 sandbox_backend: sandbox_backend.to_string(),
+                path_mode: Some(path_mode.clone()),
             },
         },
         crate::policy::PolicyAction::Deny => ToolPolicyDecision::Forbidden {
@@ -386,6 +389,7 @@ pub(super) fn evaluate_tool_policy(
                 reason: policy_reason.clone(),
                 capability: capability_kind,
                 sandbox_backend: sandbox_backend.to_string(),
+                path_mode: Some(path_mode.clone()),
             },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
@@ -420,7 +424,8 @@ pub(super) fn evaluate_tool_policy(
                     "reason": policy_reason,
                     "action": "escalate"
                 },
-                "sandbox_backend": sandbox_backend
+                "sandbox_backend": sandbox_backend,
+                "path_mode": path_mode.clone()
             }),
             audit: alan_agent_protocol::ToolDecisionAudit {
                 policy_source,
@@ -429,6 +434,7 @@ pub(super) fn evaluate_tool_policy(
                 reason: policy_reason,
                 capability: capability_kind,
                 sandbox_backend: sandbox_backend.to_string(),
+                path_mode: Some(path_mode),
             },
         },
     }
@@ -962,6 +968,30 @@ mod tests {
                 assert_eq!(audit.capability, "network");
             }
             other => panic!("expected escalation, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tool_policy_audit_reports_active_path_mode() {
+        let policy = crate::policy::PolicyEngine::autonomous();
+        let result = evaluate_tool_policy(
+            &policy,
+            &alan_agent_protocol::GovernanceConfig::default(),
+            "bash",
+            &json!({"command":"ls"}),
+            alan_agent_protocol::ToolCapability::Read,
+            None,
+            SandboxConfinement::os_enforced(),
+        );
+
+        match result {
+            ToolPolicyDecision::Allow { audit } | ToolPolicyDecision::Escalate { audit, .. } => {
+                assert_eq!(
+                    audit.path_mode.as_deref(),
+                    Some(crate::tools::active_backend_path_mode())
+                );
+            }
+            other => panic!("expected policy decision with audit, got {:?}", other),
         }
     }
 

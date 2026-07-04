@@ -164,6 +164,9 @@ pub struct ToolDecisionAudit {
     ///
     /// Field name is kept for compatibility with existing event consumers.
     pub sandbox_backend: String,
+    /// Native subprocess path semantics for this backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_mode: Option<String>,
 }
 
 /// Presentation-form tool result, decoupled from tool identity. Built-in tools

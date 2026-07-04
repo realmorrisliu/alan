@@ -33,12 +33,12 @@
 
 ## 4. Enforcement And Policy Integration
 
-- [ ] 4.1 Wire backend selection to prefer `linux_reified_namespace` only when the
+- [x] 4.1 Wire backend selection to prefer `linux_reified_namespace` only when the
   probe and runner smoke checks pass.
-- [ ] 4.2 Ensure network-denied commands remain denied under the reified backend,
+- [x] 4.2 Ensure network-denied commands remain denied under the reified backend,
   route to a human, or fall back to a network-confined backend when degraded;
   never allow autonomous reviewer approval without network confinement.
-- [ ] 4.3 Update bash/tool policy audits to distinguish reified namespace paths
+- [x] 4.3 Update bash/tool policy audits to distinguish reified namespace paths
   from projected host paths.
 
 ## 5. Verification And PRs

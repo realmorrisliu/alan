@@ -5,16 +5,27 @@
 //! plan that can be tested on any host.
 
 #[cfg(target_os = "linux")]
+use std::io::Read;
+#[cfg(any(target_os = "linux", all(test, unix)))]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
+#[cfg(target_os = "linux")]
+use std::thread::JoinHandle;
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 use thiserror::Error;
 
 use super::sandbox::{ExecResult, NetworkPosture};
 #[cfg(any(test, target_os = "linux"))]
-use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabilityReport};
+use super::sandbox_backend::{
+    LinuxReificationCapabilities, LinuxReificationCapability, LinuxReificationCapabilityReport,
+};
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
@@ -278,13 +289,20 @@ impl ReifiedNamespacePlanInput {
 pub fn default_execution_substrate() -> Vec<ReifiedExecutionSubstrateMount> {
     [
         ("/bin", "/bin"),
+        ("/sbin", "/sbin"),
         ("/usr/bin", "/usr/bin"),
+        ("/usr/sbin", "/usr/sbin"),
+        ("/usr/local/bin", "/usr/local/bin"),
+        ("/usr/local/sbin", "/usr/local/sbin"),
         ("/lib", "/lib"),
         ("/lib64", "/lib64"),
         ("/usr/lib", "/usr/lib"),
         ("/usr/lib64", "/usr/lib64"),
+        ("/usr/local/lib", "/usr/local/lib"),
+        ("/usr/local/lib64", "/usr/local/lib64"),
         ("/etc/ssl", "/etc/ssl"),
         ("/etc/hosts", "/etc/hosts"),
+        ("/etc/resolv.conf", "/etc/resolv.conf"),
     ]
     .into_iter()
     .map(|(namespace_path, host_path)| {
@@ -354,11 +372,20 @@ impl LinuxReifiedNamespaceRunner {
     pub const fn fallback_backend(&self) -> SandboxBackendKind {
         self.fallback_backend
     }
+
+    /// Run the command and terminate the Linux runner PID namespace if the timeout expires.
+    pub fn run_with_timeout(
+        &self,
+        plan: &ReifiedNamespacePlan,
+        timeout: Option<Duration>,
+    ) -> Result<ExecResult, ReifiedNamespaceRunError> {
+        self.run_inner(plan, timeout)
+    }
 }
 
 impl ReifiedNamespaceRunner for LinuxReifiedNamespaceRunner {
     fn run(&self, plan: &ReifiedNamespacePlan) -> Result<ExecResult, ReifiedNamespaceRunError> {
-        self.run_inner(plan)
+        self.run_with_timeout(plan, None)
     }
 }
 
@@ -406,16 +433,263 @@ impl ReifiedNamespaceCommandSpec {
     }
 }
 
+/// Smoke-check the actual Linux reified namespace runner.
+#[cfg(target_os = "linux")]
+pub(crate) fn smoke_linux_reified_namespace_runner() -> LinuxReificationCapability {
+    match smoke_linux_reified_namespace_runner_inner() {
+        Ok(()) => LinuxReificationCapability::available(),
+        Err(reason) => LinuxReificationCapability::unavailable(reason),
+    }
+}
+
+/// Smoke-check that selecting reified mode will not hide user PATH toolchains.
+#[cfg(target_os = "linux")]
+pub(crate) fn smoke_linux_reified_namespace_user_path() -> LinuxReificationCapability {
+    match reified_namespace_user_path_unavailable_reason(std::env::var_os("PATH")) {
+        Some(reason) => LinuxReificationCapability::unavailable(reason),
+        None => LinuxReificationCapability::available(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn reified_namespace_user_path_unavailable_reason(
+    path: Option<std::ffi::OsString>,
+) -> Option<String> {
+    let visible_roots = reified_command_path_roots();
+    reified_namespace_user_path_unavailable_reason_with_roots(
+        path,
+        &visible_roots,
+        std::ffi::OsString::from(LINUX_REIFIED_COMMAND_PATH),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn reified_command_path_roots() -> Vec<PathBuf> {
+    std::env::split_paths(LINUX_REIFIED_COMMAND_PATH)
+        .map(|path| canonicalize_existing_host_path(&path))
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn reified_namespace_user_path_unavailable_reason_with_roots(
+    path: Option<std::ffi::OsString>,
+    visible_roots: &[PathBuf],
+    reified_command_path: std::ffi::OsString,
+) -> Option<String> {
+    let Some(path) = path else {
+        return Some(
+            "current PATH is unset; preserve actual PATH/order before selecting \
+             linux_reified_namespace"
+                .to_string(),
+        );
+    };
+    let visible_roots = visible_roots
+        .iter()
+        .map(|root| canonicalize_existing_host_path(root))
+        .collect::<Vec<_>>();
+    let mut unsupported = Vec::new();
+    let mut current_executable_entries = Vec::new();
+
+    for entry in std::env::split_paths(&path) {
+        if entry.as_os_str().is_empty() {
+            return Some(
+                "current PATH contains an empty component for current-directory lookup; preserve \
+                 actual PATH/order before selecting linux_reified_namespace"
+                    .to_string(),
+            );
+        }
+        if !entry.is_absolute() {
+            unsupported.push(format!("relative PATH entry {}", entry.display()));
+            continue;
+        }
+
+        let entry = canonicalize_existing_host_path(&entry);
+        if !path_directory_has_executables(&entry) {
+            continue;
+        }
+        if visible_roots
+            .iter()
+            .any(|root| entry == *root || entry.starts_with(root))
+        {
+            push_unique_path(&mut current_executable_entries, entry);
+            continue;
+        }
+
+        unsupported.push(entry.display().to_string());
+        if unsupported.len() >= 3 {
+            break;
+        }
+    }
+
+    if !unsupported.is_empty() {
+        return Some(format!(
+            "current PATH has executable entries outside the reified execution substrate: {}; \
+             preserve user PATH/toolchain mounts before selecting linux_reified_namespace",
+            unsupported.join(", ")
+        ));
+    }
+
+    let reified_executable_entries = executable_path_entries(&reified_command_path);
+    if current_executable_entries != reified_executable_entries {
+        return Some(format!(
+            "current PATH executable entry order differs from the reified command PATH: \
+             current=[{}], reified=[{}]; preserve actual PATH/order before selecting \
+             linux_reified_namespace",
+            format_path_entries(&current_executable_entries),
+            format_path_entries(&reified_executable_entries)
+        ));
+    }
+
+    None
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn path_directory_has_executables(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() {
+        return false;
+    }
+
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return true;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        std::fs::metadata(entry.path())
+            .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn executable_path_entries(path: &std::ffi::OsString) -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    for entry in std::env::split_paths(path) {
+        if entry.as_os_str().is_empty() || !entry.is_absolute() {
+            continue;
+        }
+        let entry = canonicalize_existing_host_path(&entry);
+        if path_directory_has_executables(&entry) {
+            push_unique_path(&mut entries, entry);
+        }
+    }
+    entries
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn push_unique_path(entries: &mut Vec<PathBuf>, entry: PathBuf) {
+    if !entries.contains(&entry) {
+        entries.push(entry);
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn format_path_entries(entries: &[PathBuf]) -> String {
+    if entries.is_empty() {
+        return "<none>".to_string();
+    }
+    entries
+        .iter()
+        .map(|entry| entry.display().to_string())
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+#[cfg(target_os = "linux")]
+fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
+    let workspace = ReifiedSmokeWorkspace::create()
+        .map_err(|err| format!("create runner smoke workspace failed: {err}"))?;
+    let runner = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock);
+
+    let deny_plan = ReifiedNamespacePlan::workspace_seed(
+        workspace.root.as_path(),
+        workspace.root.as_path(),
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "test -d /mnt/workspace && test ! -e /home".to_string(),
+        ],
+        NetworkPosture::Deny,
+    )
+    .map_err(|err| format!("build runner smoke plan failed: {err}"))?;
+    run_linux_reified_smoke_plan(&runner, &deny_plan, "network-denied")?;
+
+    let allow_script = if Path::new("/etc/resolv.conf").exists() {
+        "test -f /etc/resolv.conf"
+    } else {
+        "true"
+    };
+    let allow_plan = ReifiedNamespacePlan::workspace_seed(
+        workspace.root.as_path(),
+        workspace.root.as_path(),
+        vec!["sh".to_string(), "-c".to_string(), allow_script.to_string()],
+        NetworkPosture::Allow,
+    )
+    .map_err(|err| format!("build runner network-allow smoke plan failed: {err}"))?;
+    run_linux_reified_smoke_plan(&runner, &allow_plan, "network-allow")
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_reified_smoke_plan(
+    runner: &LinuxReifiedNamespaceRunner,
+    plan: &ReifiedNamespacePlan,
+    label: &str,
+) -> Result<(), String> {
+    match runner.run(plan) {
+        Ok(result) if result.exit_code == 0 => Ok(()),
+        Ok(result) => Err(format!(
+            "runner {label} smoke command failed: exit_code={} stderr={}",
+            result.exit_code,
+            result.stderr.trim()
+        )),
+        Err(err) => Err(format!("runner {label} smoke unavailable: {}", err.reason)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct ReifiedSmokeWorkspace {
+    root: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl ReifiedSmokeWorkspace {
+    fn create() -> std::io::Result<Self> {
+        let root = std::env::temp_dir().join(format!(
+            "alan-reified-smoke-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root)?;
+        Ok(Self { root })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ReifiedSmokeWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
 #[cfg(target_os = "linux")]
 const SETUP_FAILURE_PREFIX: &str = "alan reified namespace setup failed:";
 
 #[cfg(target_os = "linux")]
 const TRUSTED_LINUX_SETUP_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
+#[cfg(any(target_os = "linux", test))]
+const LINUX_REIFIED_COMMAND_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 #[cfg(target_os = "linux")]
-const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = r#"
+const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = concat!(
+    r#"
 set -u
-PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+PATH='"#,
+    LINUX_REIFIED_COMMAND_PATH,
+    r#"'
 export PATH
 fail() {
   printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
@@ -457,6 +731,9 @@ while [ "$substrate_count" -gt 0 ]; do
 done
 
 "$mount_bin" --bind /dev/null "${root}/dev/null" || fail "bind /dev/null"
+"$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
+"$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
+"$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
 
 scratch_tmp="$1"; shift
 scratch_destination="${root}${scratch_tmp}"
@@ -464,7 +741,8 @@ scratch_destination="${root}${scratch_tmp}"
 
 cwd="$1"; shift
 "$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
-"#;
+"#,
+);
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -510,6 +788,7 @@ impl LinuxReifiedNamespaceRunner {
     fn run_inner(
         &self,
         _plan: &ReifiedNamespacePlan,
+        _timeout: Option<Duration>,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
         Err(ReifiedNamespaceRunError::new(
             "linux reified namespace runner is only available on Linux",
@@ -532,6 +811,7 @@ impl LinuxReifiedNamespaceRunner {
     fn run_inner(
         &self,
         plan: &ReifiedNamespacePlan,
+        timeout: Option<Duration>,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
         if plan.argv.is_empty() {
             return Err(self.error("argv must not be empty", Vec::new()));
@@ -562,10 +842,14 @@ impl LinuxReifiedNamespaceRunner {
             .map_err(|err| self.error(format!("create reified root failed: {err}"), Vec::new()))?;
         let command_spec = build_linux_reified_namespace_command(plan, &temp_root)
             .map_err(|err| self.error(err, Vec::new()))?;
-        let output = command_spec
-            .command()
-            .output()
-            .map_err(|err| self.error(format!("failed to start unshare: {err}"), Vec::new()))?;
+        let output = run_linux_reified_command(command_spec.command(), timeout).map_err(|err| {
+            let reason = if err.kind() == std::io::ErrorKind::TimedOut {
+                err.to_string()
+            } else {
+                format!("failed to run unshare: {err}")
+            };
+            self.error(reason, command_spec.audit_fields())
+        })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -603,6 +887,152 @@ impl LinuxReifiedNamespaceRunner {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn run_linux_reified_command(
+    mut command: Command,
+    timeout: Option<Duration>,
+) -> std::io::Result<Output> {
+    let Some(limit) = timeout else {
+        return command.output();
+    };
+
+    run_linux_reified_command_with_timeout(command, limit)
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_reified_command_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> std::io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.process_group(0);
+    let mut child = command.spawn()?;
+    let stdout_reader = child.stdout.take().map(read_child_pipe);
+    let stderr_reader = child.stderr.take().map(read_child_pipe);
+
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            return Err(timeout_reified_command(
+                &mut child,
+                stdout_reader,
+                stderr_reader,
+                timeout,
+            ));
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        std::thread::sleep(remaining.min(Duration::from_millis(20)));
+    };
+    let (stdout, stderr) = collect_child_pipes_before_deadline(
+        stdout_reader,
+        stderr_reader,
+        &mut child,
+        started,
+        timeout,
+    )?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_child_pipe<R>(mut pipe: R) -> JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        pipe.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn join_child_pipe(
+    handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+) -> std::io::Result<Vec<u8>> {
+    let Some(handle) = handle else {
+        return Ok(Vec::new());
+    };
+    handle
+        .join()
+        .map_err(|_| std::io::Error::other("child output reader panicked"))?
+}
+
+#[cfg(target_os = "linux")]
+fn collect_child_pipes_before_deadline(
+    stdout_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    stderr_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    child: &mut Child,
+    started: Instant,
+    timeout: Duration,
+) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    let mut stdout_reader = stdout_reader;
+    let mut stderr_reader = stderr_reader;
+    loop {
+        let stdout_done = stdout_reader.as_ref().is_none_or(JoinHandle::is_finished);
+        let stderr_done = stderr_reader.as_ref().is_none_or(JoinHandle::is_finished);
+        if stdout_done && stderr_done {
+            return Ok((
+                join_child_pipe(stdout_reader.take())?,
+                join_child_pipe(stderr_reader.take())?,
+            ));
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(timeout_reified_command(
+                child,
+                stdout_reader.take(),
+                stderr_reader.take(),
+                timeout,
+            ));
+        }
+
+        let remaining = timeout.saturating_sub(started.elapsed());
+        std::thread::sleep(remaining.min(Duration::from_millis(20)));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn timeout_reified_command(
+    child: &mut Child,
+    stdout_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    stderr_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    timeout: Duration,
+) -> std::io::Error {
+    let _ = kill_child_process_group(child);
+    let _ = child.wait();
+    join_finished_child_pipe(stdout_reader);
+    join_finished_child_pipe(stderr_reader);
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!("Command execution timed out after {}s", timeout.as_secs()),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn join_finished_child_pipe(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) {
+    let Some(handle) = handle else {
+        return;
+    };
+    if handle.is_finished() {
+        let _ = join_child_pipe(Some(handle));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn kill_child_process_group(child: &mut std::process::Child) -> std::io::Result<()> {
+    let pgid = -(child.id() as libc::pid_t);
+    let result = unsafe { libc::kill(pgid, libc::SIGKILL) };
+    if result == 0 { Ok(()) } else { child.kill() }
+}
+
 #[cfg(any(test, target_os = "linux"))]
 fn linux_reification_report_supports_plan(
     report: &LinuxReificationCapabilityReport,
@@ -611,6 +1041,7 @@ fn linux_reification_report_supports_plan(
     report.linux_host.is_available()
         && report.user_namespace.is_available()
         && report.mount_namespace.is_available()
+        && report.pid_namespace.is_available()
         && report.bind_mount.is_available()
         && report.read_only_remount.is_available()
         && report.scratch_tmp_mount.is_available()
@@ -633,6 +1064,11 @@ fn linux_reification_unavailable_reasons_for_plan(
         &mut reasons,
         "mount_namespace",
         &report.mount_namespace,
+    );
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "pid_namespace",
+        &report.pid_namespace,
     );
     push_missing_linux_reification_requirement(&mut reasons, "bind_mount", &report.bind_mount);
     push_missing_linux_reification_requirement(
@@ -745,6 +1181,9 @@ fn build_linux_reified_namespace_command_with_helpers(
         "--user".to_string(),
         "--map-root-user".to_string(),
         "--mount".to_string(),
+        "--pid".to_string(),
+        "--fork".to_string(),
+        "--kill-child=SIGKILL".to_string(),
     ];
     if matches!(plan.network, NetworkPosture::Deny) {
         args.push("--net".to_string());
@@ -855,7 +1294,7 @@ fn temp_parent_is_exposed_to_writable_mount(parent: &Path, mounts: &[ReifiedHost
 fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|err| format!("create root failed: {err}"))?;
 
-    prepare_dev_null_destination(root)?;
+    prepare_standard_device_destinations(root)?;
     for mount in &plan.declared_host_mounts {
         prepare_mount_destination(root, &mount.namespace_path, &mount.host_path, true)?;
     }
@@ -869,13 +1308,15 @@ fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), 
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_dev_null_destination(root: &Path) -> Result<(), String> {
+fn prepare_standard_device_destinations(root: &Path) -> Result<(), String> {
     let dev_dir = root.join("dev");
     std::fs::create_dir_all(&dev_dir)
         .map_err(|err| format!("create /dev mountpoint parent failed: {err}"))?;
-    let dev_null = dev_dir.join("null");
-    std::fs::File::create(&dev_null)
-        .map_err(|err| format!("create /dev/null mountpoint failed: {err}"))?;
+    for name in ["null", "stdin", "stdout", "stderr"] {
+        let destination = dev_dir.join(name);
+        std::fs::File::create(&destination)
+            .map_err(|err| format!("create /dev/{name} mountpoint failed: {err}"))?;
+    }
     Ok(())
 }
 
@@ -1238,6 +1679,133 @@ mod tests {
             PathBuf::from("/run/alan-tmp")
         );
         assert_eq!(plan.network, NetworkPosture::Allow);
+    }
+
+    #[test]
+    fn default_execution_substrate_includes_dns_resolver_config() {
+        let substrate = default_execution_substrate();
+
+        assert!(substrate.iter().any(|mount| {
+            mount.namespace_path == Path::new("/etc/resolv.conf")
+                && mount.host_path == Path::new("/etc/resolv.conf")
+        }));
+    }
+
+    #[test]
+    fn default_execution_substrate_includes_trusted_path_directories() {
+        let substrate = default_execution_substrate();
+
+        for path in std::env::split_paths(LINUX_REIFIED_COMMAND_PATH) {
+            assert!(
+                substrate.iter().any(|mount| {
+                    mount.namespace_path == path.as_path() && mount.host_path == path.as_path()
+                }),
+                "missing trusted PATH substrate {}",
+                path.display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_allows_executable_dirs_under_visible_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_root = temp.path().join("visible");
+        let visible_bin = visible_root.join("bin");
+        write_executable(&visible_bin.join("cargo"));
+        let path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        assert_eq!(
+            reified_namespace_user_path_unavailable_reason_with_roots(
+                Some(path.clone()),
+                std::slice::from_ref(&visible_root),
+                path,
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_unset_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_bin = temp.path().join("bin");
+        write_executable(&visible_bin.join("sh"));
+        let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            None,
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("unset PATH should block default selection");
+
+        assert!(reason.contains("current PATH is unset"));
+        assert!(reason.contains("preserve actual PATH/order"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_empty_path_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_bin = temp.path().join("bin");
+        write_executable(&visible_bin.join("sh"));
+        let current_path = std::ffi::OsString::from(format!(":{}", visible_bin.display()));
+        let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(current_path),
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("empty PATH entries should block default selection");
+
+        assert!(reason.contains("empty component"));
+        assert!(reason.contains("current-directory lookup"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_executable_dirs_outside_visible_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_root = temp.path().join("visible");
+        let user_bin = temp.path().join("home/alice/.cargo/bin");
+        write_executable(&visible_root.join("bin/sh"));
+        write_executable(&user_bin.join("cargo"));
+        let path = std::env::join_paths([visible_root.join("bin"), user_bin.clone()]).unwrap();
+        let reified_path = std::env::join_paths([visible_root.join("bin")]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(path),
+            &[visible_root],
+            reified_path,
+        )
+        .expect("user-local executable PATH entry should block reified default selection");
+
+        assert!(reason.contains(user_bin.to_string_lossy().as_ref()));
+        assert!(reason.contains("preserve user PATH/toolchain mounts"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_reified_path_order_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let usr_bin = temp.path().join("usr/bin");
+        let local_bin = temp.path().join("usr/local/bin");
+        write_executable(&usr_bin.join("cargo"));
+        write_executable(&local_bin.join("cargo"));
+        let current_path = std::env::join_paths([usr_bin.as_path(), local_bin.as_path()]).unwrap();
+        let reified_path = std::env::join_paths([local_bin.as_path(), usr_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(current_path),
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("reified PATH reordering should block default selection");
+
+        assert!(reason.contains("current PATH executable entry order differs"));
+        assert!(reason.contains("preserve actual PATH/order"));
     }
 
     #[test]
@@ -1738,15 +2306,18 @@ mod tests {
 
     #[test]
     fn reification_report_selection_requires_network_only_for_denied_plans() {
-        let report = LinuxReificationCapabilityReport::new(
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::unavailable("network namespaces disabled"),
-        );
+        let report = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: LinuxReificationCapability::available(),
+            user_namespace: LinuxReificationCapability::available(),
+            mount_namespace: LinuxReificationCapability::available(),
+            pid_namespace: LinuxReificationCapability::available(),
+            bind_mount: LinuxReificationCapability::available(),
+            read_only_remount: LinuxReificationCapability::available(),
+            scratch_tmp_mount: LinuxReificationCapability::available(),
+            network_confinement: LinuxReificationCapability::unavailable(
+                "network namespaces disabled",
+            ),
+        });
 
         assert!(linux_reification_report_supports_plan(
             &report,
@@ -1781,6 +2352,53 @@ mod tests {
         assert_eq!(
             String::from_utf8(output.stdout).unwrap(),
             format!("PATH={TRUSTED_LINUX_SETUP_PATH}\n")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_timeout_kills_child_process_group() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let marker = temp_dir.path().join("leaked-after-timeout");
+        let output = run_linux_reified_command(
+            ReifiedNamespaceCommandSpec {
+                program: "/bin/sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    format!("(sleep 2; printf leaked > {}) & wait", marker.display()),
+                ],
+            }
+            .command(),
+            Some(Duration::from_millis(50)),
+        );
+
+        let error = output.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !marker.exists(),
+            "timeout should kill the shell and its sleeping child"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_timeout_covers_output_drain_after_parent_exit() {
+        let started = Instant::now();
+        let output = run_linux_reified_command(
+            ReifiedNamespaceCommandSpec {
+                program: "/bin/sh".to_string(),
+                args: vec!["-c".to_string(), "sleep 2 &".to_string()],
+            }
+            .command(),
+            Some(Duration::from_millis(50)),
+        );
+
+        let error = output.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeout should remain active while stdout/stderr readers wait for EOF"
         );
     }
 
@@ -1825,6 +2443,9 @@ mod tests {
         assert!(command.args.contains(&"--user".to_string()));
         assert!(command.args.contains(&"--map-root-user".to_string()));
         assert!(command.args.contains(&"--mount".to_string()));
+        assert!(command.args.contains(&"--pid".to_string()));
+        assert!(command.args.contains(&"--fork".to_string()));
+        assert!(command.args.contains(&"--kill-child=SIGKILL".to_string()));
         assert!(command.args.contains(&"--net".to_string()));
         assert!(
             command
@@ -1843,10 +2464,13 @@ mod tests {
             .iter()
             .find(|arg| arg.contains("alan reified namespace setup failed"))
             .unwrap();
-        assert!(script.contains("PATH='/usr/sbin:/usr/bin:/sbin:/bin'"));
+        assert!(script.contains(&format!("PATH='{LINUX_REIFIED_COMMAND_PATH}'")));
         assert!(script.contains("\"$mount_bin\" --make-rprivate / || fail \"make root private\""));
         assert!(!script.contains("--make-rprivate / 2>/dev/null || true"));
         assert!(script.contains("\"$mount_bin\" --bind /dev/null \"${root}/dev/null\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/0 \"${root}/dev/stdin\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/1 \"${root}/dev/stdout\""));
+        assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/2 \"${root}/dev/stderr\""));
         assert!(script.contains("\"$mount_bin\" --bind \"$host_path\" \"$destination\""));
         assert!(script.contains("\"$chroot_bin\" \"$root\" \"$namespace_shell\""));
         assert!(!script.contains("chroot \"$root\""));
@@ -1862,6 +2486,9 @@ mod tests {
         assert!(command.args.contains(&"/usr/bin/mount".to_string()));
         assert!(command.args.contains(&"/usr/sbin/chroot".to_string()));
         assert!(command.args.contains(&"/usr/bin/setpriv".to_string()));
+        assert!(temp_root.root.join("dev/stdin").exists());
+        assert!(temp_root.root.join("dev/stdout").exists());
+        assert!(temp_root.root.join("dev/stderr").exists());
     }
 
     #[cfg(target_os = "linux")]
@@ -1928,5 +2555,16 @@ mod tests {
 
         std::fs::write(&marker, b"ok\n").unwrap();
         assert!(setup_marker_was_written(&marker));
+    }
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 }

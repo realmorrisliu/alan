@@ -45,6 +45,7 @@ pin-utils.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+libc.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

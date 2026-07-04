@@ -12,8 +12,8 @@
 //! recipes, or utility-specific script/DSL modes such as `sed -f`.
 
 use anyhow::{Result, anyhow};
-use regex::Regex;
 use std::ffi::OsString;
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -63,7 +63,7 @@ pub enum NetworkPosture {
 }
 
 impl NetworkPosture {
-    const fn allows_network(self) -> bool {
+    pub(crate) const fn allows_network(self) -> bool {
         matches!(self, Self::Allow)
     }
 }
@@ -416,7 +416,17 @@ impl Sandbox {
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
-        let mut command = self.build_confined_command(cmd, allow_network)?;
+        let backend = self.active_backend();
+        if matches!(
+            backend,
+            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+        ) {
+            return self
+                .exec_reified_namespace(cmd, cwd, timeout, allow_network)
+                .await;
+        }
+
+        let mut command = self.build_confined_command(cmd, allow_network, backend)?;
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -450,9 +460,10 @@ impl Sandbox {
         &self,
         cmd: &str,
         allow_network: bool,
+        backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
         // Defense in depth: start the shell with pathname expansion disabled.
-        let command = match self.active_backend() {
+        let command = match backend {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
                 let profile = super::sandbox_backend::seatbelt_profile(
                     &self.spec.writable_roots,
@@ -503,6 +514,86 @@ impl Sandbox {
         Ok(command)
     }
 
+    async fn exec_reified_namespace(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        allow_network: bool,
+    ) -> Result<ExecResult> {
+        let plan = self.reified_namespace_plan_for_command(cmd, cwd, allow_network)?;
+        let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
+            super::sandbox_backend::detect_projection_backend(),
+        );
+        let run = move || {
+            runner
+                .run_with_timeout(&plan, timeout)
+                .map_err(anyhow::Error::from)
+        };
+        tokio::task::spawn_blocking(run)
+            .await
+            .map_err(|err| anyhow!("reified namespace runner task failed: {err}"))?
+    }
+
+    fn reified_namespace_plan_for_command(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        allow_network: bool,
+    ) -> Result<super::reified_namespace::ReifiedNamespacePlan> {
+        let cwd = if cwd.is_absolute() {
+            cwd.to_path_buf()
+        } else {
+            self.workspace_root().join(cwd)
+        };
+        let network = if allow_network {
+            NetworkPosture::Allow
+        } else {
+            NetworkPosture::Deny
+        };
+        let mut plan = super::reified_namespace::ReifiedNamespacePlan::derive(
+            super::reified_namespace::ReifiedNamespacePlanInput::new(
+                self.reified_mount_declarations(),
+                cwd,
+                vec![
+                    "sh".to_string(),
+                    "-f".to_string(),
+                    "-c".to_string(),
+                    cmd.to_string(),
+                ],
+                network,
+            ),
+        )
+        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
+        plan.argv = vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            Self::translate_reified_command_host_paths(cmd, &plan),
+        ];
+        Ok(plan)
+    }
+
+    fn reified_mount_declarations(&self) -> Vec<super::reified_namespace::ReifiedMountDeclaration> {
+        self.spec
+            .writable_roots
+            .iter()
+            .enumerate()
+            .map(|(index, root)| {
+                let namespace_path = if index == 0 {
+                    super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH.to_string()
+                } else {
+                    format!("/mnt/writable-{index}")
+                };
+                super::reified_namespace::ReifiedMountDeclaration::host(
+                    namespace_path,
+                    root.clone(),
+                    super::reified_namespace::ReifiedMountAccess::ReadWrite,
+                )
+            })
+            .collect()
+    }
+
     /// List directory contents
     pub async fn list_dir(&self, path: &Path) -> Result<Vec<tokio::fs::DirEntry>> {
         if !self.is_in_workspace(path) {
@@ -546,6 +637,10 @@ impl Sandbox {
             Ok(tokens) => tokens,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
         };
+        let span_tokens = match shell_word_tokens_with_spans(trimmed) {
+            Ok(tokens) => tokens,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
         let commands = match shell_commands(trimmed) {
             Ok(commands) => commands,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
@@ -586,41 +681,7 @@ impl Sandbox {
             }
         }
 
-        let comment_free = strip_shell_comments(trimmed);
-        let regex = Regex::new(r"/[A-Za-z0-9._/-]+").expect("absolute-path regex is valid");
-        for matched in regex.find_iter(&comment_free) {
-            let start = matched.start();
-            if start > 0 {
-                let prev = comment_free.as_bytes()[start - 1];
-                if prev == b':'
-                    || prev == b'.'
-                    || prev == b'/'
-                    || prev == b'_'
-                    || prev == b'-'
-                    || prev == b'*'
-                    || prev == b'?'
-                    || prev == b']'
-                    || prev.is_ascii_alphanumeric()
-                {
-                    // Skip URL fragments and path segments within relative paths or identifiers.
-                    continue;
-                }
-            }
-            let literal = matched.as_str();
-            if is_allowed_absolute_command_path(Path::new(literal)) {
-                continue;
-            }
-            // Containment applies in every mode: the OS sandbox does not confine
-            // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
-            // must still be rejected by the parser.
-            if !self.is_in_workspace(Path::new(literal)) {
-                return Err(anyhow!(
-                    "Command contains absolute path outside workspace: {}",
-                    literal
-                ));
-            }
-            self.ensure_path_not_protected(Path::new(literal), "process path reference")?;
-        }
+        self.validate_absolute_path_literals(&span_tokens)?;
 
         Ok(())
     }
@@ -786,14 +847,17 @@ impl Sandbox {
             if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
                 return Ok(());
             }
-            if !self.is_in_workspace(&candidate) {
+            let validation_path = self
+                .reified_namespace_path_to_host(&candidate)
+                .unwrap_or(candidate);
+            if !self.is_in_workspace(&validation_path) {
                 return Err(anyhow!(
                     "Command references path outside workspace: {}",
                     token
                 ));
             }
-            self.ensure_path_not_protected(&candidate, "process path reference")?;
-            self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
+            self.ensure_path_not_protected(&validation_path, "process path reference")?;
+            self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
         }
 
         Ok(())
@@ -819,15 +883,111 @@ impl Sandbox {
         if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
             return Ok(());
         }
-        if !self.is_in_workspace(&candidate) {
+        let validation_path = self
+            .reified_namespace_path_to_host(&candidate)
+            .unwrap_or(candidate);
+        if !self.is_in_workspace(&validation_path) {
             return Err(anyhow!(
                 "Command references path outside workspace: {}",
                 token
             ));
         }
-        self.ensure_path_not_protected(&candidate, "process path reference")?;
-        self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
+        self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
         Ok(())
+    }
+
+    fn reified_namespace_path_to_host(&self, path: &Path) -> Option<PathBuf> {
+        if !matches!(
+            self.active_backend(),
+            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+        ) || !path.is_absolute()
+        {
+            return None;
+        }
+
+        for (index, root) in self.spec.writable_roots.iter().enumerate() {
+            let namespace_path = if index == 0 {
+                PathBuf::from(super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH)
+            } else {
+                PathBuf::from(format!("/mnt/writable-{index}"))
+            };
+            if path == namespace_path {
+                return Some(root.clone());
+            }
+            if let Ok(suffix) = path.strip_prefix(&namespace_path) {
+                return Some(root.join(suffix));
+            }
+        }
+        None
+    }
+
+    fn validate_absolute_path_literals(&self, tokens: &[ShellWordToken]) -> Result<()> {
+        for token in tokens {
+            for candidates in absolute_path_literal_candidates(&token.decoded) {
+                let literal = candidates
+                    .iter()
+                    .find(|candidate| {
+                        self.absolute_path_literal_is_allowed_or_in_workspace(candidate)
+                    })
+                    .unwrap_or_else(|| &candidates[0]);
+                self.validate_absolute_path_literal(literal)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn absolute_path_literal_is_allowed_or_in_workspace(&self, literal: &str) -> bool {
+        let literal_path = Path::new(literal);
+        if is_allowed_absolute_command_path(literal_path) {
+            return true;
+        }
+        let validation_path = self
+            .reified_namespace_path_to_host(literal_path)
+            .unwrap_or_else(|| literal_path.to_path_buf());
+        self.is_in_workspace(&validation_path)
+    }
+
+    fn validate_absolute_path_literal(&self, literal: &str) -> Result<()> {
+        let literal_path = Path::new(literal);
+        if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
+            return Ok(());
+        }
+        let validation_path = self
+            .reified_namespace_path_to_host(literal_path)
+            .unwrap_or_else(|| literal_path.to_path_buf());
+        // Containment applies in every mode: the OS sandbox does not confine
+        // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
+        // must still be rejected by the parser.
+        if !self.is_in_workspace(&validation_path) {
+            return Err(anyhow!(
+                "Command contains absolute path outside workspace: {}",
+                literal
+            ));
+        }
+        self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        Ok(())
+    }
+
+    fn translate_reified_command_host_paths(
+        cmd: &str,
+        plan: &super::reified_namespace::ReifiedNamespacePlan,
+    ) -> String {
+        let Ok(tokens) = shell_word_tokens_with_spans(cmd) else {
+            return cmd.to_string();
+        };
+        let mut translated = String::with_capacity(cmd.len());
+        let mut last = 0;
+        for token in tokens {
+            let Some(rewritten) = translate_reified_shell_token(&token.decoded, plan) else {
+                continue;
+            };
+            translated.push_str(&cmd[last..token.raw_start]);
+            translated.push_str(&rewritten);
+            last = token.raw_end;
+        }
+        translated.push_str(&cmd[last..]);
+        translated
     }
 }
 
@@ -878,6 +1038,394 @@ fn validate_nested_command_evaluators(commands: &[Vec<String>], backend_name: &s
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellWordToken {
+    decoded: String,
+    raw_start: usize,
+    raw_end: usize,
+}
+
+fn translate_reified_shell_token(
+    token: &str,
+    plan: &super::reified_namespace::ReifiedNamespacePlan,
+) -> Option<String> {
+    if let Some(rewritten) = translate_reified_nested_shell_token(token, plan) {
+        return Some(shell_quote_token(&rewritten));
+    }
+
+    let mut replacements = Vec::new();
+    for range in reified_shell_token_path_candidate_ranges(token) {
+        if replacements
+            .iter()
+            .any(|(existing, _)| ranges_overlap(existing, &range))
+        {
+            continue;
+        }
+
+        let candidate = &token[range.clone()];
+        let candidate_path = Path::new(candidate);
+        if !candidate_path.is_absolute() || is_allowed_absolute_command_path(candidate_path) {
+            continue;
+        }
+
+        let Some(namespace_path) =
+            plan.translate_projected_host_path(candidate_path)
+                .or_else(|| {
+                    plan.translate_projected_host_path(&lexically_normalize_path(candidate_path))
+                })
+        else {
+            continue;
+        };
+        replacements.push((range, namespace_path.display().to_string()));
+    }
+
+    if replacements.is_empty() {
+        return None;
+    }
+
+    replacements.sort_by_key(|(range, _)| range.start);
+    let replacement_len = replacements
+        .iter()
+        .map(|(_, replacement)| replacement.len())
+        .sum::<usize>();
+    let mut rewritten = String::with_capacity(token.len() + replacement_len);
+    let mut last = 0;
+    for (range, replacement) in replacements {
+        rewritten.push_str(&token[last..range.start]);
+        rewritten.push_str(&replacement);
+        last = range.end;
+    }
+    rewritten.push_str(&token[last..]);
+
+    Some(shell_quote_reified_token(&rewritten))
+}
+
+fn translate_reified_nested_shell_token(
+    token: &str,
+    plan: &super::reified_namespace::ReifiedNamespacePlan,
+) -> Option<String> {
+    let tokens = shell_word_tokens_with_spans(token).ok()?;
+    if !looks_like_nested_shell_script(&tokens) {
+        return None;
+    }
+
+    let mut translated = String::with_capacity(token.len());
+    let mut last = 0;
+    let mut changed = false;
+    for nested_token in tokens {
+        let Some(rewritten) = translate_reified_shell_token(&nested_token.decoded, plan) else {
+            continue;
+        };
+        translated.push_str(&token[last..nested_token.raw_start]);
+        translated.push_str(&rewritten);
+        last = nested_token.raw_end;
+        changed = true;
+    }
+    if !changed {
+        return None;
+    }
+
+    translated.push_str(&token[last..]);
+    Some(translated)
+}
+
+fn looks_like_nested_shell_script(tokens: &[ShellWordToken]) -> bool {
+    if tokens.len() < 2 {
+        return false;
+    }
+    let Some(command) = tokens
+        .iter()
+        .find(|token| !is_env_assignment(&token.decoded))
+    else {
+        return false;
+    };
+
+    !looks_like_path_token(&command.decoded)
+        && !looks_like_bare_protected_subpath_token(&command.decoded)
+}
+
+fn shell_quote_reified_token(token: &str) -> String {
+    if is_env_assignment(token) {
+        let (name, value) = token
+            .split_once('=')
+            .expect("is_env_assignment requires an equals sign");
+        return format!("{name}={}", shell_quote_token(value));
+    }
+    shell_quote_token(token)
+}
+
+fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
+}
+
+fn reified_shell_token_path_candidate_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    for range in colon_separated_absolute_path_component_ranges(token) {
+        push_unique_range(&mut ranges, range);
+    }
+    for range in path_like_subtoken_ranges(token) {
+        push_unique_range(&mut ranges, range);
+    }
+    for range in embedded_absolute_path_literal_ranges(token) {
+        push_path_literal_candidate_ranges(token, range, &mut ranges);
+    }
+    ranges
+}
+
+fn push_path_literal_candidate_ranges(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    if let Some(split_end) = first_later_absolute_path_split(token, &range) {
+        let first_operand = trim_trailing_whitespace_range(token, range.start..split_end);
+        if first_operand.start < first_operand.end {
+            if path_literal_range_contains_flag_segment(token, &first_operand) {
+                push_whitespace_prefix_ranges(token, first_operand.clone(), ranges);
+                push_unique_range(ranges, first_operand);
+            } else {
+                push_unique_range(ranges, first_operand.clone());
+                push_whitespace_prefix_ranges(token, first_operand, ranges);
+            }
+        }
+        return;
+    }
+
+    let trimmed = trim_trailing_whitespace_range(token, range.clone());
+    if trimmed.start < trimmed.end {
+        push_unique_range(ranges, trimmed);
+    }
+
+    let literal = &token[range.clone()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            let prefix = range.start..range.start + offset;
+            push_unique_range(ranges, prefix);
+        }
+    }
+}
+
+fn push_whitespace_prefix_ranges(token: &str, range: Range<usize>, ranges: &mut Vec<Range<usize>>) {
+    let literal = &token[range.clone()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            push_unique_range(ranges, range.start..range.start + offset);
+        }
+    }
+}
+
+fn path_literal_range_contains_flag_segment(token: &str, range: &Range<usize>) -> bool {
+    token[range.clone()]
+        .split_whitespace()
+        .skip(1)
+        .any(|segment| segment.starts_with('-'))
+}
+
+fn first_later_absolute_path_split(token: &str, range: &Range<usize>) -> Option<usize> {
+    let literal = &token[range.clone()];
+    let mut whitespace_start = None;
+    let mut in_whitespace = false;
+    for (offset, ch) in literal.char_indices().skip(1) {
+        if ch.is_whitespace() {
+            if !in_whitespace {
+                whitespace_start = Some(offset);
+                in_whitespace = true;
+            }
+            continue;
+        }
+
+        if ch == '/' && !absolute_path_match_has_path_prefix(literal, offset) {
+            return whitespace_start.map(|split| range.start + split);
+        }
+
+        whitespace_start = None;
+        in_whitespace = false;
+    }
+    None
+}
+
+fn trim_trailing_whitespace_range(token: &str, range: Range<usize>) -> Range<usize> {
+    let trimmed = token[range.clone()].trim_end_matches(char::is_whitespace);
+    range.start..range.start + trimmed.len()
+}
+
+fn push_unique_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {
+    if !ranges.contains(&range) {
+        ranges.push(range);
+    }
+}
+
+fn path_like_subtoken_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    if looks_like_path_token(token) || looks_like_bare_protected_subpath_token(token) {
+        ranges.push(0..token.len());
+    }
+    if let Some(index) = token.rfind('=') {
+        let start = index + 1;
+        if start < token.len() {
+            ranges.push(start..token.len());
+        }
+    }
+    if let Some(range) = short_option_attached_path_subtoken_range(token)
+        && !ranges.contains(&range)
+    {
+        ranges.push(range);
+    }
+    ranges
+}
+
+fn colon_separated_absolute_path_component_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    if token.starts_with('/') {
+        push_colon_separated_absolute_path_components(token, 0..token.len(), &mut ranges);
+    }
+    if let Some(index) = token.rfind('=') {
+        let start = index + 1;
+        if start < token.len() {
+            push_colon_separated_absolute_path_components(token, start..token.len(), &mut ranges);
+        }
+    }
+    ranges
+}
+
+fn push_colon_separated_absolute_path_components(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    let value = &token[range.clone()];
+    let mut component_start = range.start;
+    for (offset, ch) in value.char_indices() {
+        if ch != ':' {
+            continue;
+        }
+        push_absolute_path_component_range(token, component_start..range.start + offset, ranges);
+        component_start = range.start + offset + ch.len_utf8();
+    }
+    push_absolute_path_component_range(token, component_start..range.end, ranges);
+}
+
+fn push_absolute_path_component_range(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    if range.start >= range.end {
+        return;
+    }
+    if token[range.clone()].starts_with('/') {
+        push_unique_range(ranges, range);
+    }
+}
+
+fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
+    let mut literals = Vec::new();
+    for range in colon_separated_absolute_path_component_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
+    for range in path_like_subtoken_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
+
+    for range in embedded_absolute_path_literal_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
+
+    literals
+}
+
+fn push_absolute_path_literal_candidates(
+    token: &str,
+    range: Range<usize>,
+    literals: &mut Vec<Vec<String>>,
+) {
+    let literal = &token[range.clone()];
+    if !Path::new(literal).is_absolute() {
+        return;
+    }
+
+    let mut candidates = vec![literal.to_string()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            let prefix = literal[..offset].to_string();
+            if !candidates.contains(&prefix) {
+                candidates.push(prefix);
+            }
+        }
+    }
+    if !literals.iter().any(|existing| existing == &candidates) {
+        literals.push(candidates);
+    }
+}
+
+fn embedded_absolute_path_literal_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let indices = token.char_indices().collect::<Vec<_>>();
+    for (position, &(start, ch)) in indices.iter().enumerate() {
+        if ch != '/' || absolute_path_match_has_path_prefix(token, start) {
+            continue;
+        }
+
+        let mut end = token.len();
+        for &(index, next) in &indices[position + 1..] {
+            if is_absolute_path_literal_terminator(next) {
+                end = index;
+                break;
+            }
+        }
+        ranges.push(start..end);
+    }
+    ranges
+}
+
+fn absolute_path_match_has_path_prefix(text: &str, start: usize) -> bool {
+    if start == 0 {
+        return false;
+    }
+    let prev = text.as_bytes()[start - 1];
+    prev == b':'
+        || prev == b'.'
+        || prev == b'/'
+        || prev == b'_'
+        || prev == b'-'
+        || prev == b'*'
+        || prev == b'?'
+        || prev == b']'
+        || prev.is_ascii_alphanumeric()
+}
+
+fn is_absolute_path_literal_terminator(ch: char) -> bool {
+    matches!(
+        ch,
+        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '|' | '&' | ';' | ','
+    )
+}
+
+fn shell_quote_token(token: &str) -> String {
+    if !token.is_empty()
+        && token.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '@' | '%' | '_' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
+                )
+        })
+    {
+        return token.to_string();
+    }
+
+    let mut quoted = String::from("'");
+    for ch in token.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn validate_bash_command_shape(cmd: &str) -> Result<()> {
@@ -1016,6 +1564,11 @@ fn path_like_subtokens(token: &str) -> Vec<&str> {
 }
 
 fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
+    let range = short_option_attached_path_subtoken_range(token)?;
+    Some(&token[range])
+}
+
+fn short_option_attached_path_subtoken_range(token: &str) -> Option<Range<usize>> {
     if token.starts_with("--") {
         return None;
     }
@@ -1024,14 +1577,17 @@ fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
         return None;
     }
 
-    rest.char_indices()
-        .skip(1)
-        .map(|(index, _)| &rest[index..])
-        .find(|candidate| {
-            candidate.starts_with('~')
-                || looks_like_path_token(candidate)
-                || looks_like_bare_protected_subpath_token(candidate)
-        })
+    rest.char_indices().skip(1).find_map(|(index, _)| {
+        let candidate = &rest[index..];
+        if candidate.starts_with('~')
+            || looks_like_path_token(candidate)
+            || looks_like_bare_protected_subpath_token(candidate)
+        {
+            Some((index + 1)..token.len())
+        } else {
+            None
+        }
+    })
 }
 
 fn is_file_redirection_operator(token: &str) -> bool {
@@ -1441,6 +1997,151 @@ where
         }
         _ => false,
     }
+}
+
+fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWordToken>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.char_indices().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+    let mut raw_start = None;
+
+    while let Some((index, ch)) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                current.push(ch);
+            }
+            word_started = true;
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if let Some((_, next)) = chars.next() {
+                        current.push(next);
+                        word_started = true;
+                    } else {
+                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                    }
+                }
+                '"' => {
+                    in_double = false;
+                    word_started = true;
+                }
+                _ => {
+                    current.push(ch);
+                    word_started = true;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                raw_start.get_or_insert(index);
+                if let Some((_, next)) = chars.next() {
+                    current.push(next);
+                    word_started = true;
+                } else {
+                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                }
+            }
+            '\'' => {
+                raw_start.get_or_insert(index);
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                raw_start.get_or_insert(index);
+                in_double = true;
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
+            c if c.is_whitespace() => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+                word_started = false;
+            }
+            ';' | '(' | ')' | '{' | '}' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+                word_started = false;
+            }
+            '&' | '|' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+
+                if matches!(chars.peek(), Some((_, next)) if *next == ch) {
+                    chars.next();
+                }
+                word_started = false;
+            }
+            '<' | '>' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+
+                match (ch, chars.peek().copied()) {
+                    ('<', Some((_, '<' | '>' | '&'))) | ('>', Some((_, '>' | '&' | '|'))) => {
+                        chars.next();
+                        if ch == '<' && matches!(chars.peek(), Some((_, '-'))) {
+                            chars.next();
+                        }
+                    }
+                    _ => {}
+                }
+                word_started = false;
+            }
+            _ => {
+                raw_start.get_or_insert(index);
+                current.push(ch);
+                word_started = true;
+            }
+        }
+    }
+
+    if escaped {
+        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+    }
+    if in_single || in_double {
+        return Err(anyhow!("Command contains an unterminated quoted string"));
+    }
+    push_shell_word_token(&mut tokens, &mut current, &mut raw_start, command.len());
+
+    Ok(tokens)
+}
+
+fn push_shell_word_token(
+    tokens: &mut Vec<ShellWordToken>,
+    current: &mut String,
+    raw_start: &mut Option<usize>,
+    raw_end: usize,
+) {
+    let Some(start) = raw_start.take() else {
+        return;
+    };
+    tokens.push(ShellWordToken {
+        decoded: std::mem::take(current),
+        raw_start: start,
+        raw_end,
+    });
 }
 
 fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
