@@ -1,0 +1,14 @@
+[package]
+name = "alan-editfs"
+description = "Editable buffer interaction file server for Alan OS."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
