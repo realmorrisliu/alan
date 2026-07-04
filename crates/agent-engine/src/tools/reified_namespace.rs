@@ -492,7 +492,11 @@ fn reified_namespace_user_path_unavailable_reason_with_roots(
 
     for entry in std::env::split_paths(&path) {
         if entry.as_os_str().is_empty() {
-            continue;
+            return Some(
+                "current PATH contains an empty component for current-directory lookup; preserve \
+                 actual PATH/order before selecting linux_reified_namespace"
+                    .to_string(),
+            );
         }
         if !entry.is_absolute() {
             unsupported.push(format!("relative PATH entry {}", entry.display()));
@@ -1738,6 +1742,26 @@ mod tests {
 
         assert!(reason.contains("current PATH is unset"));
         assert!(reason.contains("preserve actual PATH/order"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_empty_path_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_bin = temp.path().join("bin");
+        write_executable(&visible_bin.join("sh"));
+        let current_path = std::ffi::OsString::from(format!(":{}", visible_bin.display()));
+        let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(current_path),
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("empty PATH entries should block default selection");
+
+        assert!(reason.contains("empty component"));
+        assert!(reason.contains("current-directory lookup"));
     }
 
     #[cfg(unix)]

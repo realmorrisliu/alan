@@ -2718,6 +2718,42 @@ fn test_reified_backend_preserves_assignment_words_for_quoted_spaced_paths() {
 }
 
 #[test]
+fn test_reified_backend_translates_colon_separated_assignment_paths() {
+    let temp = TempDir::new().unwrap();
+    let pkg_dir = temp.path().join("pkg");
+    let tests_dir = temp.path().join("tests");
+    std::fs::create_dir_all(&pkg_dir).unwrap();
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let host_path_list = format!("{}:{}", pkg_dir.display(), tests_dir.display());
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!("bash -lc 'PYTHONPATH={host_path_list} python -c \"import sys\"'"),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    let command = &plan.argv[3];
+    assert!(
+        command.contains("PYTHONPATH=/mnt/workspace/pkg:/mnt/workspace/tests"),
+        "colon-separated assignment paths were not fully translated: {command}"
+    );
+    assert!(
+        !command.contains(&pkg_dir.display().to_string()),
+        "host pkg path leaked into namespace command: {command}"
+    );
+    assert!(
+        !command.contains(&tests_dir.display().to_string()),
+        "host tests path leaked into namespace command: {command}"
+    );
+}
+
+#[test]
 fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
     let temp = TempDir::new().unwrap();
     let workspace = temp.path().join("My Project");

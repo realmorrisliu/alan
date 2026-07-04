@@ -1162,6 +1162,9 @@ fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
 
 fn reified_shell_token_path_candidate_ranges(token: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
+    for range in colon_separated_absolute_path_component_ranges(token) {
+        push_unique_range(&mut ranges, range);
+    }
     for range in path_like_subtoken_ranges(token) {
         push_unique_range(&mut ranges, range);
     }
@@ -1273,8 +1276,55 @@ fn path_like_subtoken_ranges(token: &str) -> Vec<Range<usize>> {
     ranges
 }
 
+fn colon_separated_absolute_path_component_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    if token.starts_with('/') {
+        push_colon_separated_absolute_path_components(token, 0..token.len(), &mut ranges);
+    }
+    if let Some(index) = token.rfind('=') {
+        let start = index + 1;
+        if start < token.len() {
+            push_colon_separated_absolute_path_components(token, start..token.len(), &mut ranges);
+        }
+    }
+    ranges
+}
+
+fn push_colon_separated_absolute_path_components(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    let value = &token[range.clone()];
+    let mut component_start = range.start;
+    for (offset, ch) in value.char_indices() {
+        if ch != ':' {
+            continue;
+        }
+        push_absolute_path_component_range(token, component_start..range.start + offset, ranges);
+        component_start = range.start + offset + ch.len_utf8();
+    }
+    push_absolute_path_component_range(token, component_start..range.end, ranges);
+}
+
+fn push_absolute_path_component_range(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    if range.start >= range.end {
+        return;
+    }
+    if token[range.clone()].starts_with('/') {
+        push_unique_range(ranges, range);
+    }
+}
+
 fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
     let mut literals = Vec::new();
+    for range in colon_separated_absolute_path_component_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
     for range in path_like_subtoken_ranges(token) {
         push_absolute_path_literal_candidates(token, range, &mut literals);
     }
