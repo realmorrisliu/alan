@@ -43,12 +43,30 @@
 
 ## 5. Verification And PRs
 
-- [ ] 5.1 Add Linux-only smoke tests gated by capability detection for visible
+- [x] 5.1 Add Linux-only smoke tests gated by capability detection for visible
   `/mnt/<name>` mounts, absent undeclared home paths, read-only mount mutation
   rejection, writable mount mutation, and network denial.
-- [ ] 5.2 Run focused Rust tests for the probe, plan model, path translation, and
+  Done 2026-07-03: added Linux cfg runner smoke tests gated by
+  `linux_reified_namespace_backend_readiness()` for declared mount visibility,
+  absent undeclared host paths, read-only/write access enforcement, writable
+  mutation, and denied loopback connections. The Linux smoke tests were not run
+  locally because this host is macOS and has no Linux Rust target installed.
+- [x] 5.2 Run focused Rust tests for the probe, plan model, path translation, and
   fallback behavior; run Linux smoke tests when host capabilities are available.
-- [ ] 5.3 Run clippy for touched crates, OpenSpec strict validate, and diff
+  Done 2026-07-03: `cargo test -p alan-agent-engine reified_namespace -- --nocapture`,
+  `cargo test -p alan-agent-engine sandbox_backend::tests -- --nocapture`, and
+  `cargo test -p alan-agent-engine test_reified_backend_fails_closed_without_non_linux_runner -- --nocapture`
+  passed on macOS. Linux smoke tests are cfg-gated and require a capable Linux
+  host.
+- [x] 5.3 Run clippy for touched crates, OpenSpec strict validate, and diff
   checks.
-- [ ] 5.4 Update parent namespace-driven sandbox task state and open stacked PRs
+  Done 2026-07-03: `cargo clippy -p alan-agent-engine --all-targets --all-features -- -D warnings`,
+  `openspec validate define-linux-namespace-reification --strict`,
+  `openspec validate define-namespace-driven-sandbox --strict`, and
+  `git diff --check` passed.
+- [x] 5.4 Update parent namespace-driven sandbox task state and open stacked PRs
   for each landed implementation slice.
+  Done 2026-07-03: updated the parent `define-namespace-driven-sandbox` task
+  ledger and opened ready stacked PRs for the Linux reification slices: #603
+  (probe), #604 (plan), #605 (runner), #606 (backend integration), and #607
+  (verification smoke coverage).
