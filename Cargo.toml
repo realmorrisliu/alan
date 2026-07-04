@@ -7,6 +7,7 @@ members = [
     "crates/kernel",
     "crates/knowledge",
     "crates/memfs",
+    "crates/hostfs",
     "crates/routefs",
     "crates/editfs",
     "crates/branchfs",
@@ -71,6 +72,7 @@ reqwest = { version = "0.13.4", default-features = false, features = [
 # Async utilities
 futures = "0.3"
 async-trait = "0.1"
+libc = "0.2"
 
 # URL encoding
 urlencoding = "2.1"
@@ -123,6 +125,7 @@ alan-llm = { path = "crates/llm" }
 alan-agent-engine = { path = "crates/agent-engine" }
 alan-knowledge = { path = "crates/knowledge" }
 alan-memfs = { path = "crates/memfs" }
+alan-hostfs = { path = "crates/hostfs" }
 alan-routefs = { path = "crates/routefs" }
 alan-editfs = { path = "crates/editfs" }
 alan-branchfs = { path = "crates/branchfs" }

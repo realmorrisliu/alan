@@ -5,6 +5,7 @@
 pub mod cli;
 pub mod daemon;
 pub mod host_config;
+pub mod host_mounts;
 pub mod install_channel;
 pub mod registry;
 mod skill_catalog;

@@ -1,6 +1,6 @@
 //! Tool execution context for dependency injection.
 
-use super::sandbox::Sandbox;
+use super::sandbox::{Sandbox, SandboxSpec};
 use crate::config::Config;
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
@@ -110,7 +110,9 @@ impl ToolContext {
 
     /// Create a sandbox bound to the current workspace root.
     pub fn workspace_sandbox(&self) -> Result<Sandbox> {
-        Ok(Sandbox::new(self.require_workspace_root()?.to_path_buf()))
+        Ok(Sandbox::from_spec(SandboxSpec::seed(
+            self.require_workspace_root()?.to_path_buf(),
+        )))
     }
 
     /// Resolve a path relative to working directory

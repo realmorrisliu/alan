@@ -30,6 +30,58 @@ async fn test_sandbox_blocks_outside_workspace() {
 }
 
 #[tokio::test]
+async fn sandbox_spec_writable_roots_allow_host_absolute_paths() {
+    let workspace = TempDir::new().unwrap();
+    let host = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            writable_roots: vec![workspace.path().to_path_buf(), host.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+    let target = host.path().join("created.txt");
+
+    assert!(sandbox.is_in_workspace(host.path()));
+    let result = sandbox
+        .exec(&format!("touch {}", target.display()), workspace.path())
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(target.exists());
+}
+
+#[tokio::test]
+async fn sandbox_spec_writable_roots_still_block_host_protected_subpaths() {
+    let workspace = TempDir::new().unwrap();
+    let host = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            writable_roots: vec![workspace.path().to_path_buf(), host.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+    );
+    let protected = host.path().join(".git/config");
+    tokio::fs::create_dir_all(protected.parent().unwrap())
+        .await
+        .unwrap();
+
+    let result = sandbox.write(&protected, b"[core]\n").await;
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("protected subpath .git")
+    );
+}
+
+#[tokio::test]
 async fn test_sandbox_exec() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());

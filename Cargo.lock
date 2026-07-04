@@ -31,7 +31,10 @@ version = "0.1.0"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
+ "alan-ap",
  "alan-auth",
+ "alan-hostfs",
+ "alan-kernel",
  "alan-llm",
  "alan-swebench-tooling",
  "alan-terminal-ui",
@@ -182,6 +185,17 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "alan-hostfs"
+version = "0.1.0"
+dependencies = [
+ "alan-ap",
+ "async-trait",
+ "libc",
+ "tempfile",
  "tokio",
 ]
 

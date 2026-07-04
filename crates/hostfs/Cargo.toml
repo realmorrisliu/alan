@@ -1,0 +1,16 @@
+[package]
+name = "alan-hostfs"
+description = "Host directory file server for Alan OS."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+alan-ap = { path = "../ap" }
+async-trait.workspace = true
+libc.workspace = true
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
