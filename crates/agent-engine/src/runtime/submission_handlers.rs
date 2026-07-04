@@ -5,8 +5,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ROLLBACK_NON_DURABLE_WARNING;
 use crate::approval::{
-    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
-    is_effect_replay_confirmation, replays_tool_calls, runtime_confirmation_control_kind,
+    MOUNT_ESCALATION_CHECKPOINT_TYPE, RUNTIME_CONFIRMATION_CONTROL_SOURCE,
+    RUNTIME_CONFIRMATION_CONTROL_VERSION, is_effect_replay_confirmation, replays_tool_calls,
+    runtime_confirmation_control_kind,
 };
 use crate::tape::ContentPart;
 
@@ -271,7 +272,9 @@ where
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                         .or_else(|| first_resume_text(&content));
-                    let choice_str = choice.as_deref().unwrap_or("approve");
+                    let choice_str = choice
+                        .as_deref()
+                        .unwrap_or_else(|| default_confirmation_choice(&pending));
                     let modifications = result
                         .get("modifications")
                         .and_then(|v| v.as_str())
@@ -384,6 +387,14 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
     })
 }
 
+fn default_confirmation_choice(pending: &crate::approval::PendingConfirmation) -> &'static str {
+    if pending.checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
+        "reject"
+    } else {
+        "approve"
+    }
+}
+
 fn handle_confirmation_resolution(
     state: &mut RuntimeLoopState,
     pending: crate::approval::PendingConfirmation,
@@ -406,6 +417,12 @@ fn handle_confirmation_resolution(
 
     if let Some(modifications) = modifications {
         payload["modifications"] = serde_json::Value::String(modifications);
+    }
+
+    if pending.checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
+        return Ok(handle_mount_escalation_resolution(
+            state, pending, choice_str,
+        ));
     }
 
     if let Some(control_kind) = runtime_confirmation_control_kind(&pending.checkpoint_type) {
@@ -471,6 +488,115 @@ fn handle_confirmation_resolution(
     })
 }
 
+fn handle_mount_escalation_resolution(
+    state: &mut RuntimeLoopState,
+    pending: crate::approval::PendingConfirmation,
+    choice_str: &str,
+) -> RuntimeOpAction {
+    let Some((tool_call_id, mount_request)) = validated_mount_escalation_request(&pending) else {
+        let result = json!({
+            "status": "invalid_mount_escalation_checkpoint",
+            "approved": false,
+            "live_applied": false,
+            "checkpoint_id": pending.checkpoint_id.clone(),
+            "checkpoint_type": pending.checkpoint_type.clone(),
+            "choice": choice_str,
+            "error": "Invalid mount escalation checkpoint.",
+        });
+        state
+            .session
+            .add_tool_message(&pending.checkpoint_id, "request_mount", result);
+        return RuntimeOpAction::RunTurn {
+            turn_kind: TurnRunKind::ResumeTurn,
+            user_input: None,
+            activate_task: false,
+        };
+    };
+    let approved = choice_str == "approve";
+    let status = if approved {
+        "approved_not_applied"
+    } else {
+        "rejected"
+    };
+    let result = json!({
+        "status": status,
+        "approved": approved,
+        "live_applied": false,
+        "checkpoint_id": pending.checkpoint_id.clone(),
+        "checkpoint_type": pending.checkpoint_type.clone(),
+        "choice": choice_str,
+        "mount_request": mount_request,
+    });
+
+    if approved {
+        state.session.record_event(
+            "host_mount_grant",
+            host_mount_grant_event_payload(&pending.details, &result),
+        );
+    }
+    state
+        .session
+        .add_tool_message(&tool_call_id, "request_mount", result);
+
+    RuntimeOpAction::RunTurn {
+        turn_kind: TurnRunKind::ResumeTurn,
+        user_input: None,
+        activate_task: false,
+    }
+}
+
+fn validated_mount_escalation_request(
+    pending: &crate::approval::PendingConfirmation,
+) -> Option<(String, serde_json::Value)> {
+    if pending
+        .details
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("mount_escalation")
+    {
+        return None;
+    }
+    if pending
+        .details
+        .get("tool_name")
+        .and_then(serde_json::Value::as_str)
+        != Some("request_mount")
+    {
+        return None;
+    }
+    let tool_call_id = pending
+        .details
+        .get("tool_call_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())?
+        .to_string();
+    let mount_request = pending.details.get("mount_request")?;
+    let mount_request = super::virtual_tools::parse_mount_request(mount_request)
+        .ok()?
+        .payload();
+    Some((tool_call_id, mount_request))
+}
+
+fn host_mount_grant_event_payload(
+    details: &serde_json::Value,
+    result: &serde_json::Value,
+) -> serde_json::Value {
+    let request = result
+        .get("mount_request")
+        .unwrap_or(&serde_json::Value::Null);
+    json!({
+        "namespace_path": request.get("namespace_path").and_then(serde_json::Value::as_str),
+        "host_path": request.get("host_path").and_then(serde_json::Value::as_str),
+        "access": request.get("access").and_then(serde_json::Value::as_str),
+        "reason": request.get("reason").and_then(serde_json::Value::as_str),
+        "checkpoint_id": result.get("checkpoint_id").and_then(serde_json::Value::as_str),
+        "approved": true,
+        "live_applied": false,
+        "tool_call_id": details.get("tool_call_id").and_then(serde_json::Value::as_str),
+    })
+}
+
 fn is_unknown_effect_confirmation(pending: &crate::approval::PendingConfirmation) -> bool {
     pending
         .details
@@ -505,6 +631,7 @@ mod tests {
     use super::*;
     use crate::{
         config::Config,
+        rollout::{RolloutItem, RolloutRecorder},
         runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, TurnState},
         session::Session,
         tape::ContentPart,
@@ -513,6 +640,7 @@ mod tests {
     use alan_ap::InProcessTransport;
     use alan_kernel::{Access, MountFs, Namespace, ProcFs};
     use alan_shell::Shell;
+    use tempfile::TempDir;
 
     fn namespace_environment_for_test() -> RuntimeEnvironment {
         let mut namespace = Namespace::new();
@@ -570,6 +698,45 @@ mod tests {
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn mount_escalation_pending_confirmation() -> crate::approval::PendingConfirmation {
+        let host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        let host_path = host_path.display().to_string();
+        crate::approval::PendingConfirmation {
+            checkpoint_id: "mount_escalation_call_mount".to_string(),
+            checkpoint_type: crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
+            summary: "Approve host mount?".to_string(),
+            details: json!({
+                "kind": "mount_escalation",
+                "tool_call_id": "call_mount",
+                "tool_name": "request_mount",
+                "mount_request": {
+                    "namespace_path": "/mnt/project",
+                    "host_path": host_path,
+                    "access": "read_write",
+                    "reason": "Need to edit project files"
+                },
+                "live_applied": false
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        }
+    }
+
+    fn tool_result_text_for_call(state: &RuntimeLoopState, call_id: &str) -> String {
+        state
+            .session
+            .tape
+            .messages()
+            .iter()
+            .find_map(|message| match message {
+                crate::tape::Message::Tool { responses } => responses
+                    .iter()
+                    .find(|response| response.id == call_id)
+                    .map(crate::tape::ToolResponse::text_content),
+                _ => None,
+            })
+            .expect("expected tool result")
     }
 
     #[tokio::test]
@@ -842,6 +1009,215 @@ mod tests {
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("modify"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_approve_records_grant_and_tool_result() {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session =
+            Session::new_with_id_and_recorder_in_dir("mount-approve", "test-model", temp.path())
+                .await
+                .unwrap();
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation());
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "mount_escalation_call_mount".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let tool_result = tool_result_text_for_call(&state, "call_mount");
+        assert!(tool_result.contains("\"status\":\"approved_not_applied\""));
+        assert!(tool_result.contains("\"live_applied\":false"));
+        assert!(tool_result.contains("\"namespace_path\":\"/mnt/project\""));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let grant = items
+            .iter()
+            .find_map(|item| match item {
+                RolloutItem::Event(event) if event.event_type == "host_mount_grant" => Some(event),
+                _ => None,
+            })
+            .expect("expected approved mount grant event");
+        let expected_host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        assert_eq!(grant.payload["namespace_path"], "/mnt/project");
+        assert_eq!(
+            grant.payload["host_path"],
+            expected_host_path.display().to_string()
+        );
+        assert_eq!(grant.payload["access"], "read_write");
+        assert_eq!(grant.payload["reason"], "Need to edit project files");
+        assert_eq!(
+            grant.payload["checkpoint_id"],
+            "mount_escalation_call_mount"
+        );
+        assert_eq!(grant.payload["approved"], true);
+        assert_eq!(grant.payload["live_applied"], false);
+        assert_eq!(grant.payload["tool_call_id"], "call_mount");
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_reject_returns_tool_result_without_grant() {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session =
+            Session::new_with_id_and_recorder_in_dir("mount-reject", "test-model", temp.path())
+                .await
+                .unwrap();
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation());
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "mount_escalation_call_mount".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let tool_result = tool_result_text_for_call(&state, "call_mount");
+        assert!(tool_result.contains("\"status\":\"rejected\""));
+        assert!(tool_result.contains("\"approved\":false"));
+        assert!(tool_result.contains("\"live_applied\":false"));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_missing_choice_defaults_to_reject() {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session = Session::new_with_id_and_recorder_in_dir(
+            "mount-default-reject",
+            "test-model",
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation());
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "mount_escalation_call_mount".to_string(),
+            content: vec![ContentPart::structured(json!({}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let tool_result = tool_result_text_for_call(&state, "call_mount");
+        assert!(tool_result.contains("\"status\":\"rejected\""));
+        assert!(tool_result.contains("\"choice\":\"reject\""));
+        assert!(tool_result.contains("\"approved\":false"));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_handle_mount_escalation_resume_rejects_forged_checkpoint() {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session =
+            Session::new_with_id_and_recorder_in_dir("mount-forged", "test-model", temp.path())
+                .await
+                .unwrap();
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "forged_mount".to_string(),
+                checkpoint_type: crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
+                summary: "Approve forged mount?".to_string(),
+                details: json!({
+                    "kind": "mount_escalation",
+                    "tool_call_id": "call_mount",
+                    "tool_name": "request_confirmation",
+                    "mount_request": {
+                        "namespace_path": "/mnt/project",
+                        "host_path": "relative/path",
+                        "access": "read_write",
+                        "reason": "forged"
+                    },
+                    "live_applied": false
+                }),
+                options: vec!["approve".to_string(), "reject".to_string()],
+            });
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "forged_mount".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        let tool_result = tool_result_text_for_call(&state, "forged_mount");
+        assert!(tool_result.contains("\"status\":\"invalid_mount_escalation_checkpoint\""));
+        assert!(tool_result.contains("\"approved\":false"));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
+        )));
     }
 
     #[tokio::test]

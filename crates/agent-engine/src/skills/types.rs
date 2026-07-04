@@ -823,7 +823,12 @@ impl SkillHostCapabilities {
     }
 
     pub fn with_runtime_defaults(mut self) -> Self {
-        self.extend_tools(["request_confirmation", "request_user_input", "update_plan"]);
+        self.extend_tools([
+            "request_confirmation",
+            "request_mount",
+            "request_user_input",
+            "update_plan",
+        ]);
         self
     }
 
@@ -952,6 +957,7 @@ fn is_reserved_runtime_tool_name(tool: &str) -> bool {
             | "glob"
             | "list_dir"
             | "request_confirmation"
+            | "request_mount"
             | "request_user_input"
             | "update_plan"
             | "invoke_delegated_skill"
@@ -2585,6 +2591,7 @@ enabled = true
     fn test_skill_host_capabilities_runtime_defaults_include_virtual_tools() {
         let capabilities = SkillHostCapabilities::default().with_runtime_defaults();
         assert!(capabilities.tools.contains("request_confirmation"));
+        assert!(capabilities.tools.contains("request_mount"));
         assert!(capabilities.tools.contains("request_user_input"));
         assert!(capabilities.tools.contains("update_plan"));
         assert!(!capabilities.tools.contains("invoke_delegated_skill"));
@@ -2609,6 +2616,16 @@ enabled = true
         assert!(capabilities.tools.contains("invoke_delegated_skill"));
         assert!(!capabilities.supports_delegated_skill_invocation());
         assert!(!capabilities.supports_required_tool("invoke_delegated_skill"));
+    }
+
+    #[test]
+    fn test_request_mount_required_tool_is_runtime_backed() {
+        let capabilities = SkillHostCapabilities::default().with_runtime_defaults();
+
+        assert!(capabilities.supports_required_tool("request_mount"));
+
+        let executable_only = SkillHostCapabilities::default().with_executables(["request_mount"]);
+        assert!(!executable_only.supports_required_tool("request_mount"));
     }
 
     #[test]
