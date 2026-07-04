@@ -75,9 +75,11 @@ impl SandboxBackendKind {
 
     /// Whether the backend confines bash strongly enough to run shell wrappers
     /// and reviewer-route escalated bash: the workspace filesystem boundary AND
-    /// network are kernel-enforced (Seatbelt). Landlock does not qualify — it
-    /// cannot guarantee network confinement on older kernels — so it keeps the
-    /// full shape parser and routes escalated bash to a human.
+    /// network are kernel-enforced (Seatbelt). Landlock does not qualify because
+    /// network confinement is kernel-conditional, and Linux reified namespace
+    /// does not qualify until protected subpaths are carved out of the writable
+    /// workspace mount. Conservative backends keep the full shape parser and
+    /// route escalated bash to a human.
     ///
     /// NOTE: protected subpaths (`.git`/`.alan`/`.agents`) are NOT kernel-confined
     /// (denying `.git` breaks git itself). Their integrity rests on the path-guard
@@ -85,10 +87,7 @@ impl SandboxBackendKind {
     /// writes by approved code (git porcelain, a reviewer-approved test runner)
     /// are trusted — see the residual-gap audit.
     pub const fn permits_autonomous_bash(self) -> bool {
-        matches!(
-            self,
-            SandboxBackendKind::Seatbelt | SandboxBackendKind::LinuxReifiedNamespace
-        )
+        matches!(self, SandboxBackendKind::Seatbelt)
     }
 }
 

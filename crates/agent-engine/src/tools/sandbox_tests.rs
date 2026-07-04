@@ -2388,9 +2388,11 @@ fn only_seatbelt_permits_autonomous_bash() {
     // Seatbelt is a complete bash boundary (workspace fs + network), so wrappers
     // run and escalated bash is reviewer-eligible.
     assert!(SandboxBackendKind::Seatbelt.permits_autonomous_bash());
-    // Landlock (network confinement is kernel-conditional) and the path-guard
-    // fallback are treated conservatively: full shape parser, escalated bash to a
-    // human.
+    // Landlock (network confinement is kernel-conditional), Linux reified
+    // namespace (protected subpaths are not carved out of the writable workspace
+    // mount), and the path-guard fallback are treated conservatively: full shape
+    // parser, escalated bash to a human.
+    assert!(!SandboxBackendKind::LinuxReifiedNamespace.permits_autonomous_bash());
     assert!(!SandboxBackendKind::Landlock.permits_autonomous_bash());
     assert!(!SandboxBackendKind::WorkspacePathGuard.permits_autonomous_bash());
 }
@@ -2414,6 +2416,30 @@ async fn test_landlock_keeps_shape_parser_for_opaque_writers() {
         )
         .await;
     assert!(result.is_err(), "opaque writer not rejected under Landlock");
+}
+
+#[tokio::test]
+async fn test_reified_backend_keeps_shape_parser_for_opaque_writers() {
+    // Linux reified namespace still bind-mounts the writable workspace as a whole,
+    // so protected subpath integrity depends on the full parser until those
+    // subpaths are carved out of the namespace.
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "python -c 'open(\".git/config\",\"w\").write(\"x\")'",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "opaque writer not rejected under Linux reified namespace"
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
