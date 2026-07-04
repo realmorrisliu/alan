@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -746,23 +746,28 @@ fn run_linux_reified_command_with_timeout(
             break status;
         }
         if started.elapsed() >= timeout {
-            let _ = kill_child_process_group(&mut child);
-            let _ = child.wait();
-            let _ = join_child_pipe(stdout_reader);
-            let _ = join_child_pipe(stderr_reader);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("Command execution timed out after {}s", timeout.as_secs()),
+            return Err(timeout_reified_command(
+                &mut child,
+                stdout_reader,
+                stderr_reader,
+                timeout,
             ));
         }
         let remaining = timeout.saturating_sub(started.elapsed());
         std::thread::sleep(remaining.min(Duration::from_millis(20)));
     };
+    let (stdout, stderr) = collect_child_pipes_before_deadline(
+        stdout_reader,
+        stderr_reader,
+        &mut child,
+        started,
+        timeout,
+    )?;
 
     Ok(Output {
         status,
-        stdout: join_child_pipe(stdout_reader)?,
-        stderr: join_child_pipe(stderr_reader)?,
+        stdout,
+        stderr,
     })
 }
 
@@ -788,6 +793,67 @@ fn join_child_pipe(
     handle
         .join()
         .map_err(|_| std::io::Error::other("child output reader panicked"))?
+}
+
+#[cfg(target_os = "linux")]
+fn collect_child_pipes_before_deadline(
+    stdout_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    stderr_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    child: &mut Child,
+    started: Instant,
+    timeout: Duration,
+) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    let mut stdout_reader = stdout_reader;
+    let mut stderr_reader = stderr_reader;
+    loop {
+        let stdout_done = stdout_reader.as_ref().is_none_or(JoinHandle::is_finished);
+        let stderr_done = stderr_reader.as_ref().is_none_or(JoinHandle::is_finished);
+        if stdout_done && stderr_done {
+            return Ok((
+                join_child_pipe(stdout_reader.take())?,
+                join_child_pipe(stderr_reader.take())?,
+            ));
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(timeout_reified_command(
+                child,
+                stdout_reader.take(),
+                stderr_reader.take(),
+                timeout,
+            ));
+        }
+
+        let remaining = timeout.saturating_sub(started.elapsed());
+        std::thread::sleep(remaining.min(Duration::from_millis(20)));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn timeout_reified_command(
+    child: &mut Child,
+    stdout_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    stderr_reader: Option<JoinHandle<std::io::Result<Vec<u8>>>>,
+    timeout: Duration,
+) -> std::io::Error {
+    let _ = kill_child_process_group(child);
+    let _ = child.wait();
+    join_finished_child_pipe(stdout_reader);
+    join_finished_child_pipe(stderr_reader);
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!("Command execution timed out after {}s", timeout.as_secs()),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn join_finished_child_pipe(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) {
+    let Some(handle) = handle else {
+        return;
+    };
+    if handle.is_finished() {
+        let _ = join_child_pipe(Some(handle));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2013,6 +2079,27 @@ mod tests {
         assert!(
             !marker.exists(),
             "timeout should kill the shell and its sleeping child"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_timeout_covers_output_drain_after_parent_exit() {
+        let started = Instant::now();
+        let output = run_linux_reified_command(
+            ReifiedNamespaceCommandSpec {
+                program: "/bin/sh".to_string(),
+                args: vec!["-c".to_string(), "sleep 2 &".to_string()],
+            }
+            .command(),
+            Some(Duration::from_millis(50)),
+        );
+
+        let error = output.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeout should remain active while stdout/stderr readers wait for EOF"
         );
     }
 

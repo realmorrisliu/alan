@@ -551,7 +551,7 @@ impl Sandbox {
         } else {
             NetworkPosture::Deny
         };
-        super::reified_namespace::ReifiedNamespacePlan::derive(
+        let mut plan = super::reified_namespace::ReifiedNamespacePlan::derive(
             super::reified_namespace::ReifiedNamespacePlanInput::new(
                 self.reified_mount_declarations(),
                 cwd,
@@ -564,7 +564,14 @@ impl Sandbox {
                 network,
             ),
         )
-        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))
+        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
+        plan.argv = vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            Self::translate_reified_command_host_paths(cmd, &plan),
+        ];
+        Ok(plan)
     }
 
     fn reified_mount_declarations(&self) -> Vec<super::reified_namespace::ReifiedMountDeclaration> {
@@ -948,6 +955,58 @@ impl Sandbox {
         }
         None
     }
+
+    fn translate_reified_command_host_paths(
+        cmd: &str,
+        plan: &super::reified_namespace::ReifiedNamespacePlan,
+    ) -> String {
+        let regex = Regex::new(r"/[A-Za-z0-9._/-]+").expect("absolute-path regex is valid");
+        let mut translated = String::with_capacity(cmd.len());
+        let mut last = 0;
+        for matched in regex.find_iter(cmd) {
+            let start = matched.start();
+            if absolute_path_match_has_path_prefix(cmd, start) {
+                continue;
+            }
+
+            let literal = matched.as_str();
+            let literal_path = Path::new(literal);
+            if is_allowed_absolute_command_path(literal_path) {
+                continue;
+            }
+
+            let namespace_path = plan
+                .translate_projected_host_path(literal_path)
+                .or_else(|| {
+                    plan.translate_projected_host_path(&lexically_normalize_path(literal_path))
+                });
+            let Some(namespace_path) = namespace_path else {
+                continue;
+            };
+
+            translated.push_str(&cmd[last..start]);
+            translated.push_str(&namespace_path.display().to_string());
+            last = matched.end();
+        }
+        translated.push_str(&cmd[last..]);
+        translated
+    }
+}
+
+fn absolute_path_match_has_path_prefix(text: &str, start: usize) -> bool {
+    if start == 0 {
+        return false;
+    }
+    let prev = text.as_bytes()[start - 1];
+    prev == b':'
+        || prev == b'.'
+        || prev == b'/'
+        || prev == b'_'
+        || prev == b'-'
+        || prev == b'*'
+        || prev == b'?'
+        || prev == b']'
+        || prev.is_ascii_alphanumeric()
 }
 
 fn validate_nested_command_evaluators(commands: &[Vec<String>], backend_name: &str) -> Result<()> {

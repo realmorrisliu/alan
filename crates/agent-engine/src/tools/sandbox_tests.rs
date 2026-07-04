@@ -2509,6 +2509,35 @@ async fn test_reified_backend_translates_namespace_paths_for_protected_checks() 
     );
 }
 
+#[test]
+fn test_reified_backend_translates_host_workspace_paths_in_command_argv() {
+    let temp = TempDir::new().unwrap();
+    let host_manifest = temp.path().join("Cargo.toml");
+    std::fs::write(&host_manifest, "[package]\n").unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!("cat {} > /dev/null", host_manifest.display()),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.argv,
+        vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            "cat /mnt/workspace/Cargo.toml > /dev/null".to_string()
+        ]
+    );
+}
+
 #[tokio::test]
 async fn test_os_backend_still_blocks_out_of_workspace_reads() {
     // Seatbelt denies writes/network but permits reads, so the parser must still
