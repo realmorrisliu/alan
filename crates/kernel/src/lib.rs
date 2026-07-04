@@ -20,7 +20,7 @@ mod procfs;
 mod srvfs;
 
 pub use bootstrap::KernelRoot;
-pub use mountfs::MountFs;
+pub use mountfs::{LiveNamespace, MountFs};
 pub use namespace::{Access, Namespace, Resolved, Unreachable};
 pub use process::{
     Credentials, ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec, Pid,

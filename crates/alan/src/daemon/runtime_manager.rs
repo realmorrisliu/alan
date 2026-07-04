@@ -221,6 +221,9 @@ impl RuntimeManager {
         }
         runtime_config.workspace_root_dir = Some(workspace_root_path.clone());
         runtime_config.workspace_alan_dir = Some(workspace_alan_dir.clone());
+        runtime_config.mount_grant_applicator_factory = Some(Arc::new(
+            crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory,
+        ));
         runtime_config.resume_rollout_path = resume_rollout_path;
         runtime_config.agent_config.runtime_config.governance = session_policy.governance;
         runtime_config

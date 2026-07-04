@@ -7,6 +7,7 @@
 
 use std::{
     collections::BTreeMap,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -134,6 +135,92 @@ pub struct NamespaceToolActionOutput {
     pub exit_code: i32,
 }
 
+/// Access mode for an approved host mount grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovedMountGrantAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+impl ApprovedMountGrantAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::ReadWrite => "read_write",
+        }
+    }
+}
+
+/// A host mount grant that has already passed the approval boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovedMountGrant {
+    pub namespace_path: String,
+    pub host_path: PathBuf,
+    pub access: ApprovedMountGrantAccess,
+    pub reason: String,
+}
+
+impl ApprovedMountGrant {
+    pub fn new(
+        namespace_path: impl Into<String>,
+        host_path: PathBuf,
+        access: ApprovedMountGrantAccess,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            namespace_path: namespace_path.into(),
+            host_path,
+            access,
+            reason: reason.into(),
+        }
+    }
+}
+
+/// Host-provided hook for applying approved mount grants to a live namespace.
+///
+/// The engine owns the approval flow, but the host composition root owns
+/// host-backed file-server construction. Implementations must keep hostfs
+/// dependencies out of `alan-agent-engine`.
+pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
+    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()>;
+}
+
+/// Host-provided factory that can build a mount grant applicator once the engine
+/// has created the live namespace handle for a runtime.
+pub trait MountGrantApplicatorFactory: std::fmt::Debug + Send + Sync {
+    fn create(&self, live_namespace: alan_kernel::LiveNamespace) -> Arc<dyn MountGrantApplicator>;
+}
+
+/// Result of attempting live namespace projection for an approved grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceMountApplication {
+    pub namespace_applied: bool,
+    pub namespace_error: Option<String>,
+}
+
+impl NamespaceMountApplication {
+    pub fn applied() -> Self {
+        Self {
+            namespace_applied: true,
+            namespace_error: None,
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            namespace_applied: false,
+            namespace_error: Some(reason.into()),
+        }
+    }
+
+    pub fn failed(error: anyhow::Error) -> Self {
+        Self {
+            namespace_applied: false,
+            namespace_error: Some(error.to_string()),
+        }
+    }
+}
+
 /// Namespace-backed environment for an Agent Process.
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
@@ -142,6 +229,8 @@ pub struct NamespaceRuntimeEnvironment {
     llm_connection: String,
     shared_services: Option<NamespaceSharedServices>,
     input_offset: Arc<AtomicU64>,
+    mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
+    mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
 }
 
 #[derive(Clone)]
@@ -156,6 +245,14 @@ impl std::fmt::Debug for NamespaceRuntimeEnvironment {
             .field("agent_path", &self.agent_path)
             .field("llm_connection", &self.llm_connection)
             .field("has_shared_services", &self.shared_services.is_some())
+            .field(
+                "mount_grant_applicator",
+                &self.mount_grant_applicator.is_some(),
+            )
+            .field(
+                "mount_grant_applicator_factory",
+                &self.mount_grant_applicator_factory.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -172,6 +269,8 @@ impl NamespaceRuntimeEnvironment {
             llm_connection: llm_connection.into(),
             shared_services: None,
             input_offset: Arc::new(AtomicU64::new(0)),
+            mount_grant_applicator: None,
+            mount_grant_applicator_factory: None,
         }
     }
 
@@ -188,6 +287,24 @@ impl NamespaceRuntimeEnvironment {
         self.shared_services.clone()
     }
 
+    pub fn with_mount_grant_applicator(
+        mut self,
+        applicator: Arc<dyn MountGrantApplicator>,
+    ) -> Self {
+        self.mount_grant_applicator = Some(applicator);
+        self
+    }
+
+    pub fn with_mount_grant_applicator_factory(
+        mut self,
+        factory: Arc<dyn MountGrantApplicatorFactory>,
+        live_namespace: alan_kernel::LiveNamespace,
+    ) -> Self {
+        self.mount_grant_applicator = Some(factory.create(live_namespace));
+        self.mount_grant_applicator_factory = Some(factory);
+        self
+    }
+
     pub fn agent_path(&self) -> &str {
         &self.agent_path
     }
@@ -199,6 +316,25 @@ impl NamespaceRuntimeEnvironment {
     #[cfg(test)]
     pub(crate) fn root_transport(&self) -> InProcessTransport {
         self.root.clone()
+    }
+
+    pub fn mount_grant_applicator_factory(&self) -> Option<Arc<dyn MountGrantApplicatorFactory>> {
+        self.mount_grant_applicator_factory.clone()
+    }
+
+    pub fn apply_approved_mount_grant(
+        &self,
+        grant: &ApprovedMountGrant,
+    ) -> NamespaceMountApplication {
+        let Some(applicator) = self.mount_grant_applicator.as_ref() else {
+            return NamespaceMountApplication::unavailable(
+                "live namespace mount applicator unavailable",
+            );
+        };
+        applicator
+            .apply_mount_grant(grant)
+            .map(|()| NamespaceMountApplication::applied())
+            .unwrap_or_else(NamespaceMountApplication::failed)
     }
 
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {

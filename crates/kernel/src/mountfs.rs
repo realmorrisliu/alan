@@ -16,10 +16,12 @@
 //!   holds exactly as it does for a directly-mounted server.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Request, Response, Stat,
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Request,
+    Response, Stat,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -76,13 +78,93 @@ struct State {
 
 /// The namespace-as-`FileServer`.
 pub struct MountFs {
-    ns: Namespace,
+    ns: LiveNamespace,
     state: Mutex<State>,
+}
+
+/// Shared, live mount table for a running namespace.
+///
+/// The handle is host-agnostic: callers provide an already-constructed aP file
+/// server transport plus mount access. Existing `MountFs` fids keep their
+/// resolved backing server; future walks observe mount-table changes.
+#[derive(Clone)]
+pub struct LiveNamespace {
+    ns: Arc<RwLock<Namespace>>,
+    generation: Arc<AtomicU32>,
+}
+
+impl std::fmt::Debug for LiveNamespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveNamespace")
+            .field("mounts", &self.describe())
+            .finish()
+    }
+}
+
+impl LiveNamespace {
+    /// Create a live handle around an assembled namespace.
+    pub fn new(ns: Namespace) -> Self {
+        Self {
+            ns: Arc::new(RwLock::new(ns)),
+            generation: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Mount a file server at `at`, preserving normal namespace stacking rules.
+    pub fn mount(&self, at: &str, tree: InProcessTransport, access: crate::Access) {
+        self.write().mount(at, tree, access);
+        self.bump_generation();
+    }
+
+    /// Replace every exact mount at `at`, then mount the supplied file server.
+    pub fn replace_mount(&self, at: &str, tree: InProcessTransport, access: crate::Access) {
+        let mut ns = self.write();
+        ns.unmount(at);
+        ns.mount(at, tree, access);
+        drop(ns);
+        self.bump_generation();
+    }
+
+    /// Return an inspectable summary of the current mount table.
+    pub fn describe(&self) -> Vec<(String, crate::Access)> {
+        self.read().describe()
+    }
+
+    /// Return a point-in-time namespace snapshot for process spawn inheritance.
+    pub fn snapshot(&self) -> Namespace {
+        self.read().clone()
+    }
+
+    /// Monotonic mount-table version used by qid/cache invalidation.
+    pub fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    fn resolve_candidates(&self, path: &str) -> Vec<Resolved> {
+        self.read().resolve_candidates(path)
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Namespace> {
+        self.ns.read().expect("live namespace lock poisoned")
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Namespace> {
+        self.ns.write().expect("live namespace lock poisoned")
+    }
 }
 
 impl MountFs {
     /// Wrap an assembled [`Namespace`] as a single aP file server.
     pub fn new(ns: Namespace) -> Self {
+        Self::from_live_namespace(LiveNamespace::new(ns))
+    }
+
+    /// Wrap a live namespace mount handle as a single aP file server.
+    pub fn from_live_namespace(ns: LiveNamespace) -> Self {
         let mut fids = HashMap::new();
         // The root fid is the namespace root: the synthetic directory at `/`.
         fids.insert(
@@ -97,6 +179,11 @@ impl MountFs {
             ns,
             state: Mutex::new(State { fids }),
         }
+    }
+
+    /// Return the live namespace handle backing this file server.
+    pub fn live_namespace(&self) -> LiveNamespace {
+        self.ns.clone()
     }
 
     /// The mount prefixes of the namespace, as component vectors.
@@ -260,7 +347,7 @@ impl FileServer for MountFs {
         // not contain that component — so a component-at-a-time walk still reaches
         // the deeper mount.
         if path.is_empty() || self.is_synthetic_dir(&path) {
-            let qid = synthetic_qid(&path);
+            let qid = synthetic_qid(&path, self.ns.generation());
             state.fids.insert(
                 newfid,
                 Entry {
@@ -298,7 +385,7 @@ impl FileServer for MountFs {
                 if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
                     return Err(ErrorCode::NoAccess);
                 }
-                Ok(synthetic_qid(&path))
+                Ok(synthetic_qid(&path, self.ns.generation()))
             }
         }
     }
@@ -383,7 +470,7 @@ impl FileServer for MountFs {
                 let length = self.synthetic_children(&path).join("\n").len() as u64;
                 Ok(Stat {
                     name: String::new(),
-                    qid: synthetic_qid(&path),
+                    qid: synthetic_qid(&path, self.ns.generation()),
                     length,
                     writable: false,
                 })
@@ -602,14 +689,14 @@ fn join_path(components: &[String]) -> String {
 
 /// A stable directory qid for a synthetic namespace path, keyed by the path so
 /// distinct synthetic directories never share a qid.
-fn synthetic_qid(path: &[String]) -> Qid {
+fn synthetic_qid(path: &[String], version: u32) -> Qid {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     "synthetic".hash(&mut h);
     path.hash(&mut h);
     Qid {
         kind: FileKind::Dir,
-        version: 0,
+        version,
         path: h.finish(),
     }
 }

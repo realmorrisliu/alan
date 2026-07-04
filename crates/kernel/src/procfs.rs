@@ -42,7 +42,7 @@ use alan_ap::{
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{Access, Credentials, ExecSpec, Namespace, Pid, ProcessTable, Status};
+use crate::{Access, Credentials, ExecSpec, LiveNamespace, Namespace, Pid, ProcessTable, Status};
 
 /// One committed process invocation handed to user-space execution.
 #[derive(Clone)]
@@ -134,6 +134,7 @@ static NEXT_PROCFS_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 struct State {
     table: ProcessTable,
     fids: HashMap<ProcFidKey, ProcFid>,
+    live_namespaces: HashMap<Pid, LiveNamespace>,
     /// Generic IO streams per committed process. The kernel owns the files; user
     /// space supplies the execution semantics layered above them.
     inputs: HashMap<Pid, Stream>,
@@ -188,8 +189,28 @@ impl OrderedProcessIoEventObserver {
 #[derive(Clone)]
 struct SpawnContext {
     parent: Option<Pid>,
-    namespace: Namespace,
+    namespace: NamespaceSource,
     credentials: Credentials,
+}
+
+#[derive(Clone)]
+enum NamespaceSource {
+    Snapshot(Namespace),
+    Live(LiveNamespace),
+}
+
+impl NamespaceSource {
+    fn snapshot(&self) -> Namespace {
+        match self {
+            Self::Snapshot(namespace) => namespace.clone(),
+            Self::Live(namespace) => namespace.snapshot(),
+        }
+    }
+
+    fn child_with_path_substitution(&self, placeholder: &str, pid: &str) -> Namespace {
+        self.snapshot()
+            .child_with_path_substitution(placeholder, pid)
+    }
 }
 
 /// The `/proc` file server.
@@ -214,6 +235,7 @@ impl ProcFs {
             state: Arc::new(Mutex::new(State {
                 table: ProcessTable::new(),
                 fids: HashMap::new(),
+                live_namespaces: HashMap::new(),
                 inputs: HashMap::new(),
                 outputs: HashMap::new(),
                 io_events: HashMap::new(),
@@ -228,7 +250,7 @@ impl ProcFs {
             root_node: Node::Root,
             spawn_context: SpawnContext {
                 parent: None,
-                namespace: Namespace::new(),
+                namespace: NamespaceSource::Snapshot(Namespace::new()),
                 credentials: Credentials::system(),
             },
             runner: None,
@@ -258,7 +280,29 @@ impl ProcFs {
             root_node: Node::Root,
             spawn_context: SpawnContext {
                 parent,
-                namespace,
+                namespace: NamespaceSource::Snapshot(namespace),
+                credentials,
+            },
+            runner: self.runner.clone(),
+        }
+    }
+
+    /// Create a `/proc` view whose spawner inherits from a live namespace handle.
+    /// Children snapshot the handle at clone time, so grants approved before spawn
+    /// are visible without making every child share later mutations by default.
+    pub fn for_live_spawner(
+        &self,
+        parent: Option<Pid>,
+        namespace: LiveNamespace,
+        credentials: Credentials,
+    ) -> Self {
+        Self {
+            state: self.state.clone(),
+            view_id: next_view_id(),
+            root_node: Node::Root,
+            spawn_context: SpawnContext {
+                parent,
+                namespace: NamespaceSource::Live(namespace),
                 credentials,
             },
             runner: self.runner.clone(),
@@ -276,6 +320,17 @@ impl ProcFs {
         let mut view = self.for_spawner(parent, namespace, credentials);
         view.root_node = Node::Clone;
         view
+    }
+
+    /// Bind a committed process's namespace description to a live namespace
+    /// handle. This is used for long-lived root processes whose namespace can gain
+    /// approved mounts after the process has started.
+    pub async fn bind_live_namespace(&self, pid: Pid, namespace: LiveNamespace) {
+        let mut state = self.state.lock().await;
+        if state.table.get(pid).is_some() {
+            state.live_namespaces.insert(pid, namespace);
+            state.table.bump_generation(pid);
+        }
     }
 
     fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
@@ -550,8 +605,12 @@ impl State {
             | Node::Parent(p)
             | Node::Credentials(p)
             | Node::Exit(p)
-            | Node::Ctl(p)
-            | Node::NamespaceInfo(p) => self.table.generation(*p),
+            | Node::Ctl(p) => self.table.generation(*p),
+            Node::NamespaceInfo(p) => self.table.generation(*p).wrapping_add(
+                self.live_namespaces
+                    .get(p)
+                    .map_or(0, LiveNamespace::generation),
+            ),
         };
         Qid {
             kind,
@@ -629,8 +688,10 @@ impl State {
             }
             Node::NamespaceInfo(pid) => {
                 let p = self.table.get(*pid).ok_or(ErrorCode::NotFound)?;
-                p.namespace
-                    .describe()
+                self.live_namespaces
+                    .get(pid)
+                    .map(LiveNamespace::describe)
+                    .unwrap_or_else(|| p.namespace.describe())
                     .iter()
                     .map(|(path, access)| {
                         let rights = match access {

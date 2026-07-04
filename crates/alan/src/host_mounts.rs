@@ -4,13 +4,20 @@
 //! applied to the Alan OS namespace and projected into `SandboxSpec` here, while
 //! `alan-kernel` remains host-path agnostic.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use alan_agent_engine::tools::SandboxSpec;
+use alan_agent_engine::{
+    runtime::{
+        ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
+        MountGrantApplicatorFactory,
+    },
+    tools::SandboxSpec,
+};
 use alan_ap::InProcessTransport;
 use alan_hostfs::{HostDirAccess, HostDirFs};
-use alan_kernel::{Access, Namespace};
+use alan_kernel::{Access, LiveNamespace, Namespace};
 use anyhow::{Context, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +201,95 @@ fn host_paths_overlap(left: &Path, right: &Path) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LiveNamespaceMountGrantApplicatorFactory;
+
+impl MountGrantApplicatorFactory for LiveNamespaceMountGrantApplicatorFactory {
+    fn create(&self, live_namespace: LiveNamespace) -> Arc<dyn MountGrantApplicator> {
+        Arc::new(LiveNamespaceMountGrantApplicator {
+            live_namespace,
+            granted_paths: Mutex::new(HashSet::new()),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct LiveNamespaceMountGrantApplicator {
+    live_namespace: LiveNamespace,
+    granted_paths: Mutex<HashSet<String>>,
+}
+
+impl MountGrantApplicator for LiveNamespaceMountGrantApplicator {
+    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()> {
+        let namespace_path = canonical_namespace_path(&grant.namespace_path)?;
+        let mut granted_paths = self
+            .granted_paths
+            .lock()
+            .expect("live namespace grant path set lock poisoned");
+        validate_live_mount_grant_path(&self.live_namespace, &namespace_path, &granted_paths)?;
+        let access = match grant.access {
+            ApprovedMountGrantAccess::ReadOnly => Access::ReadOnly,
+            ApprovedMountGrantAccess::ReadWrite => Access::ReadWrite,
+        };
+        let declaration =
+            HostMountDeclaration::new(namespace_path.clone(), grant.host_path.clone(), access);
+        let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
+            .with_context(|| {
+                format!(
+                    "failed to apply approved host mount {} at {}",
+                    declaration.host_path.display(),
+                    declaration.namespace_path
+                )
+            })?;
+        self.live_namespace.replace_mount(
+            &declaration.namespace_path,
+            InProcessTransport::new(Arc::new(hostfs)),
+            declaration.access,
+        );
+        granted_paths.insert(namespace_path);
+        Ok(())
+    }
+}
+
+fn canonical_namespace_path(path: &str) -> Result<String> {
+    let components = normalized_namespace_components(path)?;
+    if components.is_empty() {
+        Ok("/".to_string())
+    } else {
+        Ok(format!("/{}", components.join("/")))
+    }
+}
+
+fn validate_live_mount_grant_path(
+    live_namespace: &LiveNamespace,
+    namespace_path: &str,
+    granted_paths: &HashSet<String>,
+) -> Result<()> {
+    let requested_components = normalized_namespace_components(namespace_path)?;
+    anyhow::ensure!(
+        requested_components.first() == Some(&"mnt") && requested_components.len() >= 2,
+        "approved host mount grants must target a user mount under /mnt: {}",
+        namespace_path
+    );
+
+    for (existing_path, _) in live_namespace.describe() {
+        let existing_path = canonical_namespace_path(&existing_path)?;
+        let existing_components = normalized_namespace_components(&existing_path)?;
+        let exact_previously_granted =
+            existing_path == namespace_path && granted_paths.contains(namespace_path);
+        if namespace_paths_overlap(&requested_components, &existing_components)
+            && !exact_previously_granted
+        {
+            anyhow::bail!(
+                "approved host mount {} would shadow existing namespace mount {}",
+                namespace_path,
+                existing_path
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +361,161 @@ mod tests {
         let host_path = std::fs::canonicalize(host.path()).unwrap();
         assert_eq!(spec.writable_roots, vec![workspace.path().to_path_buf()]);
         assert!(!spec.writable_roots.contains(&host_path));
+    }
+
+    #[tokio::test]
+    async fn live_namespace_applicator_mounts_read_write_grant() {
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let live_namespace = LiveNamespace::new(Namespace::new());
+        let applicator = LiveNamespaceMountGrantApplicatorFactory.create(live_namespace.clone());
+
+        applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/project",
+                host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadWrite,
+                "Need to edit project files",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            live_namespace.describe(),
+            vec![("/mnt/project".to_string(), Access::ReadWrite)]
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_namespace)));
+        assert_file_bytes(&root, Fid(1), &["mnt", "project", "notes.txt"], b"hello").await;
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(2),
+            names: ["mnt", "project", "notes.txt"]
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        })
+        .await
+        .unwrap();
+        root.call(Request::Open {
+            fid: Fid(2),
+            mode: OpenMode::Write,
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_namespace_applicator_mounts_read_only_grant_as_read_only() {
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("manual.txt"), "read me").unwrap();
+        let live_namespace = LiveNamespace::new(Namespace::new());
+        let applicator = LiveNamespaceMountGrantApplicatorFactory.create(live_namespace.clone());
+
+        applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/docs",
+                host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadOnly,
+                "Need to inspect docs",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            live_namespace.describe(),
+            vec![("/mnt/docs".to_string(), Access::ReadOnly)]
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_namespace)));
+        assert_file_bytes(&root, Fid(1), &["mnt", "docs", "manual.txt"], b"read me").await;
+        assert_eq!(
+            root.call(Request::Open {
+                fid: Fid(1),
+                mode: OpenMode::Write,
+            })
+            .await,
+            Err(alan_ap::ErrorCode::NoAccess)
+        );
+    }
+
+    #[tokio::test]
+    async fn live_namespace_applicator_rejects_existing_system_mount_shadow() {
+        let host = tempfile::tempdir().unwrap();
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/mnt/llm",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            Access::ReadWrite,
+        );
+        let live_namespace = LiveNamespace::new(namespace);
+        let applicator = LiveNamespaceMountGrantApplicatorFactory.create(live_namespace);
+
+        let exact = applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/llm",
+                host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadWrite,
+                "Need to inspect provider state",
+            ))
+            .unwrap_err();
+        assert!(
+            exact
+                .to_string()
+                .contains("would shadow existing namespace mount")
+        );
+
+        let nested = applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/llm/connections/default",
+                host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadOnly,
+                "Need to inspect provider state",
+            ))
+            .unwrap_err();
+        assert!(
+            nested
+                .to_string()
+                .contains("would shadow existing namespace mount")
+        );
+    }
+
+    #[tokio::test]
+    async fn live_namespace_applicator_allows_replacing_previous_user_grant() {
+        let old_host = tempfile::tempdir().unwrap();
+        let new_host = tempfile::tempdir().unwrap();
+        std::fs::write(old_host.path().join("notes.txt"), "old").unwrap();
+        std::fs::write(new_host.path().join("notes.txt"), "new").unwrap();
+        let live_namespace = LiveNamespace::new(Namespace::new());
+        let applicator = LiveNamespaceMountGrantApplicatorFactory.create(live_namespace.clone());
+
+        applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/project",
+                old_host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadWrite,
+                "Need to edit project files",
+            ))
+            .unwrap();
+        applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/project",
+                new_host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadOnly,
+                "Need to inspect project files",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            live_namespace.describe(),
+            vec![("/mnt/project".to_string(), Access::ReadOnly)]
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_namespace)));
+        assert_file_bytes(&root, Fid(10), &["mnt", "project", "notes.txt"], b"new").await;
+        assert_eq!(
+            root.call(Request::Open {
+                fid: Fid(10),
+                mode: OpenMode::Write,
+            })
+            .await,
+            Err(alan_ap::ErrorCode::NoAccess)
+        );
     }
 
     #[test]

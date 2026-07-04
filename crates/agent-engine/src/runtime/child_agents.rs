@@ -322,6 +322,9 @@ where
         default_cwd_override,
         agent_home_paths: parent_agent_home_paths(parent),
         chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
+        mount_grant_applicator_factory: parent
+            .namespace_environment()
+            .mount_grant_applicator_factory(),
     };
     let resolved_child_definition =
         crate::ResolvedAgentDefinition::from_runtime_config(&child_config)
@@ -380,6 +383,7 @@ where
         &runtime_procfs,
         &child_namespace_plan,
         handles,
+        child_config.mount_grant_applicator_factory.clone(),
         "/bin/alan-agent",
     )
     .await
@@ -1421,6 +1425,7 @@ async fn spawn_child_namespace_runtime_environment(
     runtime_procfs: &alan_kernel::ProcFs,
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
+    mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
     validate_child_namespace_launch_handles(plan, &handles)?;
@@ -1472,24 +1477,34 @@ async fn spawn_child_namespace_runtime_environment(
     );
     let child_namespace =
         child_runtime_namespace_from_launch_handles(plan, agent_root_tree, &handles);
-    let child_procfs = runtime_procfs.for_spawner(
+    let live_namespace = alan_kernel::LiveNamespace::new(child_namespace);
+    runtime_procfs
+        .bind_live_namespace(child_pid, live_namespace.clone())
+        .await;
+    let child_procfs = runtime_procfs.for_live_spawner(
         Some(child_pid),
-        child_namespace.clone(),
+        live_namespace.clone(),
         alan_kernel::Credentials::user("child-agent"),
     );
-    let mut root_namespace = child_namespace;
-    root_namespace.mount(
+    live_namespace.mount(
         "/proc",
         InProcessTransport::new(Arc::new(child_procfs)),
         alan_kernel::Access::ReadWrite,
     );
-    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(root_namespace)));
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
+        live_namespace.clone(),
+    )));
     let environment = super::NamespaceRuntimeEnvironment::new(
         root,
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
     .with_shared_services(handles.srv.clone(), handles.route.clone());
+    let environment = if let Some(factory) = mount_grant_applicator_factory {
+        environment.with_mount_grant_applicator_factory(factory, live_namespace)
+    } else {
+        environment
+    };
 
     Ok(ChildNamespaceRuntimeLaunch {
         pid,
@@ -2000,7 +2015,10 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
-    use crate::runtime::{RuntimeConfig, RuntimeEnvironment};
+    use crate::runtime::{
+        ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
+        MountGrantApplicatorFactory, RuntimeConfig, RuntimeEnvironment,
+    };
     use crate::skills::SkillHostCapabilities;
     use crate::tools::Tool;
     use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
@@ -2164,6 +2182,50 @@ mod tests {
             _ctx: &crate::tools::ToolContext,
         ) -> crate::tools::ToolResult {
             Box::pin(async { Ok(json!({"ok": true})) })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingMountGrantApplicatorFactory {
+        created: Arc<Mutex<usize>>,
+    }
+
+    impl RecordingMountGrantApplicatorFactory {
+        fn created_count(&self) -> usize {
+            *self
+                .created
+                .lock()
+                .expect("created count lock should not be poisoned")
+        }
+    }
+
+    impl MountGrantApplicatorFactory for RecordingMountGrantApplicatorFactory {
+        fn create(
+            &self,
+            live_namespace: alan_kernel::LiveNamespace,
+        ) -> Arc<dyn MountGrantApplicator> {
+            *self
+                .created
+                .lock()
+                .expect("created count lock should not be poisoned") += 1;
+            Arc::new(RecordingMountGrantApplicator { live_namespace })
+        }
+    }
+
+    #[derive(Debug)]
+    struct RecordingMountGrantApplicator {
+        live_namespace: alan_kernel::LiveNamespace,
+    }
+
+    impl MountGrantApplicator for RecordingMountGrantApplicator {
+        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<()> {
+            let access = match grant.access {
+                ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
+                ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
+            };
+            self.live_namespace
+                .mount(&grant.namespace_path, memfs_transport(), access);
+            Ok(())
         }
     }
 
@@ -2906,6 +2968,7 @@ Body
             &runtime_procfs,
             &plan,
             handles,
+            None,
             "/bin/alan-agent",
         )
         .await
@@ -2993,6 +3056,79 @@ Body
     }
 
     #[tokio::test]
+    async fn child_namespace_launch_attaches_mount_grant_applicator_factory() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Workspace];
+        let plan =
+            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let child_tools = build_child_tool_registry_from_namespace_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            &plan,
+        )
+        .unwrap();
+        let launch_procfs = KernelProcFs::new();
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let handles = ChildNamespaceLaunchHandles::new(
+            Arc::new(alan_agentfs::AgentFs::new()),
+            memfs_transport(),
+            memfs_transport(),
+            memfs_transport(),
+        )
+        .with_bin_tool("/bin/alpha", memfs_transport())
+        .with_bin_tool("/bin/beta", memfs_transport());
+        let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
+
+        let launch = spawn_child_namespace_runtime_environment(
+            &launch_procfs,
+            &runtime_procfs,
+            &plan,
+            handles,
+            Some(factory.clone()),
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(factory.created_count(), 1);
+        assert!(
+            launch
+                .environment
+                .mount_grant_applicator_factory()
+                .is_some()
+        );
+        let applied = launch
+            .environment
+            .apply_approved_mount_grant(&ApprovedMountGrant::new(
+                "/mnt/project",
+                PathBuf::from("/unused/by/test/applicator"),
+                ApprovedMountGrantAccess::ReadWrite,
+                "Need project files",
+            ));
+        assert!(applied.namespace_applied);
+        assert_eq!(applied.namespace_error, None);
+
+        let namespace = read_proc_path(
+            &launch_procfs,
+            vec![launch.pid.clone(), "namespace".to_string()],
+            Fid(94),
+        )
+        .await;
+        assert!(
+            namespace.lines().any(|line| line == "/mnt/project rw"),
+            "child process namespace should reflect applicator live mounts: {namespace:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn child_namespace_launch_handles_share_parent_routefs() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
@@ -3045,6 +3181,7 @@ Body
             &runtime_procfs,
             &plan,
             handles,
+            None,
             "/bin/alan-agent",
         )
         .await

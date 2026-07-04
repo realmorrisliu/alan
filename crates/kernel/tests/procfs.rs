@@ -11,7 +11,8 @@ use alan_ap::{
     ProcessOutputEventSource, Request, Response,
 };
 use alan_kernel::{
-    Access, Credentials, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome, ProcessRunner,
+    Access, Credentials, LiveNamespace, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome,
+    ProcessRunner,
 };
 use std::sync::{
     Arc, Mutex,
@@ -1094,6 +1095,53 @@ async fn clone_uses_the_spawner_context_for_child_identity() {
     assert!(
         namespace.lines().any(|line| line == "/data ro"),
         "child namespace inherits the spawner namespace: {namespace:?}"
+    );
+}
+
+#[tokio::test]
+async fn live_spawner_namespace_reads_and_children_observe_live_mounts() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/data",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let live_namespace = LiveNamespace::new(namespace);
+    let spawner = fs.for_live_spawner(None, live_namespace.clone(), Credentials::user("alan"));
+
+    let pid = spawn(&spawner, Fid(60)).await;
+    let pid_value = Pid(pid.parse::<u64>().unwrap());
+    fs.bind_live_namespace(pid_value, live_namespace.clone())
+        .await;
+    fs.walk(Fid::ROOT, Fid(61), &[pid.clone(), "namespace".to_string()])
+        .await
+        .unwrap();
+    fs.open(Fid(61), OpenMode::Read).await.unwrap();
+    let before = fs.stat(Fid(61)).await.unwrap().qid.version;
+
+    live_namespace.mount(
+        "/mnt/project",
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+
+    let after = fs.stat(Fid(61)).await.unwrap().qid.version;
+    assert_ne!(after, before);
+    let namespace = String::from_utf8(fs.read(Fid(61), 0, 4096).await.unwrap()).unwrap();
+    assert!(
+        namespace.lines().any(|line| line == "/mnt/project rw"),
+        "live process namespace should include approved grant: {namespace:?}"
+    );
+
+    let child = spawn(&spawner, Fid(62)).await;
+    let child_namespace =
+        String::from_utf8(read_at(&fs, &[&child, "namespace"], Fid(63)).await.unwrap()).unwrap();
+    assert!(
+        child_namespace
+            .lines()
+            .any(|line| line == "/mnt/project rw"),
+        "child namespace should snapshot live grants visible at spawn: {child_namespace:?}"
     );
 }
 

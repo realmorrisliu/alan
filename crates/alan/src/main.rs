@@ -8,6 +8,8 @@
 mod cli;
 mod daemon;
 mod host_config;
+#[allow(dead_code)]
+mod host_mounts;
 pub mod registry;
 mod skill_catalog;
 

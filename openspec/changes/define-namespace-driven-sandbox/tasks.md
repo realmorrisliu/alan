@@ -24,7 +24,9 @@ proposals out as their own OpenSpec changes. No application code lands here.
   `apply-mount-grants-to-tool-sandbox` for applying approved read-write grants
   to the runtime tool sandbox projection; and
   `apply-mount-grants-to-live-namespace` for applying approved grants to the
-  running Agent Process Alan OS namespace. Linux reification remains pending.
+  running Agent Process Alan OS namespace; this slice now adds the live kernel
+  mount handle, host applicator boundary, and resume reporting. Linux
+  reification remains pending.
 
 ## 2. Carry the framing forward
 
