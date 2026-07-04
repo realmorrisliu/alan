@@ -17,6 +17,8 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+use crate::InstallChannel;
+
 const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
 pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
@@ -60,13 +62,71 @@ pub struct SandboxSpec {
 }
 
 impl SandboxSpec {
-    /// Build the current single-workspace seed spec.
+    /// Build the default single-workspace seed spec.
     pub fn seed(workspace_root: PathBuf) -> Self {
+        let writable_roots = vec![workspace_root];
+        let read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
+            &Self::default_sensitive_read_denylist(),
+            &writable_roots,
+        );
         Self {
-            writable_roots: vec![workspace_root],
-            read_denylist: Vec::new(),
+            writable_roots,
+            read_denylist,
             network: NetworkPosture::Deny,
         }
+    }
+
+    /// Build the default sensitive-read denylist from the current user's home
+    /// directory. If the host home cannot be detected, keep the list empty
+    /// rather than guessing.
+    pub fn default_sensitive_read_denylist() -> Vec<PathBuf> {
+        dirs::home_dir()
+            .map(|home| Self::sensitive_read_denylist_for_home(&home))
+            .unwrap_or_default()
+    }
+
+    /// Derive sensitive read-deny paths from an explicit home directory.
+    pub fn sensitive_read_denylist_for_home(home_dir: &Path) -> Vec<PathBuf> {
+        let mut paths = [InstallChannel::Stable, InstallChannel::Dev]
+            .into_iter()
+            .map(|channel| home_dir.join(channel.descriptor().alan_home_dir_name))
+            .collect::<Vec<_>>();
+
+        paths.extend(
+            [
+                ".ssh",
+                ".aws",
+                ".azure",
+                ".config/gcloud",
+                ".config/gh",
+                ".docker",
+                ".gnupg",
+                ".kube",
+                ".netrc",
+                ".npmrc",
+                ".pypirc",
+                "Library/Keychains",
+                "Library/Safari",
+                "Library/Application Support/Arc",
+                "Library/Application Support/BraveSoftware",
+                "Library/Application Support/Chromium",
+                "Library/Application Support/Firefox",
+                "Library/Application Support/Google/Chrome",
+                "Library/Application Support/com.apple.Safari",
+            ]
+            .into_iter()
+            .map(|relative| home_dir.join(relative)),
+        );
+
+        paths
+    }
+
+    fn exclude_writable_roots_from_read_denylist(mut self) -> Self {
+        self.read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
+            &self.read_denylist,
+            &self.writable_roots,
+        );
+        self
     }
 }
 
@@ -86,6 +146,7 @@ impl Sandbox {
 
     /// Create a new sandbox from a projected confinement spec.
     pub fn from_spec(spec: SandboxSpec) -> Self {
+        let spec = spec.exclude_writable_roots_from_read_denylist();
         assert!(
             !spec.writable_roots.is_empty(),
             "SandboxSpec requires at least one writable root"
@@ -112,6 +173,7 @@ impl Sandbox {
         spec: SandboxSpec,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Self {
+        let spec = spec.exclude_writable_roots_from_read_denylist();
         assert!(
             !spec.writable_roots.is_empty(),
             "SandboxSpec requires at least one writable root"
@@ -213,6 +275,7 @@ impl Sandbox {
                 self.workspace_root().display()
             ));
         }
+        self.ensure_path_not_read_denied(path, "read")?;
 
         tokio::fs::read(path)
             .await
@@ -398,6 +461,7 @@ impl Sandbox {
                 self.workspace_root().display()
             ));
         }
+        self.ensure_path_not_read_denied(path, "list directory")?;
 
         let mut entries = Vec::new();
         let mut dir = tokio::fs::read_dir(path).await?;
@@ -543,6 +607,27 @@ impl Sandbox {
                 action,
                 path.display()
             ));
+        }
+        Ok(())
+    }
+
+    fn ensure_path_not_read_denied(&self, path: &Path, action: &str) -> Result<()> {
+        let resolved_path = self.normalized_path(path);
+        for deny_path in &self.spec.read_denylist {
+            let canonical_deny = self
+                .canonicalize(deny_path)
+                .unwrap_or_else(|_| lexically_normalize_path(deny_path));
+            let normalized_deny = lexically_normalize_path(deny_path);
+            if resolved_path.starts_with(&canonical_deny)
+                || resolved_path.starts_with(&normalized_deny)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} blocks {} under sensitive read-deny path: {}",
+                    self.backend_name(),
+                    action,
+                    path.display()
+                ));
+            }
         }
         Ok(())
     }

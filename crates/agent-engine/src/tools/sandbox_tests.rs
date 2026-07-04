@@ -1,5 +1,86 @@
 use super::*;
+use std::collections::BTreeSet;
 use tempfile::TempDir;
+
+#[test]
+fn sensitive_read_denylist_for_home_includes_core_secret_stores() {
+    let home = Path::new("/Users/alice");
+    let denylist = SandboxSpec::sensitive_read_denylist_for_home(home);
+
+    for expected in [
+        ".alan",
+        ".alan-dev",
+        ".ssh",
+        ".aws",
+        ".config/gcloud",
+        ".config/gh",
+        ".docker",
+        ".gnupg",
+        ".kube",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        "Library/Keychains",
+        "Library/Safari",
+        "Library/Application Support/Arc",
+        "Library/Application Support/BraveSoftware",
+        "Library/Application Support/Chromium",
+        "Library/Application Support/Firefox",
+        "Library/Application Support/Google/Chrome",
+        "Library/Application Support/com.apple.Safari",
+    ] {
+        assert!(
+            denylist.contains(&home.join(expected)),
+            "denylist missing {}",
+            home.join(expected).display()
+        );
+    }
+
+    let unique = denylist.iter().collect::<BTreeSet<_>>();
+    assert_eq!(unique.len(), denylist.len());
+}
+
+#[test]
+fn sandbox_spec_seed_includes_default_sensitive_read_denylist() {
+    let workspace = PathBuf::from("/workspace");
+    let spec = SandboxSpec::seed(workspace.clone());
+
+    assert_eq!(spec.writable_roots, vec![workspace]);
+    assert_eq!(
+        spec.read_denylist,
+        SandboxSpec::default_sensitive_read_denylist()
+    );
+    assert_eq!(spec.network, NetworkPosture::Deny);
+}
+
+#[test]
+fn sandbox_spec_excludes_exact_writable_root_read_denies() {
+    let home = Path::new("/Users/alice");
+    let workspace = home.join(".alan");
+    let sandbox = Sandbox::from_spec(SandboxSpec {
+        writable_roots: vec![workspace.clone()],
+        read_denylist: SandboxSpec::sensitive_read_denylist_for_home(home),
+        network: NetworkPosture::Deny,
+    });
+
+    assert!(!sandbox.spec.read_denylist.contains(&workspace));
+    assert!(sandbox.spec.read_denylist.contains(&home.join(".ssh")));
+    assert!(sandbox.spec.read_denylist.contains(&home.join(".alan-dev")));
+}
+
+#[test]
+fn sandbox_spec_preserves_parent_read_denies_for_nested_writable_roots() {
+    let home = Path::new("/Users/alice");
+    let sensitive_parent = home.join(".ssh");
+    let workspace = sensitive_parent.join("project");
+    let sandbox = Sandbox::from_spec(SandboxSpec {
+        writable_roots: vec![workspace],
+        read_denylist: vec![sensitive_parent.clone()],
+        network: NetworkPosture::Deny,
+    });
+
+    assert!(sandbox.spec.read_denylist.contains(&sensitive_parent));
+}
 
 #[tokio::test]
 async fn test_sandbox_read_write() {
@@ -159,6 +240,34 @@ async fn test_sandbox_allows_read_from_protected_subpath() {
 
     let result = sandbox.read_string(&protected).await;
     assert_eq!(result.unwrap(), "rules: []\n");
+}
+
+#[tokio::test]
+async fn read_denylist_blocks_in_process_reads_and_sensitive_listing() {
+    let home = TempDir::new().unwrap();
+    let secret_dir = home.path().join(".ssh");
+    let secret_file = secret_dir.join("id_rsa");
+    tokio::fs::create_dir_all(&secret_dir).await.unwrap();
+    tokio::fs::write(&secret_file, "secret").await.unwrap();
+    let sandbox = Sandbox::from_spec(SandboxSpec {
+        writable_roots: vec![home.path().to_path_buf()],
+        read_denylist: vec![secret_dir.clone()],
+        network: NetworkPosture::Deny,
+    });
+
+    let root_entries = sandbox.list_dir(home.path()).await.unwrap();
+    assert!(root_entries.iter().any(|entry| entry.file_name() == ".ssh"));
+
+    let read = sandbox.read_string(&secret_file).await.unwrap_err();
+    assert!(
+        read.to_string().contains("sensitive read-deny path"),
+        "{read}"
+    );
+    let listed = sandbox.list_dir(&secret_dir).await.unwrap_err();
+    assert!(
+        listed.to_string().contains("sensitive read-deny path"),
+        "{listed}"
+    );
 }
 
 #[tokio::test]

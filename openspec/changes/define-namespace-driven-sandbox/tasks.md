@@ -18,7 +18,9 @@ proposals out as their own OpenSpec changes. No application code lands here.
   composition-root host mount declarations, and `SandboxSpec` projection.
 - [ ] 1.3 Create change(s) for P3+ hardening: macOS Seatbelt sensitive-read
   denylist; agent-requestable `mount` via `PolicyEngine` escalation; (later,
-  separately) Linux reification for full read isolation.
+  separately) Linux reification for full read isolation. Created
+  `add-seatbelt-sensitive-read-denylist` for the macOS sensitive-read slice;
+  mount escalation and Linux reification remain pending.
 
 ## 2. Carry the framing forward
 
