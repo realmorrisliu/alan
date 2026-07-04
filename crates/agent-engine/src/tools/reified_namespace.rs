@@ -2405,13 +2405,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn linux_reified_runner_ready_for_smoke() -> bool {
         let readiness = crate::tools::linux_reified_namespace_backend_readiness();
-        if readiness.selected_backend == SandboxBackendKind::LinuxReifiedNamespace {
+        // These smoke plans use explicit executables, so they validate runner
+        // capability even when the default backend selection rejects the current
+        // user PATH/toolchain shape.
+        if readiness.capability_report.is_selectable() && readiness.runner_smoke.is_available() {
             return true;
         }
 
         eprintln!(
-            "skipping linux reified namespace smoke: selected_backend={} audit={:?}",
-            readiness.selected_backend.name(),
+            "skipping linux reified namespace smoke: audit={:?}",
             readiness.audit_fields()
         );
         false
