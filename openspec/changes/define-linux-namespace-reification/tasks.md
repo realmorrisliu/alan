@@ -10,14 +10,14 @@
 
 ## 2. Reified Namespace Plan Model
 
-- [ ] 2.1 Add a pure `ReifiedNamespacePlan` model that separates declared host
+- [x] 2.1 Add a pure `ReifiedNamespacePlan` model that separates declared host
   mounts, read-only execution substrate, cwd, argv, scratch/tmp, and network
   posture.
-- [ ] 2.2 Build plan derivation from the host-backed mount declaration /
+- [x] 2.2 Build plan derivation from the host-backed mount declaration /
   sandbox authority data while excluding virtual Alan OS mounts.
-- [ ] 2.3 Add path translation helpers that map projected host paths to reified
+- [x] 2.3 Add path translation helpers that map projected host paths to reified
   namespace paths when a declared mount matches.
-- [ ] 2.4 Add unit tests for workspace seed mounts, extra read-write mounts,
+- [x] 2.4 Add unit tests for workspace seed mounts, extra read-write mounts,
   read-only mounts, virtual mount exclusion, cwd translation, and out-of-view
   rejection.
 
