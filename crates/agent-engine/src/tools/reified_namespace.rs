@@ -1015,6 +1015,7 @@ fn build_linux_reified_namespace_command_with_helpers(
         "--mount".to_string(),
         "--pid".to_string(),
         "--fork".to_string(),
+        "--kill-child=SIGKILL".to_string(),
     ];
     if matches!(plan.network, NetworkPosture::Deny) {
         args.push("--net".to_string());
@@ -2159,6 +2160,7 @@ mod tests {
         assert!(command.args.contains(&"--mount".to_string()));
         assert!(command.args.contains(&"--pid".to_string()));
         assert!(command.args.contains(&"--fork".to_string()));
+        assert!(command.args.contains(&"--kill-child=SIGKILL".to_string()));
         assert!(command.args.contains(&"--net".to_string()));
         assert!(
             command

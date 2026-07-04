@@ -439,7 +439,13 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let pid_namespace = if user_namespace.is_available() {
         run_linux_probe_command(
             "pid namespace",
-            linux_unshare_command(&["--user", "--map-root-user", "--pid", "--fork"]),
+            linux_unshare_command(&[
+                "--user",
+                "--map-root-user",
+                "--pid",
+                "--fork",
+                "--kill-child=SIGKILL",
+            ]),
         )
     } else {
         LinuxReificationCapability::unavailable("requires available user namespace")
