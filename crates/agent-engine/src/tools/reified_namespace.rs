@@ -476,7 +476,13 @@ fn reified_namespace_user_path_unavailable_reason_with_roots(
     visible_roots: &[PathBuf],
     reified_command_path: std::ffi::OsString,
 ) -> Option<String> {
-    let path = path?;
+    let Some(path) = path else {
+        return Some(
+            "current PATH is unset; preserve actual PATH/order before selecting \
+             linux_reified_namespace"
+                .to_string(),
+        );
+    };
     let visible_roots = visible_roots
         .iter()
         .map(|root| canonicalize_existing_host_path(root))
@@ -1713,6 +1719,25 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_unset_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_bin = temp.path().join("bin");
+        write_executable(&visible_bin.join("sh"));
+        let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            None,
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("unset PATH should block default selection");
+
+        assert!(reason.contains("current PATH is unset"));
+        assert!(reason.contains("preserve actual PATH/order"));
     }
 
     #[cfg(unix)]
