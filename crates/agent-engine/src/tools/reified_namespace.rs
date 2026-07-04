@@ -13,6 +13,8 @@ use std::process::Command;
 use thiserror::Error;
 
 use super::sandbox::{ExecResult, NetworkPosture};
+#[cfg(any(test, target_os = "linux"))]
+use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabilityReport};
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
@@ -398,6 +400,7 @@ impl ReifiedNamespaceCommandSpec {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args);
+        command.env_clear();
         command.env("PATH", TRUSTED_LINUX_SETUP_PATH);
         command
     }
@@ -539,11 +542,12 @@ impl LinuxReifiedNamespaceRunner {
             &report,
             matches!(self.fallback_backend, SandboxBackendKind::Landlock),
         );
-        if !report.is_selectable() {
+        if !linux_reification_report_supports_plan(&report, plan.network) {
             return Err(ReifiedNamespaceRunError::new(
                 format!(
                     "capability probe did not select reification: {}",
-                    report.unavailable_reasons().join("; ")
+                    linux_reification_unavailable_reasons_for_plan(&report, plan.network)
+                        .join("; ")
                 ),
                 if matches!(fallback_backend, SandboxBackendKind::LinuxReifiedNamespace) {
                     self.fallback_backend
@@ -596,6 +600,70 @@ impl LinuxReifiedNamespaceRunner {
             ("fallback_backend", self.fallback_backend.name().to_string()),
         ]);
         ReifiedNamespaceRunError::new(reason, self.fallback_backend, audit_fields)
+    }
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn linux_reification_report_supports_plan(
+    report: &LinuxReificationCapabilityReport,
+    network: NetworkPosture,
+) -> bool {
+    report.linux_host.is_available()
+        && report.user_namespace.is_available()
+        && report.mount_namespace.is_available()
+        && report.bind_mount.is_available()
+        && report.read_only_remount.is_available()
+        && report.scratch_tmp_mount.is_available()
+        && (matches!(network, NetworkPosture::Allow) || report.network_confinement.is_available())
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn linux_reification_unavailable_reasons_for_plan(
+    report: &LinuxReificationCapabilityReport,
+    network: NetworkPosture,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    push_missing_linux_reification_requirement(&mut reasons, "linux_host", &report.linux_host);
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "user_namespace",
+        &report.user_namespace,
+    );
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "mount_namespace",
+        &report.mount_namespace,
+    );
+    push_missing_linux_reification_requirement(&mut reasons, "bind_mount", &report.bind_mount);
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "read_only_remount",
+        &report.read_only_remount,
+    );
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "scratch_tmp_mount",
+        &report.scratch_tmp_mount,
+    );
+    if matches!(network, NetworkPosture::Deny) {
+        push_missing_linux_reification_requirement(
+            &mut reasons,
+            "network_confinement",
+            &report.network_confinement,
+        );
+    }
+    reasons
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn push_missing_linux_reification_requirement(
+    reasons: &mut Vec<String>,
+    name: &'static str,
+    capability: &LinuxReificationCapability,
+) {
+    if !capability.is_available() {
+        let reason = capability.reason().unwrap_or("no reason reported");
+        reasons.push(format!("{name}: {reason}"));
     }
 }
 
@@ -1665,6 +1733,54 @@ mod tests {
             error
                 .audit_fields
                 .contains(&("fallback_backend", "workspace_path_guard".to_string()))
+        );
+    }
+
+    #[test]
+    fn reification_report_selection_requires_network_only_for_denied_plans() {
+        let report = LinuxReificationCapabilityReport::new(
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::available(),
+            LinuxReificationCapability::unavailable("network namespaces disabled"),
+        );
+
+        assert!(linux_reification_report_supports_plan(
+            &report,
+            NetworkPosture::Allow
+        ));
+        assert!(!linux_reification_report_supports_plan(
+            &report,
+            NetworkPosture::Deny
+        ));
+        assert_eq!(
+            linux_reification_unavailable_reasons_for_plan(&report, NetworkPosture::Allow),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            linux_reification_unavailable_reasons_for_plan(&report, NetworkPosture::Deny),
+            vec!["network_confinement: network namespaces disabled".to_string()]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_runner_command_clears_inherited_environment() {
+        let output = ReifiedNamespaceCommandSpec {
+            program: "/usr/bin/env".to_string(),
+            args: Vec::new(),
+        }
+        .command()
+        .output()
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("PATH={TRUSTED_LINUX_SETUP_PATH}\n")
         );
     }
 
