@@ -21,7 +21,9 @@ proposals out as their own OpenSpec changes. No application code lands here.
   separately) Linux reification for full read isolation. Created
   `add-seatbelt-sensitive-read-denylist` for the macOS sensitive-read slice and
   `add-agent-mount-escalation` for the request/approval/grant-record slice;
-  live mount reconfiguration and Linux reification remain pending.
+  `apply-mount-grants-to-tool-sandbox` for applying approved read-write grants
+  to the runtime tool sandbox projection. Alan OS `/mnt` live remount and Linux
+  reification remain pending.
 
 ## 2. Carry the framing forward
 

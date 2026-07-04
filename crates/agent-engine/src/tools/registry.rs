@@ -1,13 +1,16 @@
 //! Tool registry for managing and executing tools.
 
-use super::context::{ToolContext, ToolExecutionBinding};
+use super::{
+    context::{ToolContext, ToolExecutionBinding},
+    sandbox::{SandboxSpec, protected_path_component},
+};
 use anyhow::Result;
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::debug;
 
 use crate::config::Config;
@@ -63,9 +66,11 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
-    schema_cache: Arc<std::sync::Mutex<HashMap<String, Arc<Validator>>>>,
+    schema_cache: Arc<Mutex<HashMap<String, Arc<Validator>>>>,
     tool_factories: HashMap<String, Arc<ToolFactory>>,
-    default_binding: Option<ToolExecutionBinding>,
+    /// Shared by ordinary clones so runtime state and namespace tool runners
+    /// observe approval-time changes to default execution authority.
+    default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
 }
 
 impl ToolRegistry {
@@ -79,20 +84,75 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             config,
-            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: HashMap::new(),
-            default_binding: None,
+            default_binding: Self::default_binding_cell(None),
         }
     }
 
     /// Set a default execution binding for `execute()` calls that don't provide context.
     pub fn set_default_execution_binding(&mut self, binding: ToolExecutionBinding) {
-        self.default_binding = Some(binding);
+        let mut default_binding = self
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned");
+        *default_binding = Some(binding);
     }
 
     /// Get the configured default execution binding, if any.
     pub fn default_execution_binding(&self) -> Option<ToolExecutionBinding> {
-        self.default_binding.clone()
+        self.default_binding_snapshot()
+    }
+
+    /// Get the runtime-projected sandbox spec for default tool execution, if configured.
+    pub fn default_sandbox_spec(&self) -> Option<SandboxSpec> {
+        self.default_binding_snapshot()
+            .as_ref()
+            .and_then(|binding| binding.sandbox_spec.clone())
+    }
+
+    /// Get the writable roots that currently define default tool sandbox authority.
+    pub fn default_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
+        let Some(binding) = self.default_binding_snapshot() else {
+            return Vec::new();
+        };
+        if let Some(spec) = binding.sandbox_spec.as_ref() {
+            return spec.writable_roots.clone();
+        }
+        binding.workspace_root.clone().into_iter().collect()
+    }
+
+    /// Add a writable root to the default runtime sandbox projection.
+    ///
+    /// Returns true when the root was newly inserted. If the registry has no
+    /// workspace-bound default binding, no projection is changed and false is returned.
+    pub fn add_default_sandbox_writable_root(&mut self, path: std::path::PathBuf) -> bool {
+        let mut default_binding = self
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned");
+        let Some(binding) = default_binding.as_mut() else {
+            return false;
+        };
+        let Some(workspace_root) = binding.workspace_root.clone() else {
+            return false;
+        };
+
+        let normalized = normalize_sandbox_root(path);
+        if protected_path_component(&normalized).is_some() {
+            return false;
+        }
+        let mut spec = binding
+            .sandbox_spec
+            .clone()
+            .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
+        if spec.writable_roots.iter().any(|root| root == &normalized) {
+            binding.sandbox_spec = Some(spec);
+            return false;
+        }
+        spec.writable_roots.push(normalized);
+        binding.sandbox_spec = Some(spec);
+        true
     }
 
     /// Set a default workspace binding using the provided workspace root and cwd.
@@ -102,11 +162,22 @@ impl ToolRegistry {
         cwd: std::path::PathBuf,
     ) {
         let scratch_dir = default_scratch_dir_for_cwd(&cwd);
-        self.default_binding = Some(ToolExecutionBinding::with_workspace(
-            workspace_root,
-            cwd,
-            scratch_dir,
-        ));
+        let mut default_binding = self
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned");
+        let sandbox_spec = default_binding
+            .as_ref()
+            .filter(|binding| {
+                binding.workspace_root.as_ref().is_some_and(|existing| {
+                    normalize_sandbox_root(existing.clone())
+                        == normalize_sandbox_root(workspace_root.clone())
+                })
+            })
+            .and_then(|binding| binding.sandbox_spec.clone());
+        let mut binding = ToolExecutionBinding::with_workspace(workspace_root, cwd, scratch_dir);
+        binding.sandbox_spec = sandbox_spec;
+        *default_binding = Some(binding);
     }
 
     /// Set a default workspace root using the workspace root as cwd.
@@ -117,23 +188,26 @@ impl ToolRegistry {
     /// Set a default working directory for `execute()` calls that don't provide context.
     pub fn set_default_cwd(&mut self, cwd: std::path::PathBuf) {
         let scratch_dir = default_scratch_dir_for_cwd(&cwd);
-        let workspace_root = self
+        let mut default_binding = self
             .default_binding
+            .lock()
+            .expect("default binding mutex poisoned");
+        let workspace_root = default_binding
             .as_ref()
             .and_then(|binding| binding.workspace_root.clone());
-        self.default_binding = Some(ToolExecutionBinding::new(workspace_root, cwd, scratch_dir));
+        *default_binding = Some(ToolExecutionBinding::new(workspace_root, cwd, scratch_dir));
     }
 
     /// Get the configured default working directory, if any.
     pub fn default_cwd(&self) -> Option<std::path::PathBuf> {
-        self.default_binding
+        self.default_binding_snapshot()
             .as_ref()
             .map(|binding| binding.cwd.clone())
     }
 
     /// Get the configured default workspace root, if any.
     pub fn default_workspace_root(&self) -> Option<std::path::PathBuf> {
-        self.default_binding
+        self.default_binding_snapshot()
             .as_ref()
             .and_then(|binding| binding.workspace_root.clone())
     }
@@ -233,9 +307,9 @@ impl ToolRegistry {
                 .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
                 .collect(),
             config,
-            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: self.tool_factories.clone(),
-            default_binding: self.default_binding.clone(),
+            default_binding: Self::default_binding_cell(self.default_binding_snapshot()),
         }
     }
 
@@ -274,9 +348,9 @@ impl ToolRegistry {
         Self {
             tools,
             config,
-            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories,
-            default_binding: self.default_binding.clone(),
+            default_binding: Self::default_binding_cell(self.default_binding_snapshot()),
         }
     }
 
@@ -297,14 +371,14 @@ impl ToolRegistry {
         let mut cloned = Self {
             tools: HashMap::new(),
             config,
-            schema_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: self
                 .tool_factories
                 .iter()
                 .filter(|(name, _)| allowed.contains(name.as_str()))
                 .map(|(name, factory)| (name.clone(), Arc::clone(factory)))
                 .collect(),
-            default_binding: self.default_binding.clone(),
+            default_binding: Self::default_binding_cell(self.default_binding_snapshot()),
         };
 
         for name in allowed {
@@ -378,7 +452,7 @@ impl ToolRegistry {
     /// Execute a tool by name (backward compatible, uses default context)
     /// Note: This creates a default ToolContext. Prefer execute_with_context for production use.
     pub async fn execute(&self, name: &str, arguments: Value) -> Result<Value> {
-        let binding = self.default_binding.clone().unwrap_or_else(|| {
+        let binding = self.default_binding_snapshot().unwrap_or_else(|| {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let scratch_dir = default_scratch_dir_for_cwd(&cwd);
             ToolExecutionBinding::without_workspace(cwd, scratch_dir)
@@ -434,6 +508,19 @@ impl ToolRegistry {
         Ok(())
     }
 
+    fn default_binding_cell(
+        binding: Option<ToolExecutionBinding>,
+    ) -> Arc<Mutex<Option<ToolExecutionBinding>>> {
+        Arc::new(Mutex::new(binding))
+    }
+
+    fn default_binding_snapshot(&self) -> Option<ToolExecutionBinding> {
+        self.default_binding
+            .lock()
+            .expect("default binding mutex poisoned")
+            .clone()
+    }
+
     /// Validate that required tools are available
     pub fn validate_required_tools(&self, required: &[String]) -> Result<Vec<String>> {
         let mut missing = Vec::new();
@@ -444,6 +531,10 @@ impl ToolRegistry {
         }
         Ok(missing)
     }
+}
+
+fn normalize_sandbox_root(path: std::path::PathBuf) -> std::path::PathBuf {
+    dunce::canonicalize(&path).unwrap_or_else(|_| dunce::simplified(&path).to_path_buf())
 }
 
 impl Default for ToolRegistry {
@@ -569,6 +660,36 @@ mod tests {
                     "cwd": cwd,
                 }))
             })
+        }
+    }
+
+    struct SandboxRootsEchoTool;
+
+    impl Tool for SandboxRootsEchoTool {
+        fn name(&self) -> &str {
+            "sandbox_roots_echo"
+        }
+
+        fn description(&self) -> &str {
+            "Return sandbox writable roots from tool context"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
+            let writable_roots = ctx
+                .sandbox_spec
+                .as_ref()
+                .map(|spec| {
+                    spec.writable_roots
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Box::pin(async move { Ok(serde_json::json!({"writable_roots": writable_roots})) })
         }
     }
 
@@ -929,6 +1050,160 @@ mod tests {
 
         assert_eq!(result["workspace_root"], "/tmp/alan-test-workspace");
         assert_eq!(result["cwd"], "/tmp/alan-test-workspace/src");
+    }
+
+    #[test]
+    fn test_tool_registry_add_default_sandbox_writable_root_is_idempotent() {
+        let workspace = tempfile::tempdir().unwrap();
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+
+        assert_eq!(
+            registry.default_sandbox_writable_roots(),
+            vec![workspace.path().to_path_buf()]
+        );
+        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+        assert!(!registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+
+        let roots = registry.default_sandbox_writable_roots();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], workspace.path());
+        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
+        assert_eq!(
+            registry.default_sandbox_spec().unwrap().writable_roots,
+            roots
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_rejects_protected_sandbox_writable_roots() {
+        let workspace = tempfile::tempdir().unwrap();
+        let host = tempfile::tempdir().unwrap();
+        let protected_root = host.path().join(".git");
+        let nested_protected_root = protected_root.join("objects");
+        std::fs::create_dir_all(&nested_protected_root).unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+
+        assert!(!registry.add_default_sandbox_writable_root(protected_root));
+        assert!(!registry.add_default_sandbox_writable_root(nested_protected_root));
+        assert_eq!(
+            registry.default_sandbox_writable_roots(),
+            vec![workspace.path().to_path_buf()]
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_rebinding_same_workspace_preserves_sandbox_spec() {
+        let workspace = tempfile::tempdir().unwrap();
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+
+        registry.set_default_workspace_binding(
+            workspace.path().to_path_buf(),
+            workspace.path().join("child-cwd"),
+        );
+
+        let roots = registry.default_sandbox_writable_roots();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], workspace.path());
+        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
+    }
+
+    #[test]
+    fn test_tool_registry_rebinding_different_workspace_drops_sandbox_spec() {
+        let workspace = tempfile::tempdir().unwrap();
+        let next_workspace = tempfile::tempdir().unwrap();
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+
+        registry.set_default_workspace_root(next_workspace.path().to_path_buf());
+
+        assert_eq!(
+            registry.default_sandbox_writable_roots(),
+            vec![next_workspace.path().to_path_buf()]
+        );
+        assert!(registry.default_sandbox_spec().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tool_registry_clone_shares_default_sandbox_binding() {
+        let workspace = tempfile::tempdir().unwrap();
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.register(SandboxRootsEchoTool);
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+
+        let runner_registry = registry.clone();
+        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+
+        let expected_roots = vec![
+            workspace.path().to_path_buf(),
+            dunce::canonicalize(approved.path()).unwrap(),
+        ];
+        assert_eq!(
+            runner_registry.default_sandbox_writable_roots(),
+            expected_roots
+        );
+
+        let result = runner_registry
+            .execute("sandbox_roots_echo", serde_json::json!({}))
+            .await
+            .unwrap();
+        let root_values = result["writable_roots"].as_array().unwrap();
+        assert_eq!(root_values.len(), 2);
+        assert_eq!(
+            root_values[0],
+            serde_json::json!(expected_roots[0].display().to_string())
+        );
+        assert_eq!(
+            root_values[1],
+            serde_json::json!(expected_roots[1].display().to_string())
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_derived_clones_snapshot_default_sandbox_binding() {
+        let workspace = tempfile::tempdir().unwrap();
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.register(SandboxRootsEchoTool);
+        registry.set_default_workspace_root(workspace.path().to_path_buf());
+
+        let clone_with_config = registry.clone_with_config(Arc::new(Config::default()));
+        let filtered = registry.filtered_clone(["sandbox_roots_echo"]);
+        let catalog_filtered = registry.catalog_filtered_clone_with_config(
+            ["sandbox_roots_echo"],
+            Arc::new(Config::default()),
+        );
+
+        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+        let snapshot_roots = vec![workspace.path().to_path_buf()];
+
+        assert_eq!(
+            clone_with_config.default_sandbox_writable_roots(),
+            snapshot_roots
+        );
+        assert_eq!(filtered.default_sandbox_writable_roots(), snapshot_roots);
+        assert_eq!(
+            catalog_filtered.default_sandbox_writable_roots(),
+            snapshot_roots
+        );
+    }
+
+    #[test]
+    fn test_tool_registry_add_default_sandbox_writable_root_requires_workspace_binding() {
+        let approved = tempfile::tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        registry.set_default_cwd(PathBuf::from("/tmp/alan-no-workspace"));
+
+        assert!(!registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+        assert!(registry.default_sandbox_spec().is_none());
     }
 
     #[tokio::test]

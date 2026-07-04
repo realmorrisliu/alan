@@ -3315,6 +3315,31 @@ Body
     }
 
     #[tokio::test]
+    async fn build_child_tool_registry_preserves_inherited_sandbox_grants() {
+        let temp = TempDir::new().unwrap();
+        let approved = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child finished cleanly.");
+        let mut parent = make_parent_state(&temp, requests, response);
+        let workspace_root = parent.workspace_root_dir.clone().unwrap();
+        {
+            let parent_tools = parent.tool_catalog_mut_for_test();
+            parent_tools.set_default_workspace_root(workspace_root.clone());
+            assert!(parent_tools.add_default_sandbox_writable_root(approved.path().to_path_buf()));
+        }
+
+        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+
+        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
+        let roots = child_tools.default_sandbox_writable_roots();
+
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], workspace_root);
+        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
+    }
+
+    #[tokio::test]
     async fn build_child_tool_registry_rejects_unavailable_requested_tool_profile_entries() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
