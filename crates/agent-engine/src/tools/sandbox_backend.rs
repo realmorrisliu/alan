@@ -201,6 +201,7 @@ pub struct LinuxReificationCapabilities {
 pub struct LinuxReifiedNamespaceBackendReadiness {
     pub capability_report: LinuxReificationCapabilityReport,
     pub runner_smoke: LinuxReificationCapability,
+    pub toolchain_smoke: LinuxReificationCapability,
     pub selected_backend: SandboxBackendKind,
 }
 
@@ -210,6 +211,7 @@ impl LinuxReifiedNamespaceBackendReadiness {
         let mut fields = self.capability_report.audit_fields();
         fields.extend([
             ("runner_smoke", self.runner_smoke.audit_value()),
+            ("toolchain_smoke", self.toolchain_smoke.audit_value()),
             ("selected_backend", self.selected_backend.name().to_string()),
             ("path_mode", self.selected_backend.path_mode().to_string()),
         ]);
@@ -348,7 +350,22 @@ pub fn preferred_linux_backend_with_reification_and_runner(
     runner_smoke: &LinuxReificationCapability,
     landlock_is_available: bool,
 ) -> SandboxBackendKind {
-    if report.is_selectable() && runner_smoke.is_available() {
+    let toolchain_smoke = LinuxReificationCapability::available();
+    preferred_linux_backend_with_reification_runner_and_toolchain(
+        report,
+        runner_smoke,
+        &toolchain_smoke,
+        landlock_is_available,
+    )
+}
+
+fn preferred_linux_backend_with_reification_runner_and_toolchain(
+    report: &LinuxReificationCapabilityReport,
+    runner_smoke: &LinuxReificationCapability,
+    toolchain_smoke: &LinuxReificationCapability,
+    landlock_is_available: bool,
+) -> SandboxBackendKind {
+    if report.is_selectable() && runner_smoke.is_available() && toolchain_smoke.is_available() {
         SandboxBackendKind::LinuxReifiedNamespace
     } else if landlock_is_available {
         SandboxBackendKind::Landlock
@@ -369,14 +386,17 @@ pub fn linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBacke
 fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBackendReadiness {
     let capability_report = probe_linux_reification();
     let runner_smoke = LinuxReificationCapability::unavailable("not a linux host");
-    let selected_backend = preferred_linux_backend_with_reification_and_runner(
+    let toolchain_smoke = LinuxReificationCapability::unavailable("not a linux host");
+    let selected_backend = preferred_linux_backend_with_reification_runner_and_toolchain(
         &capability_report,
         &runner_smoke,
+        &toolchain_smoke,
         false,
     );
     LinuxReifiedNamespaceBackendReadiness {
         capability_report,
         runner_smoke,
+        toolchain_smoke,
         selected_backend,
     }
 }
@@ -389,14 +409,21 @@ fn probe_linux_reified_namespace_backend_readiness() -> LinuxReifiedNamespaceBac
     } else {
         LinuxReificationCapability::unavailable("capability probe did not select reification")
     };
-    let selected_backend = preferred_linux_backend_with_reification_and_runner(
+    let toolchain_smoke = if runner_smoke.is_available() {
+        super::reified_namespace::smoke_linux_reified_namespace_user_path()
+    } else {
+        LinuxReificationCapability::unavailable("runner smoke did not pass")
+    };
+    let selected_backend = preferred_linux_backend_with_reification_runner_and_toolchain(
         &capability_report,
         &runner_smoke,
+        &toolchain_smoke,
         landlock_available(),
     );
     LinuxReifiedNamespaceBackendReadiness {
         capability_report,
         runner_smoke,
+        toolchain_smoke,
         selected_backend,
     }
 }
@@ -1412,10 +1439,46 @@ mod tests {
     }
 
     #[test]
+    fn linux_reification_selection_requires_toolchain_smoke() {
+        let complete = complete_linux_reification_report();
+        let runner_smoke = available_capability();
+        let toolchain_smoke = unavailable_capability("current PATH cannot be preserved");
+
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &toolchain_smoke,
+                true
+            ),
+            SandboxBackendKind::Landlock
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &toolchain_smoke,
+                false
+            ),
+            SandboxBackendKind::WorkspacePathGuard
+        );
+        assert_eq!(
+            preferred_linux_backend_with_reification_runner_and_toolchain(
+                &complete,
+                &runner_smoke,
+                &available_capability(),
+                true
+            ),
+            SandboxBackendKind::LinuxReifiedNamespace
+        );
+    }
+
+    #[test]
     fn linux_reification_readiness_audit_names_selected_backend_and_path_mode() {
         let readiness = LinuxReifiedNamespaceBackendReadiness {
             capability_report: complete_linux_reification_report(),
             runner_smoke: unavailable_capability("runner smoke failed"),
+            toolchain_smoke: unavailable_capability("current PATH cannot be preserved"),
             selected_backend: SandboxBackendKind::Landlock,
         };
 
@@ -1424,6 +1487,10 @@ mod tests {
         assert!(fields.contains(&(
             "runner_smoke",
             "unavailable(runner smoke failed)".to_string()
+        )));
+        assert!(fields.contains(&(
+            "toolchain_smoke",
+            "unavailable(current PATH cannot be preserved)".to_string()
         )));
         assert!(fields.contains(&("selected_backend", "landlock".to_string())));
         assert!(fields.contains(&("path_mode", "projected_host_paths".to_string())));

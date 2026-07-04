@@ -6,7 +6,7 @@
 
 #[cfg(target_os = "linux")]
 use std::io::Read;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(test, unix)))]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
@@ -289,11 +289,17 @@ impl ReifiedNamespacePlanInput {
 pub fn default_execution_substrate() -> Vec<ReifiedExecutionSubstrateMount> {
     [
         ("/bin", "/bin"),
+        ("/sbin", "/sbin"),
         ("/usr/bin", "/usr/bin"),
+        ("/usr/sbin", "/usr/sbin"),
+        ("/usr/local/bin", "/usr/local/bin"),
+        ("/usr/local/sbin", "/usr/local/sbin"),
         ("/lib", "/lib"),
         ("/lib64", "/lib64"),
         ("/usr/lib", "/usr/lib"),
         ("/usr/lib64", "/usr/lib64"),
+        ("/usr/local/lib", "/usr/local/lib"),
+        ("/usr/local/lib64", "/usr/local/lib64"),
         ("/etc/ssl", "/etc/ssl"),
         ("/etc/hosts", "/etc/hosts"),
         ("/etc/resolv.conf", "/etc/resolv.conf"),
@@ -436,6 +442,98 @@ pub(crate) fn smoke_linux_reified_namespace_runner() -> LinuxReificationCapabili
     }
 }
 
+/// Smoke-check that selecting reified mode will not hide user PATH toolchains.
+#[cfg(target_os = "linux")]
+pub(crate) fn smoke_linux_reified_namespace_user_path() -> LinuxReificationCapability {
+    match reified_namespace_user_path_unavailable_reason(std::env::var_os("PATH")) {
+        Some(reason) => LinuxReificationCapability::unavailable(reason),
+        None => LinuxReificationCapability::available(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn reified_namespace_user_path_unavailable_reason(
+    path: Option<std::ffi::OsString>,
+) -> Option<String> {
+    let visible_roots = reified_command_path_roots();
+    reified_namespace_user_path_unavailable_reason_with_roots(path, &visible_roots)
+}
+
+#[cfg(target_os = "linux")]
+fn reified_command_path_roots() -> Vec<PathBuf> {
+    std::env::split_paths(LINUX_REIFIED_COMMAND_PATH)
+        .map(|path| canonicalize_existing_host_path(&path))
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn reified_namespace_user_path_unavailable_reason_with_roots(
+    path: Option<std::ffi::OsString>,
+    visible_roots: &[PathBuf],
+) -> Option<String> {
+    let path = path?;
+    let visible_roots = visible_roots
+        .iter()
+        .map(|root| canonicalize_existing_host_path(root))
+        .collect::<Vec<_>>();
+    let mut unsupported = Vec::new();
+
+    for entry in std::env::split_paths(&path) {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        if !entry.is_absolute() {
+            unsupported.push(format!("relative PATH entry {}", entry.display()));
+            continue;
+        }
+
+        let entry = canonicalize_existing_host_path(&entry);
+        if !path_directory_has_executables(&entry) {
+            continue;
+        }
+        if visible_roots
+            .iter()
+            .any(|root| entry == *root || entry.starts_with(root))
+        {
+            continue;
+        }
+
+        unsupported.push(entry.display().to_string());
+        if unsupported.len() >= 3 {
+            break;
+        }
+    }
+
+    if unsupported.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "current PATH has executable entries outside the reified execution substrate: {}; \
+             preserve user PATH/toolchain mounts before selecting linux_reified_namespace",
+            unsupported.join(", ")
+        ))
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn path_directory_has_executables(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() {
+        return false;
+    }
+
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return true;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        std::fs::metadata(entry.path())
+            .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
     let workspace = ReifiedSmokeWorkspace::create()
@@ -519,10 +617,17 @@ const SETUP_FAILURE_PREFIX: &str = "alan reified namespace setup failed:";
 #[cfg(target_os = "linux")]
 const TRUSTED_LINUX_SETUP_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
+#[cfg(any(target_os = "linux", test))]
+const LINUX_REIFIED_COMMAND_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 #[cfg(target_os = "linux")]
-const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = r#"
+const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = concat!(
+    r#"
 set -u
-PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+PATH='"#,
+    LINUX_REIFIED_COMMAND_PATH,
+    r#"'
 export PATH
 fail() {
   printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
@@ -574,7 +679,8 @@ scratch_destination="${root}${scratch_tmp}"
 
 cwd="$1"; shift
 "$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
-"#;
+"#,
+);
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1524,6 +1630,57 @@ mod tests {
     }
 
     #[test]
+    fn default_execution_substrate_includes_trusted_path_directories() {
+        let substrate = default_execution_substrate();
+
+        for path in std::env::split_paths(LINUX_REIFIED_COMMAND_PATH) {
+            assert!(
+                substrate.iter().any(|mount| {
+                    mount.namespace_path == path.as_path() && mount.host_path == path.as_path()
+                }),
+                "missing trusted PATH substrate {}",
+                path.display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_allows_executable_dirs_under_visible_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_root = temp.path().join("visible");
+        let visible_bin = visible_root.join("bin");
+        write_executable(&visible_bin.join("cargo"));
+        let path = std::env::join_paths([visible_bin.as_path()]).unwrap();
+
+        assert_eq!(
+            reified_namespace_user_path_unavailable_reason_with_roots(
+                Some(path),
+                std::slice::from_ref(&visible_root),
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_executable_dirs_outside_visible_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let visible_root = temp.path().join("visible");
+        let user_bin = temp.path().join("home/alice/.cargo/bin");
+        write_executable(&visible_root.join("bin/sh"));
+        write_executable(&user_bin.join("cargo"));
+        let path = std::env::join_paths([visible_root.join("bin"), user_bin.clone()]).unwrap();
+
+        let reason =
+            reified_namespace_user_path_unavailable_reason_with_roots(Some(path), &[visible_root])
+                .expect("user-local executable PATH entry should block reified default selection");
+
+        assert!(reason.contains(user_bin.to_string_lossy().as_ref()));
+        assert!(reason.contains("preserve user PATH/toolchain mounts"));
+    }
+
+    #[test]
     fn virtual_mounts_are_excluded_from_native_plan() {
         let input = ReifiedNamespacePlanInput::new(
             vec![
@@ -2179,7 +2336,7 @@ mod tests {
             .iter()
             .find(|arg| arg.contains("alan reified namespace setup failed"))
             .unwrap();
-        assert!(script.contains("PATH='/usr/sbin:/usr/bin:/sbin:/bin'"));
+        assert!(script.contains(&format!("PATH='{LINUX_REIFIED_COMMAND_PATH}'")));
         assert!(script.contains("\"$mount_bin\" --make-rprivate / || fail \"make root private\""));
         assert!(!script.contains("--make-rprivate / 2>/dev/null || true"));
         assert!(script.contains("\"$mount_bin\" --bind /dev/null \"${root}/dev/null\""));
@@ -2270,5 +2427,16 @@ mod tests {
 
         std::fs::write(&marker, b"ok\n").unwrap();
         assert!(setup_marker_was_written(&marker));
+    }
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 }
