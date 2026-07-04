@@ -2538,6 +2538,38 @@ fn test_reified_backend_translates_host_workspace_paths_in_command_argv() {
     );
 }
 
+#[test]
+fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
+    let temp = TempDir::new().unwrap();
+    let workspace = temp.path().join("My Project");
+    let docs_dir = workspace.join("docs");
+    std::fs::create_dir_all(&docs_dir).unwrap();
+    let host_doc = docs_dir.join("Project Notes.txt");
+    std::fs::write(&host_doc, "notes\n").unwrap();
+    let sandbox = Sandbox::with_backend(
+        workspace.clone(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!("cat '{}' > /dev/null", host_doc.display()),
+            &workspace,
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.argv,
+        vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            "cat '/mnt/workspace/docs/Project Notes.txt' > /dev/null".to_string()
+        ]
+    );
+}
+
 #[tokio::test]
 async fn test_os_backend_still_blocks_out_of_workspace_reads() {
     // Seatbelt denies writes/network but permits reads, so the parser must still

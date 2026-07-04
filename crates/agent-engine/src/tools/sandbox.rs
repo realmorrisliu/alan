@@ -14,6 +14,7 @@
 use anyhow::{Result, anyhow};
 use regex::Regex;
 use std::ffi::OsString;
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -960,53 +961,22 @@ impl Sandbox {
         cmd: &str,
         plan: &super::reified_namespace::ReifiedNamespacePlan,
     ) -> String {
-        let regex = Regex::new(r"/[A-Za-z0-9._/-]+").expect("absolute-path regex is valid");
+        let Ok(tokens) = shell_word_tokens_with_spans(cmd) else {
+            return cmd.to_string();
+        };
         let mut translated = String::with_capacity(cmd.len());
         let mut last = 0;
-        for matched in regex.find_iter(cmd) {
-            let start = matched.start();
-            if absolute_path_match_has_path_prefix(cmd, start) {
-                continue;
-            }
-
-            let literal = matched.as_str();
-            let literal_path = Path::new(literal);
-            if is_allowed_absolute_command_path(literal_path) {
-                continue;
-            }
-
-            let namespace_path = plan
-                .translate_projected_host_path(literal_path)
-                .or_else(|| {
-                    plan.translate_projected_host_path(&lexically_normalize_path(literal_path))
-                });
-            let Some(namespace_path) = namespace_path else {
+        for token in tokens {
+            let Some(rewritten) = translate_reified_shell_token(&token.decoded, plan) else {
                 continue;
             };
-
-            translated.push_str(&cmd[last..start]);
-            translated.push_str(&namespace_path.display().to_string());
-            last = matched.end();
+            translated.push_str(&cmd[last..token.raw_start]);
+            translated.push_str(&rewritten);
+            last = token.raw_end;
         }
         translated.push_str(&cmd[last..]);
         translated
     }
-}
-
-fn absolute_path_match_has_path_prefix(text: &str, start: usize) -> bool {
-    if start == 0 {
-        return false;
-    }
-    let prev = text.as_bytes()[start - 1];
-    prev == b':'
-        || prev == b'.'
-        || prev == b'/'
-        || prev == b'_'
-        || prev == b'-'
-        || prev == b'*'
-        || prev == b'?'
-        || prev == b']'
-        || prev.is_ascii_alphanumeric()
 }
 
 fn validate_nested_command_evaluators(commands: &[Vec<String>], backend_name: &str) -> Result<()> {
@@ -1056,6 +1026,83 @@ fn validate_nested_command_evaluators(commands: &[Vec<String>], backend_name: &s
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellWordToken {
+    decoded: String,
+    raw_start: usize,
+    raw_end: usize,
+}
+
+fn translate_reified_shell_token(
+    token: &str,
+    plan: &super::reified_namespace::ReifiedNamespacePlan,
+) -> Option<String> {
+    for range in path_like_subtoken_ranges(token) {
+        let candidate = &token[range.clone()];
+        let candidate_path = Path::new(candidate);
+        if !candidate_path.is_absolute() || is_allowed_absolute_command_path(candidate_path) {
+            continue;
+        }
+
+        let namespace_path = plan
+            .translate_projected_host_path(candidate_path)
+            .or_else(|| {
+                plan.translate_projected_host_path(&lexically_normalize_path(candidate_path))
+            })?;
+        let namespace_path = namespace_path.display().to_string();
+        let mut rewritten = String::with_capacity(token.len() + namespace_path.len());
+        rewritten.push_str(&token[..range.start]);
+        rewritten.push_str(&shell_quote_token(&namespace_path));
+        rewritten.push_str(&token[range.end..]);
+        return Some(rewritten);
+    }
+    None
+}
+
+fn path_like_subtoken_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    if looks_like_path_token(token) || looks_like_bare_protected_subpath_token(token) {
+        ranges.push(0..token.len());
+    }
+    if let Some(index) = token.rfind('=') {
+        let start = index + 1;
+        if start < token.len() {
+            ranges.push(start..token.len());
+        }
+    }
+    if let Some(range) = short_option_attached_path_subtoken_range(token)
+        && !ranges.contains(&range)
+    {
+        ranges.push(range);
+    }
+    ranges
+}
+
+fn shell_quote_token(token: &str) -> String {
+    if !token.is_empty()
+        && token.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '@' | '%' | '_' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
+                )
+        })
+    {
+        return token.to_string();
+    }
+
+    let mut quoted = String::from("'");
+    for ch in token.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn validate_bash_command_shape(cmd: &str) -> Result<()> {
@@ -1194,6 +1241,11 @@ fn path_like_subtokens(token: &str) -> Vec<&str> {
 }
 
 fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
+    let range = short_option_attached_path_subtoken_range(token)?;
+    Some(&token[range])
+}
+
+fn short_option_attached_path_subtoken_range(token: &str) -> Option<Range<usize>> {
     if token.starts_with("--") {
         return None;
     }
@@ -1202,14 +1254,17 @@ fn short_option_attached_path_subtoken(token: &str) -> Option<&str> {
         return None;
     }
 
-    rest.char_indices()
-        .skip(1)
-        .map(|(index, _)| &rest[index..])
-        .find(|candidate| {
-            candidate.starts_with('~')
-                || looks_like_path_token(candidate)
-                || looks_like_bare_protected_subpath_token(candidate)
-        })
+    rest.char_indices().skip(1).find_map(|(index, _)| {
+        let candidate = &rest[index..];
+        if candidate.starts_with('~')
+            || looks_like_path_token(candidate)
+            || looks_like_bare_protected_subpath_token(candidate)
+        {
+            Some((index + 1)..token.len())
+        } else {
+            None
+        }
+    })
 }
 
 fn is_file_redirection_operator(token: &str) -> bool {
@@ -1619,6 +1674,151 @@ where
         }
         _ => false,
     }
+}
+
+fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWordToken>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.char_indices().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+    let mut raw_start = None;
+
+    while let Some((index, ch)) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                current.push(ch);
+            }
+            word_started = true;
+            continue;
+        }
+
+        if in_double {
+            match ch {
+                '\\' => {
+                    if let Some((_, next)) = chars.next() {
+                        current.push(next);
+                        word_started = true;
+                    } else {
+                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                    }
+                }
+                '"' => {
+                    in_double = false;
+                    word_started = true;
+                }
+                _ => {
+                    current.push(ch);
+                    word_started = true;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                raw_start.get_or_insert(index);
+                if let Some((_, next)) = chars.next() {
+                    current.push(next);
+                    word_started = true;
+                } else {
+                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
+                }
+            }
+            '\'' => {
+                raw_start.get_or_insert(index);
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                raw_start.get_or_insert(index);
+                in_double = true;
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
+            c if c.is_whitespace() => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+                word_started = false;
+            }
+            ';' | '(' | ')' | '{' | '}' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+                word_started = false;
+            }
+            '&' | '|' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+
+                if matches!(chars.peek(), Some((_, next)) if *next == ch) {
+                    chars.next();
+                }
+                word_started = false;
+            }
+            '<' | '>' => {
+                push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
+
+                match (ch, chars.peek().copied()) {
+                    ('<', Some((_, '<' | '>' | '&'))) | ('>', Some((_, '>' | '&' | '|'))) => {
+                        chars.next();
+                        if ch == '<' && matches!(chars.peek(), Some((_, '-'))) {
+                            chars.next();
+                        }
+                    }
+                    _ => {}
+                }
+                word_started = false;
+            }
+            _ => {
+                raw_start.get_or_insert(index);
+                current.push(ch);
+                word_started = true;
+            }
+        }
+    }
+
+    if escaped {
+        return Err(anyhow!("Command ends with an incomplete escape sequence"));
+    }
+    if in_single || in_double {
+        return Err(anyhow!("Command contains an unterminated quoted string"));
+    }
+    push_shell_word_token(&mut tokens, &mut current, &mut raw_start, command.len());
+
+    Ok(tokens)
+}
+
+fn push_shell_word_token(
+    tokens: &mut Vec<ShellWordToken>,
+    current: &mut String,
+    raw_start: &mut Option<usize>,
+    raw_end: usize,
+) {
+    let Some(start) = raw_start.take() else {
+        return;
+    };
+    tokens.push(ShellWordToken {
+        decoded: std::mem::take(current),
+        raw_start: start,
+        raw_end,
+    });
 }
 
 fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
