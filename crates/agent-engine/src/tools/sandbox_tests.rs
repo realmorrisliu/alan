@@ -2571,6 +2571,37 @@ fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
 }
 
 #[tokio::test]
+async fn test_reified_backend_exec_validates_quoted_host_workspace_paths_with_spaces() {
+    let temp = TempDir::new().unwrap();
+    let workspace = temp.path().join("My Project");
+    let docs_dir = workspace.join("docs");
+    tokio::fs::create_dir_all(&docs_dir).await.unwrap();
+    let host_doc = docs_dir.join("Project Notes.txt");
+    tokio::fs::write(&host_doc, "notes\n").await.unwrap();
+    let sandbox = Sandbox::with_backend(
+        workspace.clone(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("cat '{}' > /dev/null", host_doc.display()),
+            &workspace,
+            Some(std::time::Duration::from_millis(50)),
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+
+    if let Err(err) = result {
+        let message = err.to_string();
+        assert!(
+            !message.contains("outside workspace"),
+            "quoted host workspace path with spaces should not be truncated during validation: {message}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_os_backend_still_blocks_out_of_workspace_reads() {
     // Seatbelt denies writes/network but permits reads, so the parser must still
     // contain reads: an auto-approved `cat ~/.ssh/id_rsa` / `cat /etc/passwd` must

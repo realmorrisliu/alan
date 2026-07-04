@@ -12,7 +12,6 @@
 //! recipes, or utility-specific script/DSL modes such as `sed -f`.
 
 use anyhow::{Result, anyhow};
-use regex::Regex;
 use std::ffi::OsString;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -638,6 +637,10 @@ impl Sandbox {
             Ok(tokens) => tokens,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
         };
+        let span_tokens = match shell_word_tokens_with_spans(trimmed) {
+            Ok(tokens) => tokens,
+            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
+        };
         let commands = match shell_commands(trimmed) {
             Ok(commands) => commands,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
@@ -678,45 +681,7 @@ impl Sandbox {
             }
         }
 
-        let comment_free = strip_shell_comments(trimmed);
-        let regex = Regex::new(r"/[A-Za-z0-9._/-]+").expect("absolute-path regex is valid");
-        for matched in regex.find_iter(&comment_free) {
-            let start = matched.start();
-            if start > 0 {
-                let prev = comment_free.as_bytes()[start - 1];
-                if prev == b':'
-                    || prev == b'.'
-                    || prev == b'/'
-                    || prev == b'_'
-                    || prev == b'-'
-                    || prev == b'*'
-                    || prev == b'?'
-                    || prev == b']'
-                    || prev.is_ascii_alphanumeric()
-                {
-                    // Skip URL fragments and path segments within relative paths or identifiers.
-                    continue;
-                }
-            }
-            let literal = matched.as_str();
-            if is_allowed_absolute_command_path(Path::new(literal)) {
-                continue;
-            }
-            let literal_path = Path::new(literal);
-            let validation_path = self
-                .reified_namespace_path_to_host(literal_path)
-                .unwrap_or_else(|| literal_path.to_path_buf());
-            // Containment applies in every mode: the OS sandbox does not confine
-            // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
-            // must still be rejected by the parser.
-            if !self.is_in_workspace(&validation_path) {
-                return Err(anyhow!(
-                    "Command contains absolute path outside workspace: {}",
-                    literal
-                ));
-            }
-            self.ensure_path_not_protected(&validation_path, "process path reference")?;
-        }
+        self.validate_absolute_path_literals(&span_tokens)?;
 
         Ok(())
     }
@@ -957,6 +922,53 @@ impl Sandbox {
         None
     }
 
+    fn validate_absolute_path_literals(&self, tokens: &[ShellWordToken]) -> Result<()> {
+        for token in tokens {
+            for candidates in absolute_path_literal_candidates(&token.decoded) {
+                let literal = candidates
+                    .iter()
+                    .find(|candidate| {
+                        self.absolute_path_literal_is_allowed_or_in_workspace(candidate)
+                    })
+                    .unwrap_or_else(|| &candidates[0]);
+                self.validate_absolute_path_literal(literal)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn absolute_path_literal_is_allowed_or_in_workspace(&self, literal: &str) -> bool {
+        let literal_path = Path::new(literal);
+        if is_allowed_absolute_command_path(literal_path) {
+            return true;
+        }
+        let validation_path = self
+            .reified_namespace_path_to_host(literal_path)
+            .unwrap_or_else(|| literal_path.to_path_buf());
+        self.is_in_workspace(&validation_path)
+    }
+
+    fn validate_absolute_path_literal(&self, literal: &str) -> Result<()> {
+        let literal_path = Path::new(literal);
+        if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
+            return Ok(());
+        }
+        let validation_path = self
+            .reified_namespace_path_to_host(literal_path)
+            .unwrap_or_else(|| literal_path.to_path_buf());
+        // Containment applies in every mode: the OS sandbox does not confine
+        // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
+        // must still be rejected by the parser.
+        if !self.is_in_workspace(&validation_path) {
+            return Err(anyhow!(
+                "Command contains absolute path outside workspace: {}",
+                literal
+            ));
+        }
+        self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        Ok(())
+    }
+
     fn translate_reified_command_host_paths(
         cmd: &str,
         plan: &super::reified_namespace::ReifiedNamespacePlan,
@@ -1078,6 +1090,86 @@ fn path_like_subtoken_ranges(token: &str) -> Vec<Range<usize>> {
         ranges.push(range);
     }
     ranges
+}
+
+fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
+    let mut literals = Vec::new();
+    for range in path_like_subtoken_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
+
+    for range in embedded_absolute_path_literal_ranges(token) {
+        push_absolute_path_literal_candidates(token, range, &mut literals);
+    }
+
+    literals
+}
+
+fn push_absolute_path_literal_candidates(
+    token: &str,
+    range: Range<usize>,
+    literals: &mut Vec<Vec<String>>,
+) {
+    let literal = &token[range.clone()];
+    if !Path::new(literal).is_absolute() {
+        return;
+    }
+
+    let mut candidates = vec![literal.to_string()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            let prefix = literal[..offset].to_string();
+            if !candidates.contains(&prefix) {
+                candidates.push(prefix);
+            }
+        }
+    }
+    if !literals.iter().any(|existing| existing == &candidates) {
+        literals.push(candidates);
+    }
+}
+
+fn embedded_absolute_path_literal_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let indices = token.char_indices().collect::<Vec<_>>();
+    for (position, &(start, ch)) in indices.iter().enumerate() {
+        if ch != '/' || absolute_path_match_has_path_prefix(token, start) {
+            continue;
+        }
+
+        let mut end = token.len();
+        for &(index, next) in &indices[position + 1..] {
+            if is_absolute_path_literal_terminator(next) {
+                end = index;
+                break;
+            }
+        }
+        ranges.push(start..end);
+    }
+    ranges
+}
+
+fn absolute_path_match_has_path_prefix(text: &str, start: usize) -> bool {
+    if start == 0 {
+        return false;
+    }
+    let prev = text.as_bytes()[start - 1];
+    prev == b':'
+        || prev == b'.'
+        || prev == b'/'
+        || prev == b'_'
+        || prev == b'-'
+        || prev == b'*'
+        || prev == b'?'
+        || prev == b']'
+        || prev.is_ascii_alphanumeric()
+}
+
+fn is_absolute_path_literal_terminator(ch: char) -> bool {
+    matches!(
+        ch,
+        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '|' | '&' | ';' | ','
+    )
 }
 
 fn shell_quote_token(token: &str) -> String {

@@ -23,7 +23,9 @@ use thiserror::Error;
 
 use super::sandbox::{ExecResult, NetworkPosture};
 #[cfg(any(test, target_os = "linux"))]
-use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabilityReport};
+use super::sandbox_backend::{
+    LinuxReificationCapabilities, LinuxReificationCapability, LinuxReificationCapabilityReport,
+};
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
@@ -365,7 +367,7 @@ impl LinuxReifiedNamespaceRunner {
         self.fallback_backend
     }
 
-    /// Run the command and terminate the Linux runner process group if the timeout expires.
+    /// Run the command and terminate the Linux runner PID namespace if the timeout expires.
     pub fn run_with_timeout(
         &self,
         plan: &ReifiedNamespacePlan,
@@ -871,6 +873,7 @@ fn linux_reification_report_supports_plan(
     report.linux_host.is_available()
         && report.user_namespace.is_available()
         && report.mount_namespace.is_available()
+        && report.pid_namespace.is_available()
         && report.bind_mount.is_available()
         && report.read_only_remount.is_available()
         && report.scratch_tmp_mount.is_available()
@@ -893,6 +896,11 @@ fn linux_reification_unavailable_reasons_for_plan(
         &mut reasons,
         "mount_namespace",
         &report.mount_namespace,
+    );
+    push_missing_linux_reification_requirement(
+        &mut reasons,
+        "pid_namespace",
+        &report.pid_namespace,
     );
     push_missing_linux_reification_requirement(&mut reasons, "bind_mount", &report.bind_mount);
     push_missing_linux_reification_requirement(
@@ -1005,6 +1013,8 @@ fn build_linux_reified_namespace_command_with_helpers(
         "--user".to_string(),
         "--map-root-user".to_string(),
         "--mount".to_string(),
+        "--pid".to_string(),
+        "--fork".to_string(),
     ];
     if matches!(plan.network, NetworkPosture::Deny) {
         args.push("--net".to_string());
@@ -2010,15 +2020,18 @@ mod tests {
 
     #[test]
     fn reification_report_selection_requires_network_only_for_denied_plans() {
-        let report = LinuxReificationCapabilityReport::new(
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::available(),
-            LinuxReificationCapability::unavailable("network namespaces disabled"),
-        );
+        let report = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
+            linux_host: LinuxReificationCapability::available(),
+            user_namespace: LinuxReificationCapability::available(),
+            mount_namespace: LinuxReificationCapability::available(),
+            pid_namespace: LinuxReificationCapability::available(),
+            bind_mount: LinuxReificationCapability::available(),
+            read_only_remount: LinuxReificationCapability::available(),
+            scratch_tmp_mount: LinuxReificationCapability::available(),
+            network_confinement: LinuxReificationCapability::unavailable(
+                "network namespaces disabled",
+            ),
+        });
 
         assert!(linux_reification_report_supports_plan(
             &report,
@@ -2144,6 +2157,8 @@ mod tests {
         assert!(command.args.contains(&"--user".to_string()));
         assert!(command.args.contains(&"--map-root-user".to_string()));
         assert!(command.args.contains(&"--mount".to_string()));
+        assert!(command.args.contains(&"--pid".to_string()));
+        assert!(command.args.contains(&"--fork".to_string()));
         assert!(command.args.contains(&"--net".to_string()));
         assert!(
             command
