@@ -2539,6 +2539,159 @@ fn test_reified_backend_translates_host_workspace_paths_in_command_argv() {
 }
 
 #[test]
+fn test_reified_backend_translates_embedded_host_paths_in_wrapper_script() {
+    let temp = TempDir::new().unwrap();
+    let host_manifest = temp.path().join("Cargo.toml");
+    let host_copy = temp.path().join("copy.toml");
+    std::fs::write(&host_manifest, "[package]\n").unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!(
+                "bash -lc 'cp {} {}'",
+                host_manifest.display(),
+                host_copy.display()
+            ),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.argv,
+        vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            "bash -lc 'cp /mnt/workspace/Cargo.toml /mnt/workspace/copy.toml'".to_string()
+        ]
+    );
+}
+
+#[test]
+fn test_reified_backend_translates_embedded_host_paths_with_intervening_flag() {
+    let temp = TempDir::new().unwrap();
+    let host_manifest = temp.path().join("Cargo.toml");
+    let host_output_dir = temp.path().join("out");
+    std::fs::write(&host_manifest, "[package]\n").unwrap();
+    std::fs::create_dir_all(&host_output_dir).unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!(
+                "bash -lc 'cp {} -t {}'",
+                host_manifest.display(),
+                host_output_dir.display()
+            ),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.argv,
+        vec![
+            "sh".to_string(),
+            "-f".to_string(),
+            "-c".to_string(),
+            "bash -lc 'cp /mnt/workspace/Cargo.toml -t /mnt/workspace/out'".to_string()
+        ]
+    );
+}
+
+#[test]
+fn test_reified_backend_translates_quoted_spaced_wrapper_operand_before_second_path() {
+    let temp = TempDir::new().unwrap();
+    let docs_dir = temp.path().join("My Project");
+    let host_doc = docs_dir.join("Project Notes.txt");
+    let host_output_dir = temp.path().join("out");
+    std::fs::create_dir_all(&docs_dir).unwrap();
+    std::fs::create_dir_all(&host_output_dir).unwrap();
+    std::fs::write(&host_doc, "notes\n").unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!(
+                "bash -lc \"cp '{}' {}\"",
+                host_doc.display(),
+                host_output_dir.display()
+            ),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    let command = &plan.argv[3];
+    assert!(
+        command.contains("/mnt/workspace/My Project/Project Notes.txt"),
+        "spaced source path was not translated: {command}"
+    );
+    assert!(
+        command.contains("/mnt/workspace/out"),
+        "second host path was not translated: {command}"
+    );
+    assert!(
+        !command.contains(&host_doc.display().to_string()),
+        "host source path leaked into namespace command: {command}"
+    );
+    assert!(
+        !command.contains(&host_output_dir.display().to_string()),
+        "host output path leaked into namespace command: {command}"
+    );
+}
+
+#[test]
+fn test_reified_backend_preserves_assignment_words_for_quoted_spaced_paths() {
+    let temp = TempDir::new().unwrap();
+    let docs_dir = temp.path().join("My Project");
+    let host_doc = docs_dir.join("Project Notes.txt");
+    std::fs::create_dir_all(&docs_dir).unwrap();
+    std::fs::write(&host_doc, "notes\n").unwrap();
+    let sandbox = Sandbox::with_backend(
+        temp.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(
+            &format!("bash -lc \"FOO='{}' env\"", host_doc.display()),
+            temp.path(),
+            false,
+        )
+        .unwrap();
+
+    let command = &plan.argv[3];
+    assert!(
+        command.contains("FOO="),
+        "translated assignment no longer has assignment syntax: {command}"
+    );
+    assert!(
+        command.contains("/mnt/workspace/My Project/Project Notes.txt"),
+        "assignment value path was not translated: {command}"
+    );
+    assert!(
+        !command.contains("'FOO=/mnt/workspace"),
+        "entire assignment word was quoted instead of only its value: {command}"
+    );
+    assert!(
+        !command.contains(&host_doc.display().to_string()),
+        "host assignment value leaked into namespace command: {command}"
+    );
+}
+
+#[test]
 fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
     let temp = TempDir::new().unwrap();
     let workspace = temp.path().join("My Project");

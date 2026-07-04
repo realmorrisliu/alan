@@ -1051,26 +1051,207 @@ fn translate_reified_shell_token(
     token: &str,
     plan: &super::reified_namespace::ReifiedNamespacePlan,
 ) -> Option<String> {
-    for range in path_like_subtoken_ranges(token) {
+    if let Some(rewritten) = translate_reified_nested_shell_token(token, plan) {
+        return Some(shell_quote_token(&rewritten));
+    }
+
+    let mut replacements = Vec::new();
+    for range in reified_shell_token_path_candidate_ranges(token) {
+        if replacements
+            .iter()
+            .any(|(existing, _)| ranges_overlap(existing, &range))
+        {
+            continue;
+        }
+
         let candidate = &token[range.clone()];
         let candidate_path = Path::new(candidate);
         if !candidate_path.is_absolute() || is_allowed_absolute_command_path(candidate_path) {
             continue;
         }
 
-        let namespace_path = plan
-            .translate_projected_host_path(candidate_path)
-            .or_else(|| {
-                plan.translate_projected_host_path(&lexically_normalize_path(candidate_path))
-            })?;
-        let namespace_path = namespace_path.display().to_string();
-        let mut rewritten = String::with_capacity(token.len() + namespace_path.len());
-        rewritten.push_str(&token[..range.start]);
-        rewritten.push_str(&shell_quote_token(&namespace_path));
-        rewritten.push_str(&token[range.end..]);
-        return Some(rewritten);
+        let Some(namespace_path) =
+            plan.translate_projected_host_path(candidate_path)
+                .or_else(|| {
+                    plan.translate_projected_host_path(&lexically_normalize_path(candidate_path))
+                })
+        else {
+            continue;
+        };
+        replacements.push((range, namespace_path.display().to_string()));
+    }
+
+    if replacements.is_empty() {
+        return None;
+    }
+
+    replacements.sort_by_key(|(range, _)| range.start);
+    let replacement_len = replacements
+        .iter()
+        .map(|(_, replacement)| replacement.len())
+        .sum::<usize>();
+    let mut rewritten = String::with_capacity(token.len() + replacement_len);
+    let mut last = 0;
+    for (range, replacement) in replacements {
+        rewritten.push_str(&token[last..range.start]);
+        rewritten.push_str(&replacement);
+        last = range.end;
+    }
+    rewritten.push_str(&token[last..]);
+
+    Some(shell_quote_reified_token(&rewritten))
+}
+
+fn translate_reified_nested_shell_token(
+    token: &str,
+    plan: &super::reified_namespace::ReifiedNamespacePlan,
+) -> Option<String> {
+    let tokens = shell_word_tokens_with_spans(token).ok()?;
+    if !looks_like_nested_shell_script(&tokens) {
+        return None;
+    }
+
+    let mut translated = String::with_capacity(token.len());
+    let mut last = 0;
+    let mut changed = false;
+    for nested_token in tokens {
+        let Some(rewritten) = translate_reified_shell_token(&nested_token.decoded, plan) else {
+            continue;
+        };
+        translated.push_str(&token[last..nested_token.raw_start]);
+        translated.push_str(&rewritten);
+        last = nested_token.raw_end;
+        changed = true;
+    }
+    if !changed {
+        return None;
+    }
+
+    translated.push_str(&token[last..]);
+    Some(translated)
+}
+
+fn looks_like_nested_shell_script(tokens: &[ShellWordToken]) -> bool {
+    if tokens.len() < 2 {
+        return false;
+    }
+    let Some(command) = tokens
+        .iter()
+        .find(|token| !is_env_assignment(&token.decoded))
+    else {
+        return false;
+    };
+
+    !looks_like_path_token(&command.decoded)
+        && !looks_like_bare_protected_subpath_token(&command.decoded)
+}
+
+fn shell_quote_reified_token(token: &str) -> String {
+    if is_env_assignment(token) {
+        let (name, value) = token
+            .split_once('=')
+            .expect("is_env_assignment requires an equals sign");
+        return format!("{name}={}", shell_quote_token(value));
+    }
+    shell_quote_token(token)
+}
+
+fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
+}
+
+fn reified_shell_token_path_candidate_ranges(token: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    for range in path_like_subtoken_ranges(token) {
+        push_unique_range(&mut ranges, range);
+    }
+    for range in embedded_absolute_path_literal_ranges(token) {
+        push_path_literal_candidate_ranges(token, range, &mut ranges);
+    }
+    ranges
+}
+
+fn push_path_literal_candidate_ranges(
+    token: &str,
+    range: Range<usize>,
+    ranges: &mut Vec<Range<usize>>,
+) {
+    if let Some(split_end) = first_later_absolute_path_split(token, &range) {
+        let first_operand = trim_trailing_whitespace_range(token, range.start..split_end);
+        if first_operand.start < first_operand.end {
+            if path_literal_range_contains_flag_segment(token, &first_operand) {
+                push_whitespace_prefix_ranges(token, first_operand.clone(), ranges);
+                push_unique_range(ranges, first_operand);
+            } else {
+                push_unique_range(ranges, first_operand.clone());
+                push_whitespace_prefix_ranges(token, first_operand, ranges);
+            }
+        }
+        return;
+    }
+
+    let trimmed = trim_trailing_whitespace_range(token, range.clone());
+    if trimmed.start < trimmed.end {
+        push_unique_range(ranges, trimmed);
+    }
+
+    let literal = &token[range.clone()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            let prefix = range.start..range.start + offset;
+            push_unique_range(ranges, prefix);
+        }
+    }
+}
+
+fn push_whitespace_prefix_ranges(token: &str, range: Range<usize>, ranges: &mut Vec<Range<usize>>) {
+    let literal = &token[range.clone()];
+    for (offset, ch) in literal.char_indices() {
+        if ch.is_whitespace() && offset > 0 {
+            push_unique_range(ranges, range.start..range.start + offset);
+        }
+    }
+}
+
+fn path_literal_range_contains_flag_segment(token: &str, range: &Range<usize>) -> bool {
+    token[range.clone()]
+        .split_whitespace()
+        .skip(1)
+        .any(|segment| segment.starts_with('-'))
+}
+
+fn first_later_absolute_path_split(token: &str, range: &Range<usize>) -> Option<usize> {
+    let literal = &token[range.clone()];
+    let mut whitespace_start = None;
+    let mut in_whitespace = false;
+    for (offset, ch) in literal.char_indices().skip(1) {
+        if ch.is_whitespace() {
+            if !in_whitespace {
+                whitespace_start = Some(offset);
+                in_whitespace = true;
+            }
+            continue;
+        }
+
+        if ch == '/' && !absolute_path_match_has_path_prefix(literal, offset) {
+            return whitespace_start.map(|split| range.start + split);
+        }
+
+        whitespace_start = None;
+        in_whitespace = false;
     }
     None
+}
+
+fn trim_trailing_whitespace_range(token: &str, range: Range<usize>) -> Range<usize> {
+    let trimmed = token[range.clone()].trim_end_matches(char::is_whitespace);
+    range.start..range.start + trimmed.len()
+}
+
+fn push_unique_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {
+    if !ranges.contains(&range) {
+        ranges.push(range);
+    }
 }
 
 fn path_like_subtoken_ranges(token: &str) -> Vec<Range<usize>> {
