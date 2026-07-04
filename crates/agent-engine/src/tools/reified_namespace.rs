@@ -456,7 +456,11 @@ fn reified_namespace_user_path_unavailable_reason(
     path: Option<std::ffi::OsString>,
 ) -> Option<String> {
     let visible_roots = reified_command_path_roots();
-    reified_namespace_user_path_unavailable_reason_with_roots(path, &visible_roots)
+    reified_namespace_user_path_unavailable_reason_with_roots(
+        path,
+        &visible_roots,
+        std::ffi::OsString::from(LINUX_REIFIED_COMMAND_PATH),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -470,6 +474,7 @@ fn reified_command_path_roots() -> Vec<PathBuf> {
 fn reified_namespace_user_path_unavailable_reason_with_roots(
     path: Option<std::ffi::OsString>,
     visible_roots: &[PathBuf],
+    reified_command_path: std::ffi::OsString,
 ) -> Option<String> {
     let path = path?;
     let visible_roots = visible_roots
@@ -477,6 +482,7 @@ fn reified_namespace_user_path_unavailable_reason_with_roots(
         .map(|root| canonicalize_existing_host_path(root))
         .collect::<Vec<_>>();
     let mut unsupported = Vec::new();
+    let mut current_executable_entries = Vec::new();
 
     for entry in std::env::split_paths(&path) {
         if entry.as_os_str().is_empty() {
@@ -495,6 +501,7 @@ fn reified_namespace_user_path_unavailable_reason_with_roots(
             .iter()
             .any(|root| entry == *root || entry.starts_with(root))
         {
+            push_unique_path(&mut current_executable_entries, entry);
             continue;
         }
 
@@ -504,15 +511,26 @@ fn reified_namespace_user_path_unavailable_reason_with_roots(
         }
     }
 
-    if unsupported.is_empty() {
-        None
-    } else {
-        Some(format!(
+    if !unsupported.is_empty() {
+        return Some(format!(
             "current PATH has executable entries outside the reified execution substrate: {}; \
              preserve user PATH/toolchain mounts before selecting linux_reified_namespace",
             unsupported.join(", ")
-        ))
+        ));
     }
+
+    let reified_executable_entries = executable_path_entries(&reified_command_path);
+    if current_executable_entries != reified_executable_entries {
+        return Some(format!(
+            "current PATH executable entry order differs from the reified command PATH: \
+             current=[{}], reified=[{}]; preserve actual PATH/order before selecting \
+             linux_reified_namespace",
+            format_path_entries(&current_executable_entries),
+            format_path_entries(&reified_executable_entries)
+        ));
+    }
+
+    None
 }
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
@@ -532,6 +550,40 @@ fn path_directory_has_executables(path: &Path) -> bool {
             .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
     })
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn executable_path_entries(path: &std::ffi::OsString) -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    for entry in std::env::split_paths(path) {
+        if entry.as_os_str().is_empty() || !entry.is_absolute() {
+            continue;
+        }
+        let entry = canonicalize_existing_host_path(&entry);
+        if path_directory_has_executables(&entry) {
+            push_unique_path(&mut entries, entry);
+        }
+    }
+    entries
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn push_unique_path(entries: &mut Vec<PathBuf>, entry: PathBuf) {
+    if !entries.contains(&entry) {
+        entries.push(entry);
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn format_path_entries(entries: &[PathBuf]) -> String {
+    if entries.is_empty() {
+        return "<none>".to_string();
+    }
+    entries
+        .iter()
+        .map(|entry| entry.display().to_string())
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 #[cfg(target_os = "linux")]
@@ -1655,8 +1707,9 @@ mod tests {
 
         assert_eq!(
             reified_namespace_user_path_unavailable_reason_with_roots(
-                Some(path),
+                Some(path.clone()),
                 std::slice::from_ref(&visible_root),
+                path,
             ),
             None
         );
@@ -1671,13 +1724,39 @@ mod tests {
         write_executable(&visible_root.join("bin/sh"));
         write_executable(&user_bin.join("cargo"));
         let path = std::env::join_paths([visible_root.join("bin"), user_bin.clone()]).unwrap();
+        let reified_path = std::env::join_paths([visible_root.join("bin")]).unwrap();
 
-        let reason =
-            reified_namespace_user_path_unavailable_reason_with_roots(Some(path), &[visible_root])
-                .expect("user-local executable PATH entry should block reified default selection");
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(path),
+            &[visible_root],
+            reified_path,
+        )
+        .expect("user-local executable PATH entry should block reified default selection");
 
         assert!(reason.contains(user_bin.to_string_lossy().as_ref()));
         assert!(reason.contains("preserve user PATH/toolchain mounts"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_path_smoke_rejects_reified_path_order_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let usr_bin = temp.path().join("usr/bin");
+        let local_bin = temp.path().join("usr/local/bin");
+        write_executable(&usr_bin.join("cargo"));
+        write_executable(&local_bin.join("cargo"));
+        let current_path = std::env::join_paths([usr_bin.as_path(), local_bin.as_path()]).unwrap();
+        let reified_path = std::env::join_paths([local_bin.as_path(), usr_bin.as_path()]).unwrap();
+
+        let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+            Some(current_path),
+            &[temp.path().to_path_buf()],
+            reified_path,
+        )
+        .expect("reified PATH reordering should block default selection");
+
+        assert!(reason.contains("current PATH executable entry order differs"));
+        assert!(reason.contains("preserve actual PATH/order"));
     }
 
     #[test]
