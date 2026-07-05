@@ -22,10 +22,10 @@ use std::time::Instant;
 use thiserror::Error;
 
 use super::sandbox::{ExecResult, NetworkPosture};
+#[cfg(test)]
+use super::sandbox_backend::LinuxReificationCapabilities;
 #[cfg(any(test, target_os = "linux"))]
-use super::sandbox_backend::{
-    LinuxReificationCapabilities, LinuxReificationCapability, LinuxReificationCapabilityReport,
-};
+use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabilityReport};
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
@@ -680,15 +680,21 @@ const SETUP_FAILURE_PREFIX: &str = "alan reified namespace setup failed:";
 const TRUSTED_LINUX_SETUP_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[cfg(any(target_os = "linux", test))]
-const LINUX_REIFIED_COMMAND_PATH: &str =
-    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+macro_rules! linux_reified_command_path {
+    () => {
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    };
+}
+
+#[cfg(any(target_os = "linux", test))]
+const LINUX_REIFIED_COMMAND_PATH: &str = linux_reified_command_path!();
 
 #[cfg(target_os = "linux")]
 const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = concat!(
     r#"
 set -u
 PATH='"#,
-    LINUX_REIFIED_COMMAND_PATH,
+    linux_reified_command_path!(),
     r#"'
 export PATH
 fail() {

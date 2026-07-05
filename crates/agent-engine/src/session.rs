@@ -1408,9 +1408,41 @@ impl Session {
         summary: &str,
         choice: Option<&str>,
     ) {
+        self.record_checkpoint_with_optional_knowledge_root(
+            checkpoint_id,
+            checkpoint_type,
+            summary,
+            choice,
+            None,
+        );
+    }
+
+    /// Record a checkpoint to persistence with an optional content-addressed
+    /// knowledge root.
+    pub fn record_checkpoint_with_optional_knowledge_root(
+        &self,
+        checkpoint_id: &str,
+        checkpoint_type: &str,
+        summary: &str,
+        choice: Option<&str>,
+        knowledge_root: Option<&str>,
+    ) {
         if let Some(recorder) = self.recorder.as_ref()
-            && let Err(err) =
-                recorder.record_checkpoint_nowait(checkpoint_id, checkpoint_type, summary, choice)
+            && let Err(err) = match knowledge_root {
+                Some(root) => recorder.record_checkpoint_with_knowledge_root_nowait(
+                    checkpoint_id,
+                    checkpoint_type,
+                    summary,
+                    choice,
+                    root,
+                ),
+                None => recorder.record_checkpoint_nowait(
+                    checkpoint_id,
+                    checkpoint_type,
+                    summary,
+                    choice,
+                ),
+            }
         {
             error!(error = %err, "Failed to record checkpoint");
         }
