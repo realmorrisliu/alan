@@ -288,7 +288,8 @@ where
                         pending,
                         choice_str,
                         modifications,
-                    );
+                    )
+                    .await;
                 }
                 Some(PendingYield::StructuredInput(pending)) => {
                     state.session.add_tool_message(
@@ -398,7 +399,50 @@ fn default_confirmation_choice(pending: &crate::approval::PendingConfirmation) -
     }
 }
 
-fn handle_confirmation_resolution(
+fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
+    match choice_str {
+        "approve" => "approved",
+        "reject" => "rejected",
+        _ => choice_str,
+    }
+}
+
+async fn persist_runtime_confirmation_checkpoint(
+    state: &RuntimeLoopState,
+    pending: &crate::approval::PendingConfirmation,
+    choice_str: &str,
+) {
+    let knowledge_root = match state
+        .namespace_environment()
+        .current_tape_checkpoint()
+        .await
+    {
+        Ok(root) => {
+            let trimmed = root.trim();
+            if trimmed.is_empty() { None } else { Some(root) }
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                checkpoint_id = %pending.checkpoint_id,
+                checkpoint_type = %pending.checkpoint_type,
+                "Failed to read namespace tape checkpoint for rollout persistence"
+            );
+            None
+        }
+    };
+    state
+        .session
+        .record_checkpoint_with_optional_knowledge_root(
+            &pending.checkpoint_id,
+            &pending.checkpoint_type,
+            &pending.summary,
+            Some(checkpoint_choice_for_rollout(choice_str)),
+            knowledge_root.as_deref(),
+        );
+}
+
+async fn handle_confirmation_resolution(
     state: &mut RuntimeLoopState,
     pending: crate::approval::PendingConfirmation,
     choice_str: &str,
@@ -437,6 +481,7 @@ fn handle_confirmation_resolution(
         state
             .session
             .add_user_control_message_parts(vec![ContentPart::structured(payload)]);
+        persist_runtime_confirmation_checkpoint(state, &pending, choice_str).await;
     } else {
         state
             .session
@@ -1156,6 +1201,142 @@ mod tests {
         let messages = state.session.tape.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("modify"));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_confirmation_resume_persists_checkpoint_with_knowledge_root() {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session = Session::new_with_id_and_recorder_in_dir(
+            "runtime-confirmation-checkpoint-with-root",
+            "test-model",
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
+        state.environment = environment;
+        state
+            .namespace_environment()
+            .write_user_state("seed confirmation context")
+            .await
+            .unwrap();
+        let expected_root = state
+            .namespace_environment()
+            .current_tape_checkpoint()
+            .await
+            .unwrap();
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "tool_escalation_call_123".to_string(),
+                checkpoint_type: crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+                summary: "Approve tool escalation?".to_string(),
+                details: json!({}),
+                options: vec!["approve".to_string(), "reject".to_string()],
+            });
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "tool_escalation_call_123".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let checkpoint = items
+            .iter()
+            .find_map(|item| match item {
+                RolloutItem::Checkpoint(checkpoint)
+                    if checkpoint.checkpoint_id == "tool_escalation_call_123" =>
+                {
+                    Some(checkpoint)
+                }
+                _ => None,
+            })
+            .expect("expected persisted runtime confirmation checkpoint");
+        assert_eq!(
+            checkpoint.checkpoint_type,
+            crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE
+        );
+        assert_eq!(checkpoint.choice.as_deref(), Some("rejected"));
+        assert_eq!(
+            checkpoint.knowledge_root.as_deref(),
+            Some(expected_root.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_runtime_confirmation_resume_persists_checkpoint_without_knowledge_root_on_read_failure()
+     {
+        let temp = TempDir::new().unwrap();
+        let mut state = create_test_state();
+        state.session = Session::new_with_id_and_recorder_in_dir(
+            "runtime-confirmation-checkpoint-no-root",
+            "test-model",
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        let root = InProcessTransport::new(Arc::new(MountFs::new(Namespace::new())));
+        state.environment = RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ));
+        state
+            .turn_state
+            .set_confirmation(crate::approval::PendingConfirmation {
+                checkpoint_id: "tool_escalation_call_456".to_string(),
+                checkpoint_type: crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+                summary: "Approve tool escalation?".to_string(),
+                details: json!({}),
+                options: vec!["approve".to_string(), "reject".to_string()],
+            });
+        let cancel = CancellationToken::new();
+
+        let mut emit = |_event: Event| async {};
+        let op = Op::Resume {
+            request_id: "tool_escalation_call_456".to_string(),
+            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
+        };
+
+        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::ResumeTurn,
+                ..
+            }
+        ));
+
+        state.session.flush().await;
+        let rollout_path = state.session.rollout_path().unwrap().clone();
+        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
+        let checkpoint = items
+            .iter()
+            .find_map(|item| match item {
+                RolloutItem::Checkpoint(checkpoint)
+                    if checkpoint.checkpoint_id == "tool_escalation_call_456" =>
+                {
+                    Some(checkpoint)
+                }
+                _ => None,
+            })
+            .expect("expected persisted runtime confirmation checkpoint");
+        assert_eq!(checkpoint.choice.as_deref(), Some("rejected"));
+        assert!(checkpoint.knowledge_root.is_none());
     }
 
     #[tokio::test]
