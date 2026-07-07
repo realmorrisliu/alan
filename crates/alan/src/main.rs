@@ -13,11 +13,10 @@ mod host_mounts;
 pub mod registry;
 mod skill_catalog;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -1141,94 +1140,82 @@ async fn main() -> Result<()> {
             if !alan_tui::terminal::is_interactive_terminal() {
                 anyhow::bail!("{}", alan_tui::terminal::terminal_capability_error());
             }
-            let mut config = prepare_tui_config(agent_name).await?;
+            let (mut config, controller) = prepare_file_backed_tui_config(agent_name).await?;
             config.require_interactive_terminal = false;
-            alan_tui::run(config).await?;
+            let run_result = alan_tui::run_file_backed(config).await;
+            let shutdown_result = controller.shutdown().await;
+            run_result?;
+            shutdown_result?;
         }
     }
 
     Ok(())
 }
 
-async fn prepare_tui_config(agent_name: Option<String>) -> Result<alan_tui::RunConfig> {
-    let endpoints = Arc::new(AlanEndpointContract);
-    let agentd_url_override = host_config::daemon_url_env_override();
+async fn prepare_file_backed_tui_config(
+    agent_name: Option<String>,
+) -> Result<(
+    alan_tui::FileBackedRunConfig,
+    alan_agent_engine::RuntimeController,
+)> {
+    let workspace_root =
+        std::env::current_dir().context("failed to determine current directory")?;
+    let workspace_alan_dir = alan_agent_engine::workspace_alan_dir(&workspace_root);
+    let mut runtime_config = alan_agent_engine::WorkspaceRuntimeConfig::from(
+        cli::load_agent_config_metadata_with_notice()?,
+    );
+    runtime_config.agent_name = agent_name;
+    runtime_config.workspace_root_dir = Some(workspace_root.clone());
+    runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
 
-    let base_url = if let Some(remote_url) = agentd_url_override {
-        let client =
-            alan_tui::daemon_client::DaemonClient::new(remote_url.clone(), endpoints.clone());
-        client.health().await?;
-        remote_url
-    } else {
-        cli::load_agent_config_with_notice()?;
-        cli::daemon::ensure_daemon_running_with_state().await?;
-        cli::daemon::daemon_url()
+    if let Some(paths) = alan_agent_engine::AlanHomePaths::detect() {
+        runtime_config.chatgpt_auth_storage_path = Some(paths.global_auth_path.clone());
+        runtime_config.agent_home_paths = Some(paths.clone());
+    }
+
+    let skill_candidates = match skill_catalog::resolve_skill_catalog_context(&runtime_config)
+        .and_then(|context| skill_catalog::build_skill_catalog_snapshot(&context))
+    {
+        Ok(snapshot) => snapshot
+            .skills
+            .into_iter()
+            .map(|skill| {
+                alan_tui::completion::CompletionCandidate::new(
+                    if skill.name.is_empty() {
+                        skill.id
+                    } else {
+                        skill.name
+                    },
+                    Some(skill.description),
+                )
+            })
+            .collect(),
+        Err(err) => {
+            tracing::debug!(error = %format!("{err:#}"), "local skill catalog unavailable for file-backed TUI");
+            Vec::new()
+        }
     };
 
-    let mut config = alan_tui::RunConfig::new(base_url, endpoints);
-    config.agent_name = agent_name;
+    let mut launch = alan_agent_engine::spawn_with_namespace_surface(runtime_config)
+        .await
+        .context("failed to spawn file-backed runtime surface")?;
+    launch
+        .controller
+        .wait_until_ready()
+        .await
+        .context("file-backed runtime failed before becoming ready")?;
+
+    let mut config = alan_tui::FileBackedRunConfig::new(
+        launch.surface.root_transport(),
+        launch.surface.agent_path().to_string(),
+    );
+    config.workspace_dir = Some(workspace_root);
     config.history_path = alan_agent_engine::AlanHomePaths::detect()
         .map(|paths| paths.alan_home_dir.join("tui_history"));
-    Ok(config)
+    config.skill_candidates = skill_candidates;
+
+    Ok((config, launch.controller))
 }
-
-#[derive(Debug)]
-struct AlanEndpointContract;
-
-impl alan_tui::daemon_client::EndpointContract for AlanEndpointContract {
-    fn health(&self) -> &'static str {
-        daemon::api_contract::paths::HEALTH
-    }
-
-    fn sessions(&self) -> &'static str {
-        daemon::api_contract::paths::sessions()
-    }
-
-    fn session_read(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_read(session_id)
-    }
-
-    fn session_reconnect_snapshot(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_reconnect_snapshot(session_id)
-    }
-
-    fn session_history(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_history(session_id)
-    }
-
-    fn session_events_read(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_events_read(session_id)
-    }
-
-    fn session_events(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_events(session_id)
-    }
-
-    fn session_submit(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_submit(session_id)
-    }
-
-    fn session_resume(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_resume(session_id)
-    }
-
-    fn session_rollback(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_rollback(session_id)
-    }
-
-    fn session_compact(&self, session_id: &str) -> String {
-        daemon::api_contract::paths::session_compact(session_id)
-    }
-
-    fn connections_current(&self) -> &'static str {
-        daemon::api_contract::paths::CONNECTIONS_CURRENT
-    }
-
-    fn skills_catalog(&self) -> &'static str {
-        daemon::api_contract::paths::SKILLS_CATALOG
-    }
-}
-
 fn shell_target_options(args: ShellTargetArgs) -> cli::shell::ShellTargetOptions {
     cli::shell::ShellTargetOptions {
         socket: args.socket,
@@ -1254,17 +1241,14 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::AlanEndpointContract;
-    use alan_tui::daemon_client::EndpointContract;
+    use super::Cli;
+    use clap::Parser;
 
     #[test]
-    fn endpoint_contract_uses_daemon_api_contract_paths() {
-        let endpoints = AlanEndpointContract;
-        assert_eq!(endpoints.health(), "/health");
-        assert_eq!(endpoints.sessions(), "/api/v1/sessions");
-        assert_eq!(
-            endpoints.session_submit("session/id"),
-            "/api/v1/sessions/session%2Fid/submit"
-        );
+    fn hidden_tui_backend_flag_is_unavailable() {
+        let err = Cli::try_parse_from(["alan", "--tui-backend", "daemon"])
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("--tui-backend"));
     }
 }

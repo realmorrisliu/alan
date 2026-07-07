@@ -14,6 +14,7 @@
 //! machine/tape # the agent appends the tape (append-only source of truth)
 //! machine/status # read-only run-state
 //! machine/ctl  # agent-runtime control: compact/rollback (engine-owned semantics)
+//! machine/ui   # renderer-visible runtime UI snapshots + watchable UI event stream
 //! requests/    # clone-via-open: the agent opens a yield; a consumer answers by
 //!              # writing `response` (committed on clunk), which settles it
 //! actions/     # clone-via-open: the agent records a tool call and its result
@@ -60,6 +61,10 @@ rollback  roll back to the previous checkpoint
 ";
 
 const TAPE_ROOT_NAME: &str = "machine/tape";
+const DEFAULT_UI_ACTIVITY: &str = r#"{"version":1,"state":"idle"}"#;
+const DEFAULT_UI_PLAN: &str = r#"{"version":1,"items":[]}"#;
+const DEFAULT_UI_THINKING: &str = r#"{"version":1,"state":"idle","text":""}"#;
+const DEFAULT_UI_NOTICE: &str = r#"{"version":1,"kind":"none","message":""}"#;
 
 #[derive(Default)]
 struct Request {
@@ -93,6 +98,7 @@ struct State {
     /// Per-container notification streams: a new request/action or field change.
     request_events: Stream,
     action_events: Stream,
+    ui_events: Stream,
     tape: Stream,
     knowledge: KnowledgeStore,
     tape_root: ContentHash,
@@ -101,6 +107,10 @@ struct State {
     /// Agent run-state (machine/status): read-only over aP, transitioned only by
     /// lifecycle verbs on machine/ctl (D7).
     status: String,
+    ui_activity: String,
+    ui_plan: String,
+    ui_thinking: String,
+    ui_notice: String,
     next_request: u64,
     next_action: u64,
     /// The fid currently holding the exclusive-write lease on `machine/tape`, if
@@ -153,6 +163,12 @@ enum Node {
     /// (agent-file-layout-contract). Generic process control (interrupt/cancel)
     /// is the kernel's `/proc/<pid>/ctl`, not here.
     MachineCtl,
+    UiDir,
+    UiActivity,
+    UiPlan,
+    UiThinking,
+    UiNotice,
+    UiEvents,
     CheckpointsDir,
     CurrentCheckpoint,
     Events,
@@ -192,12 +208,17 @@ impl AgentFs {
                 io_events: Stream::new(),
                 request_events: Stream::new(),
                 action_events: Stream::new(),
+                ui_events: Stream::new(),
                 tape: Stream::new(),
                 knowledge,
                 tape_root,
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
                 status: "running".to_string(),
+                ui_activity: DEFAULT_UI_ACTIVITY.to_string(),
+                ui_plan: DEFAULT_UI_PLAN.to_string(),
+                ui_thinking: DEFAULT_UI_THINKING.to_string(),
+                ui_notice: DEFAULT_UI_NOTICE.to_string(),
                 next_request: 0,
                 next_action: 0,
                 tape_writer: None,
@@ -306,7 +327,16 @@ impl State {
                 "tape" => Ok(Node::Tape),
                 "status" => Ok(Node::Status),
                 "ctl" => Ok(Node::MachineCtl),
+                "ui" => Ok(Node::UiDir),
                 "checkpoints" => Ok(Node::CheckpointsDir),
+                _ => Err(ErrorCode::NotFound),
+            },
+            Node::UiDir => match name {
+                "activity" => Ok(Node::UiActivity),
+                "plan" => Ok(Node::UiPlan),
+                "thinking" => Ok(Node::UiThinking),
+                "notice" => Ok(Node::UiNotice),
+                "events" => Ok(Node::UiEvents),
                 _ => Err(ErrorCode::NotFound),
             },
             Node::CheckpointsDir => match name {
@@ -354,10 +384,15 @@ impl State {
             Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
-            Node::MachineDir => b"tape\nstatus\nctl\ncheckpoints".to_vec(),
+            Node::MachineDir => b"tape\nstatus\nctl\nui\ncheckpoints".to_vec(),
+            Node::UiDir => b"activity\nplan\nthinking\nnotice\nevents".to_vec(),
             Node::CheckpointsDir => b"current".to_vec(),
             Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
             Node::Status => self.status.clone().into_bytes(),
+            Node::UiActivity => self.ui_activity.clone().into_bytes(),
+            Node::UiPlan => self.ui_plan.clone().into_bytes(),
+            Node::UiThinking => self.ui_thinking.clone().into_bytes(),
+            Node::UiNotice => self.ui_notice.clone().into_bytes(),
             // machine/ctl exposes its accepted commands in-band, so a
             // namespace-native client discovers them by reading the file rather
             // than from external docs (self-describing namespace).
@@ -397,6 +432,7 @@ impl State {
             | Node::IoEvents
             | Node::Tape
             | Node::Events
+            | Node::UiEvents
             | Node::RequestsEvents
             | Node::ActionsEvents => {
                 return Err(ErrorCode::Unsupported);
@@ -414,6 +450,7 @@ impl State {
             Node::Events => Some(self.events.clone()),
             // io/events is IO-scoped; the per-container streams are their own.
             Node::IoEvents => Some(self.io_events.clone()),
+            Node::UiEvents => Some(self.ui_events.clone()),
             Node::RequestsEvents => Some(self.request_events.clone()),
             Node::ActionsEvents => Some(self.action_events.clone()),
             _ => None,
@@ -558,9 +595,12 @@ impl FileServer for AgentFs {
         };
         let read_write_base = if matches!(mode, OpenMode::ReadWrite) {
             match &node {
-                Node::RequestField(..) | Node::ActionField(..) => {
-                    Some(state.computed_bytes(&node)?)
-                }
+                Node::UiActivity
+                | Node::UiPlan
+                | Node::UiThinking
+                | Node::UiNotice
+                | Node::RequestField(..)
+                | Node::ActionField(..) => Some(state.computed_bytes(&node)?),
                 _ => None,
             }
         } else {
@@ -632,11 +672,13 @@ impl FileServer for AgentFs {
         match node {
             // The agent appends assistant output and tape records directly. Output
             // also goes to the IO-scoped io/events stream; both go to the aggregate.
-            Node::Output | Node::Tape => {
+            Node::Output | Node::Tape | Node::UiEvents => {
                 let stream = state.stream_for(&node).expect("stream node");
                 let is_output = matches!(node, Node::Output);
                 let record = if is_output {
                     format!("output:{}\n", data.len())
+                } else if matches!(node, Node::UiEvents) {
+                    format!("ui:events:{}\n", data.len())
                 } else {
                     format!("tape:{}\n", data.len())
                 };
@@ -666,7 +708,13 @@ impl FileServer for AgentFs {
             // io/input and request/action data fields are framed documents: buffer
             // at offset and commit the whole unit on clunk, so a turn never starts
             // on a truncated message (commit-on-clunk).
-            Node::Input | Node::RequestField(..) | Node::ActionField(..) => {
+            Node::Input
+            | Node::UiActivity
+            | Node::UiPlan
+            | Node::UiThinking
+            | Node::UiNotice
+            | Node::RequestField(..)
+            | Node::ActionField(..) => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
@@ -694,6 +742,7 @@ impl FileServer for AgentFs {
             | Node::Input
             | Node::Events
             | Node::IoEvents
+            | Node::UiEvents
             | Node::RequestsEvents
             | Node::ActionsEvents => state.stream_for(&node).expect("stream").len().await,
             Node::Tape => state.materialized_tape()?.len() as u64,
@@ -807,6 +856,33 @@ impl FileServer for AgentFs {
                 .events
                 .append(format!("action:{id}\n").as_bytes())
                 .await;
+        } else if matches!(
+            f.node,
+            Node::UiActivity | Node::UiPlan | Node::UiThinking | Node::UiNotice
+        ) && f.wrote
+        {
+            let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+            let (node, record) = match f.node {
+                Node::UiActivity => {
+                    state.ui_activity = value;
+                    (Node::UiActivity, "ui:activity\n")
+                }
+                Node::UiPlan => {
+                    state.ui_plan = value;
+                    (Node::UiPlan, "ui:plan\n")
+                }
+                Node::UiThinking => {
+                    state.ui_thinking = value;
+                    (Node::UiThinking, "ui:thinking\n")
+                }
+                Node::UiNotice => {
+                    state.ui_notice = value;
+                    (Node::UiNotice, "ui:notice\n")
+                }
+                _ => unreachable!("matched above"),
+            };
+            state.bump(&node);
+            state.events.append(record.as_bytes()).await;
         }
         Ok(())
     }
@@ -827,6 +903,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::Root => (FileKind::Dir, "/".to_string()),
         Node::IoDir => (FileKind::Dir, "io".into()),
         Node::MachineDir => (FileKind::Dir, "machine".into()),
+        Node::UiDir => (FileKind::Dir, "machine/ui".into()),
         Node::CheckpointsDir => (FileKind::Dir, "machine/checkpoints".into()),
         Node::RequestsDir => (FileKind::Dir, "requests".into()),
         Node::ActionsDir => (FileKind::Dir, "actions".into()),
@@ -843,8 +920,13 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::IoEvents => (FileKind::Stream, "io/events".into()),
         Node::Tape => (FileKind::Stream, "machine/tape".into()),
         Node::Events => (FileKind::Stream, "events".into()),
+        Node::UiEvents => (FileKind::Stream, "machine/ui/events".into()),
         Node::Status => (FileKind::File, "machine/status".into()),
         Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
+        Node::UiActivity => (FileKind::File, "machine/ui/activity".into()),
+        Node::UiPlan => (FileKind::File, "machine/ui/plan".into()),
+        Node::UiThinking => (FileKind::File, "machine/ui/thinking".into()),
+        Node::UiNotice => (FileKind::File, "machine/ui/notice".into()),
         Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
         Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
         Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
@@ -875,6 +957,11 @@ fn is_writable(node: &Node) -> bool {
         | Node::Output
         | Node::Tape
         | Node::MachineCtl
+        | Node::UiActivity
+        | Node::UiPlan
+        | Node::UiThinking
+        | Node::UiNotice
+        | Node::UiEvents
         | Node::RequestsClone
         | Node::ActionsClone
         | Node::ActionField(..) => true,

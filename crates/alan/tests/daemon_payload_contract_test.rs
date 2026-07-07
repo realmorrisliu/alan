@@ -1,4 +1,4 @@
-//! Snapshot-style checks for selected daemon payload fields consumed by the Rust TUI.
+//! Snapshot-style checks for selected daemon payload fields consumed by dynamic clients.
 
 use alan::daemon::connection_control::{ConnectionCredentialStatusKind, ConnectionProfileSummary};
 use alan::daemon::connection_routes::{
@@ -15,15 +15,28 @@ use chrono::Utc;
 use std::collections::BTreeMap;
 
 #[test]
-fn rust_tui_create_session_payload_accepts_daemon_response() {
+fn create_session_payload_preserves_selected_terminal_fields() {
     let payload = serde_json::to_value(sample_create_session_response()).unwrap();
-    let decoded: alan_tui::daemon_client::CreateSession = serde_json::from_value(payload).unwrap();
+    let object = payload
+        .as_object()
+        .expect("create-session payload should serialize as an object");
 
-    assert_eq!(decoded.session_id, "sess-1");
-    assert_eq!(decoded.profile_id.as_deref(), Some("chatgpt-main"));
-    assert_eq!(decoded.resolved_model.as_deref(), Some("gpt-5.3-codex"));
-    assert!(decoded.provider.is_some());
-    assert!(decoded.durability.is_some());
+    assert_eq!(
+        object.get("session_id").and_then(serde_json::Value::as_str),
+        Some("sess-1")
+    );
+    assert_eq!(
+        object.get("profile_id").and_then(serde_json::Value::as_str),
+        Some("chatgpt-main")
+    );
+    assert_eq!(
+        object
+            .get("resolved_model")
+            .and_then(serde_json::Value::as_str),
+        Some("gpt-5.3-codex")
+    );
+    assert!(object.contains_key("provider"));
+    assert!(object.contains_key("durability"));
 }
 
 #[test]

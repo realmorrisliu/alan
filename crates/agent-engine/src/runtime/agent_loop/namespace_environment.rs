@@ -14,7 +14,10 @@ use std::{
     },
 };
 
-use alan_agent_protocol::{ContentPart, Event, InputMode, Op, Submission};
+use alan_agent_protocol::{
+    ContentPart, Event, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot,
+};
 use alan_ap::{ErrorCode, Fid, FileKind, InProcessTransport, OpenMode, Request, Response, Stat};
 use alan_llm::{GenerationRequest, GenerationResponse};
 use anyhow::{Context, Result, bail};
@@ -229,6 +232,7 @@ pub struct NamespaceRuntimeEnvironment {
     llm_connection: String,
     shared_services: Option<NamespaceSharedServices>,
     input_offset: Arc<AtomicU64>,
+    control_offset: Arc<AtomicU64>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
 }
@@ -269,6 +273,7 @@ impl NamespaceRuntimeEnvironment {
             llm_connection: llm_connection.into(),
             shared_services: None,
             input_offset: Arc::new(AtomicU64::new(0)),
+            control_offset: Arc::new(AtomicU64::new(0)),
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
         }
@@ -313,8 +318,7 @@ impl NamespaceRuntimeEnvironment {
         &self.llm_connection
     }
 
-    #[cfg(test)]
-    pub(crate) fn root_transport(&self) -> InProcessTransport {
+    pub fn root_transport(&self) -> InProcessTransport {
         self.root.clone()
     }
 
@@ -382,6 +386,45 @@ impl NamespaceRuntimeEnvironment {
             parts: vec![ContentPart::text(message)],
             mode,
         }))
+    }
+
+    pub async fn read_next_machine_control_submission(&self) -> Result<Option<Submission>> {
+        let events_path = format!("{}/events", self.agent_path);
+        let client = self.client();
+        let offset = self.control_offset.load(Ordering::Relaxed);
+        let stat = client
+            .stat_path(&events_path)
+            .await
+            .with_context(|| format!("stat agent events from {events_path}"))?;
+        if stat.length <= offset {
+            return Ok(None);
+        }
+
+        let raw = client
+            .read_file_range(&events_path, offset, stat.length - offset)
+            .await
+            .with_context(|| format!("read agent events from {events_path}"))?;
+        let mut consumed = 0_u64;
+
+        for line in raw.split_inclusive(|byte| *byte == b'\n') {
+            if !line.ends_with(b"\n") {
+                break;
+            }
+            consumed += line.len() as u64;
+            let record = String::from_utf8(line[..line.len() - 1].to_vec())
+                .context("agent events record is not utf8")?;
+            if let Some(command) = record.strip_prefix("ctl:") {
+                self.control_offset
+                    .store(offset + consumed, Ordering::Relaxed);
+                if let Some(submission) = machine_control_submission(command) {
+                    return Ok(Some(submission));
+                }
+            }
+        }
+
+        self.control_offset
+            .store(offset + consumed, Ordering::Relaxed);
+        Ok(None)
     }
 
     pub async fn resume_submission_from_answered_request(
@@ -589,6 +632,37 @@ impl NamespaceRuntimeEnvironment {
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
         write_action_record(&client, &self.agent_path, record).await
+    }
+
+    pub(crate) async fn write_ui_activity_snapshot(
+        &self,
+        snapshot: &UiActivitySnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(&client, &ui_activity_path(&self.agent_path), snapshot).await
+    }
+
+    pub(crate) async fn write_ui_plan_snapshot(&self, snapshot: &UiPlanSnapshot) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(&client, &ui_plan_path(&self.agent_path), snapshot).await
+    }
+
+    pub(crate) async fn write_ui_thinking_snapshot(
+        &self,
+        snapshot: &UiThinkingSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(&client, &ui_thinking_path(&self.agent_path), snapshot).await
+    }
+
+    pub(crate) async fn write_ui_notice_snapshot(&self, snapshot: &UiNoticeSnapshot) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(&client, &ui_notice_path(&self.agent_path), snapshot).await
+    }
+
+    pub(crate) async fn append_ui_event(&self, event: &UiEvent) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        append_json_line(&client, &ui_events_path(&self.agent_path), event).await
     }
 
     pub async fn spawn_process<I, S>(&self, executable: &str, args: I) -> Result<String>
@@ -1443,6 +1517,14 @@ fn request_response_content_part(response: String) -> ContentPart {
     }
 }
 
+fn machine_control_submission(command: &str) -> Option<Submission> {
+    match command.trim() {
+        "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
+        "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
+        _ => None,
+    }
+}
+
 async fn write_request_record(
     client: &NamespaceClient,
     agent_path: &str,
@@ -1506,6 +1588,45 @@ async fn write_action_record(
             .await?;
     }
     Ok(id)
+}
+
+fn ui_activity_path(agent_path: &str) -> String {
+    format!("{agent_path}/machine/ui/activity")
+}
+
+fn ui_plan_path(agent_path: &str) -> String {
+    format!("{agent_path}/machine/ui/plan")
+}
+
+fn ui_thinking_path(agent_path: &str) -> String {
+    format!("{agent_path}/machine/ui/thinking")
+}
+
+fn ui_notice_path(agent_path: &str) -> String {
+    format!("{agent_path}/machine/ui/notice")
+}
+
+fn ui_events_path(agent_path: &str) -> String {
+    format!("{agent_path}/machine/ui/events")
+}
+
+async fn write_json_document<T: Serialize>(
+    client: &NamespaceClient,
+    path: &str,
+    value: &T,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(value).context("serialize ui snapshot")?;
+    client.write_document(path, &bytes).await
+}
+
+async fn append_json_line<T: Serialize>(
+    client: &NamespaceClient,
+    path: &str,
+    value: &T,
+) -> Result<()> {
+    let mut bytes = serde_json::to_vec(value).context("serialize ui event")?;
+    bytes.push(b'\n');
+    client.write_document(path, &bytes).await
 }
 
 struct InputFrame {
@@ -1702,6 +1823,17 @@ impl NamespaceClient {
         }
     }
 
+    async fn read_file_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let fid = self.open_path_guarded(path, OpenMode::Read).await?;
+        let data = self.read_range_opened(fid.fid(), offset, length).await;
+        let clunk = fid.close().await;
+        match (data, clunk) {
+            (Ok(data), Ok(())) => Ok(data),
+            (Err(err), _) => Err(err),
+            (_, Err(err)) => Err(err),
+        }
+    }
+
     async fn stat_path(&self, path: &str) -> Result<Stat> {
         let fid = self.walk_to(path).await?;
         let stat = self.stat(fid).await;
@@ -1835,6 +1967,25 @@ impl NamespaceClient {
             (Err(err), _) => Err(err),
             (_, Err(err)) => Err(err),
         }
+    }
+
+    async fn read_range_opened(&self, fid: Fid, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let mut next_offset = offset;
+        let mut remaining = length;
+        let mut data = Vec::with_capacity(length.min(64 * 1024) as usize);
+        while remaining > 0 {
+            let count = remaining.min(64 * 1024) as u32;
+            let chunk = self.read_at(fid, next_offset, count).await?;
+            if chunk.is_empty() {
+                bail!("file ended before requested range was reached");
+            }
+            next_offset += chunk.len() as u64;
+            remaining = remaining
+                .checked_sub(chunk.len() as u64)
+                .context("read exceeded requested range")?;
+            data.extend_from_slice(&chunk);
+        }
+        Ok(data)
     }
 
     async fn clunk(&self, fid: Fid) -> Result<()> {
@@ -2651,6 +2802,55 @@ mod tests {
         assert_eq!(
             messages[0].tool_responses()[0].text_content(),
             r#"{"answers":[{"question_id":"q1","value":"answer from request file"}]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn machine_ctl_records_become_control_submissions_in_order() {
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        shell
+            .write("/agent/1/io/output", b"assistant output")
+            .await
+            .unwrap();
+        shell
+            .write("/agent/1/machine/ctl", b"compact")
+            .await
+            .unwrap();
+        shell
+            .write("/agent/1/machine/ctl", b"rollback")
+            .await
+            .unwrap();
+
+        let compact = environment
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .expect("compact command should produce a submission");
+        assert!(matches!(compact.op, Op::CompactWithOptions { focus: None }));
+
+        let rollback = environment
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .expect("rollback command should produce a submission");
+        assert!(matches!(rollback.op, Op::Rollback { turns: 1 }));
+
+        assert!(
+            environment
+                .read_next_machine_control_submission()
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 
