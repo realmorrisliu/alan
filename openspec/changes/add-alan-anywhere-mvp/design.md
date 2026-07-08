@@ -1,17 +1,26 @@
 ## Context
 
-The current remote-control architecture already separates Agent Node, Relay,
-and Remote Client responsibilities. It also has a relay MVP, node routing
-metadata, sticky session-to-node binding, reconnect snapshots, and scoped
-remote-control checks. That foundation is intentionally technical: operators
-enable relay mode with environment variables, pass node IDs and tokens, and
-clients address relay nodes directly.
-
-alan Anywhere changes the product boundary. The user should experience alan as
-available across their own devices: work started on Mac can continue from
-iPhone. The system can still use an outbound relay under the hood, but the
+Alan Anywhere is the product experience over Alan OS remote attachment. The
+user should experience Alan as available across their own devices: an iPhone can
+enter the user's Mac-hosted Alan OS and work through the returned namespace. The
+system can still use outbound relay byte transport under the hood, but the
 product must not ask the user to understand tunnels, daemon URLs, VPNs, public
-IPs, SSH, router configuration, or port forwarding.
+IPs, SSH, router configuration, port forwarding, or relay nodes.
+
+The canonical architecture is `Remote Product Control Plane` plus
+`Remote Access Service`. Product account/device infrastructure handles owned
+device discovery, presence, relay brokerage, and short-lived entry tickets.
+Alan OS handles entry: `Remote Access Service` authenticates the ticket,
+creates or reattaches a `Remote Entry Process`, and hands off that process
+namespace root. After handoff, clients read files, tail streams, write `ctl`,
+answer request files, and spawn executables. There is no HTTP/WebSocket
+compatibility gateway.
+
+The OS entry model itself — bootstrap tree, one-shot handoff, entry process,
+leases, revocation, `/mnt/remote`, `/mnt/peer` — is anchored by ADR-0028 and
+owned as a contract by `define-remote-access-service`
+(`remote-access-service` capability). This change designs only the product
+plane above it and MUST NOT restate or fork those OS semantics.
 
 ## Goals / Non-Goals
 
@@ -19,17 +28,16 @@ IPs, SSH, router configuration, or port forwarding.
 
 - Make a signed-in alan Desktop automatically become remotely reachable from
   the user's own iPhone without inbound network exposure.
-- Let the iPhone app discover the user's online Macs and continue a selected
-  session or work context using the same alan account.
-- Preserve Mac-authoritative runtime execution, tool execution, governance,
-  session state, and event ordering.
-- Support realtime message submission, streamed output, interrupt, yield
-  resume, and reconnect recovery over the remote path.
-- Bind remote access to account identity, device identity, scoped short-lived
-  credentials, revocation, and encrypted transport.
-- Keep existing direct/relay architecture as the lower-level transport
-  foundation while replacing operator-facing setup with product-managed
-  enrollment and presence.
+- Let the iPhone app discover the user's online Macs and enter the selected
+  device through `Remote Access Service`.
+- Preserve Mac-authoritative namespace state, process execution, agent
+  execution, tool execution, governance, and stream ordering.
+- Support realtime stream reads, process control writes, request responses,
+  executable invocation, and reconnect recovery over the remote path.
+- Bind remote access to account identity, device identity, short-lived remote
+  entry tickets, revocation, and encrypted transport.
+- Keep direct/relay as byte-delivery transport modes while replacing
+  operator-facing setup with product-managed enrollment and presence.
 
 **Non-Goals:**
 
@@ -48,23 +56,22 @@ IPs, SSH, router configuration, or port forwarding.
 ## Decisions
 
 1. Use alan Cloud as an account/device directory plus relay broker, not as a
-   runtime authority.
+   runtime or OS authority.
 
    alan Cloud owns user authentication, device enrollment, presence, relay
    routing, short-lived token issuance, revocation, and audit metadata. It does
-   not execute tools, read local workspace files, decide governance outcomes,
-   author session events, or advance runtime state.
+   not execute tools, read namespace files, decide governance outcomes, author
+   stream records, spawn processes, or advance runtime state.
 
-   Alternative considered: expose `alan-agentd` directly from the Mac. That
+   Alternative considered: expose a daemon endpoint directly from the Mac. That
    conflicts with zero configuration and would require public IP, router, or
    tunnel knowledge for many users.
 
 2. Treat the Mac as the authoritative execution device.
 
-   The Mac owns the local daemon/runtime, session store, workspace identity,
-   event ordering, reconnect snapshot, tool execution, and policy decisions.
-   Relay and iPhone requests are remote inputs to the Mac, not remote execution
-   contexts.
+   The Mac owns Alan OS namespace state, process state, stream ordering, lease
+   state, tool execution, and policy decisions. Relay and iPhone bytes are
+   remote access to that host, not remote execution contexts.
 
    Alternative considered: proxy workspace state through alan Cloud and allow
    cloud-side execution for continuity. That would break the security and
@@ -73,44 +80,45 @@ IPs, SSH, router configuration, or port forwarding.
 3. Add product-managed device enrollment above the existing relay tunnel.
 
    A signed-in Desktop creates or refreshes a stable local device identity,
-   stores device credentials in Keychain, requests short-lived relay tickets,
-   and starts the outbound relay connection automatically. The user sees
-   device availability, not relay configuration.
+   stores device credentials in Keychain, requests short-lived remote entry
+   tickets, and starts outbound relay byte transport automatically when needed.
+   The user sees device availability, not relay configuration.
 
    Alternative considered: continue using `ALAN_RELAY_URL`,
    `ALAN_RELAY_NODE_ID`, and `ALAN_RELAY_NODE_TOKEN` as the primary path.
    Those remain useful for development/operator modes but cannot be the MVP
    product path.
 
-4. Model the user-facing surface as devices, current work, and sessions.
+4. Model the pre-attachment surface as device availability.
 
-   The iPhone app should list the user's online Macs and connectable
-   sessions or work contexts. It should not display relay node IDs, daemon base
-   URLs, tunnel status, or raw routing headers unless a debug surface is
-   explicitly opened.
+   The iPhone app should list the user's online Macs and connectability. It
+   should not display relay node IDs, daemon base URLs, tunnel status, raw
+   routing headers, session catalogs, or workspace catalogs unless a debug
+   surface is explicitly opened. After entry, work discovery happens by reading
+   the returned remote namespace.
 
    Alternative considered: reuse the existing relay node list directly in the
    mobile UI. That leaks implementation details and makes the product feel like
    remote infrastructure instead of workspace continuation.
 
-5. Provide realtime relay subscriptions with cursor recovery.
+5. Provide realtime stream delivery with offset recovery.
 
    alan Anywhere needs realtime streamed output while preserving
-   reconnect-safe recovery. The transport should support a realtime event
-   subscription through the relay path, and clients must still use node-authored
-   `events/read` and `reconnect_snapshot` after reconnect or gap detection.
+   reconnect-safe recovery. The transport should carry reads from remote stream
+   files, and clients recover through lease reattachment, saved stream offsets,
+   and ordinary file reads after reconnect or gap detection.
 
    Alternative considered: use high-frequency polling only. Polling is a useful
    fallback, but it does not satisfy the product expectation of streamed output
    and responsive interrupt/approval flows.
 
-6. Use device-bound, scoped, short-lived credentials.
+6. Use device-bound, short-lived remote entry tickets.
 
    Account login proves user identity. Device enrollment binds a Mac/iPhone app
-   installation to that account. Each remote connection uses short-lived access
-   tokens scoped to the account, device, target Mac, workspace/session, and
-   permitted operations. The Mac re-validates state-changing requests before
-   applying them.
+   installation to that account. Each remote entry attempt uses a short-lived
+   `Remote Entry Ticket` scoped to the account, client device, target Mac,
+   entry intent, expiry, and revocation state. In the current single-user phase,
+   the default ticket is not a workspace-, session-, or operation-scope matrix.
 
    Alternative considered: one long-lived bearer token per node. That matches
    the current technical MVP but is too hard to revoke safely and too weak for
@@ -119,53 +127,51 @@ IPs, SSH, router configuration, or port forwarding.
 ## Risks / Trade-offs
 
 - Relay compromise exposes routing metadata -> Keep relay non-authoritative,
-  issue short-lived scoped credentials, minimize stored metadata, and require
-  Mac-side revalidation for state-changing operations.
-- Mac goes offline during iPhone use -> Keep session state on the Mac, mark the
-  device offline/stale in presence, and allow the iPhone to show the last known
-  state without pretending execution can continue.
+  issue short-lived remote entry tickets, minimize stored metadata, and require
+  Mac-side validation before entry.
+- Mac goes offline during iPhone use -> Keep process and namespace state on the
+  Mac, mark the device offline/stale in presence, and avoid pretending
+  execution can continue elsewhere.
 - Realtime relay stream drops under mobile network churn -> Require cursor
-  recovery through `events/read` and `reconnect_snapshot`; never re-drive a turn
-  due to reconnect.
+  recovery through lease reattachment, stream offsets, and file reads; never
+  re-drive execution due to reconnect.
 - Device list becomes noisy or confusing -> Show only user-owned devices with
-  product labels, last activity, current workspace status, and clear offline
-  state; keep relay diagnostics debug-only.
-- Workspace path disclosure on mobile -> Show friendly workspace identity and
-  status by default; avoid exposing full local paths unless the Mac authorizes
-  that metadata for the signed-in user.
+  product labels, last activity, connectability, and clear offline state; keep
+  relay diagnostics debug-only.
+- Workspace path disclosure on mobile -> Avoid pre-attachment workspace
+  catalogs; after attachment, workspace visibility comes from the remote
+  namespace and descriptor rights.
 - Existing environment-configured relay paths diverge from product-managed
   alan Anywhere -> Keep environment configuration as development/operator
-  compatibility but make the account/device path the default in Desktop and
-  iPhone builds.
+  compatibility for non-Anywhere local development only; Alan Anywhere must not
+  use a daemon compatibility gateway.
 
 ## Migration Plan
 
 1. Add the OpenSpec requirements and GitHub tracking issue for alan Anywhere
    MVP; mark the old architecture issue as superseded by this product contract.
-2. Introduce account/device data models and local device identity storage
-   without changing existing relay behavior.
+2. Introduce account/device data models and local device identity storage.
 3. Implement Desktop device enrollment and automatic outbound relay connection
    behind a feature flag or development cloud endpoint.
-4. Add Cloud device/presence/workspace directory endpoints and short-lived
-   relay ticket issuance.
-5. Add realtime relay event subscription while preserving polling fallback and
-   reconnect snapshot recovery.
-6. Update iPhone to use account device discovery and session/work-context
-   selection instead of manual daemon connection.
+4. Add Cloud device/presence endpoints and short-lived remote entry ticket
+   issuance.
+5. Add realtime remote stream delivery over aP/file-surface reads with lease
+   reattachment and stream-offset recovery.
+6. Update iPhone to use account device discovery and Remote Access Service entry
+   instead of manual daemon connection.
 7. Harden revocation, audit, and offline/reconnect behavior before making the
    feature default.
 8. Keep rollback simple: Desktop can stop advertising remote availability and
-   iPhone can fall back to existing manual/local daemon connection paths during
-   development.
+   iPhone can hide Alan Anywhere entry during development.
 
 ## Open Questions
 
 - Which alan account provider is authoritative for MVP login: alan-hosted auth,
   Sign in with Apple, GitHub, or an existing managed account surface?
-- Should remote event payloads be end-to-end encrypted between iPhone and Mac
-  in MVP, or is TLS plus node-authoritative execution acceptable for the first
-  product slice?
-- What is the minimum local context metadata that iPhone may display without
-  exposing sensitive workspace paths?
+- Should remote stream bytes be end-to-end encrypted between iPhone and Mac in
+  MVP, or is transport encryption plus host-authoritative execution acceptable
+  for the first product slice?
+- What is the minimum device availability metadata that iPhone may display
+  before attachment?
 - Should APNs pending-approval notifications be included in this MVP or tracked
   as a follow-up after foreground realtime alan Anywhere works?

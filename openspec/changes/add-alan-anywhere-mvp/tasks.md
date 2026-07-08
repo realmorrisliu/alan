@@ -1,3 +1,24 @@
+> **Sequencing gate (2026-07-08).** §0 must pass before §2–§4 and §6 start.
+> The load-bearing unproven assumption of this whole product is that aP file
+> reads over relay on mobile-grade networks give acceptable latency for
+> streamed output and interrupt round-trips (ADR-0028 risk list). If the spike
+> fails, the product shape changes — build the cloud/account plumbing after
+> the physics are confirmed, not before. The OS entry contract itself is owned
+> by `define-remote-access-service`; this change owns only the product plane.
+
+## 0. De-Risk Spike (gate)
+
+- [ ] 0.1 Spike: attach to a remote namespace over aP through the existing
+  environment-configured relay (`ALAN_RELAY_URL` dev/operator mode, dev-grade
+  auth), tail a live generation stream, and issue interrupts — no accounts, no
+  enrollment, no cloud endpoints.
+- [ ] 0.2 Measure and record: stream first-byte latency, sustained token-delta
+  latency, interrupt round-trip, and reattach-after-drop behavior under
+  simulated mobile network conditions (latency injection / connection churn).
+- [ ] 0.3 Go/no-go note in this change: either confirm the aP-over-relay path
+  meets interactive expectations, or record what transport work (framing,
+  batching, prefetch) must land first — before any §2–§4 build-out.
+
 ## 1. Tracking And Product Boundary
 
 - [x] 1.1 Create the GitHub tracking issue for `add-alan-anywhere-mvp` and link
@@ -24,8 +45,8 @@
 
 - [ ] 3.1 Add Cloud service endpoints for listing account-owned devices and
   their online/offline/connectable status.
-- [ ] 3.2 Add short-lived relay ticket issuance scoped to account, client
-  device, target Mac device, workspace/session, and operation class.
+- [ ] 3.2 Add short-lived remote entry ticket issuance scoped to account, client
+  device, target Mac device, entry intent, expiry, and revocation state.
 - [ ] 3.3 Add Mac presence heartbeats that publish online/stale/offline status
   without moving runtime authority from the Mac.
 - [ ] 3.4 Add audit records for enrollment, connection, revocation, and
@@ -37,50 +58,55 @@
   Desktop is signed in and alan Anywhere is enabled.
 - [ ] 4.2 Keep environment-configured relay mode as development/operator
   compatibility while making account/device relay the Desktop default path.
-- [ ] 4.3 Publish Mac-authored session/work-context status, including
-  connectable local context state and active agent/session state.
-- [ ] 4.4 Ensure Mac remains the final authority for local context identity,
-  session liveness, governance, tool execution, and event ordering.
+- [ ] 4.3 Publish Mac-authored device availability status, including online,
+  stale, offline, and remote-entry connectability state.
+- [ ] 4.4 Ensure Mac remains the final authority for local namespace, process,
+  app, governance, tool execution, and stream ordering.
 
-## 5. Realtime Relay And Daemon Contract
+## 5. Realtime Remote Streams And File Surfaces
 
-- [ ] 5.1 Extend daemon endpoint metadata for relay-approved realtime session event subscriptions.
-- [ ] 5.2 Implement relay realtime event transport without making relay the
-  author of event IDs, sequence, or runtime state.
-- [ ] 5.3 Preserve `events/read` and `reconnect_snapshot` as the required
-  recovery path after reconnect or event gaps.
-- [ ] 5.4 Add tests that reject realtime relay subscription attempts for
-  endpoints not approved by daemon endpoint metadata.
+- [ ] 5.1 Define remote stream delivery over aP/file-surface reads without
+  adding HTTP, WebSocket, daemon-session, or compatibility gateway endpoints.
+- [ ] 5.2 Implement relay byte transport without making relay the author of
+  stream offsets, record order, process state, or runtime state.
+- [ ] 5.3 Replace daemon `events/read` and `reconnect_snapshot` recovery in the
+  target path with lease reattachment, stream offsets, and ordinary file reads.
+- [ ] 5.4 Add tests or guardrails that prevent Alan Anywhere from extending
+  daemon endpoint metadata, HTTP routes, WebSocket routes, or remote session APIs.
 
 ## 6. iPhone alan Anywhere Experience
 
-- [ ] 6.1 Replace manual daemon/relay connection as the primary iPhone path
-  with account device discovery.
-- [ ] 6.2 Show online Macs and connectable sessions/work contexts using
-  product-facing labels, not relay node IDs or tunnel URLs.
-- [ ] 6.3 Allow iPhone to send messages, interrupt runs, and resume pending
-  yields against the selected Mac session/work context.
-- [ ] 6.4 Ensure iPhone reconnects with its latest event cursor and rebuilds
-  state from reconnect snapshots when gaps are reported.
-- [ ] 6.5 Keep relay, node, routing, and daemon diagnostics behind explicit debug surfaces.
+- [ ] 6.1 Replace manual daemon/relay connection with account device discovery
+  and OS-native remote entry.
+- [ ] 6.2 Show online Macs using product-facing labels, not relay node IDs or
+  tunnel URLs.
+- [ ] 6.3 Allow iPhone to enter the selected Mac through Remote Access Service
+  and then interact through the returned remote namespace.
+- [ ] 6.4 Ensure iPhone reattaches with its live lease, resumes remote stream
+  reads from saved offsets, and rebuilds state by rereading current files when
+  gaps are reported.
+- [ ] 6.5 Keep transport, relay, routing, and ticket diagnostics behind
+  explicit debug surfaces.
 
 ## 7. Security Verification
 
-- [ ] 7.1 Add tests for account/device scope checks on read, write, resume, and
-  admin remote operations.
-- [ ] 7.2 Add tests showing Cloud cannot advance runtime state without routing
-  to and receiving authorization from the Mac.
-- [ ] 7.3 Add tests for revoked Mac and iPhone devices denying new state-changing operations.
-- [ ] 7.4 Add tests or harness scenarios for dropped mobile connections, cursor
-  replay, gap recovery, and no duplicate execution.
+- [ ] 7.1 Add tests for account/device/target/entry-intent checks during remote
+  entry ticket validation.
+- [ ] 7.2 Add tests showing Cloud cannot read namespace files, spawn processes,
+  or advance runtime state.
+- [ ] 7.3 Add tests for revoked Mac and iPhone devices denying new remote entry
+  and terminating or rejecting active remote lineages.
+- [ ] 7.4 Add tests or harness scenarios for dropped mobile connections, lease
+  reattach, stream-offset recovery, gap recovery, and no duplicate execution.
 
 ## 8. Documentation And OpenSpec Closure
 
 - [ ] 8.1 Update product and maintainer docs to describe alan Anywhere as
   device-to-device alan continuation.
-- [ ] 8.2 Update remote-control architecture/security docs to reference alan
-  Anywhere as the product layer above direct/relay transport.
-- [ ] 8.3 Run focused Rust/Swift tests for changed daemon, relay, Desktop, and iPhone surfaces.
+- [ ] 8.2 Update remote attachment architecture/security docs to reference
+  Alan Anywhere as the product layer above direct/relay transport.
+- [ ] 8.3 Run focused Rust/Swift tests for changed aP, Remote Access, relay-byte
+  transport, Desktop, and iPhone surfaces.
 - [ ] 8.4 Run `openspec validate add-alan-anywhere-mvp --type change --strict --json`.
 - [ ] 8.5 Run `openspec validate --all --strict --json`.
 - [ ] 8.6 Run `git diff --check`.
