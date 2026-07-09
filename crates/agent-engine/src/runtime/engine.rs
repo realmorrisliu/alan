@@ -1940,7 +1940,12 @@ fn spawn_with_prepared_runtime_environment(
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
                                 match read_pending_namespace_control_submission(&namespace_control).await {
                                     Some(Ok(incoming)) => {
-                                        if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
+                                        // A machine/ctl interrupt must cancel the
+                                        // running generation/tool immediately, like
+                                        // an Op::Interrupt arriving on sub_rx.
+                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
                                             }
@@ -2037,9 +2042,17 @@ fn spawn_with_prepared_runtime_environment(
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
                                 match read_pending_namespace_control_submission(&namespace_control).await {
                                     Some(Ok(incoming)) => {
-                                        requeue_if_cancelled = true;
-                                        cancel.cancel();
-                                        queues.push_outer_submission(incoming);
+                                        // Mirror the sub_rx arm: a machine/ctl
+                                        // interrupt just cancels the deferred
+                                        // action; other control ops preempt and
+                                        // requeue it.
+                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
+                                            cancel.cancel();
+                                        } else {
+                                            requeue_if_cancelled = true;
+                                            cancel.cancel();
+                                            queues.push_outer_submission(incoming);
+                                        }
                                     }
                                     Some(Err(err)) => {
                                         error!(

@@ -1167,6 +1167,12 @@ async fn prepare_file_backed_tui_config(
     runtime_config.agent_name = agent_name;
     runtime_config.workspace_root_dir = Some(workspace_root.clone());
     runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+    // Approved request_mount grants must reach the live namespace from bare
+    // `alan` too, not only from the daemon launch path — without the factory
+    // the runtime falls back to "live namespace mount applicator unavailable".
+    runtime_config.mount_grant_applicator_factory = Some(std::sync::Arc::new(
+        crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory,
+    ));
 
     if let Some(paths) = alan_agent_engine::AlanHomePaths::detect() {
         runtime_config.chatgpt_auth_storage_path = Some(paths.global_auth_path.clone());

@@ -58,6 +58,7 @@ const MACHINE_CTL_HELP: &str = "\
 # machine/ctl — agent-runtime control. Write one command per write.
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
+interrupt stop the current turn; the agent process stays alive
 ";
 
 const TAPE_ROOT_NAME: &str = "machine/tape";

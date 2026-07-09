@@ -20,6 +20,7 @@ use crate::completion::{self, CompletionCandidate, CompletionSources, Completion
 use crate::composer::{Composer, ComposerKeyOutcome, load_history};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
+use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
 use crate::terminal::{TerminalSession, terminal_capability_error};
 use crate::transcript_ui::style_transcript_line;
 
@@ -74,7 +75,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         let history = load_history(history_path, crate::HISTORY_LIMIT);
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
-    hydrate_app_from_files(&shell, &config.agent_path, &mut app).await?;
+    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
     terminal.draw_with(|frame| draw(frame, &app))?;
@@ -84,29 +85,26 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let output_task = tokio::spawn(spawn_output_tail(
-        shell.clone(),
-        agent_output_path(&config.agent_path),
+        watch_tails.output,
         tx.clone(),
         shutdown_rx.clone(),
     ));
     let request_task = tokio::spawn(spawn_request_watch(
-        shell.clone(),
-        request_events_path(&config.agent_path),
+        watch_tails.requests,
         tx.clone(),
         shutdown_rx.clone(),
     ));
     let action_task = tokio::spawn(spawn_action_watch(
-        shell.clone(),
-        action_events_path(&config.agent_path),
+        watch_tails.actions,
         tx.clone(),
         shutdown_rx.clone(),
     ));
     let ui_task = tokio::spawn(spawn_ui_watch(
-        shell.clone(),
-        ui_events_path(&config.agent_path),
-        tx,
-        shutdown_rx,
+        watch_tails.ui,
+        tx.clone(),
+        shutdown_rx.clone(),
     ));
+    let tape_task = tokio::spawn(spawn_tape_watch(watch_tails.tape, tx, shutdown_rx));
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -188,19 +186,71 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let _ = request_task.await;
     let _ = action_task.await;
     let _ = ui_task.await;
+    let _ = tape_task.await;
 
     Ok(())
 }
 
-async fn hydrate_app_from_files(
+/// Hydrate startup state and open the live watch tails so that attach time
+/// neither loses nor replays records, per channel:
+///
+/// - `machine/tape` and `machine/ui/events` hydrate FROM the byte snapshot
+///   their own tail pinned at open (`tail_with_history`): the same file is
+///   both history source and live stream, so delivery is exactly-once by
+///   construction — no ordering race can exist between "what was hydrated"
+///   and "what the tail will deliver".
+/// - The request/action event tails only trigger idempotent directory
+///   re-syncs, so overlap between their open point and the first sync is
+///   harmless.
+/// - `io/output` is an optimistic live preview: it is never hydrated, and the
+///   tape watcher is the authority that reconciles it (`apply_tape_record`
+///   dedupes fully-streamed responses, repairs a mid-turn attach that only
+///   caught the suffix, and appends responses the stream missed entirely).
+/// - UI snapshot files are read only when the ui event history is empty
+///   (fresh log); otherwise replaying the pinned history is strictly more
+///   consistent than mixing it with later point-in-time snapshot reads.
+async fn hydrate_and_open_tails(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-) -> Result<()> {
-    app.transcript = read_tape_history(shell, agent_path).await?;
+) -> Result<WatchTails> {
+    let requests = tail_from_live_edge(shell, &request_events_path(agent_path)).await?;
+    let actions = tail_from_live_edge(shell, &action_events_path(agent_path)).await?;
+    let (ui, ui_history) = tail_with_history(shell, &ui_events_path(agent_path)).await?;
+    let (tape, tape_history) =
+        tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
+    let output = tail_from_live_edge(shell, &agent_output_path(agent_path)).await?;
+
+    let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
+    app.transcript = parse_tape_history(&tape_history);
+    app.seed_reconciler_from_tape_history(&tape_history);
+
+    let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
+    let ui_events = ui_history
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
+        .collect::<Result<Vec<_>>>()?;
+    if ui_events.is_empty() {
+        app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
+        app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
+        app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
+        app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
+    } else {
+        for event in ui_events {
+            app.apply_ui_event(event);
+        }
+    }
+
     sync_actions_from_files(shell, agent_path, app).await?;
     sync_requests_from_files(shell, agent_path, app).await?;
-    sync_ui_from_files(shell, agent_path, app).await
+    Ok(WatchTails {
+        output,
+        requests,
+        actions,
+        ui,
+        tape,
+    })
 }
 
 async fn sync_requests_from_files(
@@ -226,28 +276,21 @@ async fn sync_actions_from_files(
     Ok(())
 }
 
-async fn sync_ui_from_files(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    app: &mut FileBackedApp,
-) -> Result<()> {
-    for event in read_ui_event_history(shell, agent_path).await? {
-        app.apply_ui_event(event);
-    }
-    app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
-    app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
-    app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
-    app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
-    Ok(())
+/// The live watch tails, opened during `hydrate_and_open_tails` so that
+/// attach time neither loses nor replays records (see that function's doc).
+struct WatchTails {
+    output: alan_shell::Tail,
+    requests: alan_shell::Tail,
+    actions: alan_shell::Tail,
+    ui: alan_shell::Tail,
+    tape: alan_shell::Tail,
 }
 
 async fn spawn_output_tail(
-    shell: alan_shell::Shell,
-    output_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &output_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -282,12 +325,10 @@ async fn spawn_output_tail(
 }
 
 async fn spawn_request_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -321,12 +362,10 @@ async fn spawn_request_watch(
 }
 
 async fn spawn_action_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -360,12 +399,10 @@ async fn spawn_action_watch(
 }
 
 async fn spawn_ui_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     let mut pending = Vec::new();
     loop {
         tokio::select! {
@@ -417,7 +454,70 @@ async fn spawn_ui_watch(
     Ok(())
 }
 
+async fn spawn_tape_watch(
+    mut tail: alan_shell::Tail,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    let mut pending = Vec::new();
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            result = tail.read(4096) => {
+                match result {
+                    Ok(bytes) if bytes.is_empty() => break,
+                    Ok(bytes) => {
+                        pending.extend_from_slice(&bytes);
+                        while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+                            let line = pending.drain(..=newline).collect::<Vec<_>>();
+                            let line = &line[..line.len().saturating_sub(1)];
+                            if line.is_empty() {
+                                continue;
+                            }
+                            // Non-message records (tool calls, checkpoints…)
+                            // are not rendered; skip quietly like hydration.
+                            let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
+                                continue;
+                            };
+                            if tx.send(FileBackedEvent::Tape(record)).await.is_err() {
+                                pending.clear();
+                                break;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let _ = tx.send(FileBackedEvent::Error(format!(
+                            "tape watch failed: {err:?}"
+                        ))).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    tail.close()
+        .await
+        .map_err(|err| anyhow!("failed to close tape watch: {err:?}"))?;
+    Ok(())
+}
+
 async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<alan_shell::Tail> {
+    Ok(tail_with_history(shell, path).await?.0)
+}
+
+/// Open a tail pinned at the file's current live edge and return the bytes
+/// that existed at open time. Hydrating from these returned bytes — instead
+/// of from a separate read of the same file — makes history + live delivery
+/// exactly-once by construction.
+async fn tail_with_history(
+    shell: &alan_shell::Shell,
+    path: &str,
+) -> Result<(alan_shell::Tail, Vec<u8>)> {
     let existing = shell
         .cat(path)
         .await
@@ -438,7 +538,7 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
         }
         skipped += chunk.len();
     }
-    Ok(tail)
+    Ok((tail, existing))
 }
 
 fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEvent>) {
@@ -524,20 +624,6 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
     format!("{agent_path}/requests/{request_id}/response")
 }
 
-fn proc_ctl_path(agent_path: &str) -> Result<String> {
-    let segments = agent_path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    match segments.as_slice() {
-        ["agent", "root"] => {
-            bail!("agent path must resolve to a concrete pid, not /agent/root")
-        }
-        ["agent", pid] => Ok(format!("/proc/{pid}/ctl")),
-        _ => bail!("agent path must be a concrete /agent/<pid> path: {agent_path}"),
-    }
-}
-
 async fn write_agent_input(shell: &alan_shell::Shell, agent_path: &str, text: &str) -> Result<()> {
     shell
         .write(&agent_input_path(agent_path), text.as_bytes())
@@ -572,24 +658,13 @@ async fn write_machine_ctl(
 }
 
 async fn write_interrupt(shell: &alan_shell::Shell, agent_path: &str) -> Result<()> {
-    let ctl_path = proc_ctl_path(agent_path)?;
+    // Turn interrupt is agent-runtime control: it must cancel the running
+    // generation and leave the agent process alive. Writing "interrupt" to
+    // the kernel `/proc/<pid>/ctl` would terminate the process instead.
     shell
-        .write(&ctl_path, b"interrupt")
+        .write(&machine_ctl_path(agent_path), b"interrupt")
         .await
-        .map_err(|err| anyhow!("write process interrupt failed: {err:?}"))
-}
-
-async fn read_tape_history(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-) -> Result<Vec<HistoryCell>> {
-    let raw = shell
-        .cat(&format!("{agent_path}/machine/tape"))
-        .await
-        .map_err(|err| anyhow!("read tape failed: {err:?}"))?;
-    Ok(parse_tape_history(
-        &String::from_utf8(raw).context("machine/tape is not utf8")?,
-    ))
+        .map_err(|err| anyhow!("write turn interrupt failed: {err:?}"))
 }
 
 async fn read_latest_pending_request(
@@ -687,17 +762,6 @@ async fn read_json_file<T: DeserializeOwned>(shell: &alan_shell::Shell, path: &s
         .await
         .map_err(|err| anyhow!("read {path} failed: {err:?}"))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse {path} failed"))
-}
-
-async fn read_ui_event_history(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-) -> Result<Vec<UiEvent>> {
-    let raw = read_utf8(shell, &ui_events_path(agent_path)).await?;
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
-        .collect()
 }
 
 fn request_sort_key(request_id: &str) -> u64 {
@@ -895,6 +959,7 @@ enum FileBackedEvent {
     RequestsChanged,
     ActionsChanged,
     Ui(UiEvent),
+    Tape(TapeRecordV1),
     Error(String),
 }
 
@@ -947,6 +1012,16 @@ struct FileBackedApp {
     expand_thinking: bool,
     notice: Option<String>,
     should_quit: bool,
+    /// The pure state machine reconciling the optimistic `io/output` stream
+    /// preview against the authoritative `machine/tape` records. All
+    /// suppression/echo/matching logic lives there; this app only locates
+    /// cells and applies the returned decisions.
+    reconciler: StreamReconciler,
+    /// First transcript cell for a remote turn whose stream/UI/action cells
+    /// reached this watcher before its user tape record. When the boundary
+    /// arrives, insert the user cell before the whole block and shift side
+    /// indexes such as `action_cells`.
+    pending_remote_turn_start: Option<usize>,
 }
 
 impl FileBackedApp {
@@ -970,6 +1045,8 @@ impl FileBackedApp {
             },
             expand_thinking: false,
             should_quit: false,
+            reconciler: StreamReconciler::new(),
+            pending_remote_turn_start: None,
         }
     }
 
@@ -1003,6 +1080,10 @@ impl FileBackedApp {
             }
             FileBackedEvent::Ui(event) => {
                 self.apply_ui_event(event);
+                None
+            }
+            FileBackedEvent::Tape(record) => {
+                self.apply_tape_record(record);
                 None
             }
             FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged => None,
@@ -1228,6 +1309,8 @@ impl FileBackedApp {
             return Some(action);
         }
         self.transcript.push(HistoryCell::User(text.clone()));
+        self.reconciler.on_local_submit(&text);
+        self.pending_remote_turn_start = None;
         Some(FileBackedAction::Submit(text))
     }
 
@@ -1250,6 +1333,7 @@ impl FileBackedApp {
             "clear" => {
                 self.transcript.clear();
                 self.action_cells.clear();
+                self.pending_remote_turn_start = None;
                 None
             }
             "help" => {
@@ -1267,20 +1351,21 @@ impl FileBackedApp {
     }
 
     fn set_pending_yield(&mut self, pending: PendingYieldCell) {
-        let changed = self
-            .pending_yield
-            .as_ref()
-            .is_none_or(|current| current.request_id != pending.request_id);
         self.pending_yield = Some(pending.clone());
         self.sync_form();
         self.completion = None;
-        if changed
-            && !self
-                .transcript
-                .iter()
-                .any(|cell| matches!(cell, HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id))
-        {
-            self.transcript.push(HistoryCell::PendingYield(pending));
+        // The request watcher can fire on `created:<id>` before the runtime has
+        // written kind/prompt/options, so the first sync may insert a sparse
+        // cell; later syncs for the same request must update it in place.
+        if let Some(existing) = self.transcript.iter_mut().find_map(|cell| match cell {
+            HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id => {
+                Some(existing)
+            }
+            _ => None,
+        }) {
+            *existing = pending;
+        } else {
+            self.push_turn_preview_cell(HistoryCell::PendingYield(pending));
         }
     }
 
@@ -1296,11 +1381,18 @@ impl FileBackedApp {
                 if matches!(pending.kind, YieldKind::StructuredInput)
                     && pending.questions.len() > 1 =>
             {
-                if self
-                    .form
-                    .as_ref()
-                    .is_none_or(|form| form.request_id != pending.request_id)
-                {
+                // Rebuild when the question set itself changes (e.g. fields
+                // arrived after the request-created event), not just on a new
+                // request id — otherwise the form keeps stale questions.
+                if self.form.as_ref().is_none_or(|form| {
+                    form.request_id != pending.request_id
+                        || form.fields.len() != pending.questions.len()
+                        || form
+                            .fields
+                            .iter()
+                            .zip(pending.questions.iter())
+                            .any(|(field, question)| &field.question != question)
+                }) {
                     self.form = Some(FormState::new(
                         pending.request_id.clone(),
                         pending.questions.clone(),
@@ -1312,13 +1404,121 @@ impl FileBackedApp {
     }
 
     fn push_output(&mut self, text: String) {
-        if text.is_empty() {
+        match self.reconciler.on_stream(text) {
+            StreamAction::Drop => {}
+            StreamAction::Append(text) => self.append_to_open_assistant_cell(text),
+            StreamAction::StartNew(text) => {
+                self.mark_pending_remote_turn_start_if_unbounded();
+                self.transcript.push(HistoryCell::Assistant(text));
+            }
+        }
+    }
+
+    fn push_turn_preview_cell(&mut self, cell: HistoryCell) {
+        self.mark_pending_remote_turn_start_if_unbounded();
+        self.transcript.push(cell);
+    }
+
+    fn insert_user_boundary(&mut self, content: String) {
+        let index = self
+            .pending_remote_turn_start
+            .take()
+            .unwrap_or(self.transcript.len())
+            .min(self.transcript.len());
+        self.transcript.insert(index, HistoryCell::User(content));
+        self.shift_action_cells_for_insert(index);
+    }
+
+    fn flush_held_stream_after_boundary(&mut self) {
+        if let Some(stream) = self.reconciler.take_flushed_stream() {
+            self.transcript.push(HistoryCell::Assistant(stream));
+        }
+    }
+
+    fn append_to_open_assistant_cell(&mut self, text: String) {
+        if let Some(index) = self.current_assistant_cell()
+            && let Some(HistoryCell::Assistant(existing)) = self.transcript.get_mut(index)
+        {
+            existing.push_str(&text);
             return;
         }
+        self.mark_pending_remote_turn_start_if_unbounded();
+        self.transcript.push(HistoryCell::Assistant(text));
+    }
 
-        match self.transcript.last_mut() {
-            Some(HistoryCell::Assistant(existing)) => existing.push_str(&text),
-            _ => self.transcript.push(HistoryCell::Assistant(text)),
+    fn mark_pending_remote_turn_start_if_unbounded(&mut self) {
+        if self.pending_remote_turn_start.is_some() {
+            return;
+        }
+        if self.reconciler.awaiting_boundary() || !self.current_turn_has_user_boundary() {
+            self.pending_remote_turn_start = Some(self.transcript.len());
+        }
+    }
+
+    fn current_turn_has_user_boundary(&self) -> bool {
+        for cell in self.transcript.iter().rev() {
+            match cell {
+                HistoryCell::User(_) => return true,
+                HistoryCell::Assistant(_) => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// The index of the current turn's assistant cell: the most recent
+    /// `Assistant` cell with no user message or yield after it. Interposed
+    /// plan/notice cells are scanned over; a boundary stops the scan.
+    fn current_assistant_cell(&self) -> Option<usize> {
+        for (idx, cell) in self.transcript.iter().enumerate().rev() {
+            match cell {
+                HistoryCell::Assistant(_) => return Some(idx),
+                HistoryCell::User(_) | HistoryCell::PendingYield(_) => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Reconcile a live `machine/tape` record with the transcript. All the
+    /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
+    /// only locates the current-turn cell and applies the returned decision.
+    fn apply_tape_record(&mut self, record: TapeRecordV1) {
+        if record.kind != "message" {
+            return;
+        }
+        match record.role.as_str() {
+            "user" => {
+                match self.reconciler.on_user_record(&record.content) {
+                    UserDecision::Drop => {}
+                    UserDecision::Push(content) => self.insert_user_boundary(content),
+                }
+                self.flush_held_stream_after_boundary();
+            }
+            "assistant" => {
+                let idx = self.current_assistant_cell();
+                let preview = idx.and_then(|i| match &self.transcript[i] {
+                    HistoryCell::Assistant(text) => Some(text.clone()),
+                    _ => None,
+                });
+                match self
+                    .reconciler
+                    .on_assistant_record(record.content, preview.as_deref())
+                {
+                    AssistantDecision::Drop => {}
+                    AssistantDecision::ReplacePreview(content) => {
+                        if let Some(HistoryCell::Assistant(existing)) =
+                            idx.map(|i| &mut self.transcript[i])
+                        {
+                            *existing = content;
+                        }
+                    }
+                    AssistantDecision::Push(content) => {
+                        self.transcript.push(HistoryCell::Assistant(content))
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1354,7 +1554,7 @@ impl FileBackedApp {
         let changed = self.plan != snapshot;
         self.plan = snapshot.clone();
         if changed && !snapshot.items.is_empty() {
-            self.transcript.push(HistoryCell::Plan(
+            self.push_turn_preview_cell(HistoryCell::Plan(
                 snapshot
                     .items
                     .into_iter()
@@ -1374,7 +1574,7 @@ impl FileBackedApp {
             && matches!(snapshot.state, UiThinkingState::Complete)
             && !snapshot.text.trim().is_empty()
         {
-            self.transcript.push(HistoryCell::Thinking {
+            self.push_turn_preview_cell(HistoryCell::Thinking {
                 text: snapshot.text,
                 duration_secs: snapshot.duration_secs.unwrap_or(0),
             });
@@ -1417,6 +1617,7 @@ impl FileBackedApp {
             *existing = cell;
             return;
         }
+        self.mark_pending_remote_turn_start_if_unbounded();
         let index = self.transcript.len();
         self.transcript.push(cell);
         self.action_cells.insert(action_id, index);
@@ -1465,6 +1666,7 @@ impl FileBackedApp {
         if cells_to_remove > 0 {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
+            self.shift_pending_remote_turn_start(cells_to_remove);
         }
 
         if remaining > 0
@@ -1489,6 +1691,37 @@ impl FileBackedApp {
                 }
             })
             .collect();
+    }
+
+    fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
+        for index in self.action_cells.values_mut() {
+            if *index >= inserted_at {
+                *index += 1;
+            }
+        }
+    }
+
+    fn shift_pending_remote_turn_start(&mut self, removed_prefix_len: usize) {
+        self.pending_remote_turn_start = self.pending_remote_turn_start.map(|index| {
+            if index < removed_prefix_len {
+                0
+            } else {
+                index - removed_prefix_len
+            }
+        });
+    }
+
+    fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
+        self.reconciler = StreamReconciler::new();
+        self.pending_remote_turn_start = None;
+        for line in raw.lines() {
+            let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
+                continue;
+            };
+            if record.kind == "message" {
+                self.reconciler.on_hydrated_message_record(&record.role);
+            }
+        }
     }
 
     fn render_opts(&self, width: usize) -> RenderOpts {
@@ -1744,14 +1977,6 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal.backend().clone()
-    }
-
-    #[test]
-    fn proc_ctl_path_requires_concrete_agent_pid() {
-        assert_eq!(proc_ctl_path("/agent/7").unwrap(), "/proc/7/ctl");
-        assert!(proc_ctl_path("/agent/root").is_err());
-        assert!(proc_ctl_path("/agent").is_err());
-        assert!(proc_ctl_path("/agent/7/io/output").is_err());
     }
 
     #[test]
@@ -2058,5 +2283,478 @@ mod tests {
         let echoed =
             String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
         assert_eq!(echoed, "hello through files");
+
+        // Esc interrupts through the agent-runtime surface (machine/ctl), not
+        // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate
+        // the agent process while the runtime keeps generating.
+        write_interrupt(&shell, &agent_path).await.unwrap();
+        let events =
+            String::from_utf8(shell.cat(&format!("{agent_path}/events")).await.unwrap()).unwrap();
+        assert!(
+            events.contains("ctl:interrupt"),
+            "interrupt must be recorded on machine/ctl: {events:?}"
+        );
+        let proc_status =
+            String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap()).unwrap();
+        assert_eq!(
+            proc_status.trim(),
+            "running",
+            "interrupt must not terminate the agent process"
+        );
+    }
+
+    #[test]
+    fn pending_yield_cell_updates_in_place_when_fields_arrive() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // The request watcher can observe `created:r1` before the runtime has
+        // written kind/prompt/options, so the first sync inserts a sparse cell.
+        let sparse = PendingYieldCell {
+            request_id: "r1".to_string(),
+            kind: YieldKind::Confirmation,
+            title: String::new(),
+            prompt: None,
+            options: Vec::new(),
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        };
+        app.set_pending_yield(sparse);
+
+        let populated = PendingYieldCell {
+            title: "Approve tool".to_string(),
+            prompt: Some("Run `ls`?".to_string()),
+            options: vec!["yes".to_string(), "no".to_string()],
+            default_option: Some("no".to_string()),
+            ..app.pending_yield.clone().unwrap()
+        };
+        app.set_pending_yield(populated.clone());
+
+        let cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::PendingYield(pending) => Some(pending),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cells.len(), 1, "later sync must update the cell in place");
+        assert_eq!(cells[0], &populated);
+    }
+
+    #[test]
+    fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "run this".to_string(),
+        });
+        app.set_pending_yield(PendingYieldCell {
+            request_id: "r1".to_string(),
+            kind: YieldKind::Confirmation,
+            title: "Approve?".to_string(),
+            prompt: None,
+            options: vec!["yes".to_string(), "no".to_string()],
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "next remote turn".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "run this"));
+        assert!(matches!(app.transcript[1], HistoryCell::PendingYield(_)));
+        assert!(matches!(app.transcript[2], HistoryCell::Tool { .. }));
+        assert!(
+            matches!(app.transcript[3], HistoryCell::User(ref text) if text == "next remote turn")
+        );
+        assert_eq!(app.action_cells.get("a1"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn hydrated_output_is_not_replayed_by_the_live_tail() {
+        let proc = Arc::new(ProcFs::new());
+        let proc_server: Arc<dyn FileServer> = proc.clone();
+        let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            proc_server,
+            proc_events,
+        ));
+        let mut namespace = Namespace::new();
+        namespace.mount("/proc", InProcessTransport::new(proc), Access::ReadWrite);
+        namespace.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root);
+        let pid = shell
+            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .await
+            .unwrap();
+        agent_root
+            .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+            .await;
+        let agent_path = format!("/agent/{pid}");
+        let output_path = agent_output_path(&agent_path);
+
+        // A completed turn, written in engine order (io/output first, then
+        // the tape record), landing entirely before the client attaches.
+        shell.write(&output_path, b"hi").await.unwrap();
+        shell
+            .write(
+                &format!("{agent_path}/machine/tape"),
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
+            )
+            .await
+            .unwrap();
+
+        let mut app = FileBackedApp::new(agent_path.clone());
+        let mut tails = hydrate_and_open_tails(&shell, &agent_path, &mut app)
+            .await
+            .unwrap();
+
+        // The response is hydrated from the tape exactly once...
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hi"]);
+
+        // ...and the live tail delivers only post-attach output: the first
+        // read must be the new write, not a replay of the hydrated "hi".
+        shell.write(&output_path, b"-next").await.unwrap();
+        let bytes =
+            tokio::time::timeout(std::time::Duration::from_secs(5), tails.output.read(4096))
+                .await
+                .expect("tail read timed out")
+                .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&bytes),
+            "-next",
+            "hydrated output must not be replayed by the live tail"
+        );
+    }
+
+    #[test]
+    fn app_wiring_streams_then_confirms_via_tape_record() {
+        // A thin smoke test that the app wires push_output/apply_tape_record
+        // to the reconciler; exhaustive reconciliation cases live in the
+        // reconcile module's property test.
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.push_output("hel".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+        app.push_output("lo".to_string());
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hello"]);
+    }
+
+    #[test]
+    fn raced_turn_preview_cells_move_behind_their_user_boundary() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "first".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "done".to_string(),
+        });
+
+        // UI/action cells for the next turn can beat that turn's user tape
+        // record because they are tailed from independent files.
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("next turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "prepare".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+        app.push_output("wor".to_string());
+
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "world".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+        assert!(matches!(app.transcript[4], HistoryCell::Tool { .. }));
+        assert!(matches!(app.transcript[5], HistoryCell::Assistant(ref text) if text == "world"));
+        assert_eq!(app.action_cells.get("a1"), Some(&4));
+    }
+
+    #[test]
+    fn remote_first_stream_preview_moves_behind_user_boundary() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+
+        app.push_output("hello".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "remote".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+
+        assert_eq!(app.transcript.len(), 2);
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "remote"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "hello"));
+    }
+
+    #[test]
+    fn stream_append_finds_open_preview_before_interposed_cells() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "remote".to_string(),
+        });
+
+        app.push_output("hel".to_string());
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("same turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "think".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        app.push_output("lo".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hello"]);
+        assert!(matches!(app.transcript[2], HistoryCell::Plan(_)));
+    }
+
+    #[test]
+    fn hydrated_assistant_seeds_pending_boundary_state() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        let tape = r#"{"version":1,"kind":"message","role":"user","content":"first"}
+{"version":1,"kind":"message","role":"assistant","content":"done"}
+"#;
+        app.transcript = parse_tape_history(tape);
+        app.seed_reconciler_from_tape_history(tape);
+
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("next turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "prepare".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        app.push_output("wor".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+        assert!(matches!(app.transcript[4], HistoryCell::Assistant(ref text) if text == "wor"));
+    }
+
+    #[test]
+    fn pending_remote_turn_start_shifts_with_scrollback_prune() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.transcript
+            .push(HistoryCell::Rendered(vec!["old".to_string()]));
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "done".to_string(),
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+
+        app.prune_rendered_prefix(RenderOpts::new(80, false), 1);
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[1], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[2], HistoryCell::Tool { .. }));
+        assert_eq!(app.action_cells.get("a1"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
+        let proc = Arc::new(ProcFs::new());
+        let proc_server: Arc<dyn FileServer> = proc.clone();
+        let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            proc_server,
+            proc_events,
+        ));
+        let mut namespace = Namespace::new();
+        namespace.mount("/proc", InProcessTransport::new(proc), Access::ReadWrite);
+        namespace.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root);
+        let pid = shell
+            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .await
+            .unwrap();
+        agent_root
+            .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+            .await;
+        let agent_path = format!("/agent/{pid}");
+
+        // The engine wrote the response to io/output but its tape record has
+        // not landed yet when the client attaches: the output bytes are
+        // behind the live edge and the tape hydration comes up empty.
+        shell
+            .write(&agent_output_path(&agent_path), b"hi")
+            .await
+            .unwrap();
+        let mut app = FileBackedApp::new(agent_path.clone());
+        let mut tails = hydrate_and_open_tails(&shell, &agent_path, &mut app)
+            .await
+            .unwrap();
+        assert!(
+            !app.transcript
+                .iter()
+                .any(|cell| matches!(cell, HistoryCell::Assistant(_))),
+            "nothing hydrated: the record has not landed yet"
+        );
+
+        // The tape record lands after attach; the tape watcher recovers it.
+        shell
+            .write(
+                &format!("{agent_path}/machine/tape"),
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
+            )
+            .await
+            .unwrap();
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(5), tails.tape.read(4096))
+            .await
+            .expect("tape tail read timed out")
+            .unwrap();
+        let line = String::from_utf8(bytes).unwrap();
+        let record: TapeRecordV1 = serde_json::from_str(line.trim()).unwrap();
+        app.apply_tape_record(record);
+
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assistant_cells,
+            vec!["hi"],
+            "the tape watcher must recover a response the output tail missed"
+        );
     }
 }
