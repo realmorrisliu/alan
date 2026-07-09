@@ -74,6 +74,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         let history = load_history(history_path, crate::HISTORY_LIMIT);
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
+    // Open the watch tails BEFORE hydrating: each tail pins its live edge at
+    // open time, and hydration afterwards reads everything up to now — so a
+    // write landing between the two is covered by hydration instead of being
+    // silently skipped as "pre-existing". The tiny overlap window (a write
+    // both hydrated and later tail-delivered) is safe: request/action watches
+    // only trigger idempotent re-syncs, and UI snapshot application is
+    // change-guarded.
+    let watch_tails = open_watch_tails(&shell, &config.agent_path).await?;
     hydrate_app_from_files(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -84,29 +92,21 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let output_task = tokio::spawn(spawn_output_tail(
-        shell.clone(),
-        agent_output_path(&config.agent_path),
+        watch_tails.output,
         tx.clone(),
         shutdown_rx.clone(),
     ));
     let request_task = tokio::spawn(spawn_request_watch(
-        shell.clone(),
-        request_events_path(&config.agent_path),
+        watch_tails.requests,
         tx.clone(),
         shutdown_rx.clone(),
     ));
     let action_task = tokio::spawn(spawn_action_watch(
-        shell.clone(),
-        action_events_path(&config.agent_path),
+        watch_tails.actions,
         tx.clone(),
         shutdown_rx.clone(),
     ));
-    let ui_task = tokio::spawn(spawn_ui_watch(
-        shell.clone(),
-        ui_events_path(&config.agent_path),
-        tx,
-        shutdown_rx,
-    ));
+    let ui_task = tokio::spawn(spawn_ui_watch(watch_tails.ui, tx, shutdown_rx));
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -241,13 +241,29 @@ async fn sync_ui_from_files(
     Ok(())
 }
 
+/// The four live watch tails, opened together before hydration so nothing
+/// written between snapshot and tail startup is lost (see `run`).
+struct WatchTails {
+    output: alan_shell::Tail,
+    requests: alan_shell::Tail,
+    actions: alan_shell::Tail,
+    ui: alan_shell::Tail,
+}
+
+async fn open_watch_tails(shell: &alan_shell::Shell, agent_path: &str) -> Result<WatchTails> {
+    Ok(WatchTails {
+        output: tail_from_live_edge(shell, &agent_output_path(agent_path)).await?,
+        requests: tail_from_live_edge(shell, &request_events_path(agent_path)).await?,
+        actions: tail_from_live_edge(shell, &action_events_path(agent_path)).await?,
+        ui: tail_from_live_edge(shell, &ui_events_path(agent_path)).await?,
+    })
+}
+
 async fn spawn_output_tail(
-    shell: alan_shell::Shell,
-    output_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &output_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -282,12 +298,10 @@ async fn spawn_output_tail(
 }
 
 async fn spawn_request_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -321,12 +335,10 @@ async fn spawn_request_watch(
 }
 
 async fn spawn_action_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -360,12 +372,10 @@ async fn spawn_action_watch(
 }
 
 async fn spawn_ui_watch(
-    shell: alan_shell::Shell,
-    events_path: String,
+    mut tail: alan_shell::Tail,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut tail = tail_from_live_edge(&shell, &events_path).await?;
     let mut pending = Vec::new();
     loop {
         tokio::select! {
@@ -1267,19 +1277,20 @@ impl FileBackedApp {
     }
 
     fn set_pending_yield(&mut self, pending: PendingYieldCell) {
-        let changed = self
-            .pending_yield
-            .as_ref()
-            .is_none_or(|current| current.request_id != pending.request_id);
         self.pending_yield = Some(pending.clone());
         self.sync_form();
         self.completion = None;
-        if changed
-            && !self
-                .transcript
-                .iter()
-                .any(|cell| matches!(cell, HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id))
-        {
+        // The request watcher can fire on `created:<id>` before the runtime has
+        // written kind/prompt/options, so the first sync may insert a sparse
+        // cell; later syncs for the same request must update it in place.
+        if let Some(existing) = self.transcript.iter_mut().find_map(|cell| match cell {
+            HistoryCell::PendingYield(existing) if existing.request_id == pending.request_id => {
+                Some(existing)
+            }
+            _ => None,
+        }) {
+            *existing = pending;
+        } else {
             self.transcript.push(HistoryCell::PendingYield(pending));
         }
     }
@@ -1296,11 +1307,18 @@ impl FileBackedApp {
                 if matches!(pending.kind, YieldKind::StructuredInput)
                     && pending.questions.len() > 1 =>
             {
-                if self
-                    .form
-                    .as_ref()
-                    .is_none_or(|form| form.request_id != pending.request_id)
-                {
+                // Rebuild when the question set itself changes (e.g. fields
+                // arrived after the request-created event), not just on a new
+                // request id — otherwise the form keeps stale questions.
+                if self.form.as_ref().is_none_or(|form| {
+                    form.request_id != pending.request_id
+                        || form.fields.len() != pending.questions.len()
+                        || form
+                            .fields
+                            .iter()
+                            .zip(pending.questions.iter())
+                            .any(|(field, question)| &field.question != question)
+                }) {
                     self.form = Some(FormState::new(
                         pending.request_id.clone(),
                         pending.questions.clone(),
@@ -2058,5 +2076,98 @@ mod tests {
         let echoed =
             String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
         assert_eq!(echoed, "hello through files");
+    }
+
+    #[test]
+    fn pending_yield_cell_updates_in_place_when_fields_arrive() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // The request watcher can observe `created:r1` before the runtime has
+        // written kind/prompt/options, so the first sync inserts a sparse cell.
+        let sparse = PendingYieldCell {
+            request_id: "r1".to_string(),
+            kind: YieldKind::Confirmation,
+            title: String::new(),
+            prompt: None,
+            options: Vec::new(),
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        };
+        app.set_pending_yield(sparse);
+
+        let populated = PendingYieldCell {
+            title: "Approve tool".to_string(),
+            prompt: Some("Run `ls`?".to_string()),
+            options: vec!["yes".to_string(), "no".to_string()],
+            default_option: Some("no".to_string()),
+            ..app.pending_yield.clone().unwrap()
+        };
+        app.set_pending_yield(populated.clone());
+
+        let cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::PendingYield(pending) => Some(pending),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cells.len(), 1, "later sync must update the cell in place");
+        assert_eq!(cells[0], &populated);
+    }
+
+    #[tokio::test]
+    async fn writes_between_tail_open_and_hydration_are_not_lost() {
+        let proc = Arc::new(ProcFs::new());
+        let proc_server: Arc<dyn FileServer> = proc.clone();
+        let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            proc_server,
+            proc_events,
+        ));
+        let mut namespace = Namespace::new();
+        namespace.mount("/proc", InProcessTransport::new(proc), Access::ReadWrite);
+        namespace.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root);
+        let pid = shell
+            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .await
+            .unwrap();
+        agent_root
+            .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+            .await;
+        let agent_path = format!("/agent/{pid}");
+        let output_path = agent_output_path(&agent_path);
+
+        shell.write(&output_path, b"before").await.unwrap();
+
+        // Startup order under test: tails open first and pin the live edge...
+        let mut tails = open_watch_tails(&shell, &agent_path).await.unwrap();
+
+        // ...so a write landing before hydration completes is tail-delivered
+        // instead of being skipped as pre-existing.
+        shell.write(&output_path, b"after").await.unwrap();
+        let mut app = FileBackedApp::new(agent_path.clone());
+        hydrate_app_from_files(&shell, &agent_path, &mut app)
+            .await
+            .unwrap();
+
+        let bytes =
+            tokio::time::timeout(std::time::Duration::from_secs(5), tails.output.read(4096))
+                .await
+                .expect("tail read timed out")
+                .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&bytes),
+            "after",
+            "the write between tail-open and hydration must reach the tail"
+        );
     }
 }
