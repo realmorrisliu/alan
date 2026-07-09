@@ -11,7 +11,7 @@ client to `Remote Access Service`, then Alan OS hands back a real
 
 - Add Alan Anywhere as an account-bound, zero-configuration way to continue
   Alan OS from a user's own Mac on iPhone.
-- Have Alan Desktop automatically register and advertise the Mac as an online,
+- Have Alan for macOS automatically register and advertise the Mac as an online,
   trusted execution device after account login.
 - Have Alan iPhone automatically discover the user's online Macs, connect to a
   selected Mac, enter through `Remote Access Service`, interact with the
@@ -53,7 +53,7 @@ client to `Remote Access Service`, then Alan OS hands back a real
 
 ## Impact
 
-- Alan Desktop/macOS account login, device enrollment, Keychain-backed device
+- Alan for macOS account login, device enrollment, Keychain-backed device
   credentials, and automatic outbound relay connection.
 - Alan iPhone account login, device discovery, remote entry selection, and
   namespace-backed interaction after handoff.

@@ -28,7 +28,7 @@ Not:
 ## Scope
 
 - Account-bound Mac/iPhone device enrollment.
-- Automatic Desktop remote availability over outbound encrypted relay.
+- Automatic Mac remote availability over outbound encrypted relay.
 - iPhone owned-device discovery and remote entry.
 - Realtime remote stream delivery plus lease reattach, stream-offset recovery,
   and file rereads after gaps.

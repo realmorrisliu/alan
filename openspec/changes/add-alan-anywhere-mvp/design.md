@@ -26,7 +26,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 
 **Goals:**
 
-- Make a signed-in Alan Desktop automatically become remotely reachable from
+- Make signed-in Alan for macOS automatically become remotely reachable from
   the user's own iPhone without inbound network exposure.
 - Let the iPhone app discover the user's online Macs and enter the selected
   device through `Remote Access Service`.
@@ -79,7 +79,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 
 3. Add product-managed device enrollment above the existing relay tunnel.
 
-   A signed-in Desktop creates or refreshes a stable local device identity,
+   Signed-in Alan for macOS creates or refreshes a stable local device identity,
    stores device credentials in Keychain, requests short-lived remote entry
    tickets, and starts outbound relay byte transport automatically when needed.
    The user sees device availability, not relay configuration.
@@ -151,7 +151,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 1. Add the OpenSpec requirements and GitHub tracking issue for Alan Anywhere
    MVP; mark the old architecture issue as superseded by this product contract.
 2. Introduce account/device data models and local device identity storage.
-3. Implement Desktop device enrollment and automatic outbound relay connection
+3. Implement Alan for macOS device enrollment and automatic outbound relay connection
    behind a feature flag or development cloud endpoint.
 4. Add Cloud device/presence endpoints and short-lived remote entry ticket
    issuance.
@@ -161,7 +161,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
    instead of manual daemon connection.
 7. Harden revocation, audit, and offline/reconnect behavior before making the
    feature default.
-8. Keep rollback simple: Desktop can stop advertising remote availability and
+8. Keep rollback simple: Alan for macOS can stop advertising remote availability and
    iPhone can hide Alan Anywhere entry during development.
 
 ## Open Questions

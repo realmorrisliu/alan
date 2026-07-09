@@ -5,7 +5,7 @@ alan SHALL bind each remote-capable Mac and iPhone app installation to an Alan
 account and a stable device identity before allowing Alan Anywhere access.
 
 #### Scenario: Mac enrolls after account login
-- **WHEN** a user signs in to Alan Desktop on macOS
+- **WHEN** a user signs in to Alan for macOS
 - **THEN** the Mac is registered as a device owned by that account
 - **AND** the Mac receives device-bound credentials suitable for remote
   availability
@@ -19,25 +19,25 @@ account and a stable device identity before allowing Alan Anywhere access.
   account
 
 ### Requirement: Automatic Mac remote availability
-Alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
+Alan for macOS SHALL automatically keep the signed-in Mac remotely connectable
 while the app is running and the user has not disabled Alan Anywhere.
 
-#### Scenario: Desktop starts while signed in
-- **WHEN** Alan Desktop starts with a valid signed-in account and device binding
+#### Scenario: Alan for macOS starts while signed in
+- **WHEN** Alan for macOS starts with a valid signed-in account and device binding
 - **THEN** it establishes an outbound encrypted connection to the Alan remote
   service without requiring inbound network configuration
 - **AND** the user is not asked for public IP, router, VPN, tunnel, SSH, or port
   forwarding settings
 
-#### Scenario: Desktop loses remote connectivity
+#### Scenario: Alan for macOS loses remote connectivity
 - **WHEN** the Mac loses network connectivity or its outbound remote connection
   drops
-- **THEN** Alan Desktop retries connection in the background
+- **THEN** Alan for macOS retries connection in the background
 - **AND** Alan Cloud marks the device stale or offline without changing local
   runtime state
 
 ### Requirement: User-owned device discovery
-alan SHALL let a signed-in iPhone discover the user's own online Alan Desktop
+alan SHALL let a signed-in iPhone discover the user's own online Alan for macOS
 devices without exposing relay or tunnel implementation details.
 
 #### Scenario: iPhone lists available Macs
@@ -62,7 +62,7 @@ task, and app-continuation discovery happens after attachment through the
 returned remote namespace, not through the pre-attachment control plane.
 
 #### Scenario: Mac publishes connectable device status
-- **WHEN** Alan Desktop is online
+- **WHEN** Alan for macOS is online
 - **THEN** it publishes connectable device status for the signed-in user
 - **AND** status includes product-facing availability such as online/offline,
   last seen, and whether remote entry is currently accepted

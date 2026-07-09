@@ -34,7 +34,7 @@
 - [ ] 2.1 Define account-owned device records for Mac and iPhone, including
   `device_id`, display name, platform, owner account, enrollment state, last
   seen, and revocation state.
-- [ ] 2.2 Add Mac device enrollment after Desktop account login with
+- [ ] 2.2 Add Mac device enrollment after Alan for macOS account login with
   Keychain-backed device credentials.
 - [ ] 2.3 Add iPhone device enrollment after mobile account login with platform
   secure credential storage.
@@ -52,12 +52,12 @@
 - [ ] 3.4 Add audit records for enrollment, connection, revocation, and
   state-changing remote control attempts.
 
-## 4. Mac Desktop Remote Availability
+## 4. Mac Remote Availability
 
 - [ ] 4.1 Start product-managed outbound relay connection automatically when
-  Desktop is signed in and Alan Anywhere is enabled.
+  Alan for macOS is signed in and Alan Anywhere is enabled.
 - [ ] 4.2 Keep environment-configured relay mode as development/operator
-  compatibility while making account/device relay the Desktop default path.
+  compatibility while making account/device relay the Mac default path.
 - [ ] 4.3 Publish Mac-authored device availability status, including online,
   stale, offline, and remote-entry connectability state.
 - [ ] 4.4 Ensure Mac remains the final authority for local namespace, process,
@@ -106,7 +106,7 @@
 - [ ] 8.2 Update remote attachment architecture/security docs to reference
   Alan Anywhere as the product layer above direct/relay transport.
 - [ ] 8.3 Run focused Rust/Swift tests for changed aP, Remote Access, relay-byte
-  transport, Desktop, and iPhone surfaces.
+  transport, Alan for macOS, and iPhone surfaces.
 - [ ] 8.4 Run `openspec validate add-alan-anywhere-mvp --type change --strict --json`.
 - [ ] 8.5 Run `openspec validate --all --strict --json`.
 - [ ] 8.6 Run `git diff --check`.
