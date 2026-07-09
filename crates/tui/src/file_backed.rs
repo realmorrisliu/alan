@@ -74,15 +74,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         let history = load_history(history_path, crate::HISTORY_LIMIT);
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
-    // Open the watch tails BEFORE hydrating: each tail pins its live edge at
-    // open time, and hydration afterwards reads everything up to now — so a
-    // write landing between the two is covered by hydration instead of being
-    // silently skipped as "pre-existing". The tiny overlap window (a write
-    // both hydrated and later tail-delivered) is safe: request/action watches
-    // only trigger idempotent re-syncs, and UI snapshot application is
-    // change-guarded.
-    let watch_tails = open_watch_tails(&shell, &config.agent_path).await?;
-    hydrate_app_from_files(&shell, &config.agent_path, &mut app).await?;
+    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
     terminal.draw_with(|frame| draw(frame, &app))?;
@@ -192,15 +184,39 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
-async fn hydrate_app_from_files(
+/// Hydrate startup state and open the live watch tails in the order that
+/// avoids both losing and replaying records at attach time, per channel:
+///
+/// - The request/action/ui tails open BEFORE their hydration syncs: a record
+///   landing in between is delivered by the tail as well as hydrated, and
+///   those paths are idempotent (watch records only trigger full re-syncs;
+///   ui snapshot application is change-guarded), so overlap is safe and
+///   nothing is lost.
+/// - The output tail opens AFTER `machine/tape` is read: the engine writes a
+///   turn's `io/output` text before appending its tape record
+///   (`write_assistant_state`), so every tape-hydrated response is already
+///   behind the output live edge and is never replayed into the transcript.
+///   Output is the one non-idempotent channel, so it gets loss-free-by-tape +
+///   no-duplicates instead of the replay-tolerant ordering.
+async fn hydrate_and_open_tails(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-) -> Result<()> {
+) -> Result<WatchTails> {
+    let requests = tail_from_live_edge(shell, &request_events_path(agent_path)).await?;
+    let actions = tail_from_live_edge(shell, &action_events_path(agent_path)).await?;
+    let ui = tail_from_live_edge(shell, &ui_events_path(agent_path)).await?;
     app.transcript = read_tape_history(shell, agent_path).await?;
+    let output = tail_from_live_edge(shell, &agent_output_path(agent_path)).await?;
     sync_actions_from_files(shell, agent_path, app).await?;
     sync_requests_from_files(shell, agent_path, app).await?;
-    sync_ui_from_files(shell, agent_path, app).await
+    sync_ui_from_files(shell, agent_path, app).await?;
+    Ok(WatchTails {
+        output,
+        requests,
+        actions,
+        ui,
+    })
 }
 
 async fn sync_requests_from_files(
@@ -241,22 +257,13 @@ async fn sync_ui_from_files(
     Ok(())
 }
 
-/// The four live watch tails, opened together before hydration so nothing
-/// written between snapshot and tail startup is lost (see `run`).
+/// The four live watch tails, opened during `hydrate_and_open_tails` in the
+/// per-channel order that neither loses nor replays records at attach time.
 struct WatchTails {
     output: alan_shell::Tail,
     requests: alan_shell::Tail,
     actions: alan_shell::Tail,
     ui: alan_shell::Tail,
-}
-
-async fn open_watch_tails(shell: &alan_shell::Shell, agent_path: &str) -> Result<WatchTails> {
-    Ok(WatchTails {
-        output: tail_from_live_edge(shell, &agent_output_path(agent_path)).await?,
-        requests: tail_from_live_edge(shell, &request_events_path(agent_path)).await?,
-        actions: tail_from_live_edge(shell, &action_events_path(agent_path)).await?,
-        ui: tail_from_live_edge(shell, &ui_events_path(agent_path)).await?,
-    })
 }
 
 async fn spawn_output_tail(
@@ -2119,7 +2126,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writes_between_tail_open_and_hydration_are_not_lost() {
+    async fn hydrated_output_is_not_replayed_by_the_live_tail() {
         let proc = Arc::new(ProcFs::new());
         let proc_server: Arc<dyn FileServer> = proc.clone();
         let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
@@ -2146,19 +2153,36 @@ mod tests {
         let agent_path = format!("/agent/{pid}");
         let output_path = agent_output_path(&agent_path);
 
-        shell.write(&output_path, b"before").await.unwrap();
-
-        // Startup order under test: tails open first and pin the live edge...
-        let mut tails = open_watch_tails(&shell, &agent_path).await.unwrap();
-
-        // ...so a write landing before hydration completes is tail-delivered
-        // instead of being skipped as pre-existing.
-        shell.write(&output_path, b"after").await.unwrap();
-        let mut app = FileBackedApp::new(agent_path.clone());
-        hydrate_app_from_files(&shell, &agent_path, &mut app)
+        // A completed turn, written in engine order (io/output first, then
+        // the tape record), landing entirely before the client attaches.
+        shell.write(&output_path, b"hi").await.unwrap();
+        shell
+            .write(
+                &format!("{agent_path}/machine/tape"),
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
+            )
             .await
             .unwrap();
 
+        let mut app = FileBackedApp::new(agent_path.clone());
+        let mut tails = hydrate_and_open_tails(&shell, &agent_path, &mut app)
+            .await
+            .unwrap();
+
+        // The response is hydrated from the tape exactly once...
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hi"]);
+
+        // ...and the live tail delivers only post-attach output: the first
+        // read must be the new write, not a replay of the hydrated "hi".
+        shell.write(&output_path, b"-next").await.unwrap();
         let bytes =
             tokio::time::timeout(std::time::Duration::from_secs(5), tails.output.read(4096))
                 .await
@@ -2166,8 +2190,8 @@ mod tests {
                 .unwrap();
         assert_eq!(
             String::from_utf8_lossy(&bytes),
-            "after",
-            "the write between tail-open and hydration must reach the tail"
+            "-next",
+            "hydrated output must not be replayed by the live tail"
         );
     }
 }
