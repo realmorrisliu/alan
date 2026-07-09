@@ -1076,10 +1076,11 @@ surfaces.
 ### Requirement: Safe terminal close and transcript restore are verified
 The Apple client SHALL include focused automated tests and running-app smoke
 evidence for terminal close guarding, bounded transcript snapshot persistence,
-and app-restart transcript restore.
+app-restart transcript restore, restored transcript panel presentation, and
+restored transcript dismissal.
 
 #### Scenario: Active close guard tested
-- **WHEN** tests request pane, tab, window, or app close for terminal content with active work
+- **WHEN** tests request pane, tab, window, app, or Quick Terminal close for terminal content with active work
 - **THEN** tests verify that close requires confirmation and does not mutate shell state or finalize runtimes before confirmation
 
 #### Scenario: Idle close bypass tested
@@ -1093,8 +1094,13 @@ and app-restart transcript restore.
 
 #### Scenario: Restart transcript restore smoke tested
 - **WHEN** a running-app smoke produces visible terminal output, closes or quits Alan through a confirmed path, and relaunches the freshly installed app
-- **THEN** verification confirms the restored terminal shows the prior output without an extra restored-session banner
+- **THEN** verification confirms the restored terminal shows the prior output in the accepted restored-context presentation
 - **AND** the restored terminal accepts new input in a newly started shell at the restored cwd
+
+#### Scenario: Restored transcript dismissal tested
+- **WHEN** a restored terminal content has visible restored transcript context
+- **THEN** tests verify supported clear actions remove the restored transcript from shell state, runtime restored-cache state, and subsequent persisted manifests
+- **AND** view or model coverage verifies the restored panel text is terminal-aligned rather than centered as a narrow text block
 
 ### Requirement: Ghostty fork is repository managed
 The Apple client SHALL use a repository-managed, pinned Alan-maintained Ghostty
@@ -1380,3 +1386,4 @@ behavior-neutral probe contract.
   long events, Ghostty tick or refresh spikes, shell projection spikes, runtime
   publication spikes, and child-process aggregate CPU pressure without
   inspecting terminal content
+

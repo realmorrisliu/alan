@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 # Tasks
 
 Ordered; each task is one reviewable commit and must keep
@@ -31,19 +33,19 @@ Ordered; each task is one reviewable commit and must keep
 
 ## Verification
 
-- [ ] Screenshot matrix run (six states) reviewed by maintainer against the
+- [x] Screenshot matrix run (six states) reviewed by maintainer against the
       design language doc.
-- [ ] Signal audit: with one quiet Space and one Space hosting an
+- [x] Signal audit: with one quiet Space and one Space hosting an
       input-blocked agent, only the latter shows orange.
-- [ ] Signal audit addendum (review finding): decide whether a clean-exit
+- [x] Signal audit addendum (review finding): decide whether a clean-exit
       (exit 0) pane should keep `awaitingUser` orange or fall under
       "success → silent"; current behavior keeps it orange and is pinned by
       existing runtime-metadata tests.
-- [ ] All guards and focused tests green; token baselines strictly
+- [x] All guards and focused tests green; token baselines strictly
       decreased for migrated files.
 
 ## Review and Archive
 
-- [ ] PR review.
-- [ ] Sync spec deltas into `openspec/specs/` after merge.
-- [ ] Archive change.
+- [x] PR review.
+- [x] Sync spec deltas into `openspec/specs/` after merge.
+- [x] Archive change.

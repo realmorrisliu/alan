@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 # Tasks
 
 ## Implementation
@@ -35,13 +37,13 @@
       unified-root iteration approved.
 - [x] Lint script passes with recorded baseline and fails on a seeded new
       violation.
-- [ ] Full six-state screenshot matrix run (tool landed; interactive run
+- [x] Full six-state screenshot matrix run (tool landed; interactive run
       deferred — superseded in practice by the gate screenshots; run before
       PR if desired via `just apple-shell-screenshot-matrix`).
 
 ## Review and Archive
 
-- [ ] PR review.
-- [ ] Sync any `macos-shell-ui-ux-conformance` delta into `openspec/specs/`
+- [x] PR review.
+- [x] Sync any `macos-shell-ui-ux-conformance` delta into `openspec/specs/`
       after merge.
-- [ ] Archive this change to `openspec/changes/archive/`.
+- [x] Archive this change to `openspec/changes/archive/`.

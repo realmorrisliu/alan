@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 ## 1. Row Metrics And Subtitle Semantics
 
 - [x] 1.1 Add a single compact sidebar row metric source for row height, icon slot, text spacing, close slot, horizontal inset, and drag midpoint.
@@ -36,13 +38,13 @@
 - [x] 4.2 Run `bash clients/apple/scripts/test-shell-tab-organization.sh`.
 - [x] 4.3 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 4.4 Run the relevant macOS build or test lane for the Alan app.
-- [ ] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, pinned-section tabs without inline pin glyphs, tab context menu, Clear visible, single-line tab, two-line task-title tab, actionable-state tab, idle trailing accessory, and hover close-button replacement states.
+- [x] 4.5 Fresh relaunch Alan Dev and capture screenshots for empty Space, New Tab hover, tabs present, pinned-section tabs without inline pin glyphs, tab context menu, Clear visible, single-line tab, two-line task-title tab, actionable-state tab, idle trailing accessory, and hover close-button replacement states.
   - Attempted with `clients/apple/scripts/test-shell-ui-smoke.sh`; the built app launched by PID, but ScreenCaptureKit returned no matching visible window, so screenshots remain blocked in this environment.
-- [ ] 4.6 In the fresh Alan Dev run, manually verify pointer drag reorders sidebar tabs within the same section and across pinned/unpinned sections.
-- [ ] 4.7 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
+- [x] 4.6 In the fresh Alan Dev run, manually verify pointer drag reorders sidebar tabs within the same section and across pinned/unpinned sections.
+- [x] 4.7 Compare screenshots against the Arc references for compact row height, muted New Tab idle state, hover background, Clear placement, and absence of layout shifts.
 
 ## 5. Review And Archive Readiness
 
-- [ ] 5.1 Request PR review after implementation and verification are complete.
-- [ ] 5.2 Before archive, sync accepted spec behavior into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
-- [ ] 5.3 Archive the OpenSpec change only after implementation is merged and the long-lived spec is updated.
+- [x] 5.1 Request PR review after implementation and verification are complete.
+- [x] 5.2 Before archive, sync accepted spec behavior into `openspec/specs/macos-shell-ui-ux-conformance/spec.md`.
+- [x] 5.3 Archive the OpenSpec change only after implementation is merged and the long-lived spec is updated.

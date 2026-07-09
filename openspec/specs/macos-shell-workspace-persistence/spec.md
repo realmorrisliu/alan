@@ -352,8 +352,9 @@ empty Spaces.
 
 ### Requirement: Terminal transcript snapshots restore the prior visible session context
 The macOS shell workspace manifest SHALL persist terminal transcript snapshots
-as bounded session-continuity state that can seed newly created terminal
-runtimes after app restart.
+as bounded session-continuity state that can present prior visible terminal
+context after app restart without claiming that the prior PTY or child process
+survived.
 
 #### Scenario: App closes with visible terminal output
 - **WHEN** Alan closes or quits while a retained terminal ContentInstance has visible output and restorable transcript history
@@ -362,9 +363,16 @@ runtimes after app restart.
 
 #### Scenario: App restarts after transcript snapshot
 - **WHEN** Alan restores a terminal ContentInstance from a workspace manifest that contains a terminal transcript snapshot
-- **THEN** Alan materializes the terminal with the saved transcript history before or during new runtime startup
+- **THEN** Alan materializes the terminal with the saved transcript context before or during new runtime startup
 - **AND** the restored terminal remains usable by starting a new shell in the restored cwd
-- **AND** the normal terminal UI does not show an additional restored-session banner or warning surface solely because the transcript was restored
+- **AND** the normal terminal UI may show the restored transcript in a distinct restored-context panel when that panel is quiet, bounded, and terminal-aligned
+- **AND** the UI does not present the restored transcript as a warning banner or claim that the prior process is still running
+
+#### Scenario: Restored transcript is cleared
+- **WHEN** the user invokes a supported terminal or Alan clear action for a terminal ContentInstance with a restored transcript snapshot
+- **THEN** Alan removes the restored transcript snapshot from in-memory shell state for that content
+- **AND** the next persisted workspace manifest no longer contains that restored transcript snapshot for the content
+- **AND** subsequent tab switches, pane remounts, or app relaunches do not re-show the cleared restored transcript
 
 #### Scenario: Transcript snapshot is too large
 - **WHEN** terminal history exceeds the configured row or encoded-byte snapshot limit
@@ -510,3 +518,4 @@ of state rather than rewriting and disk-writing every file on every runtime even
 - **WHEN** a terminal's transcript changes and the app keeps running
 - **THEN** alan persists the latest transcript snapshot within the configured debounce window
 - **AND** a hard crash may lose at most that window of the most recent scrollback
+

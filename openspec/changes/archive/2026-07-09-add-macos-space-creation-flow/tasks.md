@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 # Tasks
 
 Each task is one reviewable commit; keep `test-shell-design-tokens.sh`,
@@ -27,17 +29,17 @@ Each task is one reviewable commit; keep `test-shell-design-tokens.sh`,
 
 ## Verification
 
-- [ ] Manual: `+` → form → name+icon+profile → Create → named/iconed Space;
+- [x] Manual: `+` → form → name+icon+profile → Create → named/iconed Space;
       slider no longer a wall of "S".
-- [ ] Programmatic: CLI/worktree Space is named from its directory, not
+- [x] Programmatic: CLI/worktree Space is named from its directory, not
       "Space N".
-- [ ] Build + focused shell tests + default-name script test green; token
+- [x] Build + focused shell tests + default-name script test green; token
       guard green.
-- [ ] Screenshot checkpoint: form at 264pt light/dark, empty-name disabled
+- [x] Screenshot checkpoint: form at 264pt light/dark, empty-name disabled
       Create, icon strip scroll, live preview.
 
 ## Review and Archive
 
-- [ ] PR review.
-- [ ] Sync spec deltas into `openspec/specs/` after merge.
-- [ ] Archive change.
+- [x] PR review.
+- [x] Sync spec deltas into `openspec/specs/` after merge.
+- [x] Archive change.

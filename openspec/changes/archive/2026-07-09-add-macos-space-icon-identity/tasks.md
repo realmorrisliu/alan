@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 # Tasks
 
 Each task is one reviewable commit; keep `test-shell-design-tokens.sh`,
@@ -23,12 +25,12 @@ Each task is one reviewable commit; keep `test-shell-design-tokens.sh`,
 
 ## Verification
 
-- [ ] Build + focused shell tests green; monogram/resolution script tests pass.
-- [ ] Screenshot checkpoint: distinct default monograms; override works; "Use
+- [x] Build + focused shell tests green; monogram/resolution script tests pass.
+- [x] Screenshot checkpoint: distinct default monograms; override works; "Use
       Default" restores; icon-only width legible; dark mode.
 
 ## Review and Archive
 
-- [ ] PR review.
-- [ ] Sync spec deltas into `openspec/specs/` after merge.
-- [ ] Archive change.
+- [x] PR review.
+- [x] Sync spec deltas into `openspec/specs/` after merge.
+- [x] Archive change.

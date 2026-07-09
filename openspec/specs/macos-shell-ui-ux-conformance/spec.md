@@ -72,132 +72,13 @@ adapts Space target widths to available sidebar space, supports every Space
 without an arbitrary count cap, and preserves preview-first scrub navigation
 without hover-driven geometry changes or cover-flow motion.
 
-#### Scenario: Rounded track owns Space navigation
-- **WHEN** the default sidebar displays one or more Spaces
-- **THEN** the Space slider renders one rounded track as the shared navigation
-  surface
-- **AND** the track background reads as a Safari-like gray track rather than a
-  nearly transparent overlay
-- **AND** each Space is represented by a distinct target inside that track
-- **AND** the selected Space uses the strongest selected-state treatment as a
-  compact liquid-glass tab inside the track
-- **AND** inactive Spaces remain visually embedded in the track background
-
-#### Scenario: Space targets use icon and title when width allows
-- **WHEN** a Space target has enough allocated width for its icon and title
-- **THEN** alan shows the Space icon followed by a single-line title
-- **AND** the title truncates before it wraps, overlaps adjacent targets, or
-  changes sidebar width
-
-#### Scenario: Space targets distribute across the full track before overflow
-- **WHEN** the equal per-Space target width is at or above the minimum Space
-  target width
-- **THEN** alan divides the full rounded track evenly across every Space target
-- **AND** alan does not leave unused trailing track space solely because a Space
-  target reached a fixed maximum width
-- **AND** alan chooses full-title, truncated-title, or icon-only content from
-  that equal per-Space width
-
-#### Scenario: Space targets collapse to icon-only minimums
-- **WHEN** the track cannot fit readable title labels for every Space
-- **THEN** alan truncates every Space title according to the equal per-Space
-  width
-- **AND** alan may collapse Space targets to icon-only targets before horizontal
-  overflow is needed
-- **AND** the icon-only target remains a distinct click, context-menu,
-  keyboard, VoiceOver, and scrub target with its title exposed
-  accessibly
-
-#### Scenario: All Spaces participate without a nine-Space cap
-- **WHEN** the user creates more than nine Spaces
-- **THEN** alan includes every Space in the Space slider model
-- **AND** creation affordances continue to produce additional Spaces instead of
-  hiding or refusing the tenth Space solely because of slider capacity
-
-#### Scenario: Overflow scrolls horizontally inside the track
-- **WHEN** all Space targets are at their icon-only minimum width and the total
-  target width still exceeds the available track width
-- **THEN** the Space slider content scrolls horizontally within the rounded
-  track
-- **AND** alan keeps the selected Space visible when selection changes
-- **AND** alan does not resize the sidebar, wrap targets to another row, or
-  replace overflow Spaces with an unrelated menu
-
-#### Scenario: Hover previews without geometry shifts
-- **WHEN** the pointer hovers a non-selected Space in the slider
-- **THEN** alan may apply subtle foreground, tint, or focus treatment to that
-  Space target
-- **AND** alan does not expand the target, scale it, fade neighboring targets,
-  switch the selected Space, move the tab pager, or change focused terminal
-  content merely because of hover
-
-#### Scenario: Click switching remains immediate
-- **WHEN** the user clicks a non-selected Space in the slider
-- **THEN** alan immediately selects that Space
-- **AND WHEN** the user clicks the selected Space
-- **THEN** alan keeps the current selection unchanged
-
-#### Scenario: Scrub previews before commit
-- **WHEN** the user press-drags horizontally on the Space slider or sends clear
-  horizontal wheel or trackpad input while hovering the slider
-- **THEN** alan enters a scrub preview state with a focused target Space
-- **AND** alan distinguishes the scrub focus from the currently selected Space
-  when they differ
-- **AND** alan does not commit Space selection until drag release or a short
-  dwell after wheel or trackpad input stops
-
-#### Scenario: Scrub uses stable track treatment
-- **WHEN** reduced motion is disabled and Space scrub is active
-- **THEN** the scrub-focused Space is emphasized through the same stable track
-  target language used for hover, keyboard focus, and selected state
-- **AND** nearby Spaces do not scale, fade by distance, shift width, or create a
-  cover-flow or carousel effect
-- **AND** the effect remains bounded inside the sidebar Space slider
-
-#### Scenario: Scrub accounts for horizontal scroll offset
-- **WHEN** the Space slider content is horizontally scrolled
-- **AND** the user drag-scrubs or wheel-scrubs over the track
-- **THEN** alan resolves the scrub-focused Space from the visible target frames
-  and current horizontal scroll offset
-- **AND** scrub preview, commit, cancel, and selected-Space visibility remain
-  consistent with the visible track positions
-
-#### Scenario: Vertical scrolling is preserved
-- **WHEN** wheel or trackpad input over the Space slider is vertical or
-  ambiguous between horizontal and vertical intent
-- **THEN** alan does not enter Space scrub
-- **AND** the tab list can continue receiving vertical scrolling behavior
-
-#### Scenario: Space context menus remain available
-- **WHEN** the user right-clicks or opens the context menu for a selected,
-  hovered, keyboard-focused, or scrub-focused Space target
-- **THEN** alan opens the context menu for that Space
-- **AND** any active scrub preview is canceled before the context menu action
-  changes Space-level settings
-
-#### Scenario: Reduced motion preserves the state model
-- **WHEN** reduced motion is enabled
-- **THEN** hover and scrub use bounded foreground, tint, outline, or selected
-  treatment without width changes, scale, spring, perspective-like motion, or
-  cover-flow movement
-- **AND** click, hover, scrub preview, commit, cancel, and keyboard behavior
-  remain equivalent
-
-#### Scenario: Keyboard and accessibility navigation remain explicit
-- **WHEN** keyboard focus or VoiceOver reaches the Space slider
-- **THEN** each Space is exposed as a distinct actionable target with its title,
-  icon meaning when relevant, selected state, and tab count
-- **AND** left and right keyboard navigation can move preview focus without
-  immediately switching Spaces
-- **AND** Enter commits the focused Space and Escape cancels preview focus
-
-#### Scenario: Track remains borderless relative to the sidebar
-- **WHEN** the top Space slider is visible
-- **THEN** the track reads as lightweight native sidebar navigation rather than
-  a nested card, dashboard section, or detached toolbar
-- **AND** selected, hover, focus, and scrub states do not introduce notification
-  dots, oversized badges, decorative shadows, or persistent framed cards for
-  inactive Spaces
+#### Scenario: Scrubbing many Spaces
+- **WHEN** the user drags or scroll-scrubs across a sidebar with more Spaces
+  than can fit at the preferred target width
+- **THEN** the Space slider compresses targets within the continuous track
+  instead of hiding Spaces behind a fixed count limit
+- **AND** preview navigation updates without changing row geometry on hover
+  or introducing cover-flow-style motion
 
 ### Requirement: Collapsed sidebar uses a lightweight floating panel
 When the sidebar is collapsed, the macOS shell SHALL reveal navigation through a
@@ -270,7 +151,9 @@ single-pane state.
 The default macOS UI SHALL avoid exposing raw pane IDs, `tab_id`, binding,
 runtime phases, `window attached`, `title updated`, and other implementation
 terms outside explicit debug surfaces. It SHALL also avoid obsolete product
-labels from legacy native app builds in visible app chrome.
+labels from legacy native app builds in visible app chrome. Visible machine
+facts (filesystem paths, git branches, process names, counts, key hints) SHALL
+render in the mono type track and human-facing copy in the proportional track.
 
 #### Scenario: Normal terminal workflow
 - **WHEN** a user creates, selects, splits, or closes tabs and panes
@@ -279,11 +162,13 @@ labels from legacy native app builds in visible app chrome.
 - **AND** visible copy does not expose Ask alan or New alan Tab as default
   shell product actions
 
-#### Scenario: Removed command input routing states
-- **WHEN** default shell UI is visible
-- **THEN** alan does not show command-input routing states, typed command
-  submissions, unresolved command status, routing-candidate rows, attention
-  candidate rows, best-match rows, or command-row sections below a field
+#### Scenario: Machine facts use the mono accent track
+- **WHEN** the sidebar tab-row secondary line or a pane title-bar accessory
+  shows a filesystem path, working-directory leaf, git branch, or process name
+- **THEN** that text renders in the mono type track (`ShellType.mono`)
+- **AND** human-language status phrases (for example renderer failure,
+  read-only, needs attention, content-type hints) and activity copy render in
+  the proportional track (`ShellType.pro`)
 
 #### Scenario: Debug surfaces
 - **WHEN** implementation details are needed
@@ -907,69 +792,36 @@ and window chrome share one transition state.
 ### Requirement: Activity UI Is Compact And Terminal First
 Terminal activity UI SHALL use compact pane title-bar accessories, sidebar tab
 metadata, and accessibility values instead of dashboard panels, persistent
-bottom status strips, or debug labels in the default shell.
+bottom status strips, or debug labels in the default shell. The action color
+SHALL be reserved for states that require the user to act and SHALL NOT mark
+quiet, idle, or merely-active panes and Spaces.
 
-#### Scenario: Pane reports progress
-- **WHEN** a pane reports determinate, indeterminate, paused, or failed
-  progress
-- **THEN** Alan presents that state as a lightweight pane title-bar accessory or
-  sidebar activity rail that does not resize the terminal canvas, toolbar
-  content, or split dividers
-
-#### Scenario: Pane reports agent status
-- **WHEN** a pane running a supported CLI coding agent reports running, needs
-  input, complete, or error state
-- **THEN** Alan presents a compact user-facing status in the pane title-bar and
-  sidebar row without exposing raw event names, hook payloads, session IDs, or
-  debug implementation details
-
-#### Scenario: No actionable activity exists
-- **WHEN** a tab has no active, notable, or user-actionable terminal activity
-- **THEN** the sidebar tab row shows worktree and branch context as its
-  secondary line instead of reserving empty activity chrome or showing idle or
-  success states
+#### Scenario: Quiet panes and Spaces stay silent
+- **WHEN** a Space or tab has panes that are running or idle but have no
+  state requiring user action
+- **THEN** its sidebar icon and row do not render the action color
+- **AND** the action color appears only when an agent or command is blocked on
+  the user, or a failure requires user intervention
 
 ### Requirement: Sidebar Tab Rows Are Attention-Oriented Work Rows
 Sidebar tab rows SHALL use a richer but restrained layout that helps users
-identify a tab and decide whether it needs attention.
+identify a tab and decide whether it needs attention. The single-pane leading
+slot SHALL show the tab kind without using the focus accent as a selection
+marker, while the split-pane leading slot keeps the interactive topology
+indicator.
 
-#### Scenario: Tab row default layout
-- **WHEN** Alan renders a sidebar tab row
-- **THEN** the row contains a leading topology or kind slot, a title line, one
-  secondary line that shows activity or worktree/branch context, and an
-  optional progress rail only when the displayed activity owns progress
+#### Scenario: Single-pane leading slot does not borrow the focus accent
+- **WHEN** a tab contains one pane and its row is selected
+- **THEN** the single-pane indicator uses a neutral ink fill rather than the
+  focus accent color
+- **AND** selection is conveyed by the row surface treatment, not by an
+  indigo-filled indicator
 
-#### Scenario: Close affordance appears
-- **WHEN** a sidebar tab row is hovered, keyboard-focused, or otherwise
-  interaction-active
-- **THEN** the close affordance appears as a trailing overlay without reserving
-  a permanent layout slot in the row content
-
-#### Scenario: Close affordance is hidden
-- **WHEN** a sidebar tab row is not interaction-active
-- **THEN** title, secondary text, activity, and progress content may occupy the
-  full row width without leaving a fixed empty close-button column
-
-#### Scenario: Split tab leading slot
+#### Scenario: Split-pane focus marker is preserved
 - **WHEN** a tab contains multiple visible panes
-- **THEN** the leading slot shows split topology instead of the generic terminal
-  icon, and activating that topology cycles focus through panes in a stable
-  order
-
-#### Scenario: Single-pane leading slot
-- **WHEN** a tab contains one pane
-- **THEN** the leading slot shows the tab kind or supported agent icon rather
-  than a split topology indicator
-
-#### Scenario: Activity takes precedence over context
-- **WHEN** a tab has sidebar-worthy activity
-- **THEN** the secondary line shows the source-first activity copy instead of
-  worktree or branch context
-
-#### Scenario: No activity fallback
-- **WHEN** a tab has no sidebar-worthy activity
-- **THEN** the secondary line uses worktree or repository leaf plus branch when
-  available, with cwd leaf only as a fallback
+- **THEN** the focused pane within the split topology indicator may still use
+  the focus accent to mark focus, which is a focus signal rather than a
+  selection marker
 
 ### Requirement: Pane Title Bars Own Pane Detail
 Pane title bars SHALL keep terminal title as the primary label and expose
@@ -1624,53 +1476,51 @@ the implementation tasks are marked complete.
 - **WHEN** the screenshot is reviewed
 - **THEN** maintainers compare it against this change's native-surface criteria: compact capsule source-list selection, direct sectioned preference layout, left-anchored 760pt maximum-width content, unified setting rows, subordinate read-only metadata values, bounded trailing controls, subtle surface depth, no card-heavy dashboard chrome, and no oversized web-page spacing
 
-### Requirement: Root shell backing uses an opaque native base
-The default macOS shell SHALL paint its primary root backing surface with an
-opaque adaptive native base color before content-specific surfaces are rendered.
+### Requirement: Root shell backing uses a unified paper base
+The default macOS shell SHALL paint its primary root backing as one
+continuous paper material surface shared by the sidebar column and the
+workspace margins, and SHALL reserve white for raised surfaces above that
+base.
 
 #### Scenario: Light appearance root backing
 - **WHEN** the default macOS shell window is visible in light appearance
-- **THEN** the root backing surface uses `rgb(1,1,1)` as its base color
-- **AND** the root backing surface does not depend on wallpaper blending,
-  `NSVisualEffectView`, root-level transparency, or a root-level gradient wash
+- **THEN** the root backing renders the unified sidebar-material treatment
+  (visual effect material plus cool scrim) across the whole window chrome
+- **AND** the sidebar column and the margins around the workspace panel read
+  as one continuous surface without a vertical seam
+- **AND** the raised workspace panel uses the white raised paper fill above
+  that base
 
 #### Scenario: Dark appearance root backing
 - **WHEN** the default macOS shell window is visible in dark appearance
-- **THEN** the root backing surface uses a solid adaptive dark base color
-- **AND** light-mode tint, root-level material wash, and wallpaper-dependent
-  transparency do not determine the dark appearance backing color
+- **THEN** the root backing uses the dark paper material treatment and sits
+  below the terminal ink surface in relative luminance
 
-#### Scenario: Root backing is separate from future material surfaces
-- **WHEN** sidebar, floating overlay, command palette, or content-specific
-  material treatments are evaluated
-- **THEN** their material behavior remains owned by their own surface roles
-- **AND** the root backing surface does not force those surfaces to use root
-  material, root transparency, or root gradient treatment
+#### Scenario: Reduced transparency
+- **WHEN** reduce transparency is enabled
+- **THEN** the root backing falls back to the opaque window paper fill
+  without wallpaper dependence, and the chrome remains one continuous surface
 
 ### Requirement: Empty Spaces render as workspace placeholders
-The default macOS shell SHALL render a selected Space with no mounted content as
-a generic workspace placeholder rather than as an empty terminal surface.
+The default macOS shell SHALL render a selected Space with no mounted content
+as a centered workspace placeholder on the raised paper panel rather than as an
+empty terminal surface or a left-hugging fragment.
 
-#### Scenario: Empty Space placeholder in light appearance
-- **WHEN** the selected Space has no selected tab, pane tree, or mounted content
-  in light appearance
-- **THEN** alan shows an empty workspace placeholder with adaptive light-mode
-  text and control treatment
+#### Scenario: Empty Space placeholder composition
+- **WHEN** the selected Space has no selected tab, pane tree, or mounted
+  content
+- **THEN** alan shows a centered placeholder whose heading is the Space title
+  (falling back to a generic empty label), a single quiet secondary line, and a
+  bordered New Tab control using shared control material
+- **AND** a key-hint line may show the new-tab shortcut with the chord in the
+  mono track and its description in the proportional track
 - **AND** the placeholder is not painted with the terminal dark canvas,
   terminal rim, or terminal surface shadow
 
-#### Scenario: Empty Space placeholder in dark appearance
-- **WHEN** the selected Space has no selected tab, pane tree, or mounted content
-  in dark appearance
-- **THEN** alan shows the same empty workspace placeholder using adaptive
-  dark-mode text and control treatment
-- **AND** the placeholder remains readable without reusing terminal-only color
-  assumptions
-
 #### Scenario: Empty Space primary action remains terminal-first
-- **WHEN** the user activates the empty Space `New Tab` action
-- **THEN** alan creates a normal terminal tab in the current Space
-- **AND** the new tab becomes selected through the existing tab creation path
+- **WHEN** the user activates the empty Space New Tab action
+- **THEN** alan creates a normal terminal tab in the current Space through the
+  existing tab creation path
 
 ### Requirement: Workspace containers own frame chrome
 The default macOS shell SHALL keep rounded clipping, rim, and shadow frame
@@ -1746,3 +1596,235 @@ default-off, progressively disclosed control rather than default shell chrome.
 - **THEN** it uses compact Settings row treatment
 - **AND** it does not introduce a dashboard, inspector, timeline viewer, or
   debug-heavy panel into the default shell
+
+### Requirement: Restored transcript panel uses terminal-aligned presentation
+The macOS shell SHALL ensure any restored terminal transcript panel above the
+live terminal visually aligns with the terminal surface and remains quiet,
+bounded, and clearable.
+
+#### Scenario: Restored panel text aligns with terminal text
+- **WHEN** a terminal pane renders restored transcript context above the live terminal
+- **THEN** restored transcript text uses terminal-like monospace typography, row height, foreground treatment, and horizontal scrolling behavior
+- **AND** the restored text leading edge aligns with the live terminal text column as closely as the current terminal host composition permits
+- **AND** restored transcript text uses full-width leading layout rather than centering a narrow text block in the panel
+
+#### Scenario: Restored panel remains visually distinct
+- **WHEN** restored transcript context is visible
+- **THEN** Alan may use a quiet background difference and subtle separator to distinguish the prior-session context from the live terminal
+- **AND** the panel does not appear as a warning banner, diagnostic card, or prominent debug surface
+- **AND** the panel height remains bounded and stable for the restored transcript row limit used by the view
+
+#### Scenario: Restored panel clears with terminal clear intent
+- **WHEN** the user clears the focused terminal through supported terminal or Alan clear actions
+- **THEN** the restored transcript panel disappears for that terminal content
+- **AND** the live terminal still receives the clear behavior appropriate to the triggering action
+
+### Requirement: Sidebar tab rows use compact Arc-like behavior
+The default macOS shell sidebar SHALL render New Tab, Clear, and ordinary tab
+rows with compact, stable geometry that supports quick scanning without making
+the terminal sidebar feel like a dashboard or debug surface.
+
+#### Scenario: New Tab idle state is quiet
+- **WHEN** the active Space tab list displays the New Tab row and the pointer
+  and keyboard focus are elsewhere
+- **THEN** the New Tab row uses muted icon and text treatment without a
+  persistent row background
+- **AND** the New Tab row shares the same row metric system as ordinary sidebar
+  tab rows
+
+#### Scenario: New Tab hover and focus state
+- **WHEN** the pointer hovers the New Tab row or keyboard focus reaches it
+- **THEN** the New Tab row shows a full-width rounded material hover background
+  within the sidebar row bounds
+- **AND** the hover or focus state does not select a tab, scroll the list, or
+  preview a Space
+
+#### Scenario: New Tab creates ordinary unpinned tab
+- **WHEN** the user activates the New Tab row
+- **THEN** alan creates a normal unpinned terminal tab in the current Space
+- **AND** the new tab becomes selected through the existing tab creation
+  behavior
+
+#### Scenario: Ordinary tab row uses single-line layout
+- **WHEN** an ordinary sidebar tab has no meaningful subtitle
+- **THEN** the row displays the title as a single line vertically centered in
+  the compact tab row
+- **AND** the row does not reserve visible subtitle space for fallback or
+  duplicate metadata
+
+#### Scenario: Ordinary tab row uses two-line layout
+- **WHEN** an ordinary sidebar tab has required or useful secondary metadata
+  such as actionable status, activity, branch, folder, process, or content kind
+- **THEN** the row displays the title and secondary metadata as two lines within
+  the compact tab row system
+- **AND** the row does not resize the sidebar or shift adjacent rows during
+  hover, selection, close-affordance display, or activity progress updates
+
+#### Scenario: Provided task title identifies agent work
+- **WHEN** an unlocked sidebar tab has a terminal-provided or agent-provided
+  task title that describes the work being done
+- **THEN** alan uses that task title as the primary row title instead of falling
+  back to the repository, directory, process, or agent name
+- **AND** state labels such as running, thinking, failed, or input needed do not
+  replace the task title
+
+#### Scenario: User-edited title is locked
+- **WHEN** the user manually edits a sidebar tab title
+- **THEN** alan treats the title as locked
+- **AND** terminal, agent, activity, repository, process, or status updates do
+  not overwrite that locked title
+
+#### Scenario: Subtitle is required for actionable state
+- **WHEN** a tab has an actionable or exceptional state such as input needed,
+  failed, paused, exited, renderer failed, read-only, starting, or high-priority
+  activity in another pane
+- **THEN** alan shows a subtitle with the actionable state as the first token
+- **AND** the subtitle may include context tokens after the state when space
+  allows
+
+#### Scenario: Subtitle disambiguates provided task titles
+- **WHEN** a tab title is a terminal-provided or agent-provided task title and
+  context is available
+- **THEN** alan shows a subtitle that starts with stable project, repository,
+  worktree, directory, or branch context
+- **AND** the subtitle may include agent, process, command, progress, or split
+  context after the stable location token
+
+#### Scenario: Subtitle is hidden for fallback metadata
+- **WHEN** a tab has no actionable state and its secondary metadata is only a
+  fallback type, default shell process, duplicate directory, or otherwise
+  non-disambiguating label
+- **THEN** alan renders the row in single-line mode without a visible subtitle
+
+#### Scenario: Leading split indicator remains structural
+- **WHEN** a tab has one or more panes
+- **THEN** the leading sidebar indicator continues to represent pane topology
+  and focused-pane interaction
+- **AND** alan does not replace the leading split indicator with agent, process,
+  status, or content-type glyphs
+
+#### Scenario: Trailing accessory shows state until close is needed
+- **WHEN** a tab has a non-idle state that is useful for scanning
+- **THEN** alan shows a compact state glyph or progress affordance in the
+  trailing accessory slot while the row is not hovered
+- **AND WHEN** the pointer hovers the row or keyboard focus reaches it
+- **THEN** the trailing accessory can become the close button without removing
+  required state text from the subtitle or accessibility label
+
+#### Scenario: Idle trailing accessory is quiet
+- **WHEN** a tab has no useful scanning state
+- **THEN** alan keeps the trailing accessory slot visually quiet until hover or
+  keyboard focus reveals the close button
+
+#### Scenario: Pinned state is conveyed by section position
+- **WHEN** a tab is pinned in the default sidebar
+- **THEN** alan displays it in the pinned tab section above the temporary tab
+  section
+- **AND WHEN** the active Space has no unpinned tabs
+- **THEN** the New Tab row follows the pinned rows without a divider or empty
+  control-row gap
+- **AND** alan does not show a separate inline pin glyph in the tab row title or
+  trailing accessory area
+- **AND** pin and unpin actions remain available through existing command and
+  context-menu surfaces
+
+#### Scenario: Tab context menu is scoped to the clicked tab
+- **WHEN** the user opens the context menu for a sidebar tab row
+- **THEN** every visible tab-row context menu action targets the clicked tab
+  rather than the selected tab, the Space, or the whole sidebar
+- **AND** alan does not show `New Terminal Tab`, Clear, or other non-tab-scoped
+  actions in the tab-row context menu
+
+#### Scenario: Tab context menu uses the compact tab action set
+- **WHEN** the user opens the context menu for a sidebar tab row
+- **THEN** alan offers `Rename...`, `Duplicate Tab`, and `Open in Split View`
+  before organization actions
+- **AND** alan offers either `Pin Tab` or `Unpin Tab`, plus a `Move to` submenu
+  only when another Space exists
+- **AND** alan presents `Close Tab` as the final destructive action
+
+#### Scenario: Rename from context menu locks title
+- **WHEN** the user chooses `Rename...` from a sidebar tab row context menu and
+  commits a title
+- **THEN** alan applies that title to the clicked tab
+- **AND** alan treats the title as user locked so automatic terminal, agent,
+  activity, repository, process, or status updates do not overwrite it
+
+#### Scenario: Duplicate tab creates a fresh launch-context copy
+- **WHEN** the user chooses `Duplicate Tab` from a sidebar tab row context menu
+- **THEN** alan creates a new tab in the same Space near the clicked tab using
+  the clicked tab's safe launch context
+- **AND** alan does not clone live process state, scrollback, pending approvals,
+  runtime sessions, or user title locks
+- **AND** alan disables the item when the clicked tab cannot be duplicated
+  safely
+
+#### Scenario: Open in Split View uses the clicked tab split model
+- **WHEN** the user chooses `Open in Split View` from a sidebar tab row context
+  menu
+- **THEN** alan operates on the clicked tab, selecting it if necessary
+- **AND** alan creates a right-side split from the clicked tab's focused pane or
+  primary pane through the existing terminal split path
+- **AND** alan disables the item when the clicked tab content cannot be split
+  through the terminal pane model
+
+#### Scenario: Clear appears only for eligible temporary tabs
+- **WHEN** the active Space has at least one unpinned tab that is not selected
+  and whose active task state does not protect it from pruning
+- **THEN** alan shows a subtle Clear affordance in the divider/control row above
+  New Tab
+- **AND** the Clear affordance remains secondary to the New Tab row and ordinary
+  tab rows
+
+#### Scenario: Clear is hidden when no tab can be cleared
+- **WHEN** the active Space has no eligible inactive unpinned tabs
+- **THEN** alan does not show a disabled or persistent Clear affordance in the
+  default sidebar
+
+#### Scenario: Temporary section divider appears only with unpinned tabs
+- **WHEN** the active Space has at least one unpinned tab
+- **THEN** alan shows a subtle divider/control row above New Tab to mark the
+  start of the temporary tab section
+- **AND** the divider/control row appears whether or not pinned tabs also exist
+- **AND WHEN** the active Space has no unpinned tabs
+- **THEN** alan hides the divider/control row entirely and does not reserve its
+  height
+
+#### Scenario: Clear closes only inactive temporary tabs
+- **WHEN** the user activates Clear
+- **THEN** alan closes eligible inactive unpinned tabs in the current Space as a
+  single cleanup operation
+- **AND** alan keeps pinned tabs, the selected tab, tabs in other Spaces, and
+  tabs whose active task state protects them from pruning
+- **AND** alan preserves valid selected tab and pane focus after cleanup
+
+#### Scenario: Drag insertion follows compact row geometry
+- **WHEN** the user drags a tab over the compact sidebar tab list
+- **THEN** insertion target calculation uses the compact row midpoint rather
+  than the former taller-row midpoint
+- **AND** hover, selected, close, and progress states do not change the
+  insertion hit geometry
+
+#### Scenario: Tab drag carries source identity through the drop session
+- **WHEN** the user starts dragging a sidebar tab row
+- **THEN** the drag session carries the dragged tab identity and source
+  organization location as part of the drag payload or an equivalent
+  session-scoped source record
+- **AND** the drop target does not depend solely on transient hover or row
+  gesture state that can be cleared before the drop is performed
+
+#### Scenario: Dropping a tab reorders the sidebar
+- **WHEN** the user drops a dragged tab onto a valid pinned or unpinned sidebar
+  insertion target in the current Space
+- **THEN** alan routes the drop through the same host reorder operation used by
+  command and automation paths
+- **AND** the tab order, pin state, selected tab, and pane identity match the
+  requested insertion target
+
+#### Scenario: Invalid tab drop leaves order unchanged
+- **WHEN** the user drops a tab payload with a missing tab, stale source
+  location, incompatible section, or invalid target index
+- **THEN** alan rejects the drop without changing tab order, pin state, selected
+  tab, or pane identity
+- **AND** alan clears any insertion preview state after the rejected drop
+
