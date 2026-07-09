@@ -334,12 +334,16 @@ namespace.
 ### Requirement: A `ctl` is scoped to one lifecycle-bearing object
 Alan OS SHALL place a `ctl` in the directory that represents a single
 lifecycle-bearing object, alongside that object's data/status — the Plan 9 idiom
-(`/proc/<pid>/ctl`, `/net/tcp/<n>/ctl`). There SHALL NOT be one global
-`/agent/<pid>/ctl` that re-encodes object addressing as a verb argument, nor a
-`ctl` on a leaf that is pure state (e.g. `machine/tape/ctl`). The control surfaces
-this yields are `/proc/<pid>/ctl` (generic process) and `machine/ctl`
-(agent-runtime tape/checkpoint); leaf state files (`machine/status`,
-`requests/<id>/status`) are read-only and carry no control.
+(`/proc/<pid>/ctl`, `/net/tcp/<n>/ctl`). The only `ctl` files in an agent's
+overlay SHALL be the kernel-owned `/proc/<pid>/ctl` (aliased into `/agent/<pid>`
+by the overlay, per "An agent overlays agent files on the generic process
+layout") for generic process control, and the agent-runtime-owned `machine/ctl`
+for tape/checkpoint control. There SHALL NOT be a second, agent-runtime-owned
+catch-all control file placed at `/agent/<pid>/ctl` that re-encodes object
+addressing as a verb argument or duplicates/shadows the kernel's generic `ctl`,
+nor a `ctl` on a leaf that is pure state (e.g. `machine/tape/ctl`). Leaf state
+files (`machine/status`, `requests/<id>/status`) are read-only and carry no
+control.
 
 #### Scenario: A controllable object gains a new verb
 - **WHEN** a new control action is added for an object that already has a `ctl`
