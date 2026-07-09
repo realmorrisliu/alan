@@ -9,23 +9,21 @@ name = "alan_tui"
 path = "src/lib.rs"
 
 [dependencies]
+alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
+alan-shell = { path = "../shell" }
 anyhow.workspace = true
-async-trait.workspace = true
-bytes.workspace = true
 crossterm.workspace = true
-eventsource-stream.workspace = true
-futures.workspace = true
 ratatui.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 textwrap.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]
+alan-agentfs = { path = "../agentfs" }
+alan-kernel = { path = "../kernel" }
 tempfile.workspace = true
 vt100.workspace = true

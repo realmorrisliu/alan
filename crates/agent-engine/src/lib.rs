@@ -78,8 +78,9 @@ pub use rollout::{
     ToolCallRecord, session_storage_key,
 };
 pub use runtime::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, WorkspaceRuntimeConfig,
-    spawn, spawn_with_llm_client,
+    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeNamespaceLaunch,
+    RuntimeNamespaceSurface, WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
+    spawn_with_namespace_surface,
 };
 pub use session::{
     ROLLBACK_NON_DURABLE_WARNING, Session, latest_compaction_attempt_from_rollout_items,

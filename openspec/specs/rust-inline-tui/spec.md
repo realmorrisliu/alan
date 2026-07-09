@@ -1,7 +1,8 @@
 # rust-inline-tui Specification
 
 ## Purpose
-TBD - created by archiving change replace-typescript-tui-with-rust-inline-tui. Update Purpose after archive.
+Define Alan's Rust terminal UI as a terminal-first renderer host whose local
+contract reads mounted agent files directly.
 ## Requirements
 ### Requirement: Bare alan launches the Rust terminal UI
 The `alan` binary SHALL launch the Rust terminal UI when invoked without an
@@ -43,56 +44,46 @@ commands.
 - **THEN** they include the `alan` executable for terminal use
 - **AND** they do not include, sign, link, or install an `alan-tui` executable
 
-### Requirement: TUI remains daemon-backed
-The Rust TUI SHALL use alan daemon/session APIs for workspace resolution,
-connection profile resolution, session lifecycle, event streaming, submissions,
-resume operations, interrupts, compaction, rollback, and persisted history.
+### Requirement: Local TUI reads full renderer state from mounted agent files
+The Rust terminal UI SHALL treat mounted agent files as the full local terminal
+contract, not only for `io/output`, `io/input`, `requests/`, `actions/`, and
+`ctl`, but also for renderer-visible runtime state such as activity, thinking,
+plan snapshots, and notices.
 
-#### Scenario: Local daemon starts before session APIs
-- **WHEN** a user runs bare `alan` with the default local daemon configuration
-  and no healthy daemon is reachable
-- **THEN** the Rust TUI starts the local daemon before creating or attaching to a
-  session
-- **AND** it waits for the daemon health endpoint to report readiness before
-  calling session APIs
+#### Scenario: Local file-backed mode starts without daemon session APIs
+- **WHEN** the user launches local `alan-terminal-ui` against a namespace-native
+  runtime
+- **THEN** it hydrates and tails the required state directly from mounted agent
+  files, including renderer-visible runtime UI state
+- **AND** it does not create or attach to a daemon session before rendering
 
-#### Scenario: Existing local daemon is reused
-- **WHEN** a user runs bare `alan` and the configured local daemon is already
-  healthy
-- **THEN** the Rust TUI reuses that daemon
-- **AND** it does not stop the daemon on exit unless the TUI started that daemon
-  instance for this run
+#### Scenario: No daemon-backed TUI mode remains
+- **WHEN** the user launches the Rust terminal UI locally after the migration
+  cleanup
+- **THEN** it uses mounted agent files as its only runtime contract
+- **AND** no daemon-backed compatibility or remote TUI mode is available
 
-#### Scenario: Remote daemon override is respected
-- **WHEN** a user runs bare `alan` with an explicit remote daemon URL such as
-  `ALAN_AGENTD_URL`
-- **THEN** the Rust TUI connects to that configured daemon
-- **AND** it does not start, stop, or otherwise manage a local daemon process
+### Requirement: File-backed local mode preserves local interaction parity
+The Rust terminal UI SHALL preserve the current local interaction baseline when
+running file-backed: pending input surfaces, command and reference completion,
+live activity, collapsed thinking, plan visibility, and renderer-visible
+warnings or compaction notices SHALL all work without daemon session event
+streams.
 
-#### Scenario: Daemon startup failure is actionable
-- **WHEN** the configured local daemon cannot be started or does not become
-  healthy before the startup timeout
-- **THEN** the Rust TUI reports an actionable startup error before attempting to
-  create or attach to a session
+#### Scenario: Activity and notices stay in the live region
+- **WHEN** a local file-backed turn is active or the runtime emits a recoverable
+  warning, compaction notice, or memory-flush notice
+- **THEN** the TUI renders that state in the bottom live region from mounted
+  agent files
+- **AND** it does not require daemon event classification to decide what stays
+  ephemeral
 
-#### Scenario: Session starts through daemon APIs
-- **WHEN** the Rust TUI starts a new conversation for a workspace
-- **THEN** it creates or attaches to a daemon-backed session using the public
-  session APIs
-- **AND** it renders the resolved profile, provider, model, and durability state
-  from daemon responses when those fields are available
-
-#### Scenario: Event stream resumes after reconnect
-- **WHEN** the TUI reconnects to an existing daemon-backed session
-- **THEN** it reads persisted history or reconnect snapshot state before
-  consuming new events
-- **AND** it detects event gaps using daemon cursor metadata
-
-#### Scenario: User input uses protocol operations
-- **WHEN** the user submits a message, approval response, structured input,
-  interrupt, rollback, or compaction request
-- **THEN** the TUI sends the corresponding alan protocol operation through the
-  daemon session APIs
+#### Scenario: Thinking and plan state render from file surfaces
+- **WHEN** the runtime exposes renderer-visible thinking or plan updates through
+  agent files
+- **THEN** the local file-backed TUI renders collapsed thinking and human-readable
+  plan state from those files
+- **AND** the user can interact with that state without a daemon-backed session
 
 ### Requirement: Codex-like terminal interaction baseline
 The first Rust TUI SHALL provide a Codex-like terminal interaction baseline:
@@ -101,8 +92,8 @@ composer, inline viewport rendering, terminal scrollback transcript insertion,
 typed transcript cells, resize reflow, and frame coalescing.
 
 #### Scenario: Streaming assistant output renders incrementally
-- **WHEN** daemon events stream thinking, text, tool, plan, warning, or error
-  updates
+- **WHEN** renderer-visible runtime state streams thinking, text, tool, plan,
+  warning, or error updates
 - **THEN** the TUI updates typed transcript cells without rebuilding the entire
   transcript as plain strings
 - **AND** it coalesces redraws so high-frequency deltas do not overwhelm the
@@ -132,10 +123,12 @@ states rather than raw JSON or debug text.
 #### Scenario: Structured input yield is shown
 - **WHEN** the runtime emits a structured input yield
 - **THEN** the TUI presents fields or choices that match the yielded schema
-- **AND** it validates the response before submitting it to the daemon
+- **AND** it validates the response before submitting it through the active
+  control plane
 
 #### Scenario: Recoverable runtime error is shown
-- **WHEN** the daemon reports a recoverable session or stream error
+- **WHEN** the runtime or renderer host reports a recoverable session, stream,
+  or file-surface error
 - **THEN** the TUI renders a concise user-facing state with available recovery
   actions
 - **AND** raw diagnostic details remain behind an explicit debug surface
@@ -161,15 +154,19 @@ noninteractive startup failures.
   is reintroduced
 - **THEN** focused TUI or packaging contract checks fail
 
-### Requirement: Protocol events are classified into display tiers
-The TUI SHALL classify each protocol event into exactly one of three display tiers — permanent transcript content, ephemeral live-region status, or suppressed — and SHALL render each event only according to its tier.
+### Requirement: Renderer updates are classified into display tiers
+The TUI SHALL classify each renderer-visible update into exactly one of three
+display tiers — permanent transcript content, ephemeral live-region status, or
+suppressed — and SHALL render each update only according to its tier.
 
 #### Scenario: Conversational substance is permanent
-- **WHEN** the daemon emits a user message, assistant text, a completed tool call, a plan snapshot, or a fatal error
+- **WHEN** the active control plane surfaces a user message, assistant text, a
+  completed tool call, a plan snapshot, or a fatal error
 - **THEN** the TUI renders it as permanent transcript content eligible for terminal scrollback
 
 #### Scenario: Internal lifecycle events are suppressed from the transcript
-- **WHEN** the daemon emits a turn-started, turn-completed, terminal-resize, event-sequence-gap, or session-hydration event
+- **WHEN** the active control plane surfaces a turn-started, turn-completed,
+  terminal-resize, event-sequence-gap, or session-hydration update
 - **THEN** the TUI does not render it as transcript content
 - **AND** it MAY record the event to the tracing log only
 
@@ -192,7 +189,7 @@ The TUI SHALL maintain a persistent bottom live region, redrawn independently of
 
 #### Scenario: Interrupt is always available during a turn
 - **WHEN** the user presses Esc while a turn is running
-- **THEN** the TUI issues an interrupt operation to the daemon
+- **THEN** the TUI issues an interrupt through the active control plane
 
 #### Scenario: Ephemeral status does not enter scrollback
 - **WHEN** a running tool, recoverable warning, compaction notice, or memory-flush notice is surfaced
@@ -241,7 +238,7 @@ The TUI SHALL provide a completion popup driven by trigger characters that disti
 
 #### Scenario: Dollar references a skill inline
 - **WHEN** the user types `$` anywhere in the composer
-- **THEN** a completion popup lists skills sourced from the daemon skills catalog
+- **THEN** a completion popup lists skills sourced from the active skill catalog
 - **AND** selecting one inserts a skill-reference token into the message, which is submitted as part of a normal turn
 
 #### Scenario: At references a file inline
@@ -250,7 +247,7 @@ The TUI SHALL provide a completion popup driven by trigger characters that disti
 - **AND** selecting one inserts the path into the message
 
 #### Scenario: Skill catalog unavailable degrades gracefully
-- **WHEN** the daemon skills catalog cannot be retrieved
+- **WHEN** the active skill catalog cannot be resolved
 - **THEN** the `$` popup shows no candidates and the user may continue typing freely
 - **AND** the TUI does not crash or block input
 
@@ -261,4 +258,3 @@ The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to
 - **WHEN** the TUI is running
 - **THEN** the terminal's native mouse selection and copy behavior is available
 - **AND** the TUI does not enable mouse capture
-

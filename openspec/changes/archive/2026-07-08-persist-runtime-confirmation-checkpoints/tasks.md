@@ -15,5 +15,7 @@
 
 ## 3. Archive Readiness
 
-- [ ] 3.1 Sync the `runtime-core-contract` delta into `openspec/specs/` before
-  archiving this change after implementation lands.
+- [x] 3.1 Sync the `runtime-core-contract` delta into `openspec/specs/` before
+  archiving this change after implementation lands. Done 2026-07-08: both
+  checkpoint-persistence requirements appended to
+  `openspec/specs/runtime-core-contract/spec.md`.

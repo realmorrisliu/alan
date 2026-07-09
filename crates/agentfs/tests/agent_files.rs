@@ -446,6 +446,75 @@ async fn machine_status_is_read_only_state() {
 }
 
 #[tokio::test]
+async fn machine_ui_subtree_exposes_default_snapshots() {
+    let fs = AgentFs::new();
+    let machine = read_text(&fs, &["machine"], Fid(1)).await;
+    assert!(machine.lines().any(|line| line == "ui"), "machine lists ui");
+
+    let ui = read_text(&fs, &["machine", "ui"], Fid(2)).await;
+    let mut entries: Vec<&str> = ui.lines().collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        vec!["activity", "events", "notice", "plan", "thinking"]
+    );
+
+    assert!(
+        read_text(&fs, &["machine", "ui", "activity"], Fid(3))
+            .await
+            .contains("\"state\":\"idle\"")
+    );
+    assert!(
+        read_text(&fs, &["machine", "ui", "plan"], Fid(4))
+            .await
+            .contains("\"items\":[]")
+    );
+    assert!(
+        read_text(&fs, &["machine", "ui", "notice"], Fid(5))
+            .await
+            .contains("\"kind\":\"none\"")
+    );
+}
+
+#[tokio::test]
+async fn machine_ui_events_stream_supports_offset_resume() {
+    let fs = AgentFs::new();
+    let first = br#"{"type":"notice","snapshot":{"version":1,"kind":"warning","message":"one"}}"#;
+    let second = br#"{"type":"notice","snapshot":{"version":1,"kind":"warning","message":"two"}}"#;
+    write_doc(&fs, &["machine", "ui", "events"], Fid(1), first)
+        .await
+        .unwrap();
+    write_doc(&fs, &["machine", "ui", "events"], Fid(2), b"\n")
+        .await
+        .unwrap();
+    write_doc(&fs, &["machine", "ui", "events"], Fid(3), second)
+        .await
+        .unwrap();
+    write_doc(&fs, &["machine", "ui", "events"], Fid(4), b"\n")
+        .await
+        .unwrap();
+
+    fs.walk(
+        Fid::ROOT,
+        Fid(5),
+        &["machine".into(), "ui".into(), "events".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(5), OpenMode::Read).await.unwrap();
+    let offset = (first.len() + 1) as u64;
+    let resumed = String::from_utf8(fs.read(Fid(5), offset, 4096).await.unwrap()).unwrap();
+    assert!(
+        resumed.contains("\"message\":\"two\""),
+        "resumed={resumed:?}"
+    );
+    assert_eq!(
+        fs.stat(Fid(5)).await.unwrap().length,
+        (first.len() + second.len() + 2) as u64
+    );
+}
+
+#[tokio::test]
 async fn requests_events_stream_announces_new_requests() {
     use std::sync::Arc;
     use std::time::Duration;

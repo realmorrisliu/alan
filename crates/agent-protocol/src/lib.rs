@@ -13,6 +13,7 @@ mod memory;
 mod op;
 mod reasoning;
 mod spawn;
+mod ui_surface;
 
 pub use adaptive::{
     AdaptiveForm, AdaptivePresentationHint, AdaptiveYieldCapabilities, ClientCapabilities,
@@ -41,4 +42,8 @@ pub use reasoning::{ReasoningControls, ReasoningEffort};
 pub use spawn::{
     SpawnHandle, SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, SpawnTarget,
     SpawnToolProfileOverride,
+};
+pub use ui_surface::{
+    UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,
+    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState,
 };

@@ -23,6 +23,7 @@ mod turn_driver;
 mod turn_executor;
 mod turn_state;
 mod turn_support;
+mod ui_surfaces;
 mod virtual_tools;
 
 pub use agent_loop::{
@@ -36,9 +37,11 @@ pub use child_runs::{
     ChildRunTerminationRequest, global_child_run_registry,
 };
 pub use engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeStartupMetadata,
-    SessionDurabilityState, WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn,
-    spawn_with_llm_client, spawn_with_llm_client_and_tools, spawn_with_tool_registry,
+    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeNamespaceLaunch,
+    RuntimeNamespaceSurface, RuntimeStartupMetadata, SessionDurabilityState,
+    WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
+    spawn_with_llm_client_and_tools, spawn_with_namespace_surface, spawn_with_tool_registry,
+    spawn_with_tool_registry_and_namespace_surface,
 };
 
 // Re-export agent loop types for internal use

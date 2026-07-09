@@ -1,13 +1,10 @@
 use anyhow::{Context, Result};
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, Event as TerminalEvent};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::{execute, terminal as crossterm_terminal};
+use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::{IsTerminal, Stdout, Write, stdout};
-use std::time::Duration;
-
-use crate::app::AppEvent;
-use crate::ui;
 
 pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
 
@@ -36,9 +33,12 @@ impl TerminalSession {
         Ok(Self { terminal })
     }
 
-    pub fn draw(&mut self, app: &crate::app::TuiApp) -> Result<()> {
+    pub fn draw_with<F>(&mut self, draw: F) -> Result<()>
+    where
+        F: FnOnce(&mut Frame<'_>),
+    {
         self.terminal
-            .draw(|frame| ui::draw(frame, app))
+            .draw(draw)
             .map(|_| ())
             .context("failed to draw terminal frame")
     }
@@ -101,42 +101,6 @@ impl Drop for TerminalSession {
         let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
         let _ = self.terminal.show_cursor();
     }
-}
-
-pub fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<AppEvent>) {
-    tokio::task::spawn_blocking(move || {
-        loop {
-            match crossterm::event::poll(Duration::from_millis(100)) {
-                Ok(true) => match crossterm::event::read() {
-                    Ok(event) => {
-                        let should_quit = matches!(
-                            event,
-                            TerminalEvent::Key(crossterm::event::KeyEvent {
-                                code: crossterm::event::KeyCode::Char('q'),
-                                modifiers,
-                                ..
-                            }) if modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-                        );
-                        if tx.blocking_send(AppEvent::Terminal(event)).is_err() || should_quit {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        let _ = tx.blocking_send(AppEvent::Error(format!(
-                            "terminal input failed: {err}"
-                        )));
-                        break;
-                    }
-                },
-                Ok(false) => {}
-                Err(err) => {
-                    let _ = tx
-                        .blocking_send(AppEvent::Error(format!("terminal polling failed: {err}")));
-                    break;
-                }
-            }
-        }
-    });
 }
 
 #[cfg(test)]

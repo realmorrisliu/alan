@@ -215,6 +215,16 @@ async fn read_pending_namespace_resume_submission(
     }
 }
 
+async fn read_pending_namespace_control_submission(
+    namespace: &super::NamespaceRuntimeEnvironment,
+) -> Option<Result<Submission>> {
+    match namespace.read_next_machine_control_submission().await {
+        Ok(Some(submission)) => Some(Ok(submission)),
+        Ok(None) => None,
+        Err(err) => Some(Err(err)),
+    }
+}
+
 #[derive(Default)]
 struct RuntimeSubmissionQueues {
     /// Cross-turn queue for submissions.
@@ -326,6 +336,25 @@ pub struct RuntimeStartupMetadata {
 struct SessionStartupOutcome {
     session: Session,
     metadata: RuntimeStartupMetadata,
+}
+
+async fn emit_runtime_event(
+    tx: &mpsc::Sender<RuntimeEventEnvelope>,
+    ui_projector: &tokio::sync::Mutex<super::ui_surfaces::RuntimeUiProjector>,
+    submission_id: Option<String>,
+    event: Event,
+) {
+    let mut projector = ui_projector.lock().await;
+    if let Err(err) = projector.apply_event(&event).await {
+        warn!(error = %err, "Failed to project runtime ui surface event");
+    }
+    drop(projector);
+    let _ = tx
+        .send(RuntimeEventEnvelope {
+            submission_id,
+            event,
+        })
+        .await;
 }
 
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
@@ -1071,6 +1100,38 @@ impl RuntimeController {
     }
 }
 
+/// A renderer-host view of one mounted runtime namespace.
+#[derive(Clone)]
+pub struct RuntimeNamespaceSurface {
+    root: InProcessTransport,
+    agent_path: String,
+}
+
+impl RuntimeNamespaceSurface {
+    fn new(root: InProcessTransport, agent_path: impl Into<String>) -> Self {
+        Self {
+            root,
+            agent_path: agent_path.into(),
+        }
+    }
+
+    /// Root aP transport for the mounted namespace.
+    pub fn root_transport(&self) -> InProcessTransport {
+        self.root.clone()
+    }
+
+    /// Concrete agent path for the launched root agent, for example `/agent/1`.
+    pub fn agent_path(&self) -> &str {
+        &self.agent_path
+    }
+}
+
+/// Local runtime launch handle for renderer hosts.
+pub struct RuntimeNamespaceLaunch {
+    pub controller: RuntimeController,
+    pub surface: RuntimeNamespaceSurface,
+}
+
 /// Spawn a new agent runtime and return handles for communication
 pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     let core_config = effective_core_config_for_runtime(&config)?;
@@ -1083,6 +1144,22 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+/// Spawn a new namespace-native runtime and return the renderer-host surface.
+pub async fn spawn_with_namespace_surface(
+    config: WorkspaceRuntimeConfig,
+) -> Result<RuntimeNamespaceLaunch> {
+    let core_config = effective_core_config_for_runtime(&config)?;
+
+    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+        &core_config,
+        config.chatgpt_auth_storage_path.clone(),
+    )
+    .context("Failed to create LLM client for runtime")?;
+    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
+
+    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
 }
 
 /// Spawn a new agent runtime with an externally-provided LLM client.
@@ -1103,6 +1180,22 @@ pub fn spawn_with_tool_registry(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
+/// Spawn a new namespace-native runtime and return the renderer-host surface.
+pub async fn spawn_with_tool_registry_and_namespace_surface(
+    config: WorkspaceRuntimeConfig,
+    tools: crate::tools::ToolRegistry,
+) -> Result<RuntimeNamespaceLaunch> {
+    let core_config = effective_core_config_for_runtime(&config)?;
+
+    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+        &core_config,
+        config.chatgpt_auth_storage_path.clone(),
+    )
+    .context("Failed to create LLM client for runtime")?;
+
+    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
+}
+
 /// Spawn a new agent runtime with an externally-provided LLM client.
 ///
 /// This is useful for testing with a mock LLM provider.
@@ -1114,6 +1207,45 @@ pub fn spawn_with_llm_client(
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+fn configure_runtime_tool_execution_binding(
+    config: &WorkspaceRuntimeConfig,
+    tools: &mut crate::tools::ToolRegistry,
+) -> Result<()> {
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
+    let channel = runtime_install_channel(config);
+    if let Some(default_cwd) = config.default_cwd_override.as_ref() {
+        if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
+            let scratch_dir = resolved_agent_definition
+                .workspace_alan_dir
+                .as_ref()
+                .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
+                .unwrap_or_else(|| default_cwd.join(".alan").join("tmp"));
+            tools.set_default_execution_binding(
+                crate::tools::ToolExecutionBinding::with_workspace(
+                    ws_root.clone(),
+                    default_cwd.clone(),
+                    scratch_dir,
+                ),
+            );
+        } else {
+            tools.set_default_cwd(default_cwd.clone());
+        }
+    } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
+        let scratch_dir = resolved_agent_definition
+            .workspace_alan_dir
+            .as_ref()
+            .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
+            .unwrap_or_else(|| ws_root.join(".alan").join("tmp"));
+        tools.set_default_execution_binding(crate::tools::ToolExecutionBinding::with_workspace(
+            ws_root.clone(),
+            ws_root.clone(),
+            scratch_dir,
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn effective_core_config_for_runtime(
@@ -1338,37 +1470,7 @@ pub fn spawn_with_llm_client_and_tools(
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
-    let channel = runtime_install_channel(&config);
-    if let Some(default_cwd) = config.default_cwd_override.as_ref() {
-        if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-            let scratch_dir = resolved_agent_definition
-                .workspace_alan_dir
-                .as_ref()
-                .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
-                .unwrap_or_else(|| default_cwd.join(".alan").join("tmp"));
-            tools.set_default_execution_binding(
-                crate::tools::ToolExecutionBinding::with_workspace(
-                    ws_root.clone(),
-                    default_cwd.clone(),
-                    scratch_dir,
-                ),
-            );
-        } else {
-            tools.set_default_cwd(default_cwd.clone());
-        }
-    } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-        let scratch_dir = resolved_agent_definition
-            .workspace_alan_dir
-            .as_ref()
-            .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
-            .unwrap_or_else(|| ws_root.join(".alan").join("tmp"));
-        tools.set_default_execution_binding(crate::tools::ToolExecutionBinding::with_workspace(
-            ws_root.clone(),
-            ws_root.clone(),
-            scratch_dir,
-        ));
-    }
+    configure_runtime_tool_execution_binding(&config, &mut tools)?;
 
     let generation_capabilities = llm_client.capabilities();
     let host_tools = tools.clone();
@@ -1383,6 +1485,38 @@ pub fn spawn_with_llm_client_and_tools(
         host_tools,
         generation_capabilities,
     )
+}
+
+async fn spawn_with_llm_client_and_tools_and_namespace_surface(
+    config: WorkspaceRuntimeConfig,
+    llm_client: LlmClient,
+    mut tools: crate::tools::ToolRegistry,
+) -> Result<RuntimeNamespaceLaunch> {
+    configure_runtime_tool_execution_binding(&config, &mut tools)?;
+
+    let generation_capabilities = llm_client.capabilities();
+    let host_tools = tools.clone();
+    let environment = build_root_namespace_environment(
+        llm_client,
+        tools,
+        config.mount_grant_applicator_factory.clone(),
+    )
+    .await?;
+    let RuntimeEnvironment::Namespace { namespace, .. } = &environment;
+    let surface = RuntimeNamespaceSurface::new(
+        namespace.root_transport(),
+        namespace.agent_path().to_string(),
+    );
+    let controller = spawn_with_prepared_runtime_environment(
+        config,
+        RuntimeEnvironmentBootstrap::Ready(environment),
+        host_tools,
+        generation_capabilities,
+    )?;
+    Ok(RuntimeNamespaceLaunch {
+        controller,
+        surface,
+    })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1553,6 +1687,17 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache,
             turn_state: super::TurnState::default(),
         };
+        let ui_projector = match super::ui_surfaces::RuntimeUiProjector::initialize(
+            state.namespace_environment().clone(),
+        )
+        .await
+        {
+            Ok(projector) => Arc::new(tokio::sync::Mutex::new(projector)),
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
+            }
+        };
 
         info!(
             session_fingerprint = %session_log_fingerprint(&state.session.id),
@@ -1584,10 +1729,24 @@ fn spawn_with_prepared_runtime_environment(
                         None
                     }
                 }
+            } else if let Some(namespace_control) =
+                read_pending_namespace_control_submission(state.namespace_environment()).await
+            {
+                match namespace_control {
+                    Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
+                    Err(err) => {
+                        error!(
+                            error = %format!("{err:#}"),
+                            "Failed to read namespace machine/ctl command"
+                        );
+                        None
+                    }
+                }
             } else if submissions_closed {
                 None
             } else {
                 let namespace_input = state.namespace_environment().clone();
+                let namespace_control = state.namespace_environment().clone();
                 let poll_pending_namespace_response = state.turn_state.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
@@ -1601,15 +1760,28 @@ fn spawn_with_prepared_runtime_environment(
                             None => None,
                         }
                     }
-                    _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL), if poll_pending_namespace_response => {
-                        match read_pending_namespace_resume_submission(&state).await {
+                    _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
+                        match read_pending_namespace_control_submission(&namespace_control).await {
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
                                 error!(
                                     error = %format!("{err:#}"),
-                                    "Failed to read namespace answered request response"
+                                    "Failed to read namespace machine/ctl command"
                                 );
                                 None
+                            }
+                            None if poll_pending_namespace_response => {
+                                match read_pending_namespace_resume_submission(&state).await {
+                                    Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
+                                    Some(Err(err)) => {
+                                        error!(
+                                            error = %format!("{err:#}"),
+                                            "Failed to read namespace answered request response"
+                                        );
+                                        None
+                                    }
+                                    None => None,
+                                }
                             }
                             None => None,
                         }
@@ -1646,15 +1818,13 @@ fn spawn_with_prepared_runtime_environment(
                     let cancel = CancellationToken::new();
                     let event_tx_clone = evt_tx.clone();
                     let submission_event_ctx_for_emit = submission_event_ctx.clone();
+                    let ui_projector_for_emit = ui_projector.clone();
                     let mut emit = |event: Event| {
                         let tx = event_tx_clone.clone();
+                        let ui_projector = ui_projector_for_emit.clone();
                         let submission_id = submission_event_ctx_for_emit.get_submission_id();
                         async move {
-                            let _ = tx
-                                .send(RuntimeEventEnvelope {
-                                    submission_id,
-                                    event,
-                                })
+                            emit_runtime_event(&tx, ui_projector.as_ref(), submission_id, event)
                                 .await;
                         }
                     };
@@ -1665,6 +1835,7 @@ fn spawn_with_prepared_runtime_environment(
                         submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
                     };
                     let namespace_input = state.namespace_environment().clone();
+                    let namespace_control = state.namespace_environment().clone();
                     let mut submission_fut: std::pin::Pin<
                         Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
                     > = if drive_as_turn_submission {
@@ -1696,15 +1867,16 @@ fn spawn_with_prepared_runtime_environment(
                                 if let Err(e) = result {
                                     let error_msg = format!("Error handling submission: {}", e);
                                     error!(error = %error_msg);
-                                    let _ = evt_tx
-                                        .send(RuntimeEventEnvelope {
-                                            submission_id: submission_event_ctx.get_submission_id(),
-                                            event: Event::Error {
-                                                message: error_msg,
-                                                recoverable: true,
-                                            },
-                                        })
-                                        .await;
+                                    emit_runtime_event(
+                                        &evt_tx,
+                                        ui_projector.as_ref(),
+                                        submission_event_ctx.get_submission_id(),
+                                        Event::Error {
+                                            message: error_msg,
+                                            recoverable: true,
+                                        },
+                                    )
+                                    .await;
                                 }
                                 queues.outer_queue.extend(
                                     state
@@ -1751,15 +1923,44 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
                                         error!(error = %error_msg);
-                                        let _ = evt_tx
-                                            .send(RuntimeEventEnvelope {
-                                                submission_id: submission_event_ctx.get_submission_id(),
-                                                event: Event::Error {
-                                                    message: error_msg,
-                                                    recoverable: true,
-                                                },
-                                            })
-                                            .await;
+                                        emit_runtime_event(
+                                            &evt_tx,
+                                            ui_projector.as_ref(),
+                                            submission_event_ctx.get_submission_id(),
+                                            Event::Error {
+                                                message: error_msg,
+                                                recoverable: true,
+                                            },
+                                        )
+                                        .await;
+                                    }
+                                    None => {}
+                                }
+                            }
+                            _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
+                                match read_pending_namespace_control_submission(&namespace_control).await {
+                                    Some(Ok(incoming)) => {
+                                        if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
+                                            if !queues.active_turn_broker.push(incoming.clone()).await {
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        } else {
+                                            queues.push_outer_submission(incoming);
+                                        }
+                                    }
+                                    Some(Err(err)) => {
+                                        let error_msg = format!("Failed to read namespace machine/ctl command: {err:#}");
+                                        error!(error = %error_msg);
+                                        emit_runtime_event(
+                                            &evt_tx,
+                                            ui_projector.as_ref(),
+                                            submission_event_ctx.get_submission_id(),
+                                            Event::Error {
+                                                message: error_msg,
+                                                recoverable: true,
+                                            },
+                                        )
+                                        .await;
                                     }
                                     None => {}
                                 }
@@ -1787,6 +1988,7 @@ fn spawn_with_prepared_runtime_environment(
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
                     let namespace_input = state.namespace_environment().clone();
+                    let namespace_control = state.namespace_environment().clone();
                     let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
                         &mut state, action, &cancel,
                     ));
@@ -1827,6 +2029,22 @@ fn spawn_with_prepared_runtime_environment(
                                         error!(
                                             error = %format!("{err:#}"),
                                             "Failed to read namespace io/input frame during deferred action"
+                                        );
+                                    }
+                                    None => {}
+                                }
+                            }
+                            _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
+                                match read_pending_namespace_control_submission(&namespace_control).await {
+                                    Some(Ok(incoming)) => {
+                                        requeue_if_cancelled = true;
+                                        cancel.cancel();
+                                        queues.push_outer_submission(incoming);
+                                    }
+                                    Some(Err(err)) => {
+                                        error!(
+                                            error = %format!("{err:#}"),
+                                            "Failed to read namespace machine/ctl command during deferred action"
                                         );
                                     }
                                     None => {}
@@ -2217,6 +2435,36 @@ mod tests {
         controller.shutdown().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn namespace_surface_launch_exposes_live_agent_files_for_renderer_hosts() {
+        let llm_client = LlmClient::new(
+            MockLlmProvider::new().with_response(mock_generation_response("hello from surface")),
+        );
+        let mut launch = spawn_with_llm_client_and_tools_and_namespace_surface(
+            WorkspaceRuntimeConfig::default(),
+            llm_client,
+            crate::tools::ToolRegistry::new(),
+        )
+        .await
+        .unwrap();
+        launch.controller.wait_until_ready().await.unwrap();
+
+        let shell = alan_shell::Shell::new(launch.surface.root_transport());
+        let agent_path = launch.surface.agent_path().to_string();
+        assert!(agent_path.starts_with("/agent/"));
+        let message = "hello from renderer host";
+        shell
+            .write(&format!("{agent_path}/io/input"), message.as_bytes())
+            .await
+            .expect("write agent input");
+        let status = String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap();
+        assert_eq!(status, "running\n");
+        let input =
+            String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
+        assert_eq!(input, message);
+        launch.controller.shutdown().await.unwrap();
+    }
+
     struct ShutdownDrainMemoryPromotionProvider {
         call_count: Arc<Mutex<usize>>,
         deferred_delay: Duration,
@@ -2429,9 +2677,13 @@ mod tests {
             agent_config: crate::AgentConfig::from(core_config),
             ..WorkspaceRuntimeConfig::default()
         };
-        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
-            alan_kernel::Namespace::new(),
-        )));
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
         let namespace_environment =
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
@@ -2598,6 +2850,98 @@ mod tests {
             }
             other => panic!("expected Op::Resume from namespace response, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submission() {
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(MockLlmProvider::new().with_response(GenerationResponse {
+                content: "hello from namespace runtime".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+                warnings: Vec::new(),
+            })),
+        );
+
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            alan_ap::InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+
+        let core_config = crate::Config::default();
+        let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
+        let config = WorkspaceRuntimeConfig {
+            agent_config: crate::AgentConfig::from(core_config),
+            ..WorkspaceRuntimeConfig::default()
+        };
+        let namespace_environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            namespace_environment,
+            crate::tools::ToolRegistry::new(),
+            generation_capabilities,
+        )
+        .unwrap();
+        controller.wait_until_ready().await.unwrap();
+
+        let mut event_rx = controller.handle.event_sender.subscribe();
+        shell
+            .write("/agent/1/io/input", b"hello through files")
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = event_rx.recv().await.unwrap();
+                if matches!(envelope.event, Event::TurnCompleted { .. }) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("namespace io/input should drive a turn to completion");
+
+        shell
+            .write("/agent/1/machine/ctl", b"rollback")
+            .await
+            .unwrap();
+
+        let rollback = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = event_rx.recv().await.unwrap();
+                if let Event::SessionRolledBack {
+                    turns,
+                    removed_messages,
+                } = envelope.event
+                {
+                    break (turns, removed_messages);
+                }
+            }
+        })
+        .await
+        .expect("namespace machine/ctl should drive rollback submission");
+        assert_eq!(rollback, (1, 2));
+
+        controller.shutdown().await.unwrap();
     }
 
     #[test]
