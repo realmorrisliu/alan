@@ -622,20 +622,6 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
     format!("{agent_path}/requests/{request_id}/response")
 }
 
-fn proc_ctl_path(agent_path: &str) -> Result<String> {
-    let segments = agent_path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    match segments.as_slice() {
-        ["agent", "root"] => {
-            bail!("agent path must resolve to a concrete pid, not /agent/root")
-        }
-        ["agent", pid] => Ok(format!("/proc/{pid}/ctl")),
-        _ => bail!("agent path must be a concrete /agent/<pid> path: {agent_path}"),
-    }
-}
-
 async fn write_agent_input(shell: &alan_shell::Shell, agent_path: &str, text: &str) -> Result<()> {
     shell
         .write(&agent_input_path(agent_path), text.as_bytes())
@@ -670,11 +656,13 @@ async fn write_machine_ctl(
 }
 
 async fn write_interrupt(shell: &alan_shell::Shell, agent_path: &str) -> Result<()> {
-    let ctl_path = proc_ctl_path(agent_path)?;
+    // Turn interrupt is agent-runtime control: it must cancel the running
+    // generation and leave the agent process alive. Writing "interrupt" to
+    // the kernel `/proc/<pid>/ctl` would terminate the process instead.
     shell
-        .write(&ctl_path, b"interrupt")
+        .write(&machine_ctl_path(agent_path), b"interrupt")
         .await
-        .map_err(|err| anyhow!("write process interrupt failed: {err:?}"))
+        .map_err(|err| anyhow!("write turn interrupt failed: {err:?}"))
 }
 
 async fn read_latest_pending_request(
@@ -1925,14 +1913,6 @@ mod tests {
     }
 
     #[test]
-    fn proc_ctl_path_requires_concrete_agent_pid() {
-        assert_eq!(proc_ctl_path("/agent/7").unwrap(), "/proc/7/ctl");
-        assert!(proc_ctl_path("/agent/root").is_err());
-        assert!(proc_ctl_path("/agent").is_err());
-        assert!(proc_ctl_path("/agent/7/io/output").is_err());
-    }
-
-    #[test]
     fn parse_tape_history_restores_user_and_assistant_messages() {
         let cells = parse_tape_history(
             r#"{"version":1,"kind":"message","role":"user","content":"hello"}
@@ -2236,6 +2216,24 @@ mod tests {
         let echoed =
             String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
         assert_eq!(echoed, "hello through files");
+
+        // Esc interrupts through the agent-runtime surface (machine/ctl), not
+        // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate
+        // the agent process while the runtime keeps generating.
+        write_interrupt(&shell, &agent_path).await.unwrap();
+        let events =
+            String::from_utf8(shell.cat(&format!("{agent_path}/events")).await.unwrap()).unwrap();
+        assert!(
+            events.contains("ctl:interrupt"),
+            "interrupt must be recorded on machine/ctl: {events:?}"
+        );
+        let proc_status =
+            String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap()).unwrap();
+        assert_eq!(
+            proc_status.trim(),
+            "running",
+            "interrupt must not terminate the agent process"
+        );
     }
 
     #[test]

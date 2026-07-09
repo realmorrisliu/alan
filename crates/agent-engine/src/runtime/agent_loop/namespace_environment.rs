@@ -1521,6 +1521,12 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
     match command.trim() {
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
+        // Turn interrupt is agent-runtime control (stop the current turn,
+        // keep the agent alive), not kernel process lifecycle:
+        // `/proc/<pid>/ctl` interrupt terminates the process, which is the
+        // wrong semantics for a renderer host's Esc. File clients interrupt
+        // through machine/ctl.
+        "interrupt" => Some(Submission::new(Op::Interrupt)),
         _ => None,
     }
 }
@@ -2852,6 +2858,19 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
+        // Turn interrupt is a machine/ctl verb: a file client's Esc must
+        // cancel the running turn without touching kernel process lifecycle.
+        shell
+            .write("/agent/1/machine/ctl", b"interrupt")
+            .await
+            .unwrap();
+        let interrupt = environment
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .expect("interrupt command should produce a submission");
+        assert!(matches!(interrupt.op, Op::Interrupt));
     }
 
     #[tokio::test]
