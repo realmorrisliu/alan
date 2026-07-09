@@ -98,7 +98,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         tx.clone(),
         shutdown_rx.clone(),
     ));
-    let ui_task = tokio::spawn(spawn_ui_watch(watch_tails.ui, tx, shutdown_rx));
+    let ui_task = tokio::spawn(spawn_ui_watch(
+        watch_tails.ui,
+        tx.clone(),
+        shutdown_rx.clone(),
+    ));
+    let tape_task = tokio::spawn(spawn_tape_watch(watch_tails.tape, tx, shutdown_rx));
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -180,24 +185,29 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let _ = request_task.await;
     let _ = action_task.await;
     let _ = ui_task.await;
+    let _ = tape_task.await;
 
     Ok(())
 }
 
-/// Hydrate startup state and open the live watch tails in the order that
-/// avoids both losing and replaying records at attach time, per channel:
+/// Hydrate startup state and open the live watch tails so that attach time
+/// neither loses nor replays records, per channel:
 ///
-/// - The request/action/ui tails open BEFORE their hydration syncs: a record
-///   landing in between is delivered by the tail as well as hydrated, and
-///   those paths are idempotent (watch records only trigger full re-syncs;
-///   ui snapshot application is change-guarded), so overlap is safe and
-///   nothing is lost.
-/// - The output tail opens AFTER `machine/tape` is read: the engine writes a
-///   turn's `io/output` text before appending its tape record
-///   (`write_assistant_state`), so every tape-hydrated response is already
-///   behind the output live edge and is never replayed into the transcript.
-///   Output is the one non-idempotent channel, so it gets loss-free-by-tape +
-///   no-duplicates instead of the replay-tolerant ordering.
+/// - `machine/tape` and `machine/ui/events` hydrate FROM the byte snapshot
+///   their own tail pinned at open (`tail_with_history`): the same file is
+///   both history source and live stream, so delivery is exactly-once by
+///   construction — no ordering race can exist between "what was hydrated"
+///   and "what the tail will deliver".
+/// - The request/action event tails only trigger idempotent directory
+///   re-syncs, so overlap between their open point and the first sync is
+///   harmless.
+/// - `io/output` is an optimistic live preview: it is never hydrated, and the
+///   tape watcher is the authority that reconciles it (`apply_tape_record`
+///   dedupes fully-streamed responses, repairs a mid-turn attach that only
+///   caught the suffix, and appends responses the stream missed entirely).
+/// - UI snapshot files are read only when the ui event history is empty
+///   (fresh log); otherwise replaying the pinned history is strictly more
+///   consistent than mixing it with later point-in-time snapshot reads.
 async fn hydrate_and_open_tails(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -205,17 +215,39 @@ async fn hydrate_and_open_tails(
 ) -> Result<WatchTails> {
     let requests = tail_from_live_edge(shell, &request_events_path(agent_path)).await?;
     let actions = tail_from_live_edge(shell, &action_events_path(agent_path)).await?;
-    let ui = tail_from_live_edge(shell, &ui_events_path(agent_path)).await?;
-    app.transcript = read_tape_history(shell, agent_path).await?;
+    let (ui, ui_history) = tail_with_history(shell, &ui_events_path(agent_path)).await?;
+    let (tape, tape_history) =
+        tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
     let output = tail_from_live_edge(shell, &agent_output_path(agent_path)).await?;
+
+    app.transcript =
+        parse_tape_history(&String::from_utf8(tape_history).context("machine/tape is not utf8")?);
+
+    let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
+    let ui_events = ui_history
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
+        .collect::<Result<Vec<_>>>()?;
+    if ui_events.is_empty() {
+        app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
+        app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
+        app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
+        app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
+    } else {
+        for event in ui_events {
+            app.apply_ui_event(event);
+        }
+    }
+
     sync_actions_from_files(shell, agent_path, app).await?;
     sync_requests_from_files(shell, agent_path, app).await?;
-    sync_ui_from_files(shell, agent_path, app).await?;
     Ok(WatchTails {
         output,
         requests,
         actions,
         ui,
+        tape,
     })
 }
 
@@ -242,28 +274,14 @@ async fn sync_actions_from_files(
     Ok(())
 }
 
-async fn sync_ui_from_files(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    app: &mut FileBackedApp,
-) -> Result<()> {
-    for event in read_ui_event_history(shell, agent_path).await? {
-        app.apply_ui_event(event);
-    }
-    app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
-    app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
-    app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
-    app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
-    Ok(())
-}
-
-/// The four live watch tails, opened during `hydrate_and_open_tails` in the
-/// per-channel order that neither loses nor replays records at attach time.
+/// The live watch tails, opened during `hydrate_and_open_tails` so that
+/// attach time neither loses nor replays records (see that function's doc).
 struct WatchTails {
     output: alan_shell::Tail,
     requests: alan_shell::Tail,
     actions: alan_shell::Tail,
     ui: alan_shell::Tail,
+    tape: alan_shell::Tail,
 }
 
 async fn spawn_output_tail(
@@ -434,7 +452,70 @@ async fn spawn_ui_watch(
     Ok(())
 }
 
+async fn spawn_tape_watch(
+    mut tail: alan_shell::Tail,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    let mut pending = Vec::new();
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            result = tail.read(4096) => {
+                match result {
+                    Ok(bytes) if bytes.is_empty() => break,
+                    Ok(bytes) => {
+                        pending.extend_from_slice(&bytes);
+                        while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+                            let line = pending.drain(..=newline).collect::<Vec<_>>();
+                            let line = &line[..line.len().saturating_sub(1)];
+                            if line.is_empty() {
+                                continue;
+                            }
+                            // Non-message records (tool calls, checkpoints…)
+                            // are not rendered; skip quietly like hydration.
+                            let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
+                                continue;
+                            };
+                            if tx.send(FileBackedEvent::Tape(record)).await.is_err() {
+                                pending.clear();
+                                break;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let _ = tx.send(FileBackedEvent::Error(format!(
+                            "tape watch failed: {err:?}"
+                        ))).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    tail.close()
+        .await
+        .map_err(|err| anyhow!("failed to close tape watch: {err:?}"))?;
+    Ok(())
+}
+
 async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<alan_shell::Tail> {
+    Ok(tail_with_history(shell, path).await?.0)
+}
+
+/// Open a tail pinned at the file's current live edge and return the bytes
+/// that existed at open time. Hydrating from these returned bytes — instead
+/// of from a separate read of the same file — makes history + live delivery
+/// exactly-once by construction.
+async fn tail_with_history(
+    shell: &alan_shell::Shell,
+    path: &str,
+) -> Result<(alan_shell::Tail, Vec<u8>)> {
     let existing = shell
         .cat(path)
         .await
@@ -455,7 +536,7 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
         }
         skipped += chunk.len();
     }
-    Ok(tail)
+    Ok((tail, existing))
 }
 
 fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEvent>) {
@@ -596,19 +677,6 @@ async fn write_interrupt(shell: &alan_shell::Shell, agent_path: &str) -> Result<
         .map_err(|err| anyhow!("write process interrupt failed: {err:?}"))
 }
 
-async fn read_tape_history(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-) -> Result<Vec<HistoryCell>> {
-    let raw = shell
-        .cat(&format!("{agent_path}/machine/tape"))
-        .await
-        .map_err(|err| anyhow!("read tape failed: {err:?}"))?;
-    Ok(parse_tape_history(
-        &String::from_utf8(raw).context("machine/tape is not utf8")?,
-    ))
-}
-
 async fn read_latest_pending_request(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -704,17 +772,6 @@ async fn read_json_file<T: DeserializeOwned>(shell: &alan_shell::Shell, path: &s
         .await
         .map_err(|err| anyhow!("read {path} failed: {err:?}"))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse {path} failed"))
-}
-
-async fn read_ui_event_history(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-) -> Result<Vec<UiEvent>> {
-    let raw = read_utf8(shell, &ui_events_path(agent_path)).await?;
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
-        .collect()
 }
 
 fn request_sort_key(request_id: &str) -> u64 {
@@ -912,6 +969,7 @@ enum FileBackedEvent {
     RequestsChanged,
     ActionsChanged,
     Ui(UiEvent),
+    Tape(TapeRecordV1),
     Error(String),
 }
 
@@ -964,6 +1022,11 @@ struct FileBackedApp {
     expand_thinking: bool,
     notice: Option<String>,
     should_quit: bool,
+    /// Set when a tape record rendered a response before its live stream
+    /// bytes arrived (the two watch tasks race through the same channel):
+    /// `(expected_text, bytes_already_accounted)`. `push_output` consumes
+    /// matching late bytes instead of rendering them twice.
+    suppress_stream: Option<(String, usize)>,
 }
 
 impl FileBackedApp {
@@ -987,6 +1050,7 @@ impl FileBackedApp {
             },
             expand_thinking: false,
             should_quit: false,
+            suppress_stream: None,
         }
     }
 
@@ -1020,6 +1084,10 @@ impl FileBackedApp {
             }
             FileBackedEvent::Ui(event) => {
                 self.apply_ui_event(event);
+                None
+            }
+            FileBackedEvent::Tape(record) => {
+                self.apply_tape_record(record);
                 None
             }
             FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged => None,
@@ -1336,7 +1404,30 @@ impl FileBackedApp {
         }
     }
 
-    fn push_output(&mut self, text: String) {
+    fn push_output(&mut self, mut text: String) {
+        // Consume late stream bytes for a response a tape record already
+        // rendered (the tape and output watch tasks race through the same
+        // channel, so the record can win).
+        if let Some((expected, consumed)) = self.suppress_stream.take() {
+            let remainder = &expected[consumed..];
+            if let Some(rest) = text.strip_prefix(remainder) {
+                // This chunk finishes the suppressed response; any excess
+                // belongs to the next turn and renders normally.
+                text = rest.to_string();
+            } else if remainder.starts_with(text.as_str()) {
+                // A prefix chunk of the suppressed response.
+                let consumed = consumed + text.len();
+                if consumed < expected.len() {
+                    self.suppress_stream = Some((expected, consumed));
+                }
+                return;
+            } else if remainder.ends_with(text.as_str()) {
+                // A mid-turn attach clipped the stream's prefix, so the late
+                // chunk is the tail of the suppressed response.
+                return;
+            }
+            // Mismatch: the stream is not the suppressed response — render it.
+        }
         if text.is_empty() {
             return;
         }
@@ -1344,6 +1435,68 @@ impl FileBackedApp {
         match self.transcript.last_mut() {
             Some(HistoryCell::Assistant(existing)) => existing.push_str(&text),
             _ => self.transcript.push(HistoryCell::Assistant(text)),
+        }
+    }
+
+    /// Reconcile a live `machine/tape` record with the transcript. The output
+    /// stream is an optimistic preview; the tape is the authority:
+    /// - a response the stream already delivered in full is dropped (equality
+    ///   with the most recent assistant cell),
+    /// - a mid-turn attach that only caught the stream's suffix is repaired in
+    ///   place (the record ends with the cell's text),
+    /// - a response the stream missed entirely (written before the output
+    ///   tail's live edge, recorded after hydration read the tape) is
+    ///   appended.
+    fn apply_tape_record(&mut self, record: TapeRecordV1) {
+        if record.kind != "message" {
+            return;
+        }
+        match record.role.as_str() {
+            "user" => {
+                let already = self
+                    .transcript
+                    .iter()
+                    .rev()
+                    .find_map(|cell| match cell {
+                        HistoryCell::User(existing) => Some(existing == &record.content),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                if !already {
+                    self.transcript.push(HistoryCell::User(record.content));
+                }
+            }
+            "assistant" => {
+                let streamed_in_full = self
+                    .transcript
+                    .iter()
+                    .rev()
+                    .find_map(|cell| match cell {
+                        HistoryCell::Assistant(existing) => Some(existing == &record.content),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                if streamed_in_full {
+                    self.suppress_stream = None;
+                    return;
+                }
+                if let Some(HistoryCell::Assistant(existing)) = self.transcript.last_mut()
+                    && !existing.is_empty()
+                    && record.content.len() > existing.len()
+                    && record.content.ends_with(existing.as_str())
+                {
+                    // Attach caught only the stream's suffix; repair the cell
+                    // and consume any still-queued chunks of the same turn.
+                    *existing = record.content.clone();
+                    self.suppress_stream = Some((record.content, 0));
+                    return;
+                }
+                // The record beat the stream entirely: render it now and
+                // consume the late stream bytes when they arrive.
+                self.suppress_stream = Some((record.content.clone(), 0));
+                self.transcript.push(HistoryCell::Assistant(record.content));
+            }
+            _ => {}
         }
     }
 
@@ -2192,6 +2345,172 @@ mod tests {
             String::from_utf8_lossy(&bytes),
             "-next",
             "hydrated output must not be replayed by the live tail"
+        );
+    }
+
+    #[test]
+    fn streamed_response_is_not_duplicated_by_its_tape_record() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.push_output("hi".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hi".to_string(),
+        });
+        let assistant_cells = app
+            .transcript
+            .iter()
+            .filter(|cell| matches!(cell, HistoryCell::Assistant(_)))
+            .count();
+        assert_eq!(assistant_cells, 1, "tape record must dedupe streamed text");
+    }
+
+    #[test]
+    fn tape_record_beating_the_stream_suppresses_the_late_duplicate() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // The tape watch task can win the channel race against the output
+        // tail: the record renders first, then the stream bytes arrive late.
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+        app.push_output("hel".to_string());
+        app.push_output("lo".to_string());
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assistant_cells,
+            vec!["hello"],
+            "late stream bytes for a tape-rendered response must be consumed"
+        );
+
+        // A chunk crossing the turn boundary renders only its excess.
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "ok".to_string(),
+        });
+        app.push_output("okand more".to_string());
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hello", "okand more"]);
+    }
+
+    #[test]
+    fn partial_stream_attach_is_repaired_by_the_tape_record() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // Attaching mid-turn only caught the suffix of the streamed response.
+        app.push_output("lo".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assistant_cells,
+            vec!["hello"],
+            "the authoritative tape record must repair the truncated cell in place"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
+        let proc = Arc::new(ProcFs::new());
+        let proc_server: Arc<dyn FileServer> = proc.clone();
+        let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+        let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+            proc_server,
+            proc_events,
+        ));
+        let mut namespace = Namespace::new();
+        namespace.mount("/proc", InProcessTransport::new(proc), Access::ReadWrite);
+        namespace.mount(
+            "/agent",
+            InProcessTransport::new(agent_root.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root);
+        let pid = shell
+            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .await
+            .unwrap();
+        agent_root
+            .bind_process(pid.clone(), Arc::new(AgentFs::new()))
+            .await;
+        let agent_path = format!("/agent/{pid}");
+
+        // The engine wrote the response to io/output but its tape record has
+        // not landed yet when the client attaches: the output bytes are
+        // behind the live edge and the tape hydration comes up empty.
+        shell
+            .write(&agent_output_path(&agent_path), b"hi")
+            .await
+            .unwrap();
+        let mut app = FileBackedApp::new(agent_path.clone());
+        let mut tails = hydrate_and_open_tails(&shell, &agent_path, &mut app)
+            .await
+            .unwrap();
+        assert!(
+            !app.transcript
+                .iter()
+                .any(|cell| matches!(cell, HistoryCell::Assistant(_))),
+            "nothing hydrated: the record has not landed yet"
+        );
+
+        // The tape record lands after attach; the tape watcher recovers it.
+        shell
+            .write(
+                &format!("{agent_path}/machine/tape"),
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"hi\"}\n",
+            )
+            .await
+            .unwrap();
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(5), tails.tape.read(4096))
+            .await
+            .expect("tape tail read timed out")
+            .unwrap();
+        let line = String::from_utf8(bytes).unwrap();
+        let record: TapeRecordV1 = serde_json::from_str(line.trim()).unwrap();
+        app.apply_tape_record(record);
+
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assistant_cells,
+            vec!["hi"],
+            "the tape watcher must recover a response the output tail missed"
         );
     }
 }
