@@ -270,18 +270,18 @@ mod tests {
     enum Cell {
         User(String),
         Assistant(String),
-        Boundary, // a non-message interposed cell (plan/notice)
+        Interposed, // a non-message interposed cell (plan/notice)
     }
 
     impl Model {
         /// The open preview cell index: the last Assistant cell with no
-        /// User/Boundary turn break after it. Mirrors the app's scan.
+        /// User turn break after it. Interposed cells are part of the turn.
         fn open_cell(&self) -> Option<usize> {
             for (idx, cell) in self.cells.iter().enumerate().rev() {
                 match cell {
                     Cell::Assistant(_) => return Some(idx),
                     Cell::User(_) => return None,
-                    Cell::Boundary => {}
+                    Cell::Interposed => {}
                 }
             }
             None
@@ -290,10 +290,15 @@ mod tests {
         fn stream(&mut self, text: &str) {
             match self.rec.on_stream(text.to_string()) {
                 StreamAction::Drop => {}
-                StreamAction::Append(t) => match self.cells.last_mut() {
-                    Some(Cell::Assistant(existing)) => existing.push_str(&t),
-                    _ => self.cells.push(Cell::Assistant(t)),
-                },
+                StreamAction::Append(t) => {
+                    if let Some(index) = self.open_cell()
+                        && let Some(Cell::Assistant(existing)) = self.cells.get_mut(index)
+                    {
+                        existing.push_str(&t);
+                    } else {
+                        self.cells.push(Cell::Assistant(t));
+                    }
+                }
                 StreamAction::StartNew(t) => self.cells.push(Cell::Assistant(t)),
             }
         }
@@ -331,7 +336,7 @@ mod tests {
         fn messages(&self) -> Vec<Cell> {
             self.cells
                 .iter()
-                .filter(|c| !matches!(c, Cell::Boundary))
+                .filter(|c| !matches!(c, Cell::Interposed))
                 .cloned()
                 .collect()
         }
@@ -452,7 +457,8 @@ mod tests {
     fn interposed_boundary_cell_does_not_break_reconciliation() {
         let mut m = Model::default();
         m.stream("par");
-        m.cells.push(Cell::Boundary); // a plan/notice cell mid-turn
+        m.cells.push(Cell::Interposed); // a plan/notice cell mid-turn
+        m.stream("tial");
         m.assistant_record("partial");
         assert_eq!(
             m.messages(),

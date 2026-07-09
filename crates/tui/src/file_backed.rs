@@ -1406,18 +1406,16 @@ impl FileBackedApp {
     fn push_output(&mut self, text: String) {
         match self.reconciler.on_stream(text) {
             StreamAction::Drop => {}
-            StreamAction::Append(text) => match self.transcript.last_mut() {
-                Some(HistoryCell::Assistant(existing)) => existing.push_str(&text),
-                _ => self.transcript.push(HistoryCell::Assistant(text)),
-            },
-            StreamAction::StartNew(text) => self.transcript.push(HistoryCell::Assistant(text)),
+            StreamAction::Append(text) => self.append_to_open_assistant_cell(text),
+            StreamAction::StartNew(text) => {
+                self.mark_pending_remote_turn_start_if_unbounded();
+                self.transcript.push(HistoryCell::Assistant(text));
+            }
         }
     }
 
     fn push_turn_preview_cell(&mut self, cell: HistoryCell) {
-        if self.reconciler.awaiting_boundary() && self.pending_remote_turn_start.is_none() {
-            self.pending_remote_turn_start = Some(self.transcript.len());
-        }
+        self.mark_pending_remote_turn_start_if_unbounded();
         self.transcript.push(cell);
     }
 
@@ -1435,6 +1433,37 @@ impl FileBackedApp {
         if let Some(stream) = self.reconciler.take_flushed_stream() {
             self.transcript.push(HistoryCell::Assistant(stream));
         }
+    }
+
+    fn append_to_open_assistant_cell(&mut self, text: String) {
+        if let Some(index) = self.current_assistant_cell()
+            && let Some(HistoryCell::Assistant(existing)) = self.transcript.get_mut(index)
+        {
+            existing.push_str(&text);
+            return;
+        }
+        self.mark_pending_remote_turn_start_if_unbounded();
+        self.transcript.push(HistoryCell::Assistant(text));
+    }
+
+    fn mark_pending_remote_turn_start_if_unbounded(&mut self) {
+        if self.pending_remote_turn_start.is_some() {
+            return;
+        }
+        if self.reconciler.awaiting_boundary() || !self.current_turn_has_user_boundary() {
+            self.pending_remote_turn_start = Some(self.transcript.len());
+        }
+    }
+
+    fn current_turn_has_user_boundary(&self) -> bool {
+        for cell in self.transcript.iter().rev() {
+            match cell {
+                HistoryCell::User(_) => return true,
+                HistoryCell::Assistant(_) | HistoryCell::PendingYield(_) => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The index of the current turn's assistant cell: the most recent
@@ -1588,9 +1617,7 @@ impl FileBackedApp {
             *existing = cell;
             return;
         }
-        if self.reconciler.awaiting_boundary() && self.pending_remote_turn_start.is_none() {
-            self.pending_remote_turn_start = Some(self.transcript.len());
-        }
+        self.mark_pending_remote_turn_start_if_unbounded();
         let index = self.transcript.len();
         self.transcript.push(cell);
         self.action_cells.insert(action_id, index);
@@ -2471,6 +2498,70 @@ mod tests {
         assert!(matches!(app.transcript[4], HistoryCell::Tool { .. }));
         assert!(matches!(app.transcript[5], HistoryCell::Assistant(ref text) if text == "world"));
         assert_eq!(app.action_cells.get("a1"), Some(&4));
+    }
+
+    #[test]
+    fn remote_first_stream_preview_moves_behind_user_boundary() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+
+        app.push_output("hello".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "remote".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+
+        assert_eq!(app.transcript.len(), 2);
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "remote"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "hello"));
+    }
+
+    #[test]
+    fn stream_append_finds_open_preview_before_interposed_cells() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "remote".to_string(),
+        });
+
+        app.push_output("hel".to_string());
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("same turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "think".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        app.push_output("lo".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(assistant_cells, vec!["hello"]);
+        assert!(matches!(app.transcript[2], HistoryCell::Plan(_)));
     }
 
     #[test]
