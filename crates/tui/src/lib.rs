@@ -5,6 +5,7 @@ pub mod composer;
 mod file_backed;
 pub mod form;
 pub mod history;
+mod reconcile;
 pub mod terminal;
 mod transcript_ui;
 

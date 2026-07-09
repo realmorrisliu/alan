@@ -20,6 +20,7 @@ use crate::completion::{self, CompletionCandidate, CompletionSources, Completion
 use crate::composer::{Composer, ComposerKeyOutcome, load_history};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
+use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
 use crate::terminal::{TerminalSession, terminal_capability_error};
 use crate::transcript_ui::style_transcript_line;
 
@@ -1010,19 +1011,11 @@ struct FileBackedApp {
     expand_thinking: bool,
     notice: Option<String>,
     should_quit: bool,
-    /// Set when a tape record rendered a response before its live stream
-    /// bytes arrived (the two watch tasks race through the same channel):
-    /// `(expected_text, bytes_already_accounted)`. `push_output` consumes
-    /// matching late bytes instead of rendering them twice. Cleared at every
-    /// turn boundary (local submit or user tape record) so a suppression armed
-    /// for pre-attach output — whose bytes can never arrive — cannot eat the
-    /// next turn's real stream.
-    suppress_stream: Option<(String, usize)>,
-    /// The text of the User cell pushed by this client's own submit, awaiting
-    /// confirmation by the turn's user tape record. The user-record dedupe
-    /// matches only against this echo — never against older matching user
-    /// cells — so identical prompts from other writers keep their boundaries.
-    pending_user_echo: Option<String>,
+    /// The pure state machine reconciling the optimistic `io/output` stream
+    /// preview against the authoritative `machine/tape` records. All
+    /// suppression/echo/matching logic lives there; this app only locates
+    /// cells and applies the returned decisions.
+    reconciler: StreamReconciler,
 }
 
 impl FileBackedApp {
@@ -1046,8 +1039,7 @@ impl FileBackedApp {
             },
             expand_thinking: false,
             should_quit: false,
-            suppress_stream: None,
-            pending_user_echo: None,
+            reconciler: StreamReconciler::new(),
         }
     }
 
@@ -1310,11 +1302,7 @@ impl FileBackedApp {
             return Some(action);
         }
         self.transcript.push(HistoryCell::User(text.clone()));
-        // A new turn begins: the local echo will be confirmed by this turn's
-        // user tape record, and any stream suppression armed for a previous
-        // response must not leak into this turn's output.
-        self.pending_user_echo = Some(text.clone());
-        self.suppress_stream = None;
+        self.reconciler.on_local_submit(&text);
         Some(FileBackedAction::Submit(text))
     }
 
@@ -1406,119 +1394,84 @@ impl FileBackedApp {
         }
     }
 
-    fn push_output(&mut self, mut text: String) {
-        // Consume late stream bytes for a response a tape record already
-        // rendered (the tape and output watch tasks race through the same
-        // channel, so the record can win).
-        if let Some((expected, consumed)) = self.suppress_stream.take() {
-            let remainder = &expected[consumed..];
-            if let Some(rest) = text.strip_prefix(remainder) {
-                // This chunk finishes the suppressed response; any excess
-                // belongs to the next turn and renders normally.
-                text = rest.to_string();
-            } else if remainder.starts_with(text.as_str()) {
-                // A prefix chunk of the suppressed response.
-                let consumed = consumed + text.len();
-                if consumed < expected.len() {
-                    self.suppress_stream = Some((expected, consumed));
-                }
-                return;
-            } else if remainder.ends_with(text.as_str()) {
-                // A mid-turn attach clipped the stream's prefix, so the late
-                // chunk is the tail of the suppressed response.
-                return;
-            }
-            // Mismatch: the stream is not the suppressed response — render it.
-        }
-        if text.is_empty() {
-            return;
-        }
-
-        match self.transcript.last_mut() {
-            Some(HistoryCell::Assistant(existing)) => existing.push_str(&text),
-            _ => self.transcript.push(HistoryCell::Assistant(text)),
+    fn push_output(&mut self, text: String) {
+        match self.reconciler.on_stream(text) {
+            StreamAction::Drop => {}
+            StreamAction::Append(text) => match self.transcript.last_mut() {
+                Some(HistoryCell::Assistant(existing)) => existing.push_str(&text),
+                _ => self.transcript.push(HistoryCell::Assistant(text)),
+            },
+            StreamAction::StartNew(text) => self.transcript.push(HistoryCell::Assistant(text)),
         }
     }
 
-    /// Reconcile a live `machine/tape` record with the transcript. The output
-    /// stream is an optimistic preview; the tape is the authority. The
-    /// reconcile target is the *current turn's* streamed cell only — the most
-    /// recent assistant cell with no user message or yield after it — so an
-    /// identical answer from an earlier turn can never swallow a new response:
-    /// - equality with the target: the stream delivered it in full, drop the
-    ///   record;
-    /// - the record extends the target (prefix match): the record won the
-    ///   channel race mid-stream — finish the cell in place and consume the
-    ///   still-queued remainder;
-    /// - the record ends with the target (suffix match): a mid-turn attach
-    ///   clipped the stream's prefix — repair the cell in place;
-    /// - otherwise the stream missed the response entirely: append it.
+    /// The index of the current turn's assistant cell: the most recent
+    /// `Assistant` cell with no user message or yield after it. Interposed
+    /// plan/notice cells are scanned over; a boundary stops the scan.
+    fn current_assistant_cell(&self) -> Option<usize> {
+        for (idx, cell) in self.transcript.iter().enumerate().rev() {
+            match cell {
+                HistoryCell::Assistant(_) => return Some(idx),
+                HistoryCell::User(_) | HistoryCell::PendingYield(_) => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Reconcile a live `machine/tape` record with the transcript. All the
+    /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
+    /// only locates the current-turn cell and applies the returned decision.
     fn apply_tape_record(&mut self, record: TapeRecordV1) {
         if record.kind != "message" {
             return;
         }
         match record.role.as_str() {
-            "user" => {
-                // A user record is a turn boundary: any stream suppression
-                // armed for a previous response is stale from here on — the
-                // output tail was opened at the live edge, so pre-attach bytes
-                // it was waiting for can never arrive.
-                self.suppress_stream = None;
-                // Dedupe only against the pending local echo (the cell pushed
-                // by this client's own submit), never against prior matching
-                // user text: a repeated identical prompt from another writer
-                // is a real new turn and must keep its boundary.
-                if self.pending_user_echo.as_deref() == Some(record.content.as_str()) {
-                    self.pending_user_echo = None;
-                    return;
+            "user" => match self.reconciler.on_user_record(&record.content) {
+                UserDecision::Drop => {}
+                UserDecision::Push(content) => self.transcript.push(HistoryCell::User(content)),
+                UserDecision::InsertBeforeOpen(content) => {
+                    // A next-turn stream chunk raced ahead of this boundary and
+                    // opened an assistant cell; the boundary goes in front of it.
+                    match self.current_assistant_cell() {
+                        Some(idx) => self.transcript.insert(idx, HistoryCell::User(content)),
+                        None => self.transcript.push(HistoryCell::User(content)),
+                    }
                 }
-                self.transcript.push(HistoryCell::User(record.content));
-            }
+            },
             "assistant" => {
-                // Locate the current turn's streamed cell: scan back over
-                // non-boundary cells (plans, notices, tool output) and stop at
-                // a user message or yield — beyond that lies a previous turn.
-                let mut target: Option<usize> = None;
-                for (idx, cell) in self.transcript.iter().enumerate().rev() {
-                    match cell {
-                        HistoryCell::Assistant(_) => {
-                            target = Some(idx);
-                            break;
-                        }
-                        HistoryCell::User(_) | HistoryCell::PendingYield(_) => break,
-                        _ => {}
-                    }
-                }
-
-                if let Some(idx) = target
-                    && let Some(HistoryCell::Assistant(existing)) = self.transcript.get_mut(idx)
+                let idx = self.current_assistant_cell();
+                let preview = idx.and_then(|i| match &self.transcript[i] {
+                    HistoryCell::Assistant(text) => Some(text.clone()),
+                    _ => None,
+                });
+                match self
+                    .reconciler
+                    .on_assistant_record(record.content, preview.as_deref())
                 {
-                    if *existing == record.content {
-                        // Fully streamed already.
-                        self.suppress_stream = None;
-                        return;
+                    AssistantDecision::Drop => {}
+                    AssistantDecision::ReplacePreview(content) => {
+                        if let Some(HistoryCell::Assistant(existing)) =
+                            idx.map(|i| &mut self.transcript[i])
+                        {
+                            *existing = content;
+                        }
                     }
-                    if !existing.is_empty() && record.content.len() > existing.len() {
-                        if record.content.starts_with(existing.as_str()) {
-                            // The record won the race mid-stream; finish the
-                            // cell and consume the queued remainder exactly.
-                            let consumed = existing.len();
-                            *existing = record.content.clone();
-                            self.suppress_stream = Some((record.content, consumed));
-                            return;
+                    AssistantDecision::ConfirmAndSplit {
+                        confirmed,
+                        remainder,
+                    } => {
+                        if let Some(HistoryCell::Assistant(existing)) =
+                            idx.map(|i| &mut self.transcript[i])
+                        {
+                            *existing = confirmed;
                         }
-                        if record.content.ends_with(existing.as_str()) {
-                            // A mid-turn attach clipped the stream's prefix.
-                            *existing = record.content.clone();
-                            self.suppress_stream = Some((record.content, 0));
-                            return;
-                        }
+                        self.transcript.push(HistoryCell::Assistant(remainder));
+                    }
+                    AssistantDecision::Push(content) => {
+                        self.transcript.push(HistoryCell::Assistant(content))
                     }
                 }
-                // The stream missed this response entirely: render the record
-                // and consume the late stream bytes if they ever arrive.
-                self.suppress_stream = Some((record.content.clone(), 0));
-                self.transcript.push(HistoryCell::Assistant(record.content));
             }
             _ => {}
         }
@@ -2383,74 +2336,11 @@ mod tests {
     }
 
     #[test]
-    fn streamed_response_is_not_duplicated_by_its_tape_record() {
+    fn app_wiring_streams_then_confirms_via_tape_record() {
+        // A thin smoke test that the app wires push_output/apply_tape_record
+        // to the reconciler; exhaustive reconciliation cases live in the
+        // reconcile module's property test.
         let mut app = FileBackedApp::new("/agent/1".to_string());
-        app.push_output("hi".to_string());
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "hi".to_string(),
-        });
-        let assistant_cells = app
-            .transcript
-            .iter()
-            .filter(|cell| matches!(cell, HistoryCell::Assistant(_)))
-            .count();
-        assert_eq!(assistant_cells, 1, "tape record must dedupe streamed text");
-    }
-
-    #[test]
-    fn tape_record_beating_the_stream_suppresses_the_late_duplicate() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // The tape watch task can win the channel race against the output
-        // tail: the record renders first, then the stream bytes arrive late.
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "hello".to_string(),
-        });
-        app.push_output("hel".to_string());
-        app.push_output("lo".to_string());
-        let assistant_cells: Vec<_> = app
-            .transcript
-            .iter()
-            .filter_map(|cell| match cell {
-                HistoryCell::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            assistant_cells,
-            vec!["hello"],
-            "late stream bytes for a tape-rendered response must be consumed"
-        );
-
-        // A chunk crossing the turn boundary renders only its excess.
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "ok".to_string(),
-        });
-        app.push_output("okand more".to_string());
-        let assistant_cells: Vec<_> = app
-            .transcript
-            .iter()
-            .filter_map(|cell| match cell {
-                HistoryCell::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(assistant_cells, vec!["hello", "okand more"]);
-    }
-
-    #[test]
-    fn streamed_prefix_is_finished_in_place_when_the_record_wins_the_race() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // The stream delivered the beginning, the tape record won the channel
-        // race for the rest, and the final chunk is still queued.
         app.push_output("hel".to_string());
         app.apply_tape_record(TapeRecordV1 {
             version: 1,
@@ -2467,159 +2357,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            assistant_cells,
-            vec!["hello"],
-            "a streamed prefix must be finished in place, not duplicated"
-        );
-    }
-
-    #[test]
-    fn stale_suppression_is_cleared_at_the_next_turn_boundary() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // Attach landed after io/output was written but before the tape
-        // record: the record renders and arms suppression, but those output
-        // bytes are behind the live edge and will never arrive.
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "hello".to_string(),
-        });
-        // Next turn starts (user record from the tape watcher)...
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "user".to_string(),
-            content: "again".to_string(),
-        });
-        // ...and the new response happens to share the old one's prefix; the
-        // stale suppression must not eat the real stream.
-        app.push_output("hello world".to_string());
-        let assistant_cells: Vec<_> = app
-            .transcript
-            .iter()
-            .filter_map(|cell| match cell {
-                HistoryCell::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            assistant_cells,
-            vec!["hello", "hello world"],
-            "suppression armed for unreachable pre-attach bytes must die at the turn boundary"
-        );
-    }
-
-    #[test]
-    fn repeated_user_prompts_from_another_writer_keep_their_boundaries() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // Another client submits the same prompt twice; neither has a local
-        // echo, so both user records must render as turn boundaries.
-        for _ in 0..2 {
-            app.apply_tape_record(TapeRecordV1 {
-                version: 1,
-                kind: "message".to_string(),
-                role: "user".to_string(),
-                content: "same prompt".to_string(),
-            });
-            app.apply_tape_record(TapeRecordV1 {
-                version: 1,
-                kind: "message".to_string(),
-                role: "assistant".to_string(),
-                content: "same answer".to_string(),
-            });
-        }
-        let users = app
-            .transcript
-            .iter()
-            .filter(|cell| matches!(cell, HistoryCell::User(_)))
-            .count();
-        let assistants = app
-            .transcript
-            .iter()
-            .filter(|cell| matches!(cell, HistoryCell::Assistant(_)))
-            .count();
-        assert_eq!((users, assistants), (2, 2));
-
-        // The local echo path still dedupes its own confirmation record.
-        app.transcript.push(HistoryCell::User("mine".to_string()));
-        app.pending_user_echo = Some("mine".to_string());
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "user".to_string(),
-            content: "mine".to_string(),
-        });
-        let users_after = app
-            .transcript
-            .iter()
-            .filter(|cell| matches!(cell, HistoryCell::User(_)))
-            .count();
-        assert_eq!(users_after, 3, "the echoed cell must not be duplicated");
-    }
-
-    #[test]
-    fn identical_answer_from_an_earlier_turn_does_not_swallow_a_new_response() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // Turn 1 streams "Done." and its record dedupes against it.
-        app.push_output("Done.".to_string());
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "Done.".to_string(),
-        });
-        // Turn 2: the user asks again, the stream is missed at attach, and the
-        // identical record must still render as a new cell — the User cell is
-        // a turn boundary the dedupe must not scan past.
-        app.transcript
-            .push(HistoryCell::User("again please".to_string()));
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "Done.".to_string(),
-        });
-        let assistant_cells: Vec<_> = app
-            .transcript
-            .iter()
-            .filter_map(|cell| match cell {
-                HistoryCell::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            assistant_cells,
-            vec!["Done.", "Done."],
-            "an earlier identical answer must not swallow the new response"
-        );
-    }
-
-    #[test]
-    fn partial_stream_attach_is_repaired_by_the_tape_record() {
-        let mut app = FileBackedApp::new("/agent/1".to_string());
-        // Attaching mid-turn only caught the suffix of the streamed response.
-        app.push_output("lo".to_string());
-        app.apply_tape_record(TapeRecordV1 {
-            version: 1,
-            kind: "message".to_string(),
-            role: "assistant".to_string(),
-            content: "hello".to_string(),
-        });
-        let assistant_cells: Vec<_> = app
-            .transcript
-            .iter()
-            .filter_map(|cell| match cell {
-                HistoryCell::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            assistant_cells,
-            vec!["hello"],
-            "the authoritative tape record must repair the truncated cell in place"
-        );
+        assert_eq!(assistant_cells, vec!["hello"]);
     }
 
     #[tokio::test]
