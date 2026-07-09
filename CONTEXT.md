@@ -5,7 +5,11 @@ and future Alan OS work.
 
 The canonical kernel model is [ADR-0024](docs/adr/0024-plan9-kernel-model.md)
 (Plan 9 kernel) and [ADR-0025](docs/adr/0025-target-crate-architecture.md)
-(crate architecture). Where this glossary and the ADRs disagree, the ADRs win.
+(crate architecture); remote attachment is anchored by
+[ADR-0028](docs/adr/0028-remote-attachment-model.md) with its validatable
+contract in the `remote-access-service` OpenSpec capability. Where this
+glossary and the ADRs disagree, the ADRs win. Glossary entries carry names and
+one-line meanings only — normative semantics live in the ADRs and OpenSpec.
 Key consequences: the kernel has a single `Process` category (no `Agent Process`
 kernel type — agent-ness is a file-layout convention); `/agent` is a view over
 `/proc`; observation is a blocking read on a stream (no Subscription primitive);
@@ -94,10 +98,106 @@ A binding that exposes an app, host, service, or native system file tree inside
 the Alan OS Namespace.
 _Avoid_: plugin registry entry, object collection, app-private folder
 
+**Remote Attachment**:
+Cross-host Alan OS access through mountable file trees over aP; all remote
+interaction is file operations on a returned namespace (ADR-0028 D1, D13).
+_Avoid_: daemon session API, remote-control tunnel as the product boundary, screen sharing
+
+**Remote Compatibility Gateway**:
+Retired concept — no HTTP/WS/daemon-session translation layer for remote
+access exists or may be added (ADR-0028 D11).
+_Avoid_: thin HTTP adapter, WebSocket compatibility bridge, temporary daemon gateway, session API wrapper
+
+**User Namespace Attachment**:
+The single-user-phase default remote scope: the owning user's full namespace,
+with the threat model stated explicitly (ADR-0028 D1).
+_Avoid_: per-session remote access, per-workspace default projection, fine-grained capability slicing by default
+
+**Remote Entry Process**:
+The real `Process` created on the destination host that embodies a remote
+client's authority; a general shell entry, not an Agent Process (ADR-0028 D2).
+_Avoid_: daemon session, transport socket as authority, out-of-band super-user client
+
+**Remote Attachment Lease**:
+The bounded window in which a `Remote Entry Process` survives transport loss
+and may be explicitly reattached; active from handoff readiness (ADR-0028 D6).
+_Avoid_: TCP lifetime as session lifetime, permanent orphan process, daemon session store row
+
+**Remote Reattach Intent**:
+The explicit request to resume a leased entry process; fresh entry never
+implicitly revives an old lineage (ADR-0028 D2, D6).
+_Avoid_: implicit session reuse, hidden cwd resurrection, daemon-style auto-resume
+
+**Remote Reconnect Recovery**:
+Recovery = lease reattach + saved `Stream Offset`s + ordinary file reads;
+never re-drives execution (ADR-0028 D6).
+_Avoid_: reconnect snapshot API as source of truth, re-driving execution, transport-owned session state
+
+**Neutral Remote Shell Entry**:
+A fresh remote entry lands in a general shell with the standard login
+namespace; nothing is implicitly restored (ADR-0028 D2).
+_Avoid_: implicit workspace resurrection, product-specific startup surface, hidden session restore at OS entry
+
+**Remote Lineage Revocation**:
+Revocation or lease expiry tears down the whole remote-attached lineage by
+default; no local takeover escape hatch this phase (ADR-0028 D7).
+_Avoid_: silently lingering remote authority, permanent remote child after revocation, hidden daemon cleanup job
+
 **File Server**:
 A long-running Process that exports a file tree which other processes can mount
 or bind into their Namespace. Alan OS services are file servers, not HTTP APIs.
 _Avoid_: REST service, hidden singleton backend, object API
+
+**Remote Access Service**:
+The Service-Manager-started file server owning cross-host entry
+(`/srv/remote-access`); OS-generic, never runtime authority (ADR-0028 D4).
+_Avoid_: daemon replacement as system center, Root Agent gateway, runtime authority
+
+**Remote Attachment Handoff**:
+The blocking, one-shot delivery of a `Remote Entry Process` root handle after
+bootstrap; steady-state work never proxies through the service (ADR-0028 D5).
+_Avoid_: permanent proxying through the entry service, daemon session broker, runtime truth living in the handshake layer
+
+**Remote Bootstrap Tree**:
+The minimal aP entry surface of `Remote Access Service`: `new/` for fresh
+entry, `leases/` for explicit reattach (ADR-0028 D5).
+_Avoid_: separate RPC login protocol, long-lived control plane API, steady-state workspace surface
+
+**Remote Entry Clone**:
+The clone-via-open allocation of a fresh bootstrap instance (`new/clone` →
+`request`, `status`, `handoff`, `ctl`) (ADR-0028 D5).
+_Avoid_: create-session RPC, magic start command, hidden bootstrap allocation
+
+**Remote Bootstrap Consumption**:
+A successful handoff consumes its bootstrap instance; re-attachment needs a
+new clone or an explicit lease reattach (ADR-0028 D5).
+_Avoid_: reusable bootstrap session object, repeated root-handle reads, hidden attach cache
+
+**Remote Bootstrap Cleanup**:
+Pre-handoff failures are cleaned up by the bootstrap instance (including
+partial entry processes); post-handoff lifecycle belongs to the process tree
+and lease (ADR-0028 D5).
+_Avoid_: orphan half-created entry process, post-handoff service ownership, cleanup through daemon session state
+
+**Remote Lease Directory**:
+The browsable `leases/` view exposing minimal neutral metadata for explicit
+reattachment (ADR-0028 D5).
+_Avoid_: magic resume flag on a single control file, hidden lease catalog, daemon session list API
+
+**Remote Namespace Root Handoff**:
+Clients receive the entry process's namespace root itself and walk ordinary
+Alan OS paths — no remote-only endpoint bundle (ADR-0028 D5).
+_Avoid_: remote-only service menu, daemon session object, attach-specific API surface
+
+**Login Namespace Template**:
+The standard per-user namespace shape cloned for any fresh entry process,
+local or remote (ADR-0028 D3).
+_Avoid_: remote-only default namespace, borrowing a live shell namespace, hidden shared mutable workspace
+
+**Remote Context Tree**:
+Lineage-local `/mnt/remote` files exposing attachment facts (device, transport,
+lease, history); inherited by descendants, never host-global (ADR-0028 D8).
+_Avoid_: implicit remote headers, client-only memory, hidden handshake metadata
 
 **Service Manager**:
 The Alan OS system Process responsible for starting, stopping, restarting, and
@@ -210,6 +310,52 @@ _Avoid_: Context Grant API, prompt dump, implicit global access
 The Kernel identity and authority context used for access checks, such as a
 user, app, service, process, or agent actor credential.
 _Avoid_: product persona, chat participant, app-local user profile
+
+**Remote Device Identity**:
+The authenticated remote installation/hardware identity — provenance and audit
+context, not the authority-bearing `Credential` (ADR-0028 D9).
+_Avoid_: replacing the user credential, standalone permission principal by default, hidden transport token
+
+**Remote Product Control Plane**:
+The product-layer account/device/presence/relay/ticket system (e.g. for Alan
+Anywhere); lives outside Alan OS proper (ADR-0028 D10).
+_Avoid_: Alan OS kernel primitive, daemon-era runtime authority, cloud-owned process truth
+
+**Remote Entry Ticket**:
+A short-lived product credential authorizing one entry attempt (account +
+device + target + intent + expiry); never a daemon-session token (ADR-0028 D10).
+_Avoid_: daemon endpoint token, session-scoped bearer token, fine-grained workspace capability by default
+
+**Alan Anywhere**:
+The product experience over remote attachment: control plane gets you to
+`Remote Access Service`; the OS hands back a real namespace (ADR-0028 D10).
+_Avoid_: daemon remote-control product, relay UI, session API wrapper, Alan OS primitive
+
+**Alan Anywhere Discovery**:
+Pre-attachment discovery stops at owned-device availability; work discovery
+happens after entry by reading the remote namespace (ADR-0028 D10).
+_Avoid_: daemon session picker, cloud-owned workspace catalog, pre-attach app continuation state
+
+**Remote Transport Mode**:
+The byte-delivery path (direct, relay, LAN); affects reachability and latency,
+never attach semantics (ADR-0028 D11).
+_Avoid_: separate remote API family per transport, relay mode as architecture, transport-specific process model
+
+**Imported Remote Tree**:
+A remote tree mounted like any file server, default `/mnt/peer/<remote-id>`
+(named by exported entry tree, not device); effects execute on the remote host
+(ADR-0028 D12).
+_Avoid_: remote-only client abstraction, daemon API mirror, special cross-host object model
+
+**Cross-Host Process Composition**:
+Cross-host cooperation = walk/read/write/spawn on imported trees; no dedicated
+agent-to-agent RPC protocol (ADR-0028 D12).
+_Avoid_: special agent-to-agent wire protocol, daemon delegation API, hidden remote orchestration channel
+
+**Directional Remote Visibility**:
+Importing a remote tree never implicitly exposes the local namespace back;
+reverse sharing is an ordinary explicit export (ADR-0028 D12).
+_Avoid_: implicit bidirectional attach, transport-created shared namespace, hidden reverse channel
 
 **Access Check**:
 The Kernel/OS authority check for whether a Credential can obtain a Descriptor

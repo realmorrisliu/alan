@@ -6,7 +6,6 @@ Authoritative OpenSpec owners:
 
 - `openspec/specs/daemon-api-contract/spec.md`
 - `openspec/specs/runtime-core-contract/spec.md`
-- `openspec/changes/add-alan-anywhere-mvp/specs/daemon-api-contract/spec.md`
 - `openspec/changes/harden-agent-operating-system-contracts/specs/daemon-api-contract/spec.md`
 
 Keep new app-server protocol requirements in OpenSpec. Remove this bridge once
