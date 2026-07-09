@@ -1015,3 +1015,93 @@ async fn a_clunked_fid_is_released() {
         .await
         .unwrap();
 }
+
+/// A backing server whose `walk` blocks until `gate` is notified. Every other
+/// method is trivial. Used to prove `MountFs::walk` does not hold the namespace
+/// lock across the forwarded backing walk.
+struct GatedFs {
+    gate: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl FileServer for GatedFs {
+    async fn walk(&self, _fid: Fid, _newfid: Fid, _names: &[String]) -> Result<Qid, ErrorCode> {
+        // Block inside the forwarded walk until the test releases the gate.
+        self.gate.notified().await;
+        Ok(Qid {
+            kind: FileKind::Dir,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn open(&self, _: Fid, _: OpenMode) -> Result<Qid, ErrorCode> {
+        Ok(Qid {
+            kind: FileKind::Dir,
+            version: 0,
+            path: 0,
+        })
+    }
+    async fn read(&self, _: Fid, _: Offset, _: u32) -> Result<Vec<u8>, ErrorCode> {
+        Ok(Vec::new())
+    }
+    async fn write(&self, _: Fid, _: Offset, _: &[u8]) -> Result<u32, ErrorCode> {
+        Err(ErrorCode::NoAccess)
+    }
+    async fn stat(&self, _: Fid) -> Result<Stat, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn create(&self, _: Fid, _: Fid, _: &str, _: FileKind) -> Result<Qid, ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn remove(&self, _: Fid) -> Result<(), ErrorCode> {
+        Err(ErrorCode::Unsupported)
+    }
+    async fn clunk(&self, _: Fid) -> Result<(), ErrorCode> {
+        Ok(())
+    }
+}
+
+/// Regression: a walk whose backing tree blocks must NOT hold the namespace
+/// lock, so a concurrent MountFs operation can still make progress. On the old
+/// code (walk held the state lock across the forwarded call) the concurrent
+/// walk deadlocked on the lock and this test timed out.
+#[tokio::test]
+async fn walk_does_not_hold_the_namespace_lock_across_the_backing_walk() {
+    let gate = Arc::new(Notify::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/gated",
+        InProcessTransport::new(Arc::new(GatedFs { gate: gate.clone() })),
+        Access::ReadWrite,
+    );
+    ns.mount("/data", memfs(), Access::ReadWrite);
+    let fs = Arc::new(MountFs::new(ns));
+
+    // Task 1 walks into the gated tree; its forwarded backing walk blocks.
+    let gated = {
+        let fs = fs.clone();
+        tokio::spawn(async move { fs.walk(Fid::ROOT, Fid(1), &["gated".into()]).await })
+    };
+    // Give task 1 a chance to enter the forwarded (blocked) backing walk.
+    tokio::task::yield_now().await;
+
+    // A concurrent MountFs walk needs the namespace lock. If task 1 held it
+    // across the blocked backing walk, this would deadlock. It must complete;
+    // then we release the gate so task 1 finishes too.
+    let concurrent = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fs.walk(Fid::ROOT, Fid(2), &["data".into()]),
+    )
+    .await
+    .expect("concurrent walk must not be blocked by the gated walk")
+    .expect("walk /data");
+    assert_eq!(concurrent.kind, FileKind::Dir);
+
+    gate.notify_one();
+    let gated = tokio::time::timeout(std::time::Duration::from_secs(5), gated)
+        .await
+        .expect("gated walk should finish after the gate is released")
+        .expect("join gated task")
+        .expect("gated walk");
+    assert_eq!(gated.kind, FileKind::Dir);
+}
