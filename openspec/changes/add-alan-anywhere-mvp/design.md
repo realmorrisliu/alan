@@ -26,7 +26,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 
 **Goals:**
 
-- Make a signed-in alan Desktop automatically become remotely reachable from
+- Make a signed-in Alan Desktop automatically become remotely reachable from
   the user's own iPhone without inbound network exposure.
 - Let the iPhone app discover the user's online Macs and enter the selected
   device through `Remote Access Service`.
@@ -49,16 +49,16 @@ plane above it and MUST NOT restate or fork those OS semantics.
 - Complex enterprise networking, MDM, organization policy, or delegated
   account administration.
 - Moving agent execution, workspace reads, tool execution, or governance
-  authority to alan Cloud.
+  authority to Alan Cloud.
 - Building a full push-notification system as a blocker for foreground iPhone
   realtime use.
 
 ## Decisions
 
-1. Use alan Cloud as an account/device directory plus relay broker, not as a
+1. Use Alan Cloud as an account/device directory plus relay broker, not as a
    runtime or OS authority.
 
-   alan Cloud owns user authentication, device enrollment, presence, relay
+   Alan Cloud owns user authentication, device enrollment, presence, relay
    routing, short-lived token issuance, revocation, and audit metadata. It does
    not execute tools, read namespace files, decide governance outcomes, author
    stream records, spawn processes, or advance runtime state.
@@ -73,7 +73,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
    state, tool execution, and policy decisions. Relay and iPhone bytes are
    remote access to that host, not remote execution contexts.
 
-   Alternative considered: proxy workspace state through alan Cloud and allow
+   Alternative considered: proxy workspace state through Alan Cloud and allow
    cloud-side execution for continuity. That would break the security and
    product requirement that user tasks execute on the user's own device.
 
@@ -103,7 +103,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 
 5. Provide realtime stream delivery with offset recovery.
 
-   alan Anywhere needs realtime streamed output while preserving
+   Alan Anywhere needs realtime streamed output while preserving
    reconnect-safe recovery. The transport should carry reads from remote stream
    files, and clients recover through lease reattachment, saved stream offsets,
    and ordinary file reads after reconnect or gap detection.
@@ -142,13 +142,13 @@ plane above it and MUST NOT restate or fork those OS semantics.
   catalogs; after attachment, workspace visibility comes from the remote
   namespace and descriptor rights.
 - Existing environment-configured relay paths diverge from product-managed
-  alan Anywhere -> Keep environment configuration as development/operator
+  Alan Anywhere -> Keep environment configuration as development/operator
   compatibility for non-Anywhere local development only; Alan Anywhere must not
   use a daemon compatibility gateway.
 
 ## Migration Plan
 
-1. Add the OpenSpec requirements and GitHub tracking issue for alan Anywhere
+1. Add the OpenSpec requirements and GitHub tracking issue for Alan Anywhere
    MVP; mark the old architecture issue as superseded by this product contract.
 2. Introduce account/device data models and local device identity storage.
 3. Implement Desktop device enrollment and automatic outbound relay connection
@@ -166,7 +166,7 @@ plane above it and MUST NOT restate or fork those OS semantics.
 
 ## Open Questions
 
-- Which alan account provider is authoritative for MVP login: alan-hosted auth,
+- Which Alan account provider is authoritative for MVP login: Alan-hosted auth,
   Sign in with Apple, GitHub, or an existing managed account surface?
 - Should remote stream bytes be end-to-end encrypted between iPhone and Mac in
   MVP, or is transport encryption plus host-authoritative execution acceptable
@@ -174,4 +174,4 @@ plane above it and MUST NOT restate or fork those OS semantics.
 - What is the minimum device availability metadata that iPhone may display
   before attachment?
 - Should APNs pending-approval notifications be included in this MVP or tracked
-  as a follow-up after foreground realtime alan Anywhere works?
+  as a follow-up after foreground realtime Alan Anywhere works?

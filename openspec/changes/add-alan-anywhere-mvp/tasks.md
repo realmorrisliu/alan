@@ -23,9 +23,9 @@
 
 - [x] 1.1 Create the GitHub tracking issue for `add-alan-anywhere-mvp` and link
   it to this OpenSpec change.
-- [x] 1.2 Close or mark issue `#9` as superseded by the alan Anywhere MVP issue.
+- [x] 1.2 Close or mark issue `#9` as superseded by the Alan Anywhere MVP issue.
 - [x] 1.3 Keep issue `#75` open as the iOS task-manager IA follow-up and link
-  it to the alan Anywhere MVP issue.
+  it to the Alan Anywhere MVP issue.
 - [ ] 1.4 Decide the MVP account provider and document any remaining
   auth-provider assumptions before implementation starts.
 
@@ -55,7 +55,7 @@
 ## 4. Mac Desktop Remote Availability
 
 - [ ] 4.1 Start product-managed outbound relay connection automatically when
-  Desktop is signed in and alan Anywhere is enabled.
+  Desktop is signed in and Alan Anywhere is enabled.
 - [ ] 4.2 Keep environment-configured relay mode as development/operator
   compatibility while making account/device relay the Desktop default path.
 - [ ] 4.3 Publish Mac-authored device availability status, including online,
@@ -74,7 +74,7 @@
 - [ ] 5.4 Add tests or guardrails that prevent Alan Anywhere from extending
   daemon endpoint metadata, HTTP routes, WebSocket routes, or remote session APIs.
 
-## 6. iPhone alan Anywhere Experience
+## 6. iPhone Alan Anywhere Experience
 
 - [ ] 6.1 Replace manual daemon/relay connection with account device discovery
   and OS-native remote entry.
@@ -101,7 +101,7 @@
 
 ## 8. Documentation And OpenSpec Closure
 
-- [ ] 8.1 Update product and maintainer docs to describe alan Anywhere as
+- [ ] 8.1 Update product and maintainer docs to describe Alan Anywhere as
   device-to-device alan continuation.
 - [ ] 8.2 Update remote attachment architecture/security docs to reference
   Alan Anywhere as the product layer above direct/relay transport.

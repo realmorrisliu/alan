@@ -1,6 +1,6 @@
 ## Why
 
-alan Anywhere should let a signed-in user enter their own Alan OS from another
+Alan Anywhere should let a signed-in user enter their own Alan OS from another
 owned device without learning VPN, tunnels, public IPs, router configuration,
 SSH, port forwarding, daemon URLs, or relay nodes. The product path is
 OS-native remote attachment: product account/device infrastructure gets the
@@ -9,11 +9,11 @@ client to `Remote Access Service`, then Alan OS hands back a real
 
 ## What Changes
 
-- Add alan Anywhere as an account-bound, zero-configuration way to continue
+- Add Alan Anywhere as an account-bound, zero-configuration way to continue
   Alan OS from a user's own Mac on iPhone.
-- Have alan Desktop automatically register and advertise the Mac as an online,
+- Have Alan Desktop automatically register and advertise the Mac as an online,
   trusted execution device after account login.
-- Have alan iPhone automatically discover the user's online Macs, connect to a
+- Have Alan iPhone automatically discover the user's online Macs, connect to a
   selected Mac, enter through `Remote Access Service`, interact with the
   resulting `Remote Entry Process` namespace, and recover through explicit lease
   reattachment after reconnect.
@@ -24,7 +24,7 @@ client to `Remote Access Service`, then Alan OS hands back a real
   execution, governance checks, namespace access, and stream ordering remain
   authoritative on the user's Mac.
 - Add device binding, remote entry tickets, revocation, and encrypted transport
-  requirements for alan Anywhere access.
+  requirements for Alan Anywhere access.
 - Fold the current open remote-control architecture issue into this product
   contract while keeping the iOS task-manager issue as a follow-up UI framing
   track.
@@ -33,7 +33,7 @@ client to `Remote Access Service`, then Alan OS hands back a real
 
 ### New Capabilities
 
-- `alan-anywhere`: Defines alan account-bound device discovery, automatic Mac
+- `alan-anywhere`: Defines Alan account-bound device discovery, automatic Mac
   availability, iPhone remote entry, namespace-backed interaction, realtime
   stream flow, reconnect recovery, and security boundaries for the MVP.
 
@@ -53,11 +53,11 @@ client to `Remote Access Service`, then Alan OS hands back a real
 
 ## Impact
 
-- alan Desktop/macOS account login, device enrollment, Keychain-backed device
+- Alan Desktop/macOS account login, device enrollment, Keychain-backed device
   credentials, and automatic outbound relay connection.
-- alan iPhone account login, device discovery, remote entry selection, and
+- Alan iPhone account login, device discovery, remote entry selection, and
   namespace-backed interaction after handoff.
-- alan Cloud/App Server account, device registry, presence, relay broker, token
+- Alan Cloud/App Server account, device registry, presence, relay broker, token
   issuance, revocation, and audit surfaces.
 - Daemon/HTTP/WebSocket remote compatibility is not a migration surface. The
   remote path is `Remote Product Control Plane` plus Alan OS

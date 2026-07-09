@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: Account-bound device enrollment
-alan SHALL bind each remote-capable Mac and iPhone app installation to an alan
-account and a stable device identity before allowing alan Anywhere access.
+alan SHALL bind each remote-capable Mac and iPhone app installation to an Alan
+account and a stable device identity before allowing Alan Anywhere access.
 
 #### Scenario: Mac enrolls after account login
-- **WHEN** a user signs in to alan Desktop on macOS
+- **WHEN** a user signs in to Alan Desktop on macOS
 - **THEN** the Mac is registered as a device owned by that account
 - **AND** the Mac receives device-bound credentials suitable for remote
   availability
@@ -13,18 +13,18 @@ account and a stable device identity before allowing alan Anywhere access.
   in workspace files
 
 #### Scenario: iPhone signs in to the same account
-- **WHEN** a user signs in to alan on iPhone with the same account as the Mac
+- **WHEN** a user signs in to Alan on iPhone with the same account as the Mac
 - **THEN** the iPhone is registered as a device owned by that account
 - **AND** the iPhone can request access only to devices associated with that
   account
 
 ### Requirement: Automatic Mac remote availability
-alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
-while the app is running and the user has not disabled alan Anywhere.
+Alan Desktop SHALL automatically keep the signed-in Mac remotely connectable
+while the app is running and the user has not disabled Alan Anywhere.
 
 #### Scenario: Desktop starts while signed in
-- **WHEN** alan Desktop starts with a valid signed-in account and device binding
-- **THEN** it establishes an outbound encrypted connection to the alan remote
+- **WHEN** Alan Desktop starts with a valid signed-in account and device binding
+- **THEN** it establishes an outbound encrypted connection to the Alan remote
   service without requiring inbound network configuration
 - **AND** the user is not asked for public IP, router, VPN, tunnel, SSH, or port
   forwarding settings
@@ -32,16 +32,16 @@ while the app is running and the user has not disabled alan Anywhere.
 #### Scenario: Desktop loses remote connectivity
 - **WHEN** the Mac loses network connectivity or its outbound remote connection
   drops
-- **THEN** alan Desktop retries connection in the background
-- **AND** alan Cloud marks the device stale or offline without changing local
+- **THEN** Alan Desktop retries connection in the background
+- **AND** Alan Cloud marks the device stale or offline without changing local
   runtime state
 
 ### Requirement: User-owned device discovery
-alan SHALL let a signed-in iPhone discover the user's own online alan Desktop
+alan SHALL let a signed-in iPhone discover the user's own online Alan Desktop
 devices without exposing relay or tunnel implementation details.
 
 #### Scenario: iPhone lists available Macs
-- **WHEN** the iPhone app requests alan Anywhere devices for the signed-in
+- **WHEN** the iPhone app requests Alan Anywhere devices for the signed-in
   account
 - **THEN** the response includes only devices owned by that account
 - **AND** each device includes product-facing status such as online/offline,
@@ -50,7 +50,7 @@ devices without exposing relay or tunnel implementation details.
   public IP, tunnel URL, or relay node token
 
 #### Scenario: Device is offline
-- **WHEN** a previously enrolled Mac is not connected to alan Cloud
+- **WHEN** a previously enrolled Mac is not connected to Alan Cloud
 - **THEN** the iPhone may show the Mac as offline or unavailable
 - **AND** the iPhone MUST NOT offer remote entry into that Mac
   until it reconnects
@@ -62,7 +62,7 @@ task, and app-continuation discovery happens after attachment through the
 returned remote namespace, not through the pre-attachment control plane.
 
 #### Scenario: Mac publishes connectable device status
-- **WHEN** alan Desktop is online
+- **WHEN** Alan Desktop is online
 - **THEN** it publishes connectable device status for the signed-in user
 - **AND** status includes product-facing availability such as online/offline,
   last seen, and whether remote entry is currently accepted
@@ -112,7 +112,7 @@ to the iPhone through the attached remote namespace.
 - **AND** stream identity, offsets, and record order remain authored by the Mac
 
 #### Scenario: Relay transports stream bytes
-- **WHEN** realtime stream records are delivered through alan Cloud relay
+- **WHEN** realtime stream records are delivered through Alan Cloud relay
 - **THEN** the relay forwards transport bytes without becoming the authority for
   stream offsets, record order, process state, or runtime state
 - **AND** the iPhone can recover missed observations by reattaching and reading
@@ -139,10 +139,10 @@ alan SHALL keep Alan Anywhere execution, tool access, governance, namespace
 reads, and process state authoritative on the user's destination Alan OS host.
 
 #### Scenario: Cloud brokers remote entry
-- **WHEN** alan Cloud brokers an Alan Anywhere entry attempt
+- **WHEN** Alan Cloud brokers an Alan Anywhere entry attempt
 - **THEN** it issues or validates only the product-layer entry ticket and
   transport route
-- **AND** alan Cloud MUST NOT execute tools, read namespace files, decide policy
+- **AND** Alan Cloud MUST NOT execute tools, read namespace files, decide policy
   outcomes, spawn processes, or mutate runtime state on behalf of the Mac
 
 #### Scenario: Mac rejects unauthorized entry
@@ -157,7 +157,7 @@ alan SHALL protect Alan Anywhere with encrypted transport, device binding,
 short-lived remote entry tickets, and revocation.
 
 #### Scenario: Remote connection is established
-- **WHEN** iPhone connects to a Mac through alan Anywhere
+- **WHEN** iPhone connects to a Mac through Alan Anywhere
 - **THEN** the connection uses encrypted transport
 - **AND** the remote entry ticket is scoped to the signed-in account, client
   device, target Mac device, entry intent, expiry, and revocation state
@@ -171,11 +171,11 @@ short-lived remote entry tickets, and revocation.
   rejected before additional state-changing operations are accepted
 
 ### Requirement: Zero-configuration product language
-alan SHALL present alan Anywhere as device-to-device alan continuation, not as
+alan SHALL present Alan Anywhere as device-to-device alan continuation, not as
 remote desktop or user-managed networking.
 
-#### Scenario: User opens alan Anywhere on iPhone
-- **WHEN** the iPhone user opens the alan Anywhere surface
+#### Scenario: User opens Alan Anywhere on iPhone
+- **WHEN** the iPhone user opens the Alan Anywhere surface
 - **THEN** the primary UI language describes online Alan devices and entry into
   the selected device
 - **AND** it does not require or foreground VPN, tunnel, Cloudflare, SSH, port
