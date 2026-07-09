@@ -69,16 +69,3 @@ authority.
 - **WHEN** the namespace also contains virtual mounts such as `/agent` or
   `/mnt/llm`
 - **THEN** those virtual mounts do not add host paths to `SandboxSpec`
-
-### Requirement: Mount authority is not agent-expandable at landing
-Alan OS SHALL NOT expose an agent tool that can add host directory mounts in this
-landing change. Host directory mounts SHALL be declared by human/config
-composition before the agent runs, and the active declaration list SHALL remain
-fixed for the session absent human action.
-
-#### Scenario: No agent-visible mount command exists
-- **WHEN** an agent inspects its tool namespace at landing
-- **THEN** it does not receive a tool that can mount arbitrary host paths
-- **AND** it cannot broaden its own host filesystem authority without an
-  external human/config action
-
