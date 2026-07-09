@@ -13,4 +13,4 @@
 
 - [x] 3.1 Run focused Rust tests covering `alan-terminal-ui`, bare `alan` launch wiring, and file-surface runtime control paths
 - [x] 3.2 Run `openspec validate remove-daemon-backed-tui-compat --strict`
-- [ ] 3.3 After merge, archive this change once the canonical spec is synced and no daemon-backed TUI references remain
+- [x] 3.3 After merge, archive this change once the canonical spec is synced and no daemon-backed TUI references remain. Done 2026-07-08: `openspec/specs/rust-inline-tui/spec.md` already carries the merged state ("No daemon-backed TUI mode remains"); grep of `crates/tui/src` finds no daemon-backed path (one cosmetic test name only).

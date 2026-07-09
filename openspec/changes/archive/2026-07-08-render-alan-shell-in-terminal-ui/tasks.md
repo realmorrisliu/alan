@@ -13,4 +13,4 @@
 
 - [x] 3.1 Run focused Rust tests covering the new runtime launch surface and file-backed terminal UI path
 - [x] 3.2 Run `openspec validate render-alan-shell-in-terminal-ui --strict`
-- [ ] 3.3 After merge, sync `alan-renderer-host-contract` and `rust-inline-tui` delta specs into `openspec/specs/` before archiving the change
+- [x] 3.3 After merge, sync `alan-renderer-host-contract` and `rust-inline-tui` delta specs into `openspec/specs/` before archiving the change. Done 2026-07-08: created `openspec/specs/alan-renderer-host-contract/spec.md` (three requirements; the compatibility-transport scenario generalized to any renderer host since the TUI daemon path was since removed by `remove-daemon-backed-tui-compat`); the `rust-inline-tui` delta was already reflected in the main spec.
