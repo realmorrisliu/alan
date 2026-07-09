@@ -1702,13 +1702,9 @@ impl FileBackedApp {
     }
 
     fn shift_pending_remote_turn_start(&mut self, removed_prefix_len: usize) {
-        self.pending_remote_turn_start = self.pending_remote_turn_start.map(|index| {
-            if index < removed_prefix_len {
-                0
-            } else {
-                index - removed_prefix_len
-            }
-        });
+        self.pending_remote_turn_start = self
+            .pending_remote_turn_start
+            .map(|index| index.saturating_sub(removed_prefix_len));
     }
 
     fn seed_reconciler_from_tape_history(&mut self, raw: &str) {

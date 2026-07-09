@@ -165,7 +165,7 @@ impl StreamReconciler {
     }
 
     /// A `machine/tape` user record arrived: a turn boundary. Call
-    /// [`take_flushed_stream`] afterwards to render any buffered next-turn
+    /// [`Self::take_flushed_stream`] afterwards to render any buffered next-turn
     /// bytes that were waiting for this boundary.
     pub(crate) fn on_user_record(&mut self, content: &str) -> UserDecision {
         self.awaiting_boundary = false;
@@ -230,10 +230,10 @@ impl StreamReconciler {
             self.held = format!("{remainder}{}", std::mem::take(&mut self.held));
             return AssistantDecision::ReplacePreview(content);
         }
-        if content.starts_with(preview) {
+        if let Some(remainder) = content.strip_prefix(preview) {
             // Record won the channel race mid-stream: finish the cell and
             // consume the queued remainder exactly.
-            self.suppress.push_str(&content[preview.len()..]);
+            self.suppress.push_str(remainder);
             return AssistantDecision::ReplacePreview(content);
         }
         if content.ends_with(preview) {
