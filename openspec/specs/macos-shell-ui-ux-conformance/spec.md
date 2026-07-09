@@ -26,8 +26,9 @@ theme panels, and ornamental controls.
   dimensions and do not resize the sidebar or terminal content
 - **AND** the top Space slider aligns its rounded track to the sidebar edge
   inset so Space slider targets and tab rows share one optical column
-- **AND** the titlebar New Space button directly creates a standard new Space
-  instead of opening a menu of Space variants
+- **AND** the titlebar New Space button opens the in-sidebar Space creation
+  form (see "Space slider supports adaptive density and scrub navigation")
+  instead of directly creating a Space or opening a menu of Space variants
 - **AND** the titlebar New Space button is right-aligned within the sidebar
   titlebar instead of sitting immediately after the pin/unpin and appearance
   controls
