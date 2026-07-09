@@ -1013,8 +1013,16 @@ struct FileBackedApp {
     /// Set when a tape record rendered a response before its live stream
     /// bytes arrived (the two watch tasks race through the same channel):
     /// `(expected_text, bytes_already_accounted)`. `push_output` consumes
-    /// matching late bytes instead of rendering them twice.
+    /// matching late bytes instead of rendering them twice. Cleared at every
+    /// turn boundary (local submit or user tape record) so a suppression armed
+    /// for pre-attach output — whose bytes can never arrive — cannot eat the
+    /// next turn's real stream.
     suppress_stream: Option<(String, usize)>,
+    /// The text of the User cell pushed by this client's own submit, awaiting
+    /// confirmation by the turn's user tape record. The user-record dedupe
+    /// matches only against this echo — never against older matching user
+    /// cells — so identical prompts from other writers keep their boundaries.
+    pending_user_echo: Option<String>,
 }
 
 impl FileBackedApp {
@@ -1039,6 +1047,7 @@ impl FileBackedApp {
             expand_thinking: false,
             should_quit: false,
             suppress_stream: None,
+            pending_user_echo: None,
         }
     }
 
@@ -1301,6 +1310,11 @@ impl FileBackedApp {
             return Some(action);
         }
         self.transcript.push(HistoryCell::User(text.clone()));
+        // A new turn begins: the local echo will be confirmed by this turn's
+        // user tape record, and any stream suppression armed for a previous
+        // response must not leak into this turn's output.
+        self.pending_user_echo = Some(text.clone());
+        self.suppress_stream = None;
         Some(FileBackedAction::Submit(text))
     }
 
@@ -1445,18 +1459,20 @@ impl FileBackedApp {
         }
         match record.role.as_str() {
             "user" => {
-                let already = self
-                    .transcript
-                    .iter()
-                    .rev()
-                    .find_map(|cell| match cell {
-                        HistoryCell::User(existing) => Some(existing == &record.content),
-                        _ => None,
-                    })
-                    .unwrap_or(false);
-                if !already {
-                    self.transcript.push(HistoryCell::User(record.content));
+                // A user record is a turn boundary: any stream suppression
+                // armed for a previous response is stale from here on — the
+                // output tail was opened at the live edge, so pre-attach bytes
+                // it was waiting for can never arrive.
+                self.suppress_stream = None;
+                // Dedupe only against the pending local echo (the cell pushed
+                // by this client's own submit), never against prior matching
+                // user text: a repeated identical prompt from another writer
+                // is a real new turn and must keep its boundary.
+                if self.pending_user_echo.as_deref() == Some(record.content.as_str()) {
+                    self.pending_user_echo = None;
+                    return;
                 }
+                self.transcript.push(HistoryCell::User(record.content));
             }
             "assistant" => {
                 // Locate the current turn's streamed cell: scan back over
@@ -2456,6 +2472,91 @@ mod tests {
             vec!["hello"],
             "a streamed prefix must be finished in place, not duplicated"
         );
+    }
+
+    #[test]
+    fn stale_suppression_is_cleared_at_the_next_turn_boundary() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // Attach landed after io/output was written but before the tape
+        // record: the record renders and arms suppression, but those output
+        // bytes are behind the live edge and will never arrive.
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+        });
+        // Next turn starts (user record from the tape watcher)...
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "again".to_string(),
+        });
+        // ...and the new response happens to share the old one's prefix; the
+        // stale suppression must not eat the real stream.
+        app.push_output("hello world".to_string());
+        let assistant_cells: Vec<_> = app
+            .transcript
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assistant_cells,
+            vec!["hello", "hello world"],
+            "suppression armed for unreachable pre-attach bytes must die at the turn boundary"
+        );
+    }
+
+    #[test]
+    fn repeated_user_prompts_from_another_writer_keep_their_boundaries() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        // Another client submits the same prompt twice; neither has a local
+        // echo, so both user records must render as turn boundaries.
+        for _ in 0..2 {
+            app.apply_tape_record(TapeRecordV1 {
+                version: 1,
+                kind: "message".to_string(),
+                role: "user".to_string(),
+                content: "same prompt".to_string(),
+            });
+            app.apply_tape_record(TapeRecordV1 {
+                version: 1,
+                kind: "message".to_string(),
+                role: "assistant".to_string(),
+                content: "same answer".to_string(),
+            });
+        }
+        let users = app
+            .transcript
+            .iter()
+            .filter(|cell| matches!(cell, HistoryCell::User(_)))
+            .count();
+        let assistants = app
+            .transcript
+            .iter()
+            .filter(|cell| matches!(cell, HistoryCell::Assistant(_)))
+            .count();
+        assert_eq!((users, assistants), (2, 2));
+
+        // The local echo path still dedupes its own confirmation record.
+        app.transcript.push(HistoryCell::User("mine".to_string()));
+        app.pending_user_echo = Some("mine".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "mine".to_string(),
+        });
+        let users_after = app
+            .transcript
+            .iter()
+            .filter(|cell| matches!(cell, HistoryCell::User(_)))
+            .count();
+        assert_eq!(users_after, 3, "the echoed cell must not be duplicated");
     }
 
     #[test]
