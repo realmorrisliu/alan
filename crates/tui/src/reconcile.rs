@@ -30,8 +30,8 @@
 //! - *held*: those buffered next-turn bytes.
 //! - *preview_open*: the current assistant cell is unconfirmed stream text for
 //!   the in-progress turn; bytes append to it.
-//! - *suppression* `(expected, consumed)`: a tape record rendered a response
-//!   before its stream bytes arrived; the late bytes are consumed, not
+//! - *suppression*: tape records rendered one or more responses before their
+//!   stream bytes arrived; queued late bytes are consumed in FIFO order, not
 //!   duplicated.
 //! - *pending echo*: this client's own submit text, so exactly one user record
 //!   is deduped and repeated identical prompts from other writers keep their
@@ -79,9 +79,9 @@ pub(crate) struct StreamReconciler {
     awaiting_boundary: bool,
     /// Buffered next-turn stream bytes, flushed when the boundary arrives.
     held: String,
-    /// `(expected_text, bytes_already_accounted)` for a response a tape record
-    /// rendered before its stream bytes arrived.
-    suppress: Option<(String, usize)>,
+    /// Concatenated late output bytes for responses a tape record rendered
+    /// before their stream bytes arrived.
+    suppress: String,
     /// Whether the current turn's user boundary was observed after this
     /// client attached. If it was only hydrated, output bytes before the live
     /// tail edge cannot arrive later.
@@ -106,7 +106,7 @@ impl StreamReconciler {
     /// suppression: any old `/io/output` bytes are behind the live tail edge
     /// and will never arrive.
     pub(crate) fn on_hydrated_message_record(&mut self, role: &str) {
-        self.suppress = None;
+        self.suppress.clear();
         self.preview_open = false;
         self.held.clear();
         self.pending_echo = None;
@@ -130,29 +130,23 @@ impl StreamReconciler {
     /// already rendered; bytes for a not-yet-bounded next turn are held; the
     /// rest opens or extends the current assistant cell.
     pub(crate) fn on_stream(&mut self, text: String) -> StreamAction {
-        let rendered = match self.suppress.take() {
-            None => text,
-            Some((expected, consumed)) => {
-                let remainder = &expected[consumed..];
-                if let Some(rest) = text.strip_prefix(remainder) {
-                    // Finishes the suppressed response; the excess is real.
-                    rest.to_string()
-                } else if remainder.starts_with(text.as_str()) {
-                    // A leading chunk of the suppressed response; stay armed.
-                    let consumed = consumed + text.len();
-                    if consumed < expected.len() {
-                        self.suppress = Some((expected, consumed));
-                    }
-                    return StreamAction::Drop;
-                } else if remainder.ends_with(text.as_str()) {
-                    // Clipped-attach tail of the suppressed response.
-                    self.suppress = Some((expected, consumed));
-                    return StreamAction::Drop;
-                } else {
-                    // Not the suppressed response — render it.
-                    text
-                }
-            }
+        let rendered = if self.suppress.is_empty() {
+            text
+        } else if let Some(rest) = text.strip_prefix(self.suppress.as_str()) {
+            // Finishes all queued suppressed responses; the excess is real.
+            self.suppress.clear();
+            rest.to_string()
+        } else if self.suppress.starts_with(text.as_str()) {
+            // A leading chunk of queued suppressed output; stay armed.
+            self.suppress.replace_range(..text.len(), "");
+            return StreamAction::Drop;
+        } else if self.suppress.ends_with(text.as_str()) {
+            // Clipped-attach tail of suppressed output.
+            return StreamAction::Drop;
+        } else {
+            // Not the suppressed response — render it.
+            self.suppress.clear();
+            text
         };
         if rendered.is_empty() {
             return StreamAction::Drop;
@@ -217,34 +211,34 @@ impl StreamReconciler {
                 // tail, the missing bytes can still arrive and must be
                 // consumed. Hydrated turns do not get this suppression: their
                 // old output bytes are behind the live tail edge.
-                self.suppress = Some((content.clone(), 0));
+                self.suppress.push_str(&content);
             } else {
-                self.suppress = None;
+                self.suppress.clear();
             }
             return AssistantDecision::Push(content);
         };
 
         if preview == content {
             // Fully streamed already.
-            self.suppress = None;
+            self.suppress.clear();
             return AssistantDecision::Drop;
         }
         if let Some(remainder) = preview.strip_prefix(content.as_str()) {
             // Stream ran ahead into the next turn: confirm this turn and hold
             // the excess until the next turn's boundary arrives.
-            self.suppress = None;
+            self.suppress.clear();
             self.held = format!("{remainder}{}", std::mem::take(&mut self.held));
             return AssistantDecision::ReplacePreview(content);
         }
         if content.starts_with(preview) {
             // Record won the channel race mid-stream: finish the cell and
             // consume the queued remainder exactly.
-            self.suppress = Some((content.clone(), preview.len()));
+            self.suppress.push_str(&content[preview.len()..]);
             return AssistantDecision::ReplacePreview(content);
         }
         if content.ends_with(preview) {
             // A mid-turn attach clipped the stream's prefix.
-            self.suppress = Some((content.clone(), 0));
+            self.suppress.push_str(&content);
             return AssistantDecision::ReplacePreview(content);
         }
         // Clipped attach AND stream ran ahead: the preview is this response's
@@ -253,7 +247,7 @@ impl StreamReconciler {
         // hold the excess.
         for split in (1..preview.len().min(content.len() + 1)).rev() {
             if preview.is_char_boundary(split) && content.ends_with(&preview[..split]) {
-                self.suppress = None;
+                self.suppress.clear();
                 self.held = format!("{}{}", &preview[split..], std::mem::take(&mut self.held));
                 return AssistantDecision::ReplacePreview(content);
             }
@@ -261,7 +255,7 @@ impl StreamReconciler {
         // Unrelated preview: it belongs to a different racing response. Push
         // the confirmed record; keep the open preview as-is by leaving it
         // (the caller's ReplacePreview target is None, so Push appends).
-        self.suppress = Some((content.clone(), 0));
+        self.suppress.push_str(&content);
         AssistantDecision::Push(content)
     }
 }
@@ -492,6 +486,32 @@ mod tests {
                 Cell::Assistant("hello".into()),
                 Cell::User("next".into()),
                 Cell::Assistant("answer".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn queued_suppressions_consume_multiple_late_outputs_in_order() {
+        let mut m = Model::default();
+        m.user_record("u1");
+        m.assistant_record("one");
+        m.user_record("u2");
+        m.assistant_record("two");
+        m.stream("one");
+        m.stream("two");
+        m.user_record("u3");
+        m.stream("three");
+        m.assistant_record("three");
+
+        assert_eq!(
+            m.messages(),
+            vec![
+                Cell::User("u1".into()),
+                Cell::Assistant("one".into()),
+                Cell::User("u2".into()),
+                Cell::Assistant("two".into()),
+                Cell::User("u3".into()),
+                Cell::Assistant("three".into()),
             ]
         );
     }
