@@ -123,13 +123,8 @@ impl AgentRootLayout {
     }
 
     pub fn normalize_named_agent_name<'a>(&self, agent_name: Option<&'a str>) -> Option<&'a str> {
-        self.normalize_agent_name(agent_name).and_then(|name| {
-            if name == DEFAULT_AGENT_NAME {
-                None
-            } else {
-                Some(name)
-            }
-        })
+        self.normalize_agent_name(agent_name)
+            .filter(|&name| name != DEFAULT_AGENT_NAME)
     }
 
     pub fn is_single_path_component(&self, name: &str) -> bool {

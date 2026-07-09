@@ -291,29 +291,39 @@ impl MountFs {
 #[async_trait]
 impl FileServer for MountFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let mut state = self.state.lock().await;
-        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
-            return Err(ErrorCode::BadRequest);
-        }
-        let base = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-        if base.reserved {
-            return Err(ErrorCode::BadRequest);
-        }
-        // A non-empty walk descends into a child, so the base must be a directory.
-        // A backing *file* base is rejected here rather than re-resolving the
-        // absolute path (which could otherwise traverse a non-directory into a
-        // mounted descendant, e.g. a `/` file `mnt` walking into a `/mnt/llm` mount).
-        if !names.is_empty()
-            && let Some(b) = &base.backing
-            && !b.is_dir
-        {
-            return Err(ErrorCode::NotDirectory);
-        }
-        let mut path = base.path.clone();
-        path.extend(names.iter().cloned());
+        // Resolve the target path under the lock, then RELEASE it before
+        // forwarding the walk to the backing tree(s): a backing walk can block
+        // (it may itself resolve through another server that is mid-operation),
+        // and holding the namespace lock across it would freeze every other
+        // operation — the same discipline `target()`/`read`/`open`/`write` use.
+        let path = {
+            let state = self.state.lock().await;
+            if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+                return Err(ErrorCode::BadRequest);
+            }
+            let base = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if base.reserved {
+                return Err(ErrorCode::BadRequest);
+            }
+            // A non-empty walk descends into a child, so the base must be a
+            // directory. A backing *file* base is rejected here rather than
+            // re-resolving the absolute path (which could otherwise traverse a
+            // non-directory into a mounted descendant, e.g. a `/` file `mnt`
+            // walking into a `/mnt/llm` mount).
+            if !names.is_empty()
+                && let Some(b) = &base.backing
+                && !b.is_dir
+            {
+                return Err(ErrorCode::NotDirectory);
+            }
+            let mut path = base.path.clone();
+            path.extend(names.iter().cloned());
+            path
+        };
 
         // At or below a mount: forward the walk to the backing tree(s), trying each
         // union contributor (longest-prefix, most-recent-first) until one resolves.
+        // The namespace lock is not held across these forwarded calls.
         let candidates = self.ns.resolve_candidates(&join_path(&path));
         for resolved in candidates {
             let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
@@ -325,6 +335,14 @@ impl FileServer for MountFs {
                 })
                 .await;
             if let Ok(Response::Walk { qid }) = walked {
+                let mut state = self.state.lock().await;
+                // A concurrent walk may have claimed `newfid` while the lock was
+                // released; discard our backing fid and reject rather than leak.
+                if state.fids.contains_key(&newfid) {
+                    drop(state);
+                    let _ = resolved.call(Request::Clunk { fid: backing_fid }).await;
+                    return Err(ErrorCode::BadRequest);
+                }
                 state.fids.insert(
                     newfid,
                     Entry {
@@ -348,6 +366,10 @@ impl FileServer for MountFs {
         // the deeper mount.
         if path.is_empty() || self.is_synthetic_dir(&path) {
             let qid = synthetic_qid(&path, self.ns.generation());
+            let mut state = self.state.lock().await;
+            if state.fids.contains_key(&newfid) {
+                return Err(ErrorCode::BadRequest);
+            }
             state.fids.insert(
                 newfid,
                 Entry {
