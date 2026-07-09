@@ -83,7 +83,7 @@ alan SHALL allow iPhone to interact with the selected Mac by entering a
 operations.
 
 #### Scenario: iPhone sends a message
-- **WHEN** the iPhone user sends a message to an agent process through alan
+- **WHEN** the iPhone user sends a message to an agent process through Alan
   Anywhere
 - **THEN** the message is written through the attached remote namespace, such as
   an agent `io/` surface
@@ -171,7 +171,7 @@ short-lived remote entry tickets, and revocation.
   rejected before additional state-changing operations are accepted
 
 ### Requirement: Zero-configuration product language
-alan SHALL present Alan Anywhere as device-to-device alan continuation, not as
+alan SHALL present Alan Anywhere as device-to-device Alan continuation, not as
 remote desktop or user-managed networking.
 
 #### Scenario: User opens Alan Anywhere on iPhone

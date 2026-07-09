@@ -102,7 +102,7 @@
 ## 8. Documentation And OpenSpec Closure
 
 - [ ] 8.1 Update product and maintainer docs to describe Alan Anywhere as
-  device-to-device alan continuation.
+  device-to-device Alan continuation.
 - [ ] 8.2 Update remote attachment architecture/security docs to reference
   Alan Anywhere as the product layer above direct/relay transport.
 - [ ] 8.3 Run focused Rust/Swift tests for changed aP, Remote Access, relay-byte
