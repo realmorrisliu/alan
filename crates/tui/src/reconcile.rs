@@ -82,6 +82,10 @@ pub(crate) struct StreamReconciler {
     /// `(expected_text, bytes_already_accounted)` for a response a tape record
     /// rendered before its stream bytes arrived.
     suppress: Option<(String, usize)>,
+    /// Whether the current turn's user boundary was observed after this
+    /// client attached. If it was only hydrated, output bytes before the live
+    /// tail edge cannot arrive later.
+    current_turn_live_boundary: bool,
     /// This client's own submit text awaiting its user tape record.
     pending_echo: Option<String>,
 }
@@ -106,6 +110,7 @@ impl StreamReconciler {
         self.preview_open = false;
         self.held.clear();
         self.pending_echo = None;
+        self.current_turn_live_boundary = false;
         self.awaiting_boundary = role == "assistant";
     }
 
@@ -117,6 +122,7 @@ impl StreamReconciler {
         self.pending_echo = Some(text.to_string());
         self.preview_open = false;
         self.awaiting_boundary = false;
+        self.current_turn_live_boundary = true;
         self.held.clear();
     }
 
@@ -169,6 +175,7 @@ impl StreamReconciler {
     /// bytes that were waiting for this boundary.
     pub(crate) fn on_user_record(&mut self, content: &str) -> UserDecision {
         self.awaiting_boundary = false;
+        self.current_turn_live_boundary = true;
         // Dedupe only against this client's own pending echo.
         if self.pending_echo.as_deref() == Some(content) {
             self.pending_echo = None;
@@ -199,13 +206,21 @@ impl StreamReconciler {
         let decision = self.decide_assistant(content, preview.filter(|_| self.preview_open));
         self.preview_open = false;
         self.awaiting_boundary = true;
+        self.current_turn_live_boundary = false;
         decision
     }
 
     fn decide_assistant(&mut self, content: String, preview: Option<&str>) -> AssistantDecision {
         let Some(preview) = preview else {
-            // The stream missed this response; consume its late bytes.
-            self.suppress = Some((content.clone(), 0));
+            if self.current_turn_live_boundary {
+                // The turn started after attach; if the tape beat the output
+                // tail, the missing bytes can still arrive and must be
+                // consumed. Hydrated turns do not get this suppression: their
+                // old output bytes are behind the live tail edge.
+                self.suppress = Some((content.clone(), 0));
+            } else {
+                self.suppress = None;
+            }
             return AssistantDecision::Push(content);
         };
 
@@ -356,6 +371,35 @@ mod tests {
         m.stream("hel");
         m.stream("lo");
         assert_eq!(m.messages(), vec![Cell::Assistant("hello".into())]);
+    }
+
+    #[test]
+    fn hydrated_turn_without_preview_does_not_arm_stale_suppression() {
+        let mut rec = StreamReconciler::new();
+        rec.on_hydrated_message_record("user");
+
+        assert_eq!(
+            rec.on_assistant_record("The old answer".to_string(), None),
+            AssistantDecision::Push("The old answer".to_string())
+        );
+        rec.on_user_record("next");
+        assert_eq!(
+            rec.on_stream("The".to_string()),
+            StreamAction::StartNew("The".to_string())
+        );
+    }
+
+    #[test]
+    fn live_turn_without_preview_still_suppresses_late_output_tail() {
+        let mut rec = StreamReconciler::new();
+        rec.on_user_record("live");
+
+        assert_eq!(
+            rec.on_assistant_record("hello".to_string(), None),
+            AssistantDecision::Push("hello".to_string())
+        );
+        assert_eq!(rec.on_stream("hel".to_string()), StreamAction::Drop);
+        assert_eq!(rec.on_stream("lo".to_string()), StreamAction::Drop);
     }
 
     #[test]

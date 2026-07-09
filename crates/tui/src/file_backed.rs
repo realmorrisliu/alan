@@ -1459,7 +1459,7 @@ impl FileBackedApp {
         for cell in self.transcript.iter().rev() {
             match cell {
                 HistoryCell::User(_) => return true,
-                HistoryCell::Assistant(_) | HistoryCell::PendingYield(_) => return false,
+                HistoryCell::Assistant(_) => return false,
                 _ => {}
             }
         }
@@ -2341,6 +2341,54 @@ mod tests {
             .collect();
         assert_eq!(cells.len(), 1, "later sync must update the cell in place");
         assert_eq!(cells[0], &populated);
+    }
+
+    #[test]
+    fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "run this".to_string(),
+        });
+        app.set_pending_yield(PendingYieldCell {
+            request_id: "r1".to_string(),
+            kind: YieldKind::Confirmation,
+            title: "Approve?".to_string(),
+            prompt: None,
+            options: vec!["yes".to_string(), "no".to_string()],
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "next remote turn".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "run this"));
+        assert!(matches!(app.transcript[1], HistoryCell::PendingYield(_)));
+        assert!(matches!(app.transcript[2], HistoryCell::Tool { .. }));
+        assert!(
+            matches!(app.transcript[3], HistoryCell::User(ref text) if text == "next remote turn")
+        );
+        assert_eq!(app.action_cells.get("a1"), Some(&2));
     }
 
     #[tokio::test]
