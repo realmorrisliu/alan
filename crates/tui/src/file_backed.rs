@@ -223,6 +223,7 @@ async fn hydrate_and_open_tails(
 
     let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
     app.transcript = parse_tape_history(&tape_history);
+    app.seed_reconciler_from_tape_history(&tape_history);
 
     let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
     let ui_events = ui_history
@@ -243,7 +244,6 @@ async fn hydrate_and_open_tails(
 
     sync_actions_from_files(shell, agent_path, app).await?;
     sync_requests_from_files(shell, agent_path, app).await?;
-    app.seed_reconciler_from_tape_history(&tape_history);
     Ok(WatchTails {
         output,
         requests,
