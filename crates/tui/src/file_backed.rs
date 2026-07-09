@@ -1016,6 +1016,11 @@ struct FileBackedApp {
     /// suppression/echo/matching logic lives there; this app only locates
     /// cells and applies the returned decisions.
     reconciler: StreamReconciler,
+    /// First transcript cell for a remote turn whose stream/UI/action cells
+    /// reached this watcher before its user tape record. When the boundary
+    /// arrives, insert the user cell before the whole block and shift side
+    /// indexes such as `action_cells`.
+    pending_remote_turn_start: Option<usize>,
 }
 
 impl FileBackedApp {
@@ -1040,6 +1045,7 @@ impl FileBackedApp {
             expand_thinking: false,
             should_quit: false,
             reconciler: StreamReconciler::new(),
+            pending_remote_turn_start: None,
         }
     }
 
@@ -1303,6 +1309,7 @@ impl FileBackedApp {
         }
         self.transcript.push(HistoryCell::User(text.clone()));
         self.reconciler.on_local_submit(&text);
+        self.pending_remote_turn_start = None;
         Some(FileBackedAction::Submit(text))
     }
 
@@ -1356,7 +1363,7 @@ impl FileBackedApp {
         }) {
             *existing = pending;
         } else {
-            self.transcript.push(HistoryCell::PendingYield(pending));
+            self.push_turn_preview_cell(HistoryCell::PendingYield(pending));
         }
     }
 
@@ -1405,6 +1412,28 @@ impl FileBackedApp {
         }
     }
 
+    fn push_turn_preview_cell(&mut self, cell: HistoryCell) {
+        if self.reconciler.awaiting_boundary() && self.pending_remote_turn_start.is_none() {
+            self.pending_remote_turn_start = Some(self.transcript.len());
+        }
+        self.transcript.push(cell);
+    }
+
+    fn insert_user_boundary(&mut self, content: String) {
+        let index = self
+            .pending_remote_turn_start
+            .take()
+            .unwrap_or(self.transcript.len());
+        self.transcript.insert(index, HistoryCell::User(content));
+        self.shift_action_cells_for_insert(index);
+    }
+
+    fn flush_held_stream_after_boundary(&mut self) {
+        if let Some(stream) = self.reconciler.take_flushed_stream() {
+            self.transcript.push(HistoryCell::Assistant(stream));
+        }
+    }
+
     /// The index of the current turn's assistant cell: the most recent
     /// `Assistant` cell with no user message or yield after it. Interposed
     /// plan/notice cells are scanned over; a boundary stops the scan.
@@ -1427,18 +1456,13 @@ impl FileBackedApp {
             return;
         }
         match record.role.as_str() {
-            "user" => match self.reconciler.on_user_record(&record.content) {
-                UserDecision::Drop => {}
-                UserDecision::Push(content) => self.transcript.push(HistoryCell::User(content)),
-                UserDecision::InsertBeforeOpen(content) => {
-                    // A next-turn stream chunk raced ahead of this boundary and
-                    // opened an assistant cell; the boundary goes in front of it.
-                    match self.current_assistant_cell() {
-                        Some(idx) => self.transcript.insert(idx, HistoryCell::User(content)),
-                        None => self.transcript.push(HistoryCell::User(content)),
-                    }
+            "user" => {
+                match self.reconciler.on_user_record(&record.content) {
+                    UserDecision::Drop => {}
+                    UserDecision::Push(content) => self.insert_user_boundary(content),
                 }
-            },
+                self.flush_held_stream_after_boundary();
+            }
             "assistant" => {
                 let idx = self.current_assistant_cell();
                 let preview = idx.and_then(|i| match &self.transcript[i] {
@@ -1456,17 +1480,6 @@ impl FileBackedApp {
                         {
                             *existing = content;
                         }
-                    }
-                    AssistantDecision::ConfirmAndSplit {
-                        confirmed,
-                        remainder,
-                    } => {
-                        if let Some(HistoryCell::Assistant(existing)) =
-                            idx.map(|i| &mut self.transcript[i])
-                        {
-                            *existing = confirmed;
-                        }
-                        self.transcript.push(HistoryCell::Assistant(remainder));
                     }
                     AssistantDecision::Push(content) => {
                         self.transcript.push(HistoryCell::Assistant(content))
@@ -1509,7 +1522,7 @@ impl FileBackedApp {
         let changed = self.plan != snapshot;
         self.plan = snapshot.clone();
         if changed && !snapshot.items.is_empty() {
-            self.transcript.push(HistoryCell::Plan(
+            self.push_turn_preview_cell(HistoryCell::Plan(
                 snapshot
                     .items
                     .into_iter()
@@ -1529,7 +1542,7 @@ impl FileBackedApp {
             && matches!(snapshot.state, UiThinkingState::Complete)
             && !snapshot.text.trim().is_empty()
         {
-            self.transcript.push(HistoryCell::Thinking {
+            self.push_turn_preview_cell(HistoryCell::Thinking {
                 text: snapshot.text,
                 duration_secs: snapshot.duration_secs.unwrap_or(0),
             });
@@ -1571,6 +1584,9 @@ impl FileBackedApp {
         {
             *existing = cell;
             return;
+        }
+        if self.reconciler.awaiting_boundary() && self.pending_remote_turn_start.is_none() {
+            self.pending_remote_turn_start = Some(self.transcript.len());
         }
         let index = self.transcript.len();
         self.transcript.push(cell);
@@ -1644,6 +1660,14 @@ impl FileBackedApp {
                 }
             })
             .collect();
+    }
+
+    fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
+        for index in self.action_cells.values_mut() {
+            if *index >= inserted_at {
+                *index += 1;
+            }
+        }
     }
 
     fn render_opts(&self, width: usize) -> RenderOpts {
@@ -2358,6 +2382,68 @@ mod tests {
             })
             .collect();
         assert_eq!(assistant_cells, vec!["hello"]);
+    }
+
+    #[test]
+    fn raced_turn_preview_cells_move_behind_their_user_boundary() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "first".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "done".to_string(),
+        });
+
+        // UI/action cells for the next turn can beat that turn's user tape
+        // record because they are tailed from independent files.
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("next turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "prepare".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+        app.push_output("wor".to_string());
+
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "world".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+        assert!(matches!(app.transcript[4], HistoryCell::Tool { .. }));
+        assert!(matches!(app.transcript[5], HistoryCell::Assistant(ref text) if text == "world"));
+        assert_eq!(app.action_cells.get("a1"), Some(&4));
     }
 
     #[tokio::test]

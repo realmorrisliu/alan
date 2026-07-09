@@ -11,17 +11,25 @@
 //! Every bug found in review lived in the string matching + suppression +
 //! ordering bookkeeping, not in transcript access. [`StreamReconciler`]
 //! isolates exactly that: a pure state machine with no transcript knowledge.
-//! The app calls it and applies the returned decision mechanically; the
-//! reconciler decides *what* to do, the app decides *where* (which cell). It
-//! is exhaustively property-tested against the tape as ground truth over every
+//! The app calls it and applies the returned decisions mechanically. The only
+//! allowed middle insertion is a delayed user boundary, and the app is
+//! responsible for shifting any side indexes when that happens. It is
+//! exhaustively property-tested against the tape as ground truth over every
 //! legal interleaving.
 //!
+//! The load-bearing idea: a stream chunk that belongs to a turn whose user
+//! boundary has not been observed yet (a next turn racing ahead through the
+//! separate output tail) is **held**, not rendered, until that boundary
+//! arrives. This is what keeps a next-turn response from merging into, or
+//! rendering above, the turn that produced it.
+//!
 //! State:
-//! - *preview_open*: the current assistant cell is unconfirmed stream text
-//!   started since the last turn boundary. Bytes append to it; a boundary or
-//!   an authoritative record closes it. This is what keeps a next-turn stream
-//!   chunk that races ahead of its user record from merging into the previous
-//!   (closed) response.
+//! - *awaiting_boundary*: an assistant record has closed the last turn, so the
+//!   next stream bytes belong to a turn whose user record has not arrived yet;
+//!   hold them until it does.
+//! - *held*: those buffered next-turn bytes.
+//! - *preview_open*: the current assistant cell is unconfirmed stream text for
+//!   the in-progress turn; bytes append to it.
 //! - *suppression* `(expected, consumed)`: a tape record rendered a response
 //!   before its stream bytes arrived; the late bytes are consumed, not
 //!   duplicated.
@@ -32,7 +40,7 @@
 /// What the app should do with a filtered stream chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StreamAction {
-    /// Nothing to render (empty or fully suppressed).
+    /// Nothing to render (empty, suppressed, or held for a future boundary).
     Drop,
     /// Append to the current (open) assistant cell.
     Append(String),
@@ -43,13 +51,10 @@ pub(crate) enum StreamAction {
 /// What the app should do with a user tape record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum UserDecision {
-    /// Confirms the local echo already on screen: no edit.
+    /// Confirms the local echo already on screen: no user-cell edit.
     Drop,
     /// Push a new user cell at the end.
     Push(String),
-    /// A next-turn stream chunk raced ahead of this boundary and opened a
-    /// cell; insert the user cell in front of that open assistant cell.
-    InsertBeforeOpen(String),
 }
 
 /// What the app should do with an assistant tape record, given the located
@@ -60,12 +65,6 @@ pub(crate) enum AssistantDecision {
     Drop,
     /// Replace the open preview cell's content with this authoritative text.
     ReplacePreview(String),
-    /// The preview ran ahead of the tape: set the preview cell to `confirmed`
-    /// and push `remainder` as a new open assistant cell (the next turn).
-    ConfirmAndSplit {
-        confirmed: String,
-        remainder: String,
-    },
     /// The stream missed this response: push it as a new assistant cell.
     Push(String),
 }
@@ -75,6 +74,11 @@ pub(crate) enum AssistantDecision {
 pub(crate) struct StreamReconciler {
     /// The current assistant cell is an unconfirmed, still-streaming preview.
     preview_open: bool,
+    /// An assistant record closed the last turn; stream bytes until the next
+    /// user record belong to a turn whose boundary has not arrived yet.
+    awaiting_boundary: bool,
+    /// Buffered next-turn stream bytes, flushed when the boundary arrives.
+    held: String,
     /// `(expected_text, bytes_already_accounted)` for a response a tape record
     /// rendered before its stream bytes arrived.
     suppress: Option<(String, usize)>,
@@ -87,17 +91,26 @@ impl StreamReconciler {
         Self::default()
     }
 
-    /// This client submitted a message (the app pushes the User cell). A new
-    /// turn begins: stale suppression must not eat this turn's stream, and the
-    /// next stream chunk starts a fresh assistant cell.
+    /// Whether the previous assistant record closed a turn and live stream
+    /// bytes are waiting for the next user boundary before they can render.
+    pub(crate) fn awaiting_boundary(&self) -> bool {
+        self.awaiting_boundary
+    }
+
+    /// This client submitted a message (the app pushes the User cell). Its
+    /// boundary is already on screen, so this turn's stream renders
+    /// immediately; stale suppression/held from a prior turn is discarded.
     pub(crate) fn on_local_submit(&mut self, text: &str) {
         self.pending_echo = Some(text.to_string());
         self.suppress = None;
         self.preview_open = false;
+        self.awaiting_boundary = false;
+        self.held.clear();
     }
 
     /// Filter and place a stream chunk. Suppression consumes bytes a record
-    /// already rendered; the rest opens or extends the current assistant cell.
+    /// already rendered; bytes for a not-yet-bounded next turn are held; the
+    /// rest opens or extends the current assistant cell.
     pub(crate) fn on_stream(&mut self, text: String) -> StreamAction {
         let rendered = match self.suppress.take() {
             None => text,
@@ -126,6 +139,11 @@ impl StreamReconciler {
         if rendered.is_empty() {
             return StreamAction::Drop;
         }
+        if self.awaiting_boundary {
+            // Belongs to a turn whose user record has not arrived yet.
+            self.held.push_str(&rendered);
+            return StreamAction::Drop;
+        }
         if self.preview_open {
             StreamAction::Append(rendered)
         } else {
@@ -134,86 +152,91 @@ impl StreamReconciler {
         }
     }
 
-    /// A `machine/tape` user record arrived: a turn boundary.
+    /// A `machine/tape` user record arrived: a turn boundary. Call
+    /// [`take_flushed_stream`] afterwards to render any buffered next-turn
+    /// bytes that were waiting for this boundary.
     pub(crate) fn on_user_record(&mut self, content: &str) -> UserDecision {
         // Suppression armed for a previous response is stale from a boundary:
         // pre-attach bytes behind the live edge can never arrive.
         self.suppress = None;
+        self.awaiting_boundary = false;
         // Dedupe only against this client's own pending echo.
         if self.pending_echo.as_deref() == Some(content) {
             self.pending_echo = None;
-            // The app pushed this User cell at submit time; the current turn's
-            // stream (if any) opened after it, so the boundary is already in
-            // the right place.
             return UserDecision::Drop;
         }
-        if self.preview_open {
-            // A next-turn stream chunk raced ahead of this boundary; the open
-            // cell belongs after it. Keep it open as the new turn's preview.
-            UserDecision::InsertBeforeOpen(content.to_string())
-        } else {
-            UserDecision::Push(content.to_string())
+        UserDecision::Push(content.to_string())
+    }
+
+    /// After a user record, return buffered next-turn stream bytes to render
+    /// as a new assistant cell (opening the preview), if any were held.
+    pub(crate) fn take_flushed_stream(&mut self) -> Option<String> {
+        if self.held.is_empty() {
+            return None;
         }
+        self.preview_open = true;
+        Some(std::mem::take(&mut self.held))
     }
 
     /// A `machine/tape` assistant record arrived. `preview` is the open
-    /// preview cell's text when one is open, else None.
+    /// preview cell's text when one is open, else None. Every branch closes
+    /// the turn (`awaiting_boundary = true`): subsequent stream bytes belong
+    /// to the next turn and are held until its user record.
     pub(crate) fn on_assistant_record(
         &mut self,
         content: String,
         preview: Option<&str>,
     ) -> AssistantDecision {
-        let Some(preview) = preview.filter(|_| self.preview_open) else {
+        let decision = self.decide_assistant(content, preview.filter(|_| self.preview_open));
+        self.preview_open = false;
+        self.awaiting_boundary = true;
+        decision
+    }
+
+    fn decide_assistant(&mut self, content: String, preview: Option<&str>) -> AssistantDecision {
+        let Some(preview) = preview else {
             // The stream missed this response; consume its late bytes.
-            self.preview_open = false;
             self.suppress = Some((content.clone(), 0));
             return AssistantDecision::Push(content);
         };
 
         if preview == content {
-            // Fully streamed already; the record confirms and closes the cell.
-            self.preview_open = false;
+            // Fully streamed already.
             self.suppress = None;
             return AssistantDecision::Drop;
         }
         if let Some(remainder) = preview.strip_prefix(content.as_str()) {
-            // Stream ran ahead into the next turn: confirm this turn, keep the
-            // excess as the new open preview.
+            // Stream ran ahead into the next turn: confirm this turn and hold
+            // the excess until the next turn's boundary arrives.
             self.suppress = None;
-            // preview_open stays true: `remainder` is the next turn's cell.
-            return AssistantDecision::ConfirmAndSplit {
-                confirmed: content,
-                remainder: remainder.to_string(),
-            };
+            self.held = format!("{remainder}{}", std::mem::take(&mut self.held));
+            return AssistantDecision::ReplacePreview(content);
         }
         if content.starts_with(preview) {
             // Record won the channel race mid-stream: finish the cell and
             // consume the queued remainder exactly.
-            self.preview_open = false;
             self.suppress = Some((content.clone(), preview.len()));
             return AssistantDecision::ReplacePreview(content);
         }
         if content.ends_with(preview) {
             // A mid-turn attach clipped the stream's prefix.
-            self.preview_open = false;
             self.suppress = Some((content.clone(), 0));
             return AssistantDecision::ReplacePreview(content);
         }
         // Clipped attach AND stream ran ahead: the preview is this response's
         // tail followed by the next turn's bytes. Split at the longest prefix
-        // of the preview that is a suffix of the record.
+        // of the preview that is a suffix of the record; confirm this turn and
+        // hold the excess.
         for split in (1..preview.len().min(content.len() + 1)).rev() {
             if preview.is_char_boundary(split) && content.ends_with(&preview[..split]) {
                 self.suppress = None;
-                // The remainder becomes the next turn's open preview.
-                return AssistantDecision::ConfirmAndSplit {
-                    confirmed: content,
-                    remainder: preview[split..].to_string(),
-                };
+                self.held = format!("{}{}", &preview[split..], std::mem::take(&mut self.held));
+                return AssistantDecision::ReplacePreview(content);
             }
         }
         // Unrelated preview: it belongs to a different racing response. Push
-        // the confirmed record; keep the open preview as-is.
+        // the confirmed record; keep the open preview as-is by leaving it
+        // (the caller's ReplacePreview target is None, so Push appends).
         self.suppress = Some((content.clone(), 0));
         AssistantDecision::Push(content)
     }
@@ -267,12 +290,9 @@ mod tests {
             match self.rec.on_user_record(content) {
                 UserDecision::Drop => {}
                 UserDecision::Push(c) => self.cells.push(Cell::User(c)),
-                UserDecision::InsertBeforeOpen(c) => {
-                    let idx = self
-                        .open_cell()
-                        .expect("InsertBeforeOpen requires an open cell");
-                    self.cells.insert(idx, Cell::User(c));
-                }
+            }
+            if let Some(stream) = self.rec.take_flushed_stream() {
+                self.cells.push(Cell::Assistant(stream));
             }
         }
 
@@ -291,15 +311,6 @@ mod tests {
                     if let Some(Cell::Assistant(existing)) = idx.map(|i| &mut self.cells[i]) {
                         *existing = t;
                     }
-                }
-                AssistantDecision::ConfirmAndSplit {
-                    confirmed,
-                    remainder,
-                } => {
-                    if let Some(Cell::Assistant(existing)) = idx.map(|i| &mut self.cells[i]) {
-                        *existing = confirmed;
-                    }
-                    self.cells.push(Cell::Assistant(remainder));
                 }
                 AssistantDecision::Push(t) => self.cells.push(Cell::Assistant(t)),
             }
@@ -387,13 +398,13 @@ mod tests {
     }
 
     #[test]
-    fn next_turn_stream_racing_ahead_of_its_user_record_is_placed_after_it() {
+    fn next_turn_stream_racing_ahead_of_its_user_record_is_held_then_placed_after_it() {
         let mut m = Model::default();
         m.user_record("u1");
         m.assistant_record("hello"); // stream missed turn 1
         m.stream("hello"); // turn 1's late tail, fully suppressed
-        m.stream("w"); // turn 2's stream, ahead of its user record
-        m.user_record("u2");
+        m.stream("w"); // turn 2's stream, ahead of its user record: held
+        m.user_record("u2"); // boundary flushes the held "w"
         m.assistant_record("world");
         m.stream("orld");
         assert_eq!(
@@ -408,13 +419,20 @@ mod tests {
     }
 
     #[test]
-    fn stream_running_ahead_splits_the_next_turn_out() {
+    fn stream_running_ahead_holds_the_next_turn_until_its_boundary() {
         let mut m = Model::default();
         m.stream("onetwo"); // turn1 + start of turn2 before turn1's record
-        m.assistant_record("one");
+        m.assistant_record("one"); // confirms "one", holds "two"
+        // "two" is not shown yet — its user boundary has not arrived.
+        assert_eq!(m.messages(), vec![Cell::Assistant("one".into())]);
+        m.user_record("u2");
         assert_eq!(
             m.messages(),
-            vec![Cell::Assistant("one".into()), Cell::Assistant("two".into())]
+            vec![
+                Cell::Assistant("one".into()),
+                Cell::User("u2".into()),
+                Cell::Assistant("two".into()),
+            ]
         );
     }
 
