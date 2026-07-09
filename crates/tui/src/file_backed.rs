@@ -221,8 +221,8 @@ async fn hydrate_and_open_tails(
         tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
     let output = tail_from_live_edge(shell, &agent_output_path(agent_path)).await?;
 
-    app.transcript =
-        parse_tape_history(&String::from_utf8(tape_history).context("machine/tape is not utf8")?);
+    let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
+    app.transcript = parse_tape_history(&tape_history);
 
     let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
     let ui_events = ui_history
@@ -243,6 +243,7 @@ async fn hydrate_and_open_tails(
 
     sync_actions_from_files(shell, agent_path, app).await?;
     sync_requests_from_files(shell, agent_path, app).await?;
+    app.seed_reconciler_from_tape_history(&tape_history);
     Ok(WatchTails {
         output,
         requests,
@@ -1332,6 +1333,7 @@ impl FileBackedApp {
             "clear" => {
                 self.transcript.clear();
                 self.action_cells.clear();
+                self.pending_remote_turn_start = None;
                 None
             }
             "help" => {
@@ -1423,7 +1425,8 @@ impl FileBackedApp {
         let index = self
             .pending_remote_turn_start
             .take()
-            .unwrap_or(self.transcript.len());
+            .unwrap_or(self.transcript.len())
+            .min(self.transcript.len());
         self.transcript.insert(index, HistoryCell::User(content));
         self.shift_action_cells_for_insert(index);
     }
@@ -1636,6 +1639,7 @@ impl FileBackedApp {
         if cells_to_remove > 0 {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
+            self.shift_pending_remote_turn_start(cells_to_remove);
         }
 
         if remaining > 0
@@ -1666,6 +1670,29 @@ impl FileBackedApp {
         for index in self.action_cells.values_mut() {
             if *index >= inserted_at {
                 *index += 1;
+            }
+        }
+    }
+
+    fn shift_pending_remote_turn_start(&mut self, removed_prefix_len: usize) {
+        self.pending_remote_turn_start = self.pending_remote_turn_start.map(|index| {
+            if index < removed_prefix_len {
+                0
+            } else {
+                index - removed_prefix_len
+            }
+        });
+    }
+
+    fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
+        self.reconciler = StreamReconciler::new();
+        self.pending_remote_turn_start = None;
+        for line in raw.lines() {
+            let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
+                continue;
+            };
+            if record.kind == "message" {
+                self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
     }
@@ -2444,6 +2471,76 @@ mod tests {
         assert!(matches!(app.transcript[4], HistoryCell::Tool { .. }));
         assert!(matches!(app.transcript[5], HistoryCell::Assistant(ref text) if text == "world"));
         assert_eq!(app.action_cells.get("a1"), Some(&4));
+    }
+
+    #[test]
+    fn hydrated_assistant_seeds_pending_boundary_state() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        let tape = r#"{"version":1,"kind":"message","role":"user","content":"first"}
+{"version":1,"kind":"message","role":"assistant","content":"done"}
+"#;
+        app.transcript = parse_tape_history(tape);
+        app.seed_reconciler_from_tape_history(tape);
+
+        app.apply_ui_event(UiEvent::Plan {
+            snapshot: UiPlanSnapshot::new(
+                Some("next turn".to_string()),
+                vec![alan_agent_protocol::PlanItem {
+                    id: "1".to_string(),
+                    content: "prepare".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                }],
+            ),
+        });
+        app.push_output("wor".to_string());
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
+        assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+        assert!(matches!(app.transcript[4], HistoryCell::Assistant(ref text) if text == "wor"));
+    }
+
+    #[test]
+    fn pending_remote_turn_start_shifts_with_scrollback_prune() {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.transcript
+            .push(HistoryCell::Rendered(vec!["old".to_string()]));
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "assistant".to_string(),
+            content: "done".to_string(),
+        });
+        sync_actions_from_snapshots(
+            &mut app,
+            vec![ActionSnapshot {
+                id: "a1".to_string(),
+                name: "tool".to_string(),
+                status: "completed".to_string(),
+                output: "ran".to_string(),
+                result: r#"{"exit_code":0}"#.to_string(),
+            }],
+        );
+
+        app.prune_rendered_prefix(RenderOpts::new(80, false), 1);
+        app.apply_tape_record(TapeRecordV1 {
+            version: 1,
+            kind: "message".to_string(),
+            role: "user".to_string(),
+            content: "second".to_string(),
+        });
+
+        assert!(matches!(app.transcript[0], HistoryCell::Assistant(ref text) if text == "done"));
+        assert!(matches!(app.transcript[1], HistoryCell::User(ref text) if text == "second"));
+        assert!(matches!(app.transcript[2], HistoryCell::Tool { .. }));
+        assert_eq!(app.action_cells.get("a1"), Some(&2));
     }
 
     #[tokio::test]

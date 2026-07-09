@@ -97,6 +97,18 @@ impl StreamReconciler {
         self.awaiting_boundary
     }
 
+    /// Seed state from already-hydrated authoritative tape records. Unlike
+    /// live assistant records, hydrated assistant records must not arm stream
+    /// suppression: any old `/io/output` bytes are behind the live tail edge
+    /// and will never arrive.
+    pub(crate) fn on_hydrated_message_record(&mut self, role: &str) {
+        self.suppress = None;
+        self.preview_open = false;
+        self.held.clear();
+        self.pending_echo = None;
+        self.awaiting_boundary = role == "assistant";
+    }
+
     /// This client submitted a message (the app pushes the User cell). Its
     /// boundary is already on screen, so this turn's stream renders
     /// immediately; stale suppression/held from a prior turn is discarded.
