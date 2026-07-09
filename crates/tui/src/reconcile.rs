@@ -111,10 +111,10 @@ impl StreamReconciler {
 
     /// This client submitted a message (the app pushes the User cell). Its
     /// boundary is already on screen, so this turn's stream renders
-    /// immediately; stale suppression/held from a prior turn is discarded.
+    /// immediately. Suppression is intentionally preserved: unread output
+    /// tail bytes from the previous response can arrive after this boundary.
     pub(crate) fn on_local_submit(&mut self, text: &str) {
         self.pending_echo = Some(text.to_string());
-        self.suppress = None;
         self.preview_open = false;
         self.awaiting_boundary = false;
         self.held.clear();
@@ -168,9 +168,6 @@ impl StreamReconciler {
     /// [`take_flushed_stream`] afterwards to render any buffered next-turn
     /// bytes that were waiting for this boundary.
     pub(crate) fn on_user_record(&mut self, content: &str) -> UserDecision {
-        // Suppression armed for a previous response is stale from a boundary:
-        // pre-attach bytes behind the live edge can never arrive.
-        self.suppress = None;
         self.awaiting_boundary = false;
         // Dedupe only against this client's own pending echo.
         if self.pending_echo.as_deref() == Some(content) {
@@ -412,6 +409,47 @@ mod tests {
         m.cells.push(Cell::User("hi".into())); // app's local echo
         m.user_record("hi"); // confirming record
         assert_eq!(m.messages(), vec![Cell::User("hi".into())]);
+    }
+
+    #[test]
+    fn suppression_survives_local_submit_until_late_tail_is_consumed() {
+        let mut m = Model::default();
+        m.stream("hel");
+        m.assistant_record("hello"); // arms suppression for the queued "lo" tail
+        m.rec.on_local_submit("next");
+        m.cells.push(Cell::User("next".into())); // app's local echo
+        m.stream("lo"); // old response tail arrives after the new user boundary
+        m.stream("answer");
+        m.assistant_record("answer");
+
+        assert_eq!(
+            m.messages(),
+            vec![
+                Cell::Assistant("hello".into()),
+                Cell::User("next".into()),
+                Cell::Assistant("answer".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn suppression_survives_remote_user_record_until_late_tail_is_consumed() {
+        let mut m = Model::default();
+        m.stream("hel");
+        m.assistant_record("hello"); // arms suppression for the queued "lo" tail
+        m.user_record("next");
+        m.stream("lo"); // old response tail arrives after the remote user boundary
+        m.stream("answer");
+        m.assistant_record("answer");
+
+        assert_eq!(
+            m.messages(),
+            vec![
+                Cell::Assistant("hello".into()),
+                Cell::User("next".into()),
+                Cell::Assistant("answer".into()),
+            ]
+        );
     }
 
     #[test]
