@@ -15,8 +15,16 @@ use std::path::{Path, PathBuf};
 const READ_TOOL_BINDINGS: &[&str] = &["read_file", "grep", "glob", "list_dir", "bash"];
 const WRITE_TOOL_BINDINGS: &[&str] = &["write_file", "edit_file", "bash"];
 const SHELL_TOOL_BINDINGS: &[&str] = &["bash", "shell", "exec_command"];
-const NETWORK_TOOL_BINDINGS: &[&str] = &["gh", "github", "curl", "browser", "agent-browser", "web"];
-const GITHUB_TOOL_BINDINGS: &[&str] = &["gh", "github"];
+const NETWORK_TOOL_BINDINGS: &[&str] = &[
+    "bash",
+    "gh",
+    "github",
+    "curl",
+    "browser",
+    "agent-browser",
+    "web",
+];
+const GITHUB_TOOL_BINDINGS: &[&str] = &["bash", "gh", "github"];
 const BROWSER_TOOL_BINDINGS: &[&str] = &["browser", "agent-browser", "web"];
 
 /// Error returned before `/proc/clone` when the original delegated task cannot
@@ -421,6 +429,25 @@ mod tests {
 
         assert_eq!(decision.recovery, DelegatedCapabilityRecovery::ParentPath);
         assert_eq!(decision.unsatisfied, requirements);
+    }
+
+    #[test]
+    fn builtin_bash_binding_satisfies_network_and_github_requirements() {
+        let child = summary(&["read_file", "bash"], true);
+        let requirements = vec![
+            DelegatedCapabilityRequirement::Network,
+            DelegatedCapabilityRequirement::Github,
+        ];
+
+        let decision = evaluate_delegated_namespace(
+            "Review GitHub issue",
+            &requirements,
+            child,
+            &DelegatedNamespaceSummary::default(),
+        );
+
+        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
+        assert!(decision.unsatisfied.is_empty());
     }
 
     #[test]
