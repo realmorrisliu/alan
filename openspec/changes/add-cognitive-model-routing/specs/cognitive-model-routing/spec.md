@@ -17,6 +17,14 @@ cognitive routing SHALL NOT dispatch through a provider SDK or global opaque id.
 - **THEN** Alan reports that route unavailable before spawning an attempt
 - **AND** it does not bypass the namespace through profile metadata
 
+#### Scenario: Cognitive routing is not configured
+- **WHEN** no System 1 or System 2 role aliases are configured and the existing
+  single Connection resolves successfully
+- **THEN** Alan uses that mounted Connection through the existing single-profile
+  Generation path without requiring cognitive-role aliases
+- **AND** startup and ordinary turns do not fail merely because cognitive routing
+  is absent
+
 ### Requirement: Routed attempts are ordinary Processes
 Each System 1 or System 2 attempt SHALL execute as an ordinary Process visible in
 `/proc` and, when agent-conforming, the `/agent` overlay. Attempts SHALL expose

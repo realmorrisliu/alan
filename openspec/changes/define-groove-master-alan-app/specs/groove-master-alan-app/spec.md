@@ -36,6 +36,15 @@ from durable practice signals.
   root/rest/root-octave patterns, into loop construction and variation
 - **AND** theory-heavy language follows groove and pocket foundations
 
+#### Scenario: The route continues through twelve months
+- **WHEN** the user progresses beyond the first twelve weeks
+- **THEN** Months 3–6 develop Bass Language through groove-first vocabulary,
+  variation, and intentional note choice
+- **AND** Months 6–12 develop Musical Conversation through call-and-response,
+  interaction, personal feel, and deeper listening
+- **AND** later phases preserve the ordered route rather than becoming an
+  unconstrained lesson catalog
+
 #### Scenario: Daily plan adapts
 - **WHEN** the app prepares a later session
 - **THEN** it may adjust source, duration, challenge, review target,
