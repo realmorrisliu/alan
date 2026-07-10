@@ -116,12 +116,13 @@ machine/routing/
 ├── status       # idle/running/escalating/completed/failed
 ├── current      # attempt pid, role, Connection alias, bounded reason
 ├── result       # accepted attempt reference and outcome metadata
-├── events       # offset-resumable ordered records
-└── ctl          # auto / next role control
+└── events       # offset-resumable ordered records
 ```
 
 Clients hydrate snapshots and block-read events. Rollout/tape records may carry
 the same bounded references, but no daemon DTO is a second source of truth.
+Routing control remains on `machine/ctl` through the `route auto` and
+`route next <role>` commands defined above; `machine/routing` is read-only.
 
 ### 6. Request controls compose after Connection selection
 
