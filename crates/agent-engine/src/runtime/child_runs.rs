@@ -278,7 +278,9 @@ impl ChildRunRegistry {
         let mut records = self.inner.write().expect("child run registry poisoned");
         let now = now_ms();
         if let Some(record) = records.get_mut(child_run_id) {
-            record.status = status;
+            if !record.status.is_terminal() {
+                record.status = status;
+            }
             record.error_message = error_message.map(|message| {
                 truncate_text_with_suffix(&message, MAX_CHILD_RUN_ERROR_MESSAGE_CHARS, "...")
             });
@@ -712,6 +714,21 @@ mod tests {
             registry.reconcile_process_exit(id, exit_code);
             assert_eq!(registry.get(id).unwrap().status, expected);
         }
+    }
+
+    #[test]
+    fn registry_does_not_overwrite_authoritative_process_terminal_status() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+        registry.mark_running("run-1");
+        registry.reconcile_process_exit("run-1", 130);
+
+        registry.mark_terminal("run-1", ChildRunStatus::Completed, None);
+
+        assert_eq!(
+            registry.get("run-1").unwrap().status,
+            ChildRunStatus::Terminated
+        );
     }
 
     #[test]
