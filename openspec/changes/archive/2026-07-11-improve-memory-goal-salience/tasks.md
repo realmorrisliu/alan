@@ -14,5 +14,5 @@
 
 - [x] 3.1 Run `just verify` and fix fallout.
 - [x] 3.2 Run `openspec validate improve-memory-goal-salience --strict`.
-- [ ] 3.3 Open PR, address review, merge.
-- [ ] 3.4 After merge, sync the delta spec into `openspec/specs/runtime-memory-surfaces/` and confirm archive readiness.
+- [x] 3.3 Open PR, address review, merge. (PR #620, merged 2026-07-11)
+- [x] 3.4 After merge, sync the delta spec into `openspec/specs/runtime-memory-surfaces/` and confirm archive readiness. (synced 2026-07-11)

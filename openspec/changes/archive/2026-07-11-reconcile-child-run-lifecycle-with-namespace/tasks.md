@@ -1,7 +1,7 @@
 ## 1. Consumer Re-Audit (Pre-Implementation Gate)
 
 - [x] 1.1 Re-run the consumer audit at implementation time: grep `child_runs` across `crates/`, `clients/apple/`, and scripts; confirm the endpoints still have no callers beyond the payload contract test before deleting anything.
-- [ ] 1.2 Confirm `align-delegation-capability-with-namespace` has merged and rebase this change's `child-run-lifecycle` delta against the synced spec.
+- [x] 1.2 Confirm `align-delegation-capability-with-namespace` has merged and rebase this change's `child-run-lifecycle` delta against the synced spec. (align merged as PR #617 and archived 2026-07-10; delta applied against the synced spec at sync time)
 
 ## 2. Remove The Dead Daemon Control Plane
 
@@ -24,5 +24,5 @@
 
 - [x] 5.1 Run `just verify` and fix fallout.
 - [x] 5.2 Run `openspec validate reconcile-child-run-lifecycle-with-namespace --strict`.
-- [ ] 5.3 Open PR (call out the endpoint removal explicitly for out-of-tree consumers), address review, merge.
-- [ ] 5.4 After merge, sync delta specs into `openspec/specs/` (order: after align and evidence changes) and confirm archive readiness.
+- [x] 5.3 Open PR (call out the endpoint removal explicitly for out-of-tree consumers), address review, merge. (PR #619, merged 2026-07-10)
+- [x] 5.4 After merge, sync delta specs into `openspec/specs/` (order: after align and evidence changes) and confirm archive readiness. (synced 2026-07-11)
