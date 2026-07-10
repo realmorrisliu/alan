@@ -333,6 +333,19 @@ impl ProcFs {
         }
     }
 
+    /// Record the terminal result reported by the user-space host for a
+    /// committed process.
+    ///
+    /// This is distinct from writing `cancel` or `interrupt` to `ctl`: those
+    /// are control requests and therefore terminate a live process with the
+    /// conventional cancellation exit code. A host that observes its process
+    /// complete normally must preserve the actual result instead.
+    pub async fn record_exit(&self, pid: Pid, exit_code: i32) {
+        let mut state = self.state.lock().await;
+        state.runner_tasks.remove(&pid);
+        state.table.exit(pid, exit_code);
+    }
+
     fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
         let mut child_namespace = self
             .spawn_context
