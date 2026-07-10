@@ -222,9 +222,18 @@ impl TurnState {
         if let Some(active_turn_message_start) = &mut self.active_turn_message_start {
             *active_turn_message_start = active_turn_message_start.saturating_sub(retention_start);
         }
-        if let Some(plan_snapshot_turn_start) = &mut self.plan_snapshot_turn_start {
-            *plan_snapshot_turn_start = plan_snapshot_turn_start.saturating_sub(retention_start);
+        if self
+            .plan_snapshot_turn_start
+            .is_some_and(|start| start < retention_start)
+        {
+            self.plan_snapshot_turn_start = None;
+        } else if let Some(plan_snapshot_turn_start) = &mut self.plan_snapshot_turn_start {
+            *plan_snapshot_turn_start -= retention_start;
         }
+    }
+
+    pub(crate) fn note_resumed_user_input(&mut self) {
+        self.plan_snapshot_turn_start = None;
     }
 
     pub(crate) fn set_active_skills(&mut self, active_skills: Vec<ActiveSkillEnvelope>) {
@@ -570,6 +579,19 @@ mod tests {
 
         state.clear();
         assert_eq!(state.active_turn_message_start(), None);
+    }
+
+    #[test]
+    fn dropped_plan_boundary_does_not_become_active_after_compaction() {
+        let mut state = TurnState::default();
+        state.begin_turn(2);
+        state.set_plan_snapshot(Some("old plan".to_string()), Vec::new());
+        state.begin_turn(5);
+
+        state.note_tape_compaction(5);
+
+        assert_eq!(state.active_turn_message_start(), Some(0));
+        assert!(!state.plan_snapshot_is_from_active_turn());
     }
 
     #[test]

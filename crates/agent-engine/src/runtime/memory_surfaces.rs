@@ -731,6 +731,25 @@ mod tests {
     }
 
     #[test]
+    fn substantive_resume_input_overrides_earlier_active_plan() {
+        let mut session = Session::new();
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Implement the old memory contract.");
+        turn_state.set_plan_snapshot(
+            Some("Finish the old memory contract.".to_string()),
+            Vec::new(),
+        );
+        turn_state.note_resumed_user_input();
+        session.add_user_message("Switch to the provider connection contract.");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Switch to the provider connection contract."
+        );
+    }
+
+    #[test]
     fn terse_imperative_passes_salience_filter() {
         let mut session = Session::new();
         session.add_user_message("Prepare the release.");
