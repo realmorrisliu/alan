@@ -140,6 +140,12 @@ fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
         .zip(turn_state.active_turn_message_start())
         .is_some_and(|((index, _), start)| *index >= start);
 
+    if turn_state.plan_snapshot_is_from_active_turn()
+        && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+    {
+        return plan_goal;
+    }
+
     if latest_is_substantive && latest_is_current_turn {
         return truncate_memory_text(
             latest_user.unwrap().1.as_str(),
@@ -161,6 +167,16 @@ fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
         return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
     }
 
+    if let Some(summary) = session
+        .tape
+        .summary()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+    {
+        let goal = truncate_memory_text(summary, MAX_INLINE_TEXT_CHARS, &source_ref);
+        return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
+    }
+
     latest_user
         .map(|(_, text)| truncate_memory_text(text, MAX_INLINE_TEXT_CHARS, &source_ref))
         .filter(|value| !value.is_empty())
@@ -179,12 +195,11 @@ fn derive_active_plan_goal(turn_state: &TurnState) -> Option<String> {
             snapshot
                 .items
                 .iter()
-                .find(|item| {
-                    matches!(
-                        item.status,
-                        alan_agent_protocol::PlanItemStatus::InProgress
-                            | alan_agent_protocol::PlanItemStatus::Pending
-                    )
+                .find(|item| matches!(item.status, alan_agent_protocol::PlanItemStatus::InProgress))
+                .or_else(|| {
+                    snapshot.items.iter().find(|item| {
+                        matches!(item.status, alan_agent_protocol::PlanItemStatus::Pending)
+                    })
                 })
                 .map(|item| item.content.trim())
                 .filter(|value| !value.is_empty())
@@ -209,7 +224,11 @@ fn is_substantive_goal_message(text: &str) -> bool {
 }
 
 fn is_acknowledgement_class_fragment(text: &str) -> bool {
-    let normalized = text
+    let without_emoji_modifiers = text
+        .chars()
+        .filter(|character| !matches!(*character, '\u{fe0f}' | '\u{1f3fb}'..='\u{1f3ff}'))
+        .collect::<String>();
+    let normalized = without_emoji_modifiers
         .trim()
         .trim_matches(|character: char| character.is_ascii_punctuation())
         .trim()
@@ -237,7 +256,14 @@ fn is_acknowledgement_class_fragment(text: &str) -> bool {
             | "sounds good"
             | "👍"
             | "👌"
-    )
+    ) || normalized.split_whitespace().count() > 1
+        && normalized.split_whitespace().all(|token| {
+            let token = token.trim_matches(|character: char| character.is_ascii_punctuation());
+            matches!(
+                token,
+                "ok" | "okay" | "yes" | "yep" | "yeah" | "sure" | "thanks" | "👍" | "👌"
+            )
+        })
 }
 
 fn derive_latest_assistant_state(session: &Session, turn_state: &TurnState) -> String {
@@ -688,6 +714,23 @@ mod tests {
     }
 
     #[test]
+    fn in_turn_plan_update_refines_the_initial_user_goal() {
+        let mut session = Session::new();
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Implement the memory contract changes.");
+        turn_state.set_plan_snapshot(
+            Some("Validate salience and compaction fallback behavior.".to_string()),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Validate salience and compaction fallback behavior."
+        );
+    }
+
+    #[test]
     fn terse_imperative_passes_salience_filter() {
         let mut session = Session::new();
         session.add_user_message("Prepare the release.");
@@ -714,6 +757,61 @@ mod tests {
         assert_eq!(
             derive_current_goal(&session, &turn_state),
             "[carried forward] Validate the namespace-native migration."
+        );
+    }
+
+    #[test]
+    fn compaction_summary_wins_before_acknowledgement_fallback() {
+        let mut session = Session::new();
+        session.tape.set_summary(
+            "Complete the namespace-native lifecycle migration and verify parent visibility."
+                .to_string(),
+        );
+        session.add_user_message("ok");
+
+        assert_eq!(
+            derive_current_goal(&session, &TurnState::default()),
+            "[carried forward] Complete the namespace-native lifecycle migration and verify parent visibility."
+        );
+    }
+
+    #[test]
+    fn acknowledgement_token_sequences_and_emoji_modifiers_do_not_replace_goal() {
+        for acknowledgement in ["ok thanks", "ok 👍", "👍🏻", "okay, thanks!"] {
+            let mut session = Session::new();
+            session.add_user_message("Archive the completed Alan OS contract changes.");
+            session.add_user_message(acknowledgement);
+
+            assert_eq!(
+                derive_current_goal(&session, &TurnState::default()),
+                "[carried forward] Archive the completed Alan OS contract changes.",
+                "acknowledgement {acknowledgement:?} must not become the goal"
+            );
+        }
+    }
+
+    #[test]
+    fn active_plan_goal_prefers_in_progress_before_pending_order() {
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot(
+            None,
+            vec![
+                alan_agent_protocol::PlanItem {
+                    id: "future".to_string(),
+                    content: "Archive the next contract.".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::Pending,
+                },
+                alan_agent_protocol::PlanItem {
+                    id: "current".to_string(),
+                    content: "Verify the current contract.".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                },
+            ],
+        );
+
+        assert_eq!(
+            derive_active_plan_goal(&turn_state).as_deref(),
+            Some("Verify the current contract.")
         );
     }
 
