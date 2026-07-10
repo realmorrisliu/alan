@@ -3,6 +3,9 @@ use super::child_runs::{
     ChildRunRecord, ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest,
     global_child_run_registry,
 };
+use super::delegation_capabilities::{
+    DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
+};
 use super::engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
     RuntimeStartupMetadata, WorkspaceRuntimeConfig, spawn_with_namespace_environment,
@@ -11,7 +14,8 @@ use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
 use crate::tools::ToolRegistry;
 use alan_agent_protocol::{
-    GovernanceConfig, Op, SpawnHandle, SpawnSpec, SpawnTarget, Submission, YieldKind,
+    DelegatedCapabilityDecision, DelegatedCapabilityRecovery, GovernanceConfig, Op, SpawnHandle,
+    SpawnSpec, SpawnTarget, Submission, YieldKind,
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec};
@@ -279,7 +283,7 @@ where
 
 async fn spawn_child_runtime_with_client_factory_and_cancel<F>(
     parent: &RuntimeLoopState,
-    spec: SpawnSpec,
+    mut spec: SpawnSpec,
     llm_client_factory: F,
     cancel: Option<&CancellationToken>,
 ) -> Result<ChildRuntimeController>
@@ -351,6 +355,8 @@ where
     let child_namespace_plan =
         build_child_namespace_assembly_plan(parent, &spec, &effective_child_core_config)
             .context("Failed to assemble child-agent namespace plan")?;
+    let delegation_capability_decision =
+        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan)?;
     let child_tools = build_child_tool_registry_from_namespace_plan(
         parent,
         &spec,
@@ -399,7 +405,7 @@ where
     .context("Failed to spawn child-agent namespace runtime")?;
     let (runtime, startup_metadata) = wait_for_child_runtime_startup(runtime, cancel).await?;
     let child_run_id = uuid::Uuid::new_v4().to_string();
-    let child_run_record = ChildRunRecord::new(
+    let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
         parent.session.id.clone(),
         startup_metadata.session_id.clone(),
@@ -413,6 +419,9 @@ where
             .map(|path| path.display().to_string()),
         Some(format!("{:?}", spec.target)),
     );
+    if let Some(decision) = delegation_capability_decision {
+        child_run_record = child_run_record.with_delegation_capability_decision(decision);
+    }
     global_child_run_registry().register(child_run_record);
     let event_rx = runtime.handle.event_sender.subscribe();
     let liveness_rx = runtime.handle.liveness_sender.subscribe();
@@ -443,6 +452,82 @@ where
         child_run_id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
     })
+}
+
+fn evaluate_delegated_launch_capabilities(
+    parent: &RuntimeLoopState,
+    spec: &mut SpawnSpec,
+    plan: &ChildNamespaceAssemblyPlan,
+) -> Result<Option<DelegatedCapabilityDecision>> {
+    let Some(context) = spec.delegated.as_ref() else {
+        return Ok(None);
+    };
+    let requirements = context.requirements.clone();
+    let child_namespace = namespace_summary_from_child_plan(plan);
+    let parent_namespace = namespace_summary_from_parent(parent);
+    let decision = evaluate_delegated_namespace(
+        &spec.launch.task,
+        &requirements,
+        child_namespace,
+        &parent_namespace,
+    );
+
+    match decision.recovery {
+        DelegatedCapabilityRecovery::Satisfied => Ok(Some(decision)),
+        DelegatedCapabilityRecovery::Narrowed => {
+            if let Some(narrowed_task) = decision.narrowed_task.clone() {
+                spec.launch.task = narrowed_task;
+            }
+            Ok(Some(decision))
+        }
+        DelegatedCapabilityRecovery::ParentPath
+        | DelegatedCapabilityRecovery::AskUser
+        | DelegatedCapabilityRecovery::Limitation => {
+            Err(DelegatedSpawnRejected { decision }.into())
+        }
+    }
+}
+
+fn namespace_summary_from_child_plan(
+    plan: &ChildNamespaceAssemblyPlan,
+) -> alan_agent_protocol::DelegatedNamespaceSummary {
+    namespace_summary_from_bindings(
+        vec![
+            plan.agent_mount.clone(),
+            plan.llm_mount.clone(),
+            plan.srv_mount.clone(),
+            plan.route_mount.clone(),
+        ],
+        plan.bin_tool_mounts.clone(),
+        plan.workspace_root.clone(),
+        Some(plan.llm_connection_name.clone()),
+    )
+}
+
+fn namespace_summary_from_parent(
+    parent: &RuntimeLoopState,
+) -> alan_agent_protocol::DelegatedNamespaceSummary {
+    namespace_summary_from_bindings(
+        vec![
+            "/agent".to_string(),
+            "/mnt/llm".to_string(),
+            "/srv".to_string(),
+            alan_routefs::MOUNT_PATH.to_string(),
+        ],
+        parent
+            .static_tool_names()
+            .into_iter()
+            .map(|tool| format!("/bin/{tool}"))
+            .collect(),
+        bound_workspace_root(parent),
+        Some(
+            parent
+                .core_config
+                .connection_profile
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
+        ),
+    )
 }
 
 async fn wait_for_child_runtime_startup(
@@ -2428,7 +2513,127 @@ mod tests {
             },
             handles: Vec::new(),
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
+            delegated: None,
         }
+    }
+
+    fn capability_plan(
+        workspace_root: Option<PathBuf>,
+        tools: &[&str],
+    ) -> ChildNamespaceAssemblyPlan {
+        ChildNamespaceAssemblyPlan {
+            agent_mount: "/agent".to_string(),
+            llm_mount: "/mnt/llm".to_string(),
+            llm_connection_name: "default".to_string(),
+            srv_mount: "/srv".to_string(),
+            route_mount: alan_routefs::MOUNT_PATH.to_string(),
+            bin_tool_mounts: tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
+            cwd: workspace_root.clone(),
+            workspace_root,
+        }
+    }
+
+    #[test]
+    fn delegated_spawn_boundary_passes_satisfied_task_unchanged() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("unused"),
+        );
+        let workspace_root = PathBuf::from("/tmp/repo");
+        let mut spec = launch_spec(temp.path().join("agent"));
+        spec.launch.task = "Inspect local files".to_string();
+        spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
+            requirements: vec![
+                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
+                    path: Some(workspace_root.clone()),
+                },
+                alan_agent_protocol::DelegatedCapabilityRequirement::LlmConnection,
+            ],
+        });
+
+        let decision = evaluate_delegated_launch_capabilities(
+            &parent,
+            &mut spec,
+            &capability_plan(Some(workspace_root), &["read_file"]),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            decision.recovery,
+            alan_agent_protocol::DelegatedCapabilityRecovery::Satisfied
+        );
+        assert_eq!(spec.launch.task, "Inspect local files");
+    }
+
+    #[test]
+    fn delegated_spawn_boundary_rewrites_narrowed_task_explicitly() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("unused"),
+        );
+        let workspace_root = PathBuf::from("/tmp/repo");
+        let mut spec = launch_spec(temp.path().join("agent"));
+        spec.launch.task = "Review GitHub issue against local code".to_string();
+        spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
+            requirements: vec![
+                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
+                    path: Some(workspace_root.clone()),
+                },
+                alan_agent_protocol::DelegatedCapabilityRequirement::Github,
+            ],
+        });
+
+        let decision = evaluate_delegated_launch_capabilities(
+            &parent,
+            &mut spec,
+            &capability_plan(Some(workspace_root), &["read_file"]),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            decision.recovery,
+            alan_agent_protocol::DelegatedCapabilityRecovery::Narrowed
+        );
+        assert!(spec.launch.task.contains("NARROWED DELEGATION SCOPE"));
+        assert!(spec.launch.task.contains("Withheld capabilities: github"));
+    }
+
+    #[test]
+    fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("unused"),
+        );
+        let mut spec = launch_spec(temp.path().join("agent"));
+        spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
+            requirements: vec![
+                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
+                    path: Some(PathBuf::from("/outside/repo")),
+                },
+            ],
+        });
+
+        let error = evaluate_delegated_launch_capabilities(
+            &parent,
+            &mut spec,
+            &capability_plan(None, &["read_file"]),
+        )
+        .unwrap_err();
+        let rejection = error.downcast_ref::<DelegatedSpawnRejected>().unwrap();
+
+        assert_eq!(
+            rejection.decision.recovery,
+            alan_agent_protocol::DelegatedCapabilityRecovery::AskUser
+        );
+        assert_eq!(rejection.decision.unsatisfied.len(), 1);
     }
 
     fn completed_response(text: &str) -> GenerationResponse {
@@ -4353,6 +4558,7 @@ model_reasoning_effort = "high"
             },
             handles: vec![SpawnHandle::Workspace],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
+            delegated: None,
         };
 
         let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
@@ -4422,6 +4628,7 @@ Body
             },
             handles: vec![SpawnHandle::Workspace],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
+            delegated: None,
         };
 
         let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {

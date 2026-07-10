@@ -33,6 +33,26 @@ work.
    package delivery contract JSON even when the user-facing parent response
    should be concise prose.
 
+## Namespace Requirement And Recovery Contract
+
+Before spawn, alan classifies the delegated task in namespace terms and checks
+the assembled child namespace. Keep the task honest about what the child needs:
+workspace read/write scope, `/bin` shell or external-service bindings, an LLM
+Connection, and material side effects.
+
+- If the child namespace satisfies the task, alan launches it unchanged.
+- If alan narrows the task, the child receives an explicit narrowed-scope block
+  naming withheld capabilities; the parent remains responsible for that work.
+- If the parent can satisfy a missing binding, alan declines the original child
+  launch and records `parent_path` recovery instead of pretending the child did it.
+- Otherwise alan asks for missing input or returns an explicit limitation. Never
+  substitute unrelated local context for unavailable GitHub, network, browser,
+  or workspace evidence.
+
+The decision is recorded in the parent's delegated tool result/tape. A launched
+child also carries the bounded requirement and namespace summary in its launch
+record; the live authority remains `/proc/<pid>/namespace`.
+
 ## Working Principles
 
 1. Treat this package as alan's general repo-local coding mode, not as a
