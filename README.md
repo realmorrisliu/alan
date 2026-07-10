@@ -585,8 +585,11 @@ curl http://localhost:8090/api/v1/sessions/{id}/history
 # Read reconnect handoff state for TUI/mobile recovery
 curl http://localhost:8090/api/v1/sessions/{id}/reconnect_snapshot
 
-# Inspect delegated child-agent runs
-curl http://localhost:8090/api/v1/sessions/{id}/child_runs
+# Inspect delegated child Agent Processes through Alan OS files
+# /agent/<parent-pid>/children       # child pid listing
+# /proc/<child-pid>/status           # authoritative lifecycle state
+# /proc/<child-pid>/exit             # terminal exit code
+# Write `cancel` or `interrupt` to /proc/<child-pid>/ctl to stop the process.
 
 # Poll events from rollout gap-aware API
 curl "http://localhost:8090/api/v1/sessions/{id}/events/read?after_event_id=e-123&limit=50"

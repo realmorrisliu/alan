@@ -341,16 +341,19 @@ impl ProcFs {
     /// conventional cancellation exit code. A host that observes its process
     /// complete normally must preserve the actual result instead.
     pub async fn record_exit(&self, pid: Pid, exit_code: i32) {
-        let transitioned = {
+        let (transitioned, runner_task) = {
             let mut state = self.state.lock().await;
             let transitioned = state
                 .table
                 .get(pid)
                 .is_some_and(|process| process.status != Status::Exited);
-            state.runner_tasks.remove(&pid);
+            let runner_task = state.runner_tasks.remove(&pid);
             state.table.exit(pid, exit_code);
-            transitioned
+            (transitioned, runner_task)
         };
+        if let Some(task) = runner_task {
+            task.abort();
+        }
         if transitioned {
             self.publish_process_event(
                 pid,

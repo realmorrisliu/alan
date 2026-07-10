@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 
 pub(crate) const MAX_INLINE_EVIDENCE_BYTES: usize = 30_000;
 const MAX_EVIDENCE_PREVIEW_BYTES: usize = 8_000;
+const MAX_EVIDENCE_METADATA_VALUE_BYTES: usize = 512;
 pub(crate) const RETENTION_EXPIRED_RECORD_TYPE: &str = "evidence_retention_expired";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +89,25 @@ pub(crate) fn payload_needs_projection(payload: &Value) -> bool {
         .unwrap_or(true)
 }
 
+pub(crate) fn redact_evidence_payload(payload: &Value) -> Value {
+    let mut markers = Vec::new();
+    redact_json_value(payload, &mut markers)
+}
+
+/// Returns the preview from a structurally valid, already-bounded evidence
+/// projection. Rollout persistence uses this to avoid applying the generic
+/// 512-character tool-value cap to the runtime's bounded evidence preview.
+pub(crate) fn bounded_projection_preview(payload: &Value) -> Option<&str> {
+    let projection = serde_json::from_value::<EvidenceProjection>(payload.clone()).ok()?;
+    if projection.record_type != "evidence_projection"
+        || projection.preview.len() > MAX_EVIDENCE_PREVIEW_BYTES
+        || projection.truncation.preview_bytes != projection.preview.len()
+    {
+        return None;
+    }
+    payload.get("preview")?.as_str()
+}
+
 pub(crate) fn project_evidence_payload(
     payload: &Value,
     reference: Option<NamespaceEvidenceReference>,
@@ -114,7 +134,7 @@ pub(crate) fn project_evidence_payload(
             "summary",
         ] {
             if let Some(value) = object.get(key) {
-                metadata.insert(key.to_string(), value.clone());
+                metadata.insert(key.to_string(), bounded_metadata_value(value));
             }
         }
     }
@@ -134,10 +154,33 @@ pub(crate) fn project_evidence_payload(
     .expect("evidence projection is serializable")
 }
 
+fn bounded_metadata_value(value: &Value) -> Value {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
+        Value::String(text) => Value::String(utf8_prefix_with_marker(
+            text,
+            MAX_EVIDENCE_METADATA_VALUE_BYTES,
+        )),
+        Value::Array(_) | Value::Object(_) => {
+            let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+            Value::String(utf8_prefix_with_marker(
+                &serialized,
+                MAX_EVIDENCE_METADATA_VALUE_BYTES,
+            ))
+        }
+    }
+}
+
 pub(crate) fn redact_durable_evidence_text(text: &str) -> RedactedEvidence {
     if let Ok(value) = serde_json::from_str::<Value>(text) {
         let mut markers = Vec::new();
         let value = redact_json_value(&value, &mut markers);
+        if markers.is_empty() {
+            return RedactedEvidence {
+                text: text.to_string(),
+                markers,
+            };
+        }
         return RedactedEvidence {
             text: serde_json::to_string(&value).unwrap_or_else(|_| text.to_string()),
             markers,
@@ -213,10 +256,67 @@ fn redact_sensitive_line(line: &str, markers: &mut Vec<EvidenceRedactionMarker>)
             return format!("{}{} {}", key, &line[separator..=separator], marker);
         }
     }
+    let line = redact_url_query_secrets(line, markers);
     if lower.contains("bearer ") {
-        return redact_bearer(line, markers);
+        return redact_bearer(&line, markers);
     }
-    line.to_string()
+    line
+}
+
+fn redact_url_query_secrets(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
+    let bytes = text.as_bytes();
+    let mut cursor = 0;
+    let mut copied_through = 0;
+    let mut redacted = String::with_capacity(text.len());
+    let mut found = false;
+
+    while cursor < bytes.len() {
+        if !matches!(bytes[cursor], b'?' | b'&') {
+            cursor += 1;
+            continue;
+        }
+
+        let key_start = cursor + 1;
+        let mut separator = key_start;
+        while separator < bytes.len()
+            && !matches!(
+                bytes[separator],
+                b'=' | b'&' | b'#' | b' ' | b'\t' | b'\r' | b'\n'
+            )
+        {
+            separator += 1;
+        }
+        if separator >= bytes.len()
+            || bytes[separator] != b'='
+            || !sensitive_key(&text[key_start..separator])
+        {
+            cursor = separator.max(cursor + 1);
+            continue;
+        }
+
+        let value_start = separator + 1;
+        let mut value_end = value_start;
+        while value_end < bytes.len()
+            && !matches!(
+                bytes[value_end],
+                b'&' | b'#' | b' ' | b'\t' | b'\r' | b'\n' | b'\'' | b'"' | b'<' | b'>'
+            )
+        {
+            value_end += 1;
+        }
+        redacted.push_str(&text[copied_through..value_start]);
+        redacted.push_str("[REDACTED reason=secret_key]");
+        copied_through = value_end;
+        cursor = value_end;
+        found = true;
+    }
+
+    if !found {
+        return text.to_string();
+    }
+    redacted.push_str(&text[copied_through..]);
+    push_marker(markers, marker("secret_key"), "secret_key");
+    redacted
 }
 
 fn redact_line_oriented_text(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
@@ -282,8 +382,15 @@ fn sensitive_key(key: &str) -> bool {
             | "idtoken"
             | "bearertoken"
             | "clientsecret"
+            | "password"
+            | "passwd"
+            | "passphrase"
+            | "token"
             | "secret"
     ) || normalized.contains("apikey")
+        || ["token", "secret", "password", "passwd", "passphrase"]
+            .iter()
+            .any(|suffix| normalized.ends_with(suffix))
 }
 
 fn marker(reason: &str) -> String {
@@ -341,6 +448,16 @@ mod tests {
     }
 
     #[test]
+    fn json_evidence_without_redactions_preserves_original_bytes() {
+        let original = "{\n  \"duplicate\": 1,\n  \"duplicate\": 2,\n  \"safe\": true\n}\n";
+
+        let redacted = redact_durable_evidence_text(original);
+
+        assert_eq!(redacted.text, original);
+        assert!(redacted.markers.is_empty());
+    }
+
+    #[test]
     fn unresolvable_projection_marks_inline_fallback() {
         let payload = json!({"output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1)});
         let projection = project_evidence_payload(
@@ -374,6 +491,51 @@ mod tests {
         assert!(preview.contains("[REDACTED reason=secret_key]"));
         assert!(!preview.contains("preview-secret"));
         assert_eq!(projection["redactions"][0]["reason_class"], "secret_key");
+    }
+
+    #[test]
+    fn projection_metadata_is_bounded_and_scalar_normalized() {
+        let projection = project_evidence_payload(
+            &json!({
+                "output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1),
+                "summary": "s".repeat(100_000),
+                "process": {"nested": "p".repeat(100_000)}
+            }),
+            Some(NamespaceEvidenceReference {
+                path: "/agent/1/actions/a0/output".to_string(),
+                offset: Some(0),
+                length: None,
+            }),
+            Vec::new(),
+            None,
+        );
+
+        let summary = projection["metadata"]["summary"].as_str().unwrap();
+        let process = projection["metadata"]["process"].as_str().unwrap();
+        assert!(summary.len() <= MAX_EVIDENCE_METADATA_VALUE_BYTES);
+        assert!(process.len() <= MAX_EVIDENCE_METADATA_VALUE_BYTES);
+        assert!(summary.contains("...[truncated; inspect reference]"));
+        assert!(process.contains("...[truncated; inspect reference]"));
+        assert!(serde_json::to_vec(&projection).unwrap().len() < 12_000);
+    }
+
+    #[test]
+    fn bounded_projection_preview_accepts_runtime_projection_and_rejects_oversized_preview() {
+        let projection = project_evidence_payload(
+            &json!({"output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1)}),
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+        assert_eq!(
+            bounded_projection_preview(&projection),
+            projection["preview"].as_str()
+        );
+
+        let mut oversized = projection;
+        oversized["preview"] = json!("x".repeat(MAX_EVIDENCE_PREVIEW_BYTES + 1));
+        oversized["truncation"]["preview_bytes"] = json!(MAX_EVIDENCE_PREVIEW_BYTES + 1);
+        assert!(bounded_projection_preview(&oversized).is_none());
     }
 
     #[test]
@@ -414,5 +576,47 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn redacts_sensitive_url_query_parameters_anywhere_in_a_line() {
+        let redacted = redact_durable_evidence_text(
+            "download: https://host/cb?api_key=first&safe=ok\nurl=https://host/file?access_token=second#fragment",
+        );
+
+        assert!(!redacted.text.contains("first"));
+        assert!(!redacted.text.contains("second"));
+        assert!(redacted.text.contains("safe=ok"));
+        assert_eq!(
+            redacted
+                .text
+                .matches("[REDACTED reason=secret_key]")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn redacts_password_passphrase_and_plain_token_credentials() {
+        let json = redact_durable_evidence_text(
+            r#"{"password":"json-password","passphrase":"json-passphrase","github_token":"github-secret","session_token":"session-secret"}"#,
+        );
+        let text = redact_durable_evidence_text(
+            "password=line-password\ndownload: https://host/file?token=query-token",
+        );
+
+        for secret in [
+            "json-password",
+            "json-passphrase",
+            "github-secret",
+            "session-secret",
+            "line-password",
+            "query-token",
+        ] {
+            assert!(!json.text.contains(secret));
+            assert!(!text.text.contains(secret));
+        }
+        assert!(json.text.contains("[REDACTED reason=secret_key]"));
+        assert_eq!(text.text.matches("[REDACTED reason=secret_key]").count(), 2);
     }
 }

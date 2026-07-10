@@ -154,17 +154,22 @@ fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
         );
     }
 
-    if let Some(plan_goal) = derive_active_plan_goal(turn_state) {
-        return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
-    }
-
-    if let Some((_, substantive)) = user_messages
+    if let Some((index, substantive)) = user_messages
         .iter()
         .rev()
         .find(|(_, text)| is_substantive_goal_message(text))
     {
+        if turn_state.plan_snapshot_postdates_message(*index)
+            && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+        {
+            return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
+        }
         let goal = truncate_memory_text(substantive, MAX_INLINE_TEXT_CHARS, &source_ref);
         return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
+    }
+
+    if let Some(plan_goal) = derive_active_plan_goal(turn_state) {
+        return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
     }
 
     if let Some(summary) = session
@@ -731,6 +736,25 @@ mod tests {
     }
 
     #[test]
+    fn substantive_resume_input_overrides_earlier_active_plan() {
+        let mut session = Session::new();
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Implement the old memory contract.");
+        turn_state.set_plan_snapshot(
+            Some("Finish the old memory contract.".to_string()),
+            Vec::new(),
+        );
+        turn_state.note_resumed_user_input();
+        session.add_user_message("Switch to the provider connection contract.");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Switch to the provider connection contract."
+        );
+    }
+
+    #[test]
     fn terse_imperative_passes_salience_filter() {
         let mut session = Session::new();
         session.add_user_message("Prepare the release.");
@@ -747,9 +771,10 @@ mod tests {
         let mut session = Session::new();
         session.add_user_message("Complete the broader migration.");
         let mut turn_state = TurnState::default();
-        turn_state.set_plan_snapshot(
+        turn_state.set_plan_snapshot_at_message_count(
             Some("Validate the namespace-native migration.".to_string()),
             Vec::new(),
+            session.tape.messages().len(),
         );
         turn_state.begin_turn(session.tape.messages().len());
         session.add_user_message("ok");
@@ -757,6 +782,27 @@ mod tests {
         assert_eq!(
             derive_current_goal(&session, &turn_state),
             "[carried forward] Validate the namespace-native migration."
+        );
+    }
+
+    #[test]
+    fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
+        let mut session = Session::new();
+        session.add_user_message("Finish task A.");
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot_at_message_count(
+            Some("Complete task A plan.".to_string()),
+            Vec::new(),
+            session.tape.messages().len(),
+        );
+        session.add_assistant_message("Task A paused.", None);
+        session.add_user_message("Switch to substantive task B.");
+        session.add_assistant_message("Task B underway.", None);
+        session.add_user_message("ok");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "[carried forward] Switch to substantive task B."
         );
     }
 

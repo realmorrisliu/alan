@@ -311,6 +311,19 @@ impl AgentRootFs {
         }
     }
 
+    /// Remove the agent-state backing tree for a process that failed to launch.
+    pub async fn unbind_process(&self, pid: &str) -> bool {
+        let mut state = self.state.lock().await;
+        state.process_event_pids.remove(pid);
+        state.io_event_pids.remove(pid);
+        state.input_event_pids.remove(pid);
+        state.output_event_pids.remove(pid);
+        if state.root_pid.as_deref() == Some(pid) {
+            state.root_pid = None;
+        }
+        state.agents.remove(pid).is_some()
+    }
+
     /// Point `/agent/root` at the pid that embodies the Root Agent Process.
     pub async fn set_root_process(&self, pid: impl Into<String>) {
         self.state.lock().await.root_pid = Some(pid.into());
