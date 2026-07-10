@@ -1,43 +1,52 @@
-## 1. Ledger And Storage
+## 1. Memory Store Transaction Surface
 
-- [ ] 1.1 Define memory write ledger record types with `memory_write_id`, target, anchor, confidence, evidence, rationale, source session/turn, timestamps, and revert status.
-- [ ] 1.2 Add one-file-per-write Markdown ledger layout helpers under `.alan/memory/ledger/YYYY/MM/` and preserve compatibility with existing memory files.
-- [ ] 1.3 Add runtime validation for ledger-target path containment and allowed stable memory targets.
-- [ ] 1.4 Ensure `[memory].enabled = false` makes proactive stable, staged, inbox, daily-note, consolidation, and ledger writes ineligible.
+- [ ] 1.1 Add store-owned proposal, status, result, events, ledger, and `ctl`
+  surfaces to `alan-memfs` using ordinary aP operations and commit-on-clunk.
+- [ ] 1.2 Implement atomic target-document plus ledger commit with namespace
+  target containment and access-right checks.
+- [ ] 1.3 Project the current `.alan/memory/` layout through a Workspace Memory
+  Store compatibility adapter under `/mnt/mem`.
 
-## 2. Write Planning And Validation
+## 2. Planning And Validation
 
-- [ ] 2.1 Extend turn-end memory promotion output parsing to carry evidence class, source references, confidence, and consolidation disposition.
-- [ ] 2.2 Add validation and canonicalization for direct statements, repeated behavior, and external/repository evidence.
-- [ ] 2.3 Add provenance normalization for file, command, issue/PR, URL, and repeated-behavior evidence with bounded excerpts, ranges, hashes, or summaries.
-- [ ] 2.4 Add sensitive-data rejection/redaction for candidate observations and evidence before stable, staged, inbox, daily-note, consolidation, or ledger persistence.
-- [ ] 2.5 Route stable memory mutations through a single runtime writer that creates ledger entries and target-file updates together.
-- [ ] 2.6 Stage ambiguous, conflicting, or low-confidence observations for consolidation only after sensitive-data validation.
+- [ ] 2.1 Change Agent Execution Engine promotion output to a bounded candidate
+  containing memory kind, selected mounted store, namespace target, evidence
+  class and references, confidence, disposition, observation, and rationale.
+- [ ] 2.2 Remove direct durable memory mutation from engine promotion, flush, and
+  consolidation paths; submit eligible proposals to the Memory Store.
+- [ ] 2.3 Enforce direct-statement, repeated-behavior, external-evidence, dedupe,
+  staging, and disabled-memory rules across runtime planning and store commit.
+- [ ] 2.4 Apply mandatory sensitive-data rejection/redaction at the store commit
+  boundary before any target, staging, result, or ledger persistence.
 
-## 3. Inspection And Revert Surfaces
+## 3. Inspection And Revert
 
-- [ ] 3.1 Add CLI commands for recent write listing, single-write inspection, and revert.
-- [ ] 3.2 Add daemon memory endpoints and endpoint-contract metadata for session-scoped recent/show/revert operations and authorized workspace-scoped recent/show/revert operations.
-- [ ] 3.3 Add precise revert mechanics that remove matched stable-memory content or mark it with a machine-readable reverted state, with safe failure when the target content no longer matches the ledger anchor.
+- [ ] 3.1 Implement store-owned recent-write listing through ledger directories
+  and write events.
+- [ ] 3.2 Implement precise `revert` control with anchor/hash verification,
+  atomic target+ledger update, and `manual_resolution_required` failure.
+- [ ] 3.3 Reimplement `alan memory recent|show|revert` as file clients over the
+  mounted Memory Store; add no daemon endpoints.
 
 ## 4. Memory Surface Integration
 
-- [ ] 4.1 Update recall, handoff, session-summary, and daily-note surfaces to keep provenance references bounded.
-- [ ] 4.2 Ensure prompt-facing memory surfaces do not duplicate full ledger content.
-- [ ] 4.3 Ensure prompt-facing memory surfaces exclude reverted blocks and never reintroduce reverted content from ledger records.
-- [ ] 4.4 Preserve legacy memory entries that do not have reversible ledger metadata.
-- [ ] 4.5 Update the built-in memory skill, session-end prompt guidance, and `runtime-memory-surfaces` semantic-summary contract so stable, staged, inbox, daily-note, and ledger writes go through the runtime writer or a compatibility bridge instead of direct file mutation.
+- [ ] 4.1 Update recall, handoff, session-summary, and daily-note readers to use
+  namespace Memory Store paths and bounded ledger/evidence references.
+- [ ] 4.2 Ensure prompt-facing surfaces exclude reverted content and never copy
+  complete ledger records.
+- [ ] 4.3 Update the built-in memory skill to propose or explain store writes
+  without directly mutating stable, staged, inbox, daily, or ledger files.
 
-## 5. Verification
+## 5. Verification And Archive Readiness
 
-- [ ] 5.1 Add unit tests for write-plan normalization, evidence validation, provenance persistence, disabled-memory write suppression, stable and staged secret redaction, dedupe, path rejection, skill/prompt compatibility routing, and confidence downgrades.
-- [ ] 5.2 Add storage tests for ledger creation, target updates, successful revert, already-reverted writes, reverted prompt-surface exclusion, and manual-resolution-required failures.
-- [ ] 5.3 Add daemon and CLI integration tests for recent, show, revert, session scoping, authorized workspace scoping, unscoped request rejection, and unauthorized workspace-scope rejection.
-- [ ] 5.4 Run `cargo test --workspace` or the narrower documented Rust test suites covering runtime and daemon memory behavior.
-- [ ] 5.5 Run `openspec validate add-proactive-memory-v2 --strict`.
-
-## 6. PR Review And Archive Readiness
-
-- [ ] 6.1 Review the implementation diff for hidden memory writes, provenance gaps, and prompt-facing ledger leakage.
-- [ ] 6.2 After merge, sync accepted delta requirements into `openspec/specs/`.
-- [ ] 6.3 Archive the completed OpenSpec change after the synced specs validate.
+- [ ] 5.1 Add unit and integration tests for proposal commit, target containment,
+  store authority, disabled mounts, redaction, dedupe, staging, atomic ledger
+  writes, revert, conflict failure, and prompt exclusion.
+- [ ] 5.2 Add compatibility tests proving `.alan/memory/` remains readable through
+  the Workspace Memory Store adapter without leaking raw host paths.
+- [ ] 5.3 Run focused engine/memfs tests and `cargo test --workspace` or document
+  unrelated blockers with the focused suites green.
+- [ ] 5.4 Run `openspec validate add-proactive-memory-v2 --strict` and full strict
+  OpenSpec validation.
+- [ ] 5.5 After merge, sync accepted deltas into `openspec/specs/` before
+  archiving the change.

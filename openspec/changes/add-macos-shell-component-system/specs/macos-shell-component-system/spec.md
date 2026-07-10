@@ -3,30 +3,30 @@
 ### Requirement: Component system is a macOS host-surface capability
 
 The macOS shell component system SHALL be treated as a host-surface/design-system
-capability in the programmable environment model. It SHALL own reusable SwiftUI
-presentation primitives, semantic token consumption, accessibility behavior, preview
-coverage, and visual migration discipline for macOS environment surfaces. It SHALL NOT
-define or store environment core semantics such as objects, commands, buffers, views,
-queries, ledgers, agent policy, or app domain truth.
+capability for Alan for macOS. It SHALL own reusable SwiftUI presentation
+primitives, semantic token consumption, accessibility behavior, preview coverage,
+and visual migration discipline for terminal, Alan OS, Agent Process, and Alan
+App surfaces. It SHALL NOT define or store Alan Kernel semantics, file-server
+contracts, Agent Process policy, or app-domain truth.
 
 #### Scenario: The component system role is inspected
 
-- **WHEN** a developer evaluates where shell component-system behavior belongs in the
-  programmable environment architecture
+- **WHEN** a developer evaluates where shell component-system behavior belongs
+  in the Alan architecture
 - **THEN** this capability is classified as the macOS host-surface/design-system layer
 - **AND** its owned concerns are SwiftUI presentation primitives, token usage,
   accessibility behavior, preview coverage, and visual migration discipline
-- **AND** environment core semantics remain owned by the programmable
-  environment/runtime or by environment apps, not by the component layer
+- **AND** Kernel, service-file, Agent Runtime Service, and Alan App domain
+  semantics remain with their owning layers, not the component system
 
-#### Scenario: A future environment view renders on macOS
+#### Scenario: A file-backed or app-owned surface renders on macOS
 
-- **WHEN** a programmable environment view, buffer, or app surface is rendered through
-  the macOS host
+- **WHEN** terminal state, an Alan OS file projection, Agent Process state, or an
+  Alan App surface is rendered through the macOS host
 - **THEN** the host may compose the reusable SwiftUI primitives defined by this
   capability
-- **AND** the component layer does not become the source of truth for object, command,
-  buffer, view, query, ledger, or app-domain state
+- **AND** the component layer does not become the source of truth for process,
+  service-file, or app-domain state
 
 ### Requirement: Presentational primitives live in a single design-system home
 

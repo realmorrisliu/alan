@@ -1,48 +1,47 @@
 ## Why
 
-alan needs evidence before productizing physical-device control. The first
-question is whether Alan for macOS can safely act as a local Matter controller
-using Apple's public `Matter.framework`, commission a low-risk Matter light, and
-perform basic state read/write operations without coupling the generic runtime
-to Apple-specific APIs.
+Alan needs evidence that Alan for macOS can safely commission and control one
+low-risk Matter light through Apple's public `Matter.framework`. The previous
+spike pointed toward a typed local RPC/tool provider; under the Plan 9-like
+architecture the platform implementation may remain host-local, but its Alan OS
+boundary must be a mountable file tree.
 
 ## What Changes
 
-- Add a macOS-only Matter controller spike that uses Apple `Matter.framework`
-  from the Apple client/service layer.
-- Prove Alan can create or load a local Matter controller, commission a directly
-  paired Matter light from a setup payload, persist controller/fabric state, list
-  the commissioned node, read On/Off state, and set On/Off state.
-- Keep Matter APIs out of `alan-runtime`; the runtime-facing boundary remains a
-  future typed `home.*` tool/RPC surface.
-- Capture physical-device action evidence and safety constraints for the later
-  `add-home-control-tools` product change.
-- Exclude Apple Home control, HomeKit-only devices, Home Assistant bridges,
-  Aqara bridge endpoints, raw LLM-visible Matter cluster control, and high-risk
-  device categories from this spike.
+- Preserve the macOS-only feasibility scope: create/load a controller, commission
+  one direct Matter light, persist fabric state, list/read the light, and set
+  On/Off.
+- Add a host-backed Matter Service that posts `/srv/matter` and serves
+  `/mnt/matter` through aP while `Matter.framework` stays behind the adapter.
+- Model commissioning as an inspectable lifecycle directory with request,
+  status, result, events, and owning `ctl` files.
+- Model commissioned devices as directories with readable metadata/status and a
+  whole writable On/Off state document committed on clunk.
+- Record each physical write as a service-owned result file and event with
+  target, requested state, observed outcome, timestamp, and error details.
+- Keep raw Matter endpoints/clusters, broad device categories, final `home.*`
+  Tools, general governance, and product UI out of the spike.
+- Require any debug entry point to perform the same file operations as future
+  clients and remain explicitly spike-only.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `macos-matter-controller-spike`: Defines the macOS-only Matter controller
-  spike contract, including setup-payload commissioning, controller state
-  persistence, low-risk light control, RPC boundary expectations, and manual
-  verification evidence.
+- `macos-matter-controller-spike`: Defines the host-backed Matter Service tree,
+  direct-light commissioning, durable controller state, list/read/OnOff
+  behavior, action records, safety constraints, and manual evidence gate.
 
 ### Modified Capabilities
 
-- None. The spike records constraints for future governance/tooling work but
-  does not yet change stable `home.*` tools, policy semantics, or daemon APIs.
+None.
 
 ## Impact
 
-- Affected Apple client areas: new macOS Matter controller service prototype,
-  controller state storage, Matter setup-payload handling, commissioned device
-  registry projection, and low-risk light command execution.
-- Affected runtime/daemon areas: no runtime-core coupling in this spike; any
-  temporary invocation path must stay behind a local service/RPC boundary that
-  can later become the typed `home.*` tool provider.
-- Affected dependencies: Apple public `Matter.framework` on macOS.
-- Affected verification: focused unit/fake-service tests where possible plus
-  manual verification against a real directly Matter-capable light.
+- Alan for macOS hosts the platform adapter and platform credential/storage
+  integration; Alan Kernel and file-unaware agent/domain crates import no Matter
+  types.
+- Service Manager posts/mounts the Matter tree; fake adapters can test the same
+  file contract without physical hardware.
+- A future home-control change may add `/bin` Tools and broader governance over
+  this tree, but the spike defines no RPC or Tool API.

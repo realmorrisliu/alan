@@ -1,208 +1,125 @@
 ## ADDED Requirements
 
-### Requirement: Cognitive System Configuration
-alan SHALL allow agent configuration to declare System 1 and System 2 cognitive
-model bindings that resolve through available provider, credential, and model
-configuration with optional reasoning-effort intent.
+### Requirement: Cognitive roles resolve to mounted LLM Connections
+Alan SHALL configure System 1 and System 2 as callable llmfs Connections bound
+under stable cognitive-role aliases in the coordinating Agent Process namespace.
+Provider, model, and Credential material SHALL remain owned by the Connection;
+cognitive routing SHALL NOT dispatch through a provider SDK or global opaque id.
 
-#### Scenario: Cognition config declares two model bindings
-- **WHEN** `agent.toml` declares System 1 and System 2 cognition entries
-- **THEN** alan resolves each entry to a concrete provider, credential scope,
-  model, and request-control intent before provider dispatch
+#### Scenario: Both cognitive roles are available
+- **WHEN** the spawner resolves valid System 1 and System 2 connection profiles
+- **THEN** it binds each callable Connection under the corresponding role alias
+  in the coordinator namespace
+- **AND** the aliases expose no plaintext credential material
 
-#### Scenario: Cognition config omits a required system
-- **WHEN** cognition routing is enabled but System 1 or System 2 is not
-  configured
-- **THEN** alan rejects startup or session creation with a diagnostic that names
-  the missing cognitive system
+#### Scenario: A cognitive role is unavailable
+- **WHEN** a configured Connection is missing, unauthorized, or not mounted
+- **THEN** Alan reports that route unavailable before spawning an attempt
+- **AND** it does not bypass the namespace through profile metadata
 
-#### Scenario: Cognition config is absent
-- **WHEN** an agent has no cognition configuration
-- **THEN** alan preserves existing single-profile behavior using the resolved
-  `connection_profile`
+### Requirement: Routed attempts are ordinary Processes
+Each System 1 or System 2 attempt SHALL execute as an ordinary Process visible in
+`/proc` and, when agent-conforming, the `/agent` overlay. Attempts SHALL expose
+normal IO, status, events, and parentage rather than existing only as hidden
+runtime phases.
 
-#### Scenario: Invalid cognitive model binding is rejected
-- **WHEN** cognition config references a missing provider, credential scope, or
-  model binding
-- **THEN** alan rejects startup or session creation with a diagnostic that names
-  the missing binding component
+#### Scenario: A System 1 attempt starts
+- **WHEN** the coordinator chooses the fast route
+- **THEN** it spawns a child Agent Process with the System 1 Connection and
+  bounded task descriptors
+- **AND** the attempt is inspectable through process and agent files
 
-### Requirement: Provider Availability And Cognitive Binding Separation
-alan SHALL keep provider and credential availability separate from System
-1/System 2 cognitive-role assignment.
+#### Scenario: A System 2 attempt follows escalation
+- **WHEN** the coordinator accepts a System 1 escalation suggestion
+- **THEN** it spawns a sequential System 2 attempt with its own namespace and
+  Connection
+- **AND** both attempts remain linked by process/action provenance
 
-#### Scenario: Provider availability is role-neutral
-- **WHEN** alan loads configured AI providers and available models
-- **THEN** those provider/model entries do not themselves imply System 1 or
-  System 2 behavior
+### Requirement: Speculative System 1 has a restricted namespace
+A speculative System 1 attempt SHALL receive read-only context mounts and a
+`/bin` union that omits side-effecting Tools. It SHALL NOT gain a withheld mount
+or executable through `/srv`, opaque ids, retained parent descriptors, or an
+in-process Tool registry.
 
-#### Scenario: Cognitive binding selects from availability
-- **WHEN** alan resolves System 1 or System 2
-- **THEN** the cognitive binding selects from available provider/model entries
-  rather than duplicating provider credentials inside the cognition block
+#### Scenario: System 1 inspects context
+- **WHEN** a System 1 attempt needs repository or app context
+- **THEN** it may read only the explicitly mounted read-only trees and run only
+  the read-only Tools present in its `/bin`
 
-### Requirement: Runtime-Owned Cognitive Routing
-alan SHALL select the cognitive system in runtime before provider dispatch by
-applying explicit overrides, deterministic safety gates, configured defaults,
-System 1 fallback, and System 1 self-escalation. Turn-scoped explicit routing
-intent SHALL supersede session-scoped explicit routing intent for that turn.
-Deterministic safety gates SHALL supersede any effective explicit System 1
-routing intent.
+#### Scenario: System 1 proposes a mutation
+- **WHEN** System 1 output suggests a state-changing action
+- **THEN** the suggestion is returned as data for coordinator review or deeper
+  routing
+- **AND** no side effect executes from the speculative namespace
 
-#### Scenario: Effective System 2 intent wins
-- **WHEN** the effective routing intent after turn-over-session resolution
-  explicitly requests System 2
-- **THEN** alan routes the turn to System 2 regardless of the default routing
-  mode
+### Requirement: Routing precedence is deterministic and observable
+The coordinator SHALL resolve routing in this order: explicit System 2 next
+intent, deterministic System 2 gates, eligible explicit System 1 next intent,
+configured default, then System 1 fallback. Every forced, refused, automatic, or
+explicit decision SHALL append a bounded record to routing events.
 
-#### Scenario: Turn override supersedes session override
-- **WHEN** a session explicitly requests System 2
-- **AND** the current turn explicitly requests System 1
-- **AND** no deterministic gate requires System 2
-- **THEN** alan honors the turn-scoped System 1 intent for that turn
-- **AND** routing metadata records the turn-scoped routing source
+#### Scenario: Explicit System 1 conflicts with a gate
+- **WHEN** `next system-1` is pending but a deterministic gate requires System 2
+- **THEN** the coordinator selects System 2
+- **AND** routing status/events identify the refused intent and gate reason
 
-#### Scenario: Deterministic gate forces System 2
-- **WHEN** runtime detects a configured high-risk or high-complexity condition
-  that requires deep reasoning
-- **THEN** alan routes the turn to System 2 before generating a fast draft
+#### Scenario: No override or gate applies
+- **WHEN** no explicit next intent or deterministic gate applies
+- **THEN** the configured default role is selected, falling back to System 1
 
-#### Scenario: System 1 override is superseded by gate
-- **WHEN** the effective routing intent after turn-over-session resolution
-  explicitly requests System 1
-- **AND** runtime detects a configured high-risk or high-complexity condition
-  that requires deep reasoning
-- **THEN** alan ignores or rejects the forced System 1 intent and routes the
-  turn to System 2 before generating a fast draft
-- **AND** the routing metadata records that the deterministic gate superseded
-  the override
+### Requirement: Explicit routing intent uses the owning ctl
+The coordinating Agent Process SHALL accept `auto` and next-attempt cognitive
+role intent through `machine/routing/ctl`. A next-attempt intent SHALL be consumed
+by one logical input and SHALL NOT create an independent session or daemon
+override authority.
 
-#### Scenario: Configured default route is honored
-- **WHEN** no override or deterministic gate applies
-- **AND** the resolved cognition config declares a default cognitive system
-- **THEN** alan routes the turn to the configured default cognitive system
+#### Scenario: User requests the deep route
+- **WHEN** an authorized client writes `next system-2` to routing `ctl`
+- **THEN** the next logical input uses System 2 unless the command is invalidated
+  before consumption
+- **AND** status/events record the command and consumption
 
-#### Scenario: Missing default falls back to System 1
-- **WHEN** no override, deterministic gate, or configured default applies
-- **THEN** alan starts the turn on System 1
+### Requirement: System 1 escalation is typed stream content
+Alan SHALL allow System 1 to emit a provider-neutral `route/escalate` record
+with a bounded reason and needed-context labels. The record SHALL be treated as
+a suggestion read from the attempt stream, not as a Tool or capability, and the
+coordinator SHALL record its decision before spawning System 2.
 
-### Requirement: System 1 Self-Escalation
-alan SHALL provide an internal-only escalation action that lets System 1 request
-a System 2 rerun with a bounded reason and needed-context summary. alan SHALL
-withhold side-effecting tools from unaccepted System 1 attempts until runtime
-accepts the System 1 route for execution or routes the turn to System 2.
-Runtime acceptance of a System 1 route is an internal commit point and SHALL NOT
-itself require user confirmation unless the active governance or tool policy
-requires confirmation.
+#### Scenario: System 1 requests escalation
+- **WHEN** the System 1 events/output stream contains a valid escalation record
+- **THEN** the coordinator suppresses the speculative draft as the accepted
+  result and evaluates the deeper route
+- **AND** no `escalate_to_system2` Tool or virtual action is required
 
-#### Scenario: System 1 escalates
-- **WHEN** System 1 emits the internal escalation action
-- **THEN** runtime does not accept the System 1 draft as user-visible output
-- **AND** runtime reruns the original task on System 2 with bounded triage notes
+### Requirement: Routing state is projected under machine routing
+AgentFS SHALL expose routing `config`, `status`, `current`, `result`, `events`,
+and `ctl` under `machine/routing/`. Snapshot files and the offset-resumable events
+stream SHALL be the canonical client observability surface.
 
-#### Scenario: Escalation action is not a user tool
-- **WHEN** alan exposes tool definitions to user-governed tools or client
-  dynamic tools
-- **THEN** the internal escalation action is not exposed as a normal external
-  side-effecting tool
+#### Scenario: A renderer attaches mid-attempt
+- **WHEN** a renderer opens the coordinating agent after an attempt has started
+- **THEN** it reads routing snapshots for the current role, attempt pid,
+  Connection alias, status, and bounded reason
+- **AND** it resumes ordered updates by reading routing events from its offset
 
-#### Scenario: Escalation before external side effects
-- **WHEN** System 1 determines that a task needs System 2 before any
-  side-effecting tool has executed
-- **THEN** runtime reruns the original logical turn on System 2 and includes the
-  bounded System 1 triage notes
+### Requirement: Accepted output identifies its attempt provenance
+The coordinator SHALL publish one accepted logical result while retaining the
+accepted attempt pid, cognitive role, Connection alias, reasoning controls,
+routing reason, and prior-attempt references in routing result and tape/action
+records. It SHALL NOT expose hidden reasoning content.
 
-#### Scenario: Read-only context before escalation
-- **WHEN** System 1 used read-only tools before emitting the internal escalation
-  action
-- **THEN** runtime provides the read-only tool results to System 2 as observed
-  context instead of discarding them
+#### Scenario: System 2 answer is accepted
+- **WHEN** a System 1 escalation is followed by a successful System 2 attempt
+- **THEN** the parent output uses the System 2 result
+- **AND** routing files identify both attempts and why the second was selected
 
-#### Scenario: Speculative System 1 thinking and observation is allowed
-- **WHEN** runtime starts an automatic System 1 attempt
-- **THEN** System 1 can perform model-internal reasoning, calculation, planning,
-  unaccepted draft generation, and read-only tool use before route acceptance
-- **AND** runtime does not treat that speculative thinking or read-only
-  observation as an external side effect
+### Requirement: Provider continuation is role and namespace compatible
+Provider-native continuation SHALL be reused only when Connection identity,
+model, credential scope, cognitive role, prompt fingerprint, visible Tool
+manifest fingerprint, and relevant request controls are compatible. A role
+change SHALL default to a fresh Generation with accepted context reprojected.
 
-#### Scenario: Side-effecting tool is blocked before System 1 acceptance
-- **WHEN** runtime starts an automatic System 1 attempt
-- **AND** System 1 requests a side-effecting tool before runtime has accepted
-  the System 1 route for execution
-- **THEN** runtime does not execute the side-effecting tool in the unaccepted
-  System 1 phase
-- **AND** runtime routes to System 2 or defers the side effect until the System
-  1 route is accepted
-
-#### Scenario: Autonomous System 1 route can be accepted without user yield
-- **WHEN** runtime starts an automatic System 1 attempt under governance that
-  allows autonomous execution
-- **AND** no deterministic gate or policy rule requires System 2 or user
-  confirmation
-- **THEN** runtime can accept the System 1 route for execution without emitting
-  a user-confirmation yield
-
-#### Scenario: Accepted side effect already happened before escalation
-- **WHEN** a side-effecting tool has already completed after runtime accepted
-  the System 1 execution phase or after an external client changed state
-- **THEN** runtime treats the side effect as part of the current session state
-  and System 2 continues from the observed post-side-effect state rather than
-  replaying the original task as if no side effect occurred
-
-### Requirement: Cognitive Routing Observability
-alan SHALL record cognitive routing metadata for each routed turn without
-exposing hidden reasoning content.
-
-#### Scenario: Routed turn records metadata
-- **WHEN** alan dispatches a model request through cognitive routing
-- **THEN** turn metadata records selected cognitive system, routing source,
-  model binding id, provider, model, effective reasoning effort, and a bounded
-  routing reason
-
-#### Scenario: Escalated turn records both phases
-- **WHEN** System 1 escalates to System 2
-- **THEN** rollout metadata records that System 1 requested escalation and that
-  System 2 produced the accepted draft
-
-### Requirement: Single Runtime First Implementation
-alan SHALL implement cognitive routing inside the existing runtime turn loop
-without making System 1 and System 2 separate child agents or default parallel
-model executions.
-
-#### Scenario: System 2 rerun remains same logical turn
-- **WHEN** a System 1 attempt escalates to System 2
-- **THEN** runtime preserves one logical user turn and records the escalation as
-  routing metadata rather than spawning a separate child-agent session
-
-### Requirement: Provider-Native Continuation Partitioning
-alan SHALL treat provider-native continuation state as an optimization scoped to
-compatible cognitive model bindings, while preserving tape-level continuation
-across System 1 and System 2.
-
-#### Scenario: Compatible binding reuses native continuation
-- **WHEN** the selected cognitive model binding has the same provider family,
-  credential scope, model, cognitive-system prompt fingerprint, tool definition
-  fingerprint, and continuation-affecting settings as the current
-  provider-native continuation state
-- **THEN** runtime can reuse that provider-native continuation state
-
-#### Scenario: Incompatible binding clears native continuation
-- **WHEN** cognitive routing selects a model binding with a different provider
-  family, credential scope, model, cognitive-system prompt fingerprint, tool
-  definition fingerprint, or continuation-affecting setting
-- **THEN** runtime clears or isolates provider-native continuation and projects
-  the accepted tape into the selected provider request instead
-
-#### Scenario: System 1-only tools do not leak to System 2
-- **WHEN** a System 1 attempt used provider-native continuation with
-  System-1-only prompt text or tools such as the internal escalation action
-- **AND** the turn routes or escalates to System 2 with a different prompt or
-  tool fingerprint
-- **THEN** runtime does not reuse the System 1 provider-native continuation for
-  the System 2 request
-
-#### Scenario: Tape continuation remains authoritative
-- **WHEN** provider-native continuation cannot be reused after a cognitive
-  system switch
-- **THEN** alan still continues from the accepted runtime tape rather than
-  losing conversation state
+#### Scenario: Routing switches from System 1 to System 2
+- **WHEN** the selected cognitive role or Connection changes
+- **THEN** Alan does not pass System 1 provider-native continuation into System 2
+- **AND** the deeper Generation receives only accepted, provider-neutral context

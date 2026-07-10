@@ -1,281 +1,149 @@
 ## ADDED Requirements
 
-### Requirement: alan Voice brand and scope
-alan SHALL present macOS voice input as alan Voice, with Hold to Talk as the
-first-phase interaction model.
+### Requirement: Alan Voice brand and scope
+Alan SHALL present macOS voice input as **Alan Voice**, with **Hold to Talk** as
+the first-phase interaction. User-visible copy SHALL use canonical Alan casing
+and SHALL NOT describe the feature as dictation, always listening, a voice call,
+or a Siri-style assistant.
 
-#### Scenario: User sees voice input entry points
-- **WHEN** alan presents voice input in menus, settings, shortcut labels, or the
-  capture layer
-- **THEN** the user-facing language uses alan Voice and Hold to Talk
-- **AND** the default language does not describe the feature as dictation,
-  always listening, a voice call, or a Siri-style assistant
+#### Scenario: User sees voice entry points
+- **WHEN** menus, settings, shortcuts, or capture feedback name the feature
+- **THEN** they use `Alan Voice` and `Hold to Talk`
+- **AND** technical recognizer/provider labels remain in explicit diagnostics
 
-#### Scenario: Developer views diagnostics
-- **WHEN** a developer opens an explicit diagnostics surface
-- **THEN** alan may show technical labels such as recognizer, provider, audio
-  route, transcript, or intent confidence
-- **AND** those labels remain outside the default user workflow
+### Requirement: Voice Service is a host-backed file server
+Alan Voice SHALL expose capture and recognition through an aP service posted at
+`/srv/voice` and mounted at `/mnt/voice`. Apple Speech, audio APIs, cloud SDKs,
+and secret storage SHALL remain behind the adapter and SHALL NOT be required by
+Alan Kernel or Agent Processes.
 
-### Requirement: Push-to-talk recording lifecycle
-alan SHALL start recording when the user presses and holds the configured Hold
-to Talk shortcut and SHALL stop recording when the user releases it.
+#### Scenario: Voice Service starts
+- **WHEN** Alan for macOS enables the service
+- **THEN** the access-filtered handle and mounted tree expose config, status,
+  capture records, drafts, results, and events
+- **AND** no daemon session or typed RPC is required
 
-#### Scenario: User holds shortcut
-- **WHEN** the user presses and holds the configured Hold to Talk shortcut
-- **THEN** alan starts a voice capture session
-- **AND** alan shows an active recording state before or as audio capture begins
+### Requirement: Hold to Talk uses a capture lifecycle object
+Alan Voice SHALL allocate a capture object for each Hold to Talk interaction and
+control start, stop, cancel, and reviewed commit through its owning `ctl`.
 
-#### Scenario: User releases shortcut
-- **WHEN** the user releases the Hold to Talk shortcut during an active capture
-- **THEN** alan stops audio capture
-- **AND** alan begins recognition and intent processing for the captured audio
+#### Scenario: User holds and releases
+- **WHEN** the user presses and holds the configured shortcut, then releases it
+- **THEN** capture status moves from recording to recognition through ordered
+  files/events
+- **AND** overlapping capture is not started silently
 
-#### Scenario: Shortcut is pressed while processing
-- **WHEN** the user presses Hold to Talk while a previous voice input is still
-  processing
-- **THEN** alan does not start overlapping audio capture
-- **AND** alan either queues, ignores, or offers to cancel the in-flight input
-  according to a visible state transition
+#### Scenario: User cancels
+- **WHEN** the user presses Escape during recording, recognition, or review
+- **THEN** capture becomes terminally cancelled
+- **AND** no transcript, task, app mutation, Tool, or Agent Process submission is
+  committed from that capture
 
-### Requirement: Cancellation without side effects
-alan SHALL let the user cancel an in-progress voice input before it writes to
-alan state or advances an agent run.
-
-#### Scenario: User cancels while recording
-- **WHEN** the user presses Escape or invokes cancel during recording
-- **THEN** alan stops recording
-- **AND** no transcript, note, task, command, or agent submission is created
-
-#### Scenario: User cancels while processing
-- **WHEN** the user cancels while recognition or intent resolution is in progress
-- **THEN** alan abandons the result if cancellation is still possible
-- **AND** alan does not apply any state-changing action after cancellation
-
-### Requirement: Local recognition mode
-alan SHALL provide Local Mode as the default voice recognition mode and SHALL
-avoid uploading audio when Local Mode is selected.
+### Requirement: Local recognition is default and does not upload audio
+Alan Voice SHALL use Local Mode by default and SHALL avoid cloud audio upload
+when Local Mode is selected. It SHALL report unavailability rather than silently
+switching modes.
 
 #### Scenario: Local recognition is available
-- **WHEN** the user invokes Hold to Talk in Local Mode and the platform supports
-  local recognition for the selected locale
-- **THEN** alan performs audio recognition without uploading audio to a cloud
-  speech provider
-- **AND** alan may continue intent routing through normal alan runtime paths
-  only after recognition has produced text or a typed intent
+- **WHEN** the platform supports on-device recognition for the selected locale
+- **THEN** captured audio is recognized locally and transcript/intent files are
+  produced without cloud audio upload
 
 #### Scenario: Local recognition is unavailable
-- **WHEN** the user invokes Hold to Talk in Local Mode and local recognition is
-  unavailable for the selected locale, device, or OS state
-- **THEN** alan reports that local voice recognition is unavailable
-- **AND** alan does not silently switch to Cloud Mode or upload audio
+- **WHEN** local recognition cannot run
+- **THEN** status/result explain the unavailable condition
+- **AND** audio is not uploaded unless the user explicitly switches to Cloud Mode
 
-#### Scenario: First launch before voice use
-- **WHEN** alan starts before the user has invoked or configured alan Voice
-- **THEN** alan does not require an extra model download, account registration,
-  or cloud provider setup for the default voice input path
+### Requirement: Cloud recognition is explicit
+Cloud Mode SHALL require explicit provider selection, available host-managed
+credentials, and visible audio-upload disclosure before capture.
 
-### Requirement: Cloud recognition mode
-alan SHALL provide Cloud Mode as an optional voice recognition mode for users
-who want higher quality recognition or provider-backed speech-to-intent.
+#### Scenario: Cloud credentials are missing
+- **WHEN** Cloud Mode is selected without a usable credential reference
+- **THEN** capture does not upload audio
+- **AND** Alan offers credential repair or a return to Local Mode
 
-#### Scenario: User enables Cloud Mode
-- **WHEN** the user enables Cloud Mode
-- **THEN** alan requires an explicit provider selection and credential setup
-- **AND** alan shows that audio may be sent to the selected cloud provider
+### Requirement: VoiceIntent is a reviewable domain document
+Recognition SHALL produce a typed intent proposal containing transcript,
+normalized text, intent kind, target descriptor or namespace path, confidence,
+safety class, proposed operation, and review state. It SHALL NOT define a Kernel
+intent type or global command registry.
 
-#### Scenario: Cloud provider is missing credentials
-- **WHEN** Cloud Mode is selected but the provider credential is missing,
-  expired, or invalid
-- **THEN** alan reports the credential problem before recording or upload
-- **AND** alan offers a path to configure credentials or switch back to Local
-  Mode
+#### Scenario: Intent is ambiguous or state-changing
+- **WHEN** confidence is low, the target is unclear, or the operation changes
+  state
+- **THEN** the proposal remains a draft or capture-owned review record
+- **AND** no mutation occurs before review and current target authorization
 
-#### Scenario: User switches recognition mode
-- **WHEN** the user changes the default voice recognition mode
-- **THEN** subsequent Hold to Talk sessions use the selected mode
-- **AND** the current mode remains visible in the alan Voice settings surface
+### Requirement: First-phase intents resolve to native operations
+Alan Voice SHALL support capture, agent request, task, search, and app-command
+intents by resolving them to authorized file writes, owning `ctl` writes, `/bin`
+Tool execution, or bounded Agent Executable spawn.
 
-### Requirement: Speech-to-intent output
-alan SHALL convert recognized speech into a typed intent result rather than
-treating speech as only a raw transcript.
+#### Scenario: Agent request targets an existing agent
+- **WHEN** the focused surface supplies an authorized Agent Process descriptor
+- **THEN** Alan Voice writes the accepted request to that process's `io/input`
+- **AND** it does not address a daemon session id
 
-#### Scenario: Intent is resolved
-- **WHEN** alan successfully recognizes speech
-- **THEN** alan produces a voice intent that includes the transcript, intent
-  type, target context, confidence, and proposed action
-- **AND** alan routes the proposed action according to the resolved intent type
+#### Scenario: Agent request starts new work
+- **WHEN** no existing agent is selected and the user commits the request
+- **THEN** the app opens bounded context descriptors and spawns an Agent
+  Executable
+- **AND** the new Process is visible in `/proc` and `/agent`
 
-#### Scenario: Intent is ambiguous
-- **WHEN** alan cannot resolve a confident intent from recognized speech
-- **THEN** alan asks for review, creates a non-destructive draft, or routes the
-  input as a normal alan message according to the active context
-- **AND** alan does not perform destructive or irreversible actions without
-  additional confirmation
+#### Scenario: Target app service is unavailable
+- **WHEN** a task, search, capture, or app-command target is not mounted or lacks
+  required rights
+- **THEN** the intent stays a safe draft or asks for target selection
+- **AND** no global object id or host callback bypasses the namespace
 
-### Requirement: First-phase voice intent types
-alan SHALL support capture, agent command, task creation, search, and app
-command intents in the first alan Voice phase.
+### Requirement: Feedback is compact and keyboard-first
+Alan for macOS SHALL show compact recording, recognizing, review, success,
+cancelled, unavailable, and error states while keeping the active terminal or
+app content visible. The primary flow SHALL be operable without a pointer.
 
-#### Scenario: Capture intent
-- **WHEN** the user says a phrase such as "record this idea"
-- **THEN** alan creates or inserts a capture item in the current alan context
-- **AND** the captured content is based on the recognized intent payload rather
-  than the raw audio
+#### Scenario: Recognition takes noticeable time
+- **WHEN** output is not ready within the fast feedback window
+- **THEN** the overlay reflects current capture-file status and remains
+  cancellable by keyboard
 
-#### Scenario: Agent command intent
-- **WHEN** the user asks alan to analyze, inspect, summarize, or otherwise act
-  on the current context
-- **THEN** alan creates or uses the appropriate alan conversation/session
-- **AND** alan submits the command through the normal alan runtime path
+### Requirement: Permissions and privacy are repairable
+Alan Voice SHALL explain and provide repair paths for microphone, speech
+recognition, global shortcut, and any required accessibility permissions. It
+SHALL show the active recognition mode and cloud provider before cloud upload.
 
-#### Scenario: Task intent
-- **WHEN** the user asks alan to create a todo or task
-- **THEN** alan creates a task-like item in the current task surface or a
-  compatible fallback capture surface
-- **AND** alan preserves the task text and relevant context
+#### Scenario: Permission is revoked
+- **WHEN** a required permission is unavailable
+- **THEN** capture status reports the specific missing permission and a repair
+  path
+- **AND** the service does not remain falsely in recording state
 
-#### Scenario: Search intent
-- **WHEN** the user asks alan to search local alan data, recent conversations,
-  or current app content
-- **THEN** alan routes the request to the appropriate search surface
-- **AND** alan shows search progress or results without starting unrelated
-  agent execution
+### Requirement: Voice initialization is off the startup critical path
+Alan Voice SHALL initialize heavyweight audio, recognition, and cloud clients
+lazily when invoked or configured.
 
-#### Scenario: App command intent
-- **WHEN** the user asks alan to open, focus, summarize, or transform the
-  current alan surface
-- **THEN** alan routes the action through the owning app command or runtime path
-- **AND** alan rejects unsupported commands with a recoverable message
+#### Scenario: Alan for macOS starts
+- **WHEN** Alan Voice is enabled but unused
+- **THEN** app, terminal, and current-content startup do not wait for recognizer
+  or cloud-provider initialization
 
-### Requirement: Current context targeting
-alan SHALL use the current macOS app context to decide where a voice intent
-should be written or routed.
+### Requirement: Legacy fixed-command voice control is retired
+Alan Voice SHALL remove the old `NSSpeechRecognizer` fixed-command controller as
+a parallel user-facing path. Former command phrases SHALL pass through the same
+intent proposal and file/process execution rules as other speech.
 
-#### Scenario: Active alan context exists
-- **WHEN** the user completes a Hold to Talk capture while an alan session,
-  terminal pane, task surface, or search surface is active
-- **THEN** alan includes that active context in the intent resolution input
-- **AND** alan writes or routes the result to the matching context unless the
-  user chooses another target
+#### Scenario: A former fixed phrase is spoken
+- **WHEN** recognition produces text matching the old vocabulary
+- **THEN** Alan Voice resolves it as a normal app-command proposal
+- **AND** unsupported commands fail through the same recoverable result path
 
-#### Scenario: No active target is available
-- **WHEN** no safe active target exists for the resolved voice intent
-- **THEN** alan creates a safe default capture or asks the user to choose a
-  target
-- **AND** alan does not discard the recognized content unless the user cancels
+### Requirement: Host compatibility bridge is deletion-bound
+The system SHALL name any temporary Alan for macOS callback bridge
+`AlanVoiceHostCompatibilityBridge`, translate it to canonical Voice Service file
+operations, keep intent truth outside the bridge, add no bridge-only behavior,
+and delete it when the host consumes aP directly.
 
-### Requirement: Low-distraction capture feedback
-alan SHALL provide compact voice feedback states without taking over the main
-terminal or alan surface.
-
-#### Scenario: Recording starts
-- **WHEN** alan begins recording
-- **THEN** alan shows a compact recording indicator with the active mode
-- **AND** the active terminal or alan content remains visible
-
-#### Scenario: Processing starts
-- **WHEN** recording stops and recognition or intent resolution begins
-- **THEN** alan shows a processing state
-- **AND** the user can distinguish recording from processing
-
-#### Scenario: Voice input succeeds
-- **WHEN** alan applies a voice intent successfully
-- **THEN** alan shows a concise success state identifying the action that was
-  applied
-- **AND** the feedback automatically recedes unless the result requires review
-
-#### Scenario: Voice input fails
-- **WHEN** recording, recognition, provider access, or intent routing fails
-- **THEN** alan shows a recoverable error with the next action available to the
-  user
-- **AND** alan does not leave the UI in a recording or processing state
-
-### Requirement: Keyboard-first operation
-alan Voice SHALL be usable without relying on the mouse for the primary voice
-input path.
-
-#### Scenario: User completes voice input by keyboard
-- **WHEN** the user presses, holds, releases, and optionally cancels the Hold to
-  Talk shortcut
-- **THEN** alan completes the voice input lifecycle without requiring pointer
-  interaction
-
-#### Scenario: User needs settings
-- **WHEN** the user opens alan Voice settings
-- **THEN** alan exposes keyboard-reachable controls for shortcut, mode,
-  provider, credential status, language, and permission repair
-
-### Requirement: Permissions and repair
-alan SHALL handle microphone, speech recognition, global shortcut, and any
-required accessibility permissions with clear purpose and recovery language.
-
-#### Scenario: Microphone permission is missing
-- **WHEN** the user invokes alan Voice without microphone permission
-- **THEN** alan explains that the microphone is needed only for Hold to Talk
-- **AND** alan offers a path to grant or reopen system permission settings
-
-#### Scenario: Speech recognition permission is missing
-- **WHEN** the selected recognition mode requires system speech recognition
-  permission and it is not granted
-- **THEN** alan explains why speech recognition permission is needed
-- **AND** alan offers a path to grant or repair the permission
-
-#### Scenario: Shortcut permission is missing
-- **WHEN** the configured Hold to Talk shortcut requires global shortcut or
-  accessibility permission that is not available
-- **THEN** alan explains the permission purpose
-- **AND** alan offers a keyboard-accessible fallback or repair path
-
-### Requirement: Privacy and provider disclosure
-alan SHALL make audio handling, recognition mode, and provider state explicit
-before cloud audio processing occurs.
-
-#### Scenario: Local Mode is active
-- **WHEN** alan Voice is in Local Mode
-- **THEN** alan indicates that audio recognition is local
-- **AND** alan does not upload captured audio to a cloud speech provider
-
-#### Scenario: Cloud Mode is active
-- **WHEN** alan Voice is in Cloud Mode
-- **THEN** alan indicates the active cloud provider before or during capture
-- **AND** alan makes clear that captured audio may be sent to that provider
-
-#### Scenario: Provider changes
-- **WHEN** the user changes the Cloud Mode provider
-- **THEN** alan updates the visible provider state
-- **AND** future Cloud Mode captures use the newly selected provider
-
-### Requirement: Performance isolation
-alan Voice SHALL avoid slowing app startup, conversation startup, terminal
-startup, and current context loading.
-
-#### Scenario: App starts with alan Voice enabled
-- **WHEN** alan macOS starts
-- **THEN** alan does not initialize heavyweight audio, speech, or cloud
-  recognition work on the critical startup path
-- **AND** alan Voice initializes lazily when invoked or opened in settings
-
-#### Scenario: User finishes speaking
-- **WHEN** the user releases Hold to Talk
-- **THEN** alan starts recognition and intent handling promptly
-- **AND** alan reports progress if the result is not ready within the expected
-  fast feedback window
-
-### Requirement: Legacy voice command retirement
-alan SHALL retire the old fixed-command shell voice control path when alan
-Voice becomes the owner of macOS voice input.
-
-#### Scenario: alan Voice is enabled
-- **WHEN** alan Voice is available in the macOS app
-- **THEN** the old fixed command vocabulary controller is not exposed as a
-  parallel user-facing voice feature
-- **AND** shell commands reachable by voice are routed through alan Voice
-  intent resolution and normal app command ownership
-
-#### Scenario: Legacy command phrase is spoken
-- **WHEN** the user speaks a phrase that previously matched the legacy shell
-  voice command list
-- **THEN** alan resolves it through the alan Voice intent pipeline
-- **AND** unsupported commands fail through the same recoverable voice feedback
-  path as other app command intents
+#### Scenario: Host bridge is inspected
+- **WHEN** maintainers audit the Voice implementation
+- **THEN** the bridge's consumer, translated files, and deletion gate are explicit
+- **AND** remote or Agent Process clients do not depend on the bridge

@@ -29,7 +29,10 @@ generation.
 ### Requirement: UPDF Supports Agent-Assisted Publishing Review
 UPDF SHALL support a publishing review workflow where humans review rendered
 targets, QA findings, comments, and agent-proposed patches instead of manually
-maintaining multiple target-specific editions.
+maintaining multiple target-specific editions. The review host SHALL open
+bounded project, package, QA, preview, and writable proposal descriptors, bind
+the `updf` Tool and role Skill, and spawn a role-specific Agent Executable rather
+than embedding an agent engine or calling a daemon/session API.
 
 #### Scenario: Comment is attached to preview context
 - **WHEN** a reviewer comments on a target preview page or region
@@ -38,15 +41,17 @@ maintaining multiple target-specific editions.
 
 #### Scenario: Agent receives bounded publishing context
 - **WHEN** an agent is asked to address a review comment or QA issue
-- **THEN** UPDF provides the relevant manuscript source, publishing templates,
-  target profile, QA report entry, preview artifact or crop when available, and
-  mutation-lane guidance
+- **THEN** UPDF opens the relevant manuscript source, publishing templates,
+  target profile, QA report entry, preview artifact or crop, mutation-lane
+  guidance, role Skill, and `/bin/updf` into a bounded child namespace
+- **AND** it spawns an Agent Executable visible through `/proc` and `/agent`
 
 #### Scenario: Agent patch is reviewable
 - **WHEN** an agent proposes a publishing fix
 - **THEN** the proposal includes a source diff, affected mutation lane, reason,
   rebuilt target artifacts when available, and QA status change
 - **AND** a human can accept or reject the patch before it becomes final
+- **AND** the agent writes only to the authorized proposal tree until acceptance
 
 ### Requirement: UPDF Distinguishes Writing And Publishing Agent Roles
 UPDF SHALL distinguish agents that edit manuscript content from agents that

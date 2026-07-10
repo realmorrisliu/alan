@@ -1,59 +1,56 @@
 ## Why
 
-alan can already control reasoning effort for a selected model, but it cannot
-act like a two-speed agent that normally thinks quickly and deliberately
-escalates when a task needs deeper reasoning. alan should support configurable
-System 1/System 2 model bindings with automatic, visible, and overridable
-routing.
+Alan should normally use a fast model path and deliberately escalate complex or
+high-cost work to a deeper model. The previous change hid that behavior inside a
+runtime `CognitiveRouter`, session overrides, daemon DTOs, and an internal virtual
+action; the Plan 9-like design requires model choice, attempt isolation,
+escalation, and observability to be expressed through mounted LLM Connections,
+Processes, files, and streams.
 
 ## What Changes
 
-- Add cognitive routing configuration for System 1 and System 2 model bindings,
-  layered above provider/credential configuration and optional reasoning-effort
-  intent.
-- Add a runtime-owned `CognitiveRouter` that applies explicit overrides,
-  deterministic safety gates, and System 1 self-escalation before provider
-  dispatch, with safety gates able to supersede forced System 1 intent.
-- Add an internal-only escalation action that lets the System 1 model request a
-  System 2 rerun without exposing the fast draft to the user.
-- Gate side-effecting tools during unaccepted System 1 attempts so workspace
-  mutation waits for accepted fast execution or System 2 routing.
-- Record routing decisions in turn/session metadata, rollout entries, logs, and
-  daemon/client DTOs.
-- Preserve existing provider adapter boundaries: adapters only project the
-  normalized request they receive and do not decide routing.
-- Partition provider-native continuation by compatible prompt and tool state so
-  System 1-only escalation tools or speculative prompt context cannot leak into
-  System 2.
-- Keep first implementation single-runtime and single-active-turn; this is not
-  parallel multi-agent execution.
+- Bind configured System 1 and System 2 LLM Connections into the coordinating
+  Agent Process namespace under stable cognitive-role aliases.
+- Represent each routed attempt as an inspectable Process/Generation rather than
+  an invisible provider-dispatch phase.
+- Give speculative System 1 attempts a structurally restricted namespace with
+  read-only context and no side-effecting Tool bindings; System 2 receives only
+  the mounts explicitly assembled for the deeper attempt.
+- Treat System 1 escalation output as a typed suggestion in its model stream;
+  the coordinator records the decision and spawns the System 2 attempt. It is not
+  a privileged virtual Tool.
+- Project routing configuration, current attempt, bounded reason, result,
+  status, and ordered events under `machine/routing/` in the agent overlay.
+- Accept explicit next-attempt/default control through the owning routing `ctl`;
+  remove new session/fork/turn daemon DTO requirements.
+- Compose the selected LLM Connection with canonical reasoning-effort controls
+  in the provider-neutral llmfs Generation request. Provider adapters remain
+  unaware of cognitive roles.
+- Preserve provider-native continuation only within a compatible Connection,
+  prompt fingerprint, visible Tool set, and attempt role.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `cognitive-model-routing`: Owns System 1/System 2 model binding configuration,
-  automatic routing, internal escalation, override precedence, and routing
-  observability.
+- `cognitive-model-routing`: Defines cognitive-role Connection mounts,
+  restricted attempt Processes, routing precedence, stream-based escalation,
+  file-backed observability, explicit `ctl` intent, and continuation boundaries.
 
 ### Modified Capabilities
 
-- `provider-request-controls`: Request-control resolution must compose with the
-  selected cognitive model binding and remain the only authority for effective
-  reasoning effort.
-- `daemon-api-contract`: Daemon session and turn surfaces must expose routing
-  metadata and accept explicit cognitive-system overrides.
+- `provider-request-controls`: Reasoning controls compose with the selected
+  cognitive-role LLM Connection and remain provider-neutral Generation input.
 
 ## Impact
 
-- Affected runtime modules: request-control resolution, turn execution,
-  LLM-client construction, virtual/internal actions, rollout persistence, and
-  session startup metadata.
-- Affected configuration: `agent.toml` gains a cognition block that binds
-  System 1 and System 2 to available provider/model entries without duplicating
-  provider credentials.
-- Affected daemon/clients: session create/fork/submit DTOs and read/list
-  responses expose selected cognitive system and routing reason.
-- Affected tests: routing precedence, deterministic gates, System 1 escalation,
-  side-effect gating, hidden fast-draft suppression, metadata persistence,
-  prompt/tool continuation partitioning, and provider-boundary contract tests.
+- Agent Runtime Service/AgentFS gains the `machine/routing/` projection and
+  coordinates ordinary child Process/Generation lifecycles.
+- `alan-llmfs` remains the callable model boundary at `/mnt/llm`; configured
+  Connections are mounted under cognitive-role aliases and attempts receive one
+  active Connection.
+- Side-effect isolation is enforced by the attempt namespace and visible `/bin`
+  union, not a runtime-only Tool classification gate.
+- Daemon compatibility surfaces may mirror routing files temporarily, but this
+  change adds no daemon/session API requirements and remote clients use the
+  returned namespace.

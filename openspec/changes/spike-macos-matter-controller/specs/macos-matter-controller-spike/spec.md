@@ -1,100 +1,108 @@
 ## ADDED Requirements
 
-### Requirement: macOS Matter controller spike is platform-scoped
-Alan for macOS SHALL isolate Apple `Matter.framework` integration inside the
-Apple client/service layer and MUST NOT require `alan-runtime` to link against
-or model Apple Matter types.
+### Requirement: Matter integration is a host-backed file server
+Alan for macOS SHALL isolate `Matter.framework` behind an aP Matter Service that
+posts `/srv/matter` and serves `/mnt/matter`. Alan Kernel, Agent Execution Engine,
+portable domain crates, and non-Apple builds SHALL NOT import or model Apple
+Matter types.
 
-#### Scenario: Runtime invokes future home capability
-- **WHEN** Matter controller behavior is exposed beyond the Apple service layer
-- **THEN** the boundary is expressed as typed local service/RPC behavior suitable
-  for future `home.*` tools
-- **AND** `alan-runtime` remains platform-agnostic
+#### Scenario: Matter Service starts on macOS
+- **WHEN** the host adapter becomes ready
+- **THEN** controller, commissioning, device, action, status, and events files
+  are available through the authorized mount
+- **AND** clients do not need a typed RPC or direct framework call
 
-#### Scenario: Linux or non-Apple runtime builds are evaluated
-- **WHEN** non-macOS runtime crates are built or tested
-- **THEN** they do not require Apple `Matter.framework`, `MTRDeviceController`,
-  or Apple Matter storage types
+#### Scenario: Non-Apple tests run
+- **WHEN** Linux or another non-Apple target builds/tests the file contract
+- **THEN** it uses a fake backend without linking `Matter.framework`
 
-### Requirement: Spike commissions one direct Matter light
-The macOS Matter controller spike SHALL support commissioning one directly
-Matter-capable light into Alan's own Matter fabric from a setup payload.
+### Requirement: Commissioning is an inspectable file lifecycle
+The Matter Service SHALL allocate a commissioning directory from ordinary aP
+operations and SHALL expose whole request, status, result, events, and adjacent
+`ctl` files. A setup payload SHALL commit only on clunk and partial payloads SHALL
+NOT start commissioning.
 
-#### Scenario: Setup payload is provided
-- **WHEN** the operator provides a valid setup payload for a direct Matter light
-  in pairing or multi-admin pairing mode
-- **THEN** Alan creates or loads a local Matter controller
-- **AND** Alan attempts to commission the light into Alan's own fabric
-- **AND** the result records success or the concrete commissioning failure
+#### Scenario: Valid direct-light payload is committed
+- **WHEN** an authorized operator commits a setup payload and starts the attempt
+- **THEN** the service creates or loads Alan's controller and attempts to
+  commission the light into Alan's fabric
+- **AND** progress and concrete success/failure remain inspectable
 
-#### Scenario: Payload targets unsupported scope
-- **WHEN** the setup payload is for a HomeKit-only device, bridge-only topology,
-  bridged endpoint, or unsupported high-risk device type
-- **THEN** the spike does not claim support for that target
-- **AND** the result reports an unsupported target or verification blocker
+#### Scenario: Unsupported payload is committed
+- **WHEN** the payload targets an excluded bridge, endpoint, or high-risk device
+- **THEN** the attempt is rejected with an unsupported result
+- **AND** no unsupported physical command is executed
 
-### Requirement: Controller state survives app restart
-The macOS Matter controller spike SHALL persist the controller state needed to
-reuse a commissioned direct Matter light after Alan for macOS restarts.
+### Requirement: Controller state survives host restart
+The Matter Service SHALL persist the protected controller/fabric state required
+to reopen commissioned devices after Alan for macOS restarts. It SHALL expose
+safe readiness/status files without exposing operational secrets.
 
-#### Scenario: App restarts after commissioning
-- **WHEN** the light was successfully commissioned and Alan for macOS restarts
-- **THEN** Alan reloads the local Matter controller state
-- **AND** the commissioned light remains listable without repeating
-  commissioning
+#### Scenario: Host restarts after commissioning
+- **WHEN** the service restarts with valid stored controller state
+- **THEN** it reposts `/srv/matter`, remounts the tree, and lists the light
+  without recommissioning
 
-#### Scenario: Persisted state is unavailable
-- **WHEN** controller or fabric state cannot be loaded
-- **THEN** Alan reports the controller as unavailable or uninitialized
-- **AND** Alan does not pretend that previously commissioned devices are ready
+#### Scenario: Stored state is unavailable
+- **WHEN** protected state cannot be opened
+- **THEN** controller status reports unavailable or uninitialized
+- **AND** devices are not reported as confirmed ready
 
-### Requirement: Spike lists and reads the commissioned light
-The macOS Matter controller spike SHALL list the commissioned direct Matter light
-and read its On/Off state through the macOS Matter controller service.
+### Requirement: The spike lists and reads one direct light
+The Matter Service SHALL list the commissioned direct light and expose current
+On/Off state through its device directory.
 
-#### Scenario: Commissioned light is reachable
-- **WHEN** the commissioned light is online and reachable on the local Matter
-  fabric
-- **THEN** Alan lists the light as a commissioned node
-- **AND** Alan can read its On/Off state with a structured result
+#### Scenario: Light is reachable
+- **WHEN** a client reads the device's status and `onoff` file
+- **THEN** the service returns current reachable state and an observed On/Off
+  value
 
-#### Scenario: Commissioned light is unreachable
-- **WHEN** the commissioned light is offline or unreachable
-- **THEN** Alan returns a structured unavailable result
-- **AND** Alan does not report stale state as confirmed current state
+#### Scenario: Light is unreachable
+- **WHEN** current state cannot be read
+- **THEN** status reports unavailable and does not present stale state as current
 
-### Requirement: Spike performs low-risk light OnOff writes
-The macOS Matter controller spike SHALL support setting the commissioned direct
-Matter light On or Off and SHALL record a structured physical-action result.
+### Requirement: OnOff writes are whole document mutations
+The spike SHALL accept only bounded On/Off writes for the direct light through a
+whole `onoff` document committed on clunk. It SHALL serialize the physical write
+and create an action result plus event.
 
-#### Scenario: Turn light on
-- **WHEN** the operator requests turning the commissioned light on through the
-  spike path
-- **THEN** Alan sends the On command through the macOS Matter controller service
-- **AND** Alan records target, requested action, status, timestamp, and any error
-  detail in the action result
+#### Scenario: Operator turns the light on
+- **WHEN** an authorized client commits `on` to the light's `onoff` document
+- **THEN** the service sends the Matter On command and records requested state,
+  status, timestamp, observed read-back when available, and errors
 
-#### Scenario: Turn light off
-- **WHEN** the operator requests turning the commissioned light off through the
-  spike path
-- **THEN** Alan sends the Off command through the macOS Matter controller service
-- **AND** Alan records target, requested action, status, timestamp, and any error
-  detail in the action result
+#### Scenario: A partial or invalid state is written
+- **WHEN** the document is incomplete or not `on`/`off`
+- **THEN** commit fails and no physical command is sent
 
 ### Requirement: Spike excludes product home-control tooling
-The macOS Matter controller spike SHALL NOT define final `home.*` tool schemas,
-general physical-device governance policy, or LLM-visible raw Matter
-endpoint/cluster command access.
+The Matter spike SHALL NOT define final `home.*` Tool schemas, a global device
+registry, raw cluster/endpoint execution, broad physical-device governance, or
+LLM-visible direct Matter commands.
 
-#### Scenario: Agent-facing control is requested during the spike
-- **WHEN** a design or implementation path would expose raw Matter cluster
-  commands or broad physical-device writes to the LLM
-- **THEN** that behavior is deferred to the later home-control product change
-- **AND** the spike remains limited to service feasibility and low-risk light
+#### Scenario: Agent-facing product control is requested
+- **WHEN** a design proposes broad Tools or additional device categories during
+  the spike
+- **THEN** that work is deferred to a separate OpenSpec change after physical
   verification
 
-#### Scenario: Product scope is evaluated after spike success
-- **WHEN** the direct Matter light spike passes commissioning, persistence,
-  list, read, and OnOff write verification
-- **THEN** productized `home.*` tools, device registry naming, governance risk
-  levels, and skill instructions are handled by a separate OpenSpec change
+### Requirement: Debug clients use canonical file operations
+Any spike-only CLI or developer UI SHALL allocate/read/write the Matter Service
+files and SHALL NOT call `Matter.framework` or an RPC controller directly. The
+debug surface SHALL remain explicitly non-product.
+
+#### Scenario: Setup payload is entered in developer UI
+- **WHEN** the operator submits the payload
+- **THEN** the UI commits the commissioning request file and watches its events
+- **AND** the same attempt is visible to any other authorized file client
+
+### Requirement: Physical verification evidence is retained
+The spike SHALL retain bounded commissioning, restart, list, read, On, and Off
+result files plus manual environment notes sufficient to distinguish a platform
+failure, network/device blocker, unsupported scope, and successful operation.
+
+#### Scenario: Spike readiness is evaluated
+- **WHEN** maintainers decide whether to productize Matter control
+- **THEN** each required operation has inspectable result files and manual fixture
+  notes
+- **AND** logs alone are not treated as sufficient proof

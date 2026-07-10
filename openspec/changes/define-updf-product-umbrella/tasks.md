@@ -26,6 +26,9 @@
   package format, QA report contract, JSON outputs, and mutation-lane guidance.
 - [ ] 2.4 Define `macos-updf-preview` for Alan's read-only `.updf` preview and
   QA summary consumer role.
+- [ ] 2.5 Define agent review through bounded descriptors, `/bin/updf`, a role
+  Skill, Agent Executable spawn, and a writable proposal tree rather than an
+  embedded engine or daemon/session API.
 
 ## 3. Implementation Slice Decomposition
 
@@ -40,6 +43,8 @@
   focused specs rather than first-slice implementation requirements.
 - [ ] 3.7 Defer WYSIWYG-like semantic editing to a later slice after comments,
   anchors, and agent patch review are proven.
+- [ ] 3.8 Treat any initial `UPDFPreviewHostCompatibilityBridge` as a file-client
+  translation with no bridge-owned state and a direct-file deletion gate.
 
 ## 4. Verification
 

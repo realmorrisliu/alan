@@ -1,241 +1,167 @@
 ## Context
 
-alan already has connection profiles, model catalog metadata, and runtime-owned
-reasoning-effort resolution for a selected model. That lets an operator choose a
-provider-backed model and effort, but it does not let the agent behave like a two-speed system:
-normally quick and inexpensive, while able to recognize when a task deserves
-deeper reasoning.
+`alan-llmfs` already separates Provider from callable Connection and models each
+Generation as `clone`, `data`, `events`, `status`, and `ctl`. Agent requests are
+assembled from namespace files; changing model means binding a different
+Connection. AgentFS already exposes machine state and events as files.
 
-The desired model is inspired by System 1/System 2 from "Thinking, Fast and
-Slow": System 1 is fast, automatic, and pattern-driven; System 2 is slower,
-more deliberate, and used for complex reasoning or high-cost errors. alan should
-borrow the useful structure without reproducing the human failure mode where the
-fast system is overconfident and the slow system fails to engage.
+The old cognitive-routing design predated those surfaces. It selected providers
+inside one runtime loop, gave System 1 an internal virtual escalation Tool,
+withheld side effects through runtime classification, and spread result metadata
+across session/fork/reconnect DTOs. That made the daemon and in-process engine the
+architectural center.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Let `agent.toml` configure System 1 and System 2 as model bindings layered
-  above provider/credential configuration, with optional reasoning-effort intent.
-- Honor the configured default route when no override or deterministic gate
-  applies, falling back to System 1 when no default is configured.
-- Let the System 1 model self-escalate through an internal-only runtime action.
-- Suppress fast drafts when escalation occurs and rerun the original task on
-  System 2 with bounded triage notes.
-- Record every routing decision in audit-friendly metadata.
+- Support configurable fast and deep LLM Connections with automatic and explicit
+  routing.
+- Make every attempt, Connection role, escalation, and accepted result
+  inspectable through `/proc`, `/agent`, `/mnt/llm`, and stream files.
+- Structurally prevent speculative System 1 attempts from performing
+  side-effecting Tool actions.
+- Preserve provider-neutral reasoning controls and explicit continuation
+  compatibility.
+- Present one coherent parent Agent Process result while retaining attempt
+  provenance.
 
 **Non-Goals:**
 
-- Run two models in parallel by default.
-- Turn System 1/System 2 into separate child agents.
-- Move routing decisions into provider adapters.
-- Replace existing request-control resolution.
-- Expose hidden reasoning content as routing metadata.
+- Add cognitive roles to Alan Kernel or provider adapters.
+- Run System 1 and System 2 in parallel by default.
+- Expose chain-of-thought or provider-private reasoning.
+- Create daemon routing endpoints, session override DTOs, or a global model
+  router service.
+- Let a System 1 child acquire mounts withheld by its spawner.
 
 ## Decisions
 
-### Decision: Split provider availability from cognitive model binding
+### 1. Cognitive roles are namespace aliases to LLM Connections
 
-Configuration should have two conceptual layers:
+Agent configuration names two connection profiles and optional reasoning effort
+intent. During process construction, the spawner resolves them and binds callable
+Connection trees at stable role aliases in the coordinator namespace, for
+example:
 
-1. provider/credential availability, which describes authenticated AI providers
-   and the models alan can use through them,
-2. cognitive model binding, which selects which available model acts as System 1
-   and which acts as System 2.
+```text
+/mnt/llm/cognition/system-1  -> bound llmfs Connection
+/mnt/llm/cognition/system-2  -> bound llmfs Connection
+```
 
-This keeps System 1/System 2 out of provider auth and avoids copying provider
-credentials into the cognition block. Existing connection profiles can remain a
-compatibility path and can feed the provider/model availability layer, but
-cognitive routing should resolve to a concrete provider, credential scope,
-model, and request-control intent before dispatch.
+These aliases are local namespace bindings, not new globally callable llmfs
+objects. Credentials remain inside the Connection. Missing or unauthorized role
+mounts make that route unavailable.
 
-Alternatives considered:
+Alternative considered: let runtime hold provider/model/credential structs and
+dispatch directly. Rejected: model capability would no longer equal mounted
+Connection reachability.
 
-- Make System 1/System 2 reference full connection profiles directly. This is
-  simple but keeps model selection tangled with credential/profile ownership.
-- Create separate provider config for each system. This duplicates credentials
-  and makes model swaps harder to reason about.
+### 2. Each attempt is an ordinary inspectable process
 
-### Decision: CognitiveRouter manages routing, not provider adapters
+The coordinating Agent Process owns the logical user task and routing state. It
+spawns a System 1 Agent Process with a bounded task descriptor, one active LLM
+Connection, read-only context mounts, and a `/bin` union containing only
+read-only Tools. If a deeper route is required, it spawns a System 2 Agent
+Process with the explicitly authorized namespace for that attempt.
 
-`CognitiveRouter` runs in runtime before provider dispatch. It selects a
-cognitive system and concrete model binding, then delegates reasoning-effort
-resolution to the existing request-control resolver for the selected binding.
-Provider adapters receive a normal `GenerationRequest` and do not know why the
-runtime selected it.
+Attempt processes appear in `/proc`, conform under `/agent`, stream output
+through `io/output`, and return bounded result/provenance through the parent
+action record. They are sequential by default. The parent does not merge hidden
+transcripts; it records which attempt produced the accepted result.
 
-Alternatives considered:
+Alternative considered: rebind Tools inside one long-lived Process between
+phases. Rejected for V1: retained descriptors and in-process state make the
+speculative side-effect boundary harder to audit than a freshly constructed
+child namespace.
 
-- Make each provider adapter decide whether to use a faster or deeper model.
-  This duplicates policy and breaks provider projection isolation.
-- Put routing entirely in daemon/client code. This prevents runtime from
-  auditing decisions consistently and makes CLI/TUI/macOS behavior diverge.
+### 3. Routing precedence is explicit and file-visible
 
-### Decision: Use safety-first routing gates plus System 1 self-escalation
+The coordinator applies:
 
-Routing first resolves explicit cognitive-system intent by scope: a turn-scoped
-intent applies only to that turn and supersedes any session-scoped intent, while
-session-scoped intent applies only when the turn did not supply its own intent.
-After resolving that effective explicit intent, routing has five layers:
+1. an explicit `system-2` next-attempt intent;
+2. deterministic safety/complexity rules requiring System 2;
+3. an eligible explicit `system-1` next-attempt intent;
+4. the configured default role;
+5. System 1 fallback with self-escalation available.
 
-1. effective explicit System 2 intent, which can always choose the deeper route,
-2. deterministic gates for known high-risk or high-complexity cases,
-3. effective explicit System 1 intent, which is honored only when no
-   deterministic gate requires System 2,
-4. configured default route, which may select System 1 or System 2,
-5. System 1 fallback attempt that can call internal `escalate_to_system2`.
+`machine/routing/ctl` accepts owner-defined commands such as `next system-1`,
+`next system-2`, and `auto`. `next` is consumed by the next logical input. A
+deterministic System 2 gate may refuse `next system-1`; the refusal is recorded
+in routing status/events. Compatibility transports may translate an old override
+into the same `ctl` write but gain no independent semantics.
 
-This avoids a separate router LLM call on every turn while still letting the
-fast model recognize when a task should not be answered quickly.
-It also prevents clients from forcing the fast route through conditions the
-runtime already knows require System 2.
+### 4. Escalation is typed stream content, not a Tool
 
-Alternatives considered:
+System 1 receives a provider-neutral instruction that may emit a typed
+`route/escalate` record containing a bounded reason and needed-context labels.
+The record has no authority. The coordinator reads it from the attempt's output
+stream, records it under `machine/routing`, and decides whether to spawn System
+2. No `escalate_to_system2` executable or virtual Tool appears in `/bin`.
 
-- Always call a small classifier model first. This is simple but adds latency to
-  every turn and makes the classifier another hidden model path.
-- Let System 1 overrides outrank deterministic gates. This makes manual control
-  simple but undercuts the safety boundary.
-- Hard-code all routing rules. This is predictable but will feel brittle and
-  miss semantic complexity.
+If System 1 completes without escalation, its result may be accepted only if the
+task required no withheld effects. Proposed mutations remain parent-visible
+action proposals executed later under normal governance.
 
-### Decision: Escalation is an internal virtual action with a side-effect boundary
+### 5. Routing state lives under machine/routing
 
-System 1 receives an internal-only action such as
-`escalate_to_system2(reason, needed_context)`. When runtime captures it, the
-fast draft is not accepted or streamed to the user. Runtime reruns System 2 with
-the original task and bounded triage notes.
+AgentFS projects:
 
-For V1, System 1's auto route should behave like human fast cognition in a
-controlled environment: it can form an impression, gather read-only context, or
-ask to escalate, but it should not perform irreversible external side effects
-before System 2 has taken over or the runtime has accepted the System 1 plan.
-Runtime must therefore withhold side-effecting tools from the unaccepted System
-1 phase. If a read-only tool was used before escalation, System 2 receives
-those results as part of the rerun context. If a side effect already happened
-after runtime accepted a System 1 execution phase, or due to an external client
-state change, System 2 must continue from the observed post-side-effect state
-rather than replaying the original task as if nothing changed.
+```text
+machine/routing/
+├── config       # role aliases, mode, default; secrets absent
+├── status       # idle/running/escalating/completed/failed
+├── current      # attempt pid, role, Connection alias, bounded reason
+├── result       # accepted attempt reference and outcome metadata
+├── events       # offset-resumable ordered records
+└── ctl          # auto / next role control
+```
 
-This acceptance is a runtime-owned commit point, not a user-confirmation prompt.
-Before that commit point, System 1 may perform model-internal reasoning,
-calculation, planning, draft generation that is not streamed as accepted output,
-and read-only tool use. After runtime accepts the fast route, System 1 can
-execute permitted side-effecting tools under the same governance and policy
-rules as any other routed turn. Human confirmation is still required only when
-the active governance or tool policy would have required it anyway.
+Clients hydrate snapshots and block-read events. Rollout/tape records may carry
+the same bounded references, but no daemon DTO is a second source of truth.
 
-Alternatives considered:
+### 6. Request controls compose after Connection selection
 
-- Ask System 1 to emit a JSON preamble. This is easier to parse but less aligned
-  with alan's action-oriented machine model.
-- Let System 1 answer and append a note that deeper reasoning is needed. This
-  leaks low-confidence output and weakens the user experience.
-- Treat runtime acceptance as human approval. This would preserve safety but
-  would add unnecessary interruptions and undercut autonomous operation.
+The attempt chooses its bound Connection first. Canonical reasoning-effort intent
+is then validated against that Connection's model metadata and written into the
+provider-neutral llmfs Generation request. `alan-llmfs` maps the request to
+`alan-llm`; provider adapters only project normalized controls.
 
-### Decision: Routing metadata is visible but bounded
+### 7. Continuation is partitioned by observable compatibility
 
-Turn/session metadata includes selected cognitive system, model binding id,
-provider, model, reasoning effort, routing source, and a short routing reason.
-Create, list, read, reconnect, and fork DTOs expose that bounded metadata where
-they already report request-control metadata. It does not expose private
-reasoning traces.
-
-Alternatives considered:
-
-- Hide routing completely. This undermines trust and makes debugging difficult.
-- Store full chain-of-thought. This violates provider and product boundaries.
-
-### Decision: Keep first version single-runtime and single-active-turn
-
-The first implementation changes provider selection within the existing turn
-loop. It does not spawn a second agent, merge transcripts, or run competing
-models.
-
-Alternatives considered:
-
-- Use child agents for System 2. This is useful later for delegated work but too
-  heavy for normal routing.
-- Run both systems and compare. This is expensive and creates answer selection
-  complexity.
-
-### Decision: Treat provider-native continuation as an optimization partitioned by model binding
-
-alan's tape-level continuation remains compatible across System 1 and System 2
-because runtime can project the accepted tape into whichever model binding is
-selected. Provider-native continuation state, such as a Responses
-`previous_response_id`, is not assumed to be portable across different cognitive
-model bindings.
-
-Runtime must partition, clear, or replay provider-native continuation when the
-selected cognitive binding changes provider family, credential scope, model, or
-other continuation-affecting settings. The compatibility boundary includes the
-cognitive-system prompt fingerprint and tool definition fingerprint, because
-System 1 may receive internal-only tools or speculative instructions that System
-2 must not inherit through provider-native state. Reuse is allowed only inside a
-proven compatible binding boundary.
-
-Alternatives considered:
-
-- Assume all configured System 1/System 2 models can share provider continuation.
-  This is too provider-specific and risks invalid request chains or prompt/tool
-  leakage across cognitive phases.
-- Disable provider-native continuation whenever cognition is enabled. This is
-  safe but gives up useful stateful-provider efficiency.
-
-## Implementation Ownership
-
-This change is primarily a runtime-routing change, not a prompt-only or
-skill-only feature.
-
-- Runtime owns `CognitiveRouter`, route precedence, the System 1 acceptance
-  commit point, escalation handling, routing metadata, and provider-native
-  continuation partitioning.
-- Tool governance owns read-only versus side-effecting capability classification
-  and enforces the unaccepted System 1 side-effect gate before tool execution.
-- Prompts describe the selected cognitive role, speculative boundary, and
-  internal escalation contract to the model, but prompts are not the security or
-  side-effect boundary.
-- Skills may adapt their guidance to the routed context, but they do not decide
-  the cognitive route, bypass tool governance, or expose `escalate_to_system2`
-  as a normal user tool.
-- Daemon and client surfaces carry override intent and display bounded routing
-  metadata; they do not independently decide provider/model routing.
+Tape-level accepted context remains provider-neutral. Provider-native
+continuation may be reused only when Connection identity, model, credential
+scope, prompt fingerprint, visible Tool manifest fingerprint, cognitive role,
+and relevant request controls match. A role switch normally starts a fresh
+Generation and reprojects accepted context.
 
 ## Risks / Trade-offs
 
-- System 1 fails to escalate -> Mitigate with safety-first deterministic gates
-  and response guardrails that can force System 2 on contradiction or retry.
-- Routing adds latency -> Mitigate by using System 1 by default and avoiding a
-  separate classifier call.
-- Model binding switching complicates provider state -> Mitigate by resolving
-  the binding before constructing the request and by partitioning provider
-  continuation by compatible provider/model/credential boundaries.
-- System 1 mutates workspace before escalation -> Mitigate by withholding
-  side-effecting tools until runtime accepts the fast route or routes to System
-  2.
-- Metadata becomes noisy -> Mitigate with compact routing reasons and stable
-  enum fields.
-- Config ambiguity -> Mitigate by keeping `connection_profile` as the fallback
-  default and making cognition config explicit.
+- [Risk] Process-per-attempt adds latency → Mitigation: process/file-server paths
+  are local and sequential; measure before introducing hidden in-process phases.
+- [Risk] Parent result presentation exposes internal complexity → Mitigation:
+  default UI shows one accepted result while routing files preserve inspection.
+- [Risk] Deterministic gates become policy sprawl → Mitigation: keep a bounded,
+  testable V1 set and record every forced route reason.
+- [Risk] System 1 uses a writable mount accidentally → Mitigation: assert the
+  spawned namespace and `/bin` union before first model Generation.
+- [Risk] Provider continuation leaks System 1 prompt/tools into System 2 →
+  Mitigation: default fresh Generation on role change and strict fingerprints.
 
 ## Migration Plan
 
-1. Add cognition config parsing while preserving existing `connection_profile`
-   behavior as the default single-system path.
-2. Add routing metadata types and persistence with no behavior change.
-3. Add deterministic routing gates and explicit overrides, with System 2 gates
-   superseding forced System 1 intent.
-4. Add System 1 model binding dispatch.
-5. Add internal System 1 escalation and System 2 rerun.
-6. Expose metadata in daemon/client DTOs.
-
-Existing agents without a cognition block continue to use their current single
-profile and request-control behavior. When cognition is enabled, both System 1
-and System 2 model bindings must resolve successfully.
+1. Add cognitive role alias resolution and `machine/routing` files without
+   changing the single-Connection default.
+2. Add restricted System 1 attempt spawn and accepted-result handoff.
+3. Add deterministic gates and explicit routing `ctl` intent.
+4. Add typed stream escalation and sequential System 2 attempt spawn.
+5. Remove cognitive session/fork/turn DTO deltas and internal virtual escalation
+   Tool assumptions.
+6. Delete the compatibility mirror after shipped clients read routing files.
 
 ## Open Questions
 
-- Which deterministic gates belong in V1 versus later policy configuration.
+- Which deterministic gates belong in the first policy set; the mechanism does
+  not depend on the final list.
+- Whether a later optimized same-Process attempt is worth adding after namespace
+  equivalence can be proven; it is not the V1 contract.
