@@ -6,6 +6,7 @@ mod agent_loop;
 mod child_agents;
 mod child_runs;
 mod compaction;
+mod delegation_capabilities;
 mod engine;
 mod guardian;
 mod loop_guard;

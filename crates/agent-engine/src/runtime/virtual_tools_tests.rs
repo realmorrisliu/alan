@@ -2411,6 +2411,19 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
         spec.launch.timeout_secs,
         Some(DEFAULT_DELEGATED_TIMEOUT_SECS)
     );
+    let requirements = &spec
+        .delegated
+        .as_ref()
+        .expect("delegated launch should carry classified requirements")
+        .requirements;
+    assert!(requirements.contains(
+        &alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
+            path: Some(PathBuf::from("/tmp/alan-delegated-parent")),
+        }
+    ));
+    assert!(
+        requirements.contains(&alan_agent_protocol::DelegatedCapabilityRequirement::LlmConnection)
+    );
 
     let prompt_view = state.session.tape.prompt_view();
     let tool_result = prompt_view
@@ -2429,6 +2442,54 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
     assert!(tool_result.contains("Delegated review completed."));
     assert!(tool_result.contains("child_run"));
     assert!(tool_result.contains("child-session"));
+}
+
+#[tokio::test]
+async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
+    let mut state = create_test_agent_loop_state();
+    state.core_config.memory.workspace_dir =
+        Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
+    activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+    let tool_call = NormalizedToolCall {
+        id: "call_capability_mismatch".to_string(),
+        name: "invoke_delegated_skill".to_string(),
+        arguments: serde_json::json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review GitHub issue 42"
+        }),
+    };
+    let decision = alan_agent_protocol::DelegatedCapabilityDecision {
+        requirements: vec![alan_agent_protocol::DelegatedCapabilityRequirement::Github],
+        namespace: alan_agent_protocol::DelegatedNamespaceSummary::default(),
+        unsatisfied: vec![alan_agent_protocol::DelegatedCapabilityRequirement::Github],
+        recovery: alan_agent_protocol::DelegatedCapabilityRecovery::ParentPath,
+        narrowed_task: None,
+    };
+    let expected_decision = decision.clone();
+    let cancel = CancellationToken::new();
+    let mut emit = |_event: Event| async {};
+
+    handle_invoke_delegated_skill(
+        &mut state,
+        &tool_call,
+        &tool_call.arguments,
+        &cancel,
+        &mut emit,
+        move |_state, _spec, _cancel| {
+            Box::pin(async move { Err(anyhow::Error::new(DelegatedSpawnRejected { decision })) })
+        },
+    )
+    .await
+    .unwrap();
+
+    let tool_result = tool_result_text_for_call(&state, "call_capability_mismatch");
+    let record: DelegatedSkillInvocationRecord = serde_json::from_str(&tool_result).unwrap();
+    assert_eq!(
+        record.result.error_kind.as_deref(),
+        Some("delegated_capability_mismatch")
+    );
+    assert_eq!(record.result.capability_decision, Some(expected_decision));
 }
 
 #[tokio::test]

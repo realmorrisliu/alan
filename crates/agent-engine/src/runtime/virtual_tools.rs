@@ -1,7 +1,8 @@
 use alan_agent_protocol::{
-    AdaptivePresentationHint, ConfirmationYieldPayload, Event, SpawnHandle, SpawnLaunchInputs,
-    SpawnRuntimeOverrides, SpawnSpec, SpawnToolProfileOverride, StructuredInputKind,
-    StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload, YieldKind,
+    AdaptivePresentationHint, ConfirmationYieldPayload, DelegatedSpawnContext, Event, SpawnHandle,
+    SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, SpawnToolProfileOverride,
+    StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
+    StructuredInputYieldPayload, YieldKind,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,9 @@ use super::child_agents::{
 };
 use super::child_runs::{
     ChildRunRegistryError, ChildRunTerminationMode, global_child_run_registry,
+};
+use super::delegation_capabilities::{
+    DelegatedSpawnRejected, classify_delegated_task_requirements,
 };
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
@@ -1198,19 +1202,24 @@ where
                             return Ok(VirtualToolOutcome::EndTurn);
                         }
 
-                        (
-                            persisted_request,
-                            DelegatedSkillResult::failed(
-                                format!(
-                                    "Failed to launch delegated runtime for skill '{}': {err}",
-                                    request.skill_id
-                                ),
-                                Some(json!({
-                                    "error_kind": "child_launch_failed"
-                                })),
+                        let capability_decision = err
+                            .downcast_ref::<DelegatedSpawnRejected>()
+                            .map(|rejection| rejection.decision.clone());
+                        let error_kind = if capability_decision.is_some() {
+                            "delegated_capability_mismatch"
+                        } else {
+                            "child_launch_failed"
+                        };
+                        let mut result = DelegatedSkillResult::failed(
+                            format!(
+                                "Failed to launch delegated runtime for skill '{}': {err}",
+                                request.skill_id
                             ),
-                            None,
-                        )
+                            Some(json!({ "error_kind": error_kind })),
+                        );
+                        result.error_kind = Some(error_kind.to_string());
+                        result.capability_decision = capability_decision;
+                        (persisted_request, result, None)
                     }
                 }
             }
@@ -1394,6 +1403,8 @@ fn build_delegated_spawn_spec(
         request.workspace_root.is_some(),
         parent_default_cwd.as_deref(),
     )?;
+    let requirements =
+        classify_delegated_task_requirements(&request.task, workspace_root.as_deref());
     Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
@@ -1409,6 +1420,7 @@ fn build_delegated_spawn_spec(
         },
         handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],
         runtime_overrides: delegated_runtime_overrides(request.skill_id.as_str()),
+        delegated: Some(DelegatedSpawnContext { requirements }),
     })
 }
 
@@ -1510,7 +1522,7 @@ fn delegated_tool_profile(skill_id: &str) -> Option<SpawnToolProfileOverride> {
 }
 
 fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedSkillResult {
-    match result.status {
+    let mut delegated = match result.status {
         ChildRuntimeStatus::Completed => delegated_result_from_completed_child(result),
         ChildRuntimeStatus::Failed => child_failure_result(
             format!(
@@ -1570,7 +1582,12 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
             delegated.warnings = result.warnings.clone();
             delegated
         }
-    }
+    };
+    delegated.capability_decision = result
+        .child_run
+        .as_ref()
+        .and_then(|record| record.delegation_capability_decision.clone());
+    delegated
 }
 
 fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> DelegatedSkillResult {

@@ -2,6 +2,103 @@ use crate::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Material capability required by a delegated task, expressed in the same
+/// mount-and-binding vocabulary used to assemble the child namespace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DelegatedCapabilityRequirement {
+    WorkspaceRead {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
+    },
+    WorkspaceWrite {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
+    },
+    Shell,
+    Network,
+    Github,
+    Browser,
+    LlmConnection,
+    SideEffects,
+}
+
+impl DelegatedCapabilityRequirement {
+    /// Stable human-readable label used in launch and mismatch records.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::WorkspaceRead { .. } => "workspace_read",
+            Self::WorkspaceWrite { .. } => "workspace_write",
+            Self::Shell => "shell",
+            Self::Network => "network",
+            Self::Github => "github",
+            Self::Browser => "browser",
+            Self::LlmConnection => "llm_connection",
+            Self::SideEffects => "side_effects",
+        }
+    }
+}
+
+/// Access projected from the assembled namespace into the delegated child.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedWorkspaceAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+/// Bounded historical summary derived from the actual child namespace plan.
+///
+/// This is audit metadata, not a second authority registry. While a child is
+/// alive, `/proc/<pid>/namespace` remains the source of truth.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DelegatedNamespaceSummary {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_bindings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_access: Option<DelegatedWorkspaceAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_projection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_connection: Option<String>,
+}
+
+/// Visible recovery selected when a delegated namespace cannot satisfy the
+/// original task requirements.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedCapabilityRecovery {
+    Satisfied,
+    ParentPath,
+    Narrowed,
+    AskUser,
+    Limitation,
+}
+
+/// Auditable outcome of comparing classified task requirements with the
+/// assembled child namespace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DelegatedCapabilityDecision {
+    pub requirements: Vec<DelegatedCapabilityRequirement>,
+    pub namespace: DelegatedNamespaceSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsatisfied: Vec<DelegatedCapabilityRequirement>,
+    pub recovery: DelegatedCapabilityRecovery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrowed_task: Option<String>,
+}
+
+/// Requirement input attached to a delegated spawn before namespace assembly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DelegatedSpawnContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<DelegatedCapabilityRequirement>,
+}
+
 /// Explicit launch target for a child agent instance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -96,6 +193,8 @@ pub struct SpawnSpec {
     pub handles: Vec<SpawnHandle>,
     #[serde(default, skip_serializing_if = "SpawnRuntimeOverrides::is_empty")]
     pub runtime_overrides: SpawnRuntimeOverrides,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegated: Option<DelegatedSpawnContext>,
 }
 
 impl SpawnSpec {
@@ -134,6 +233,14 @@ mod tests {
                     allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
                 }),
             },
+            delegated: Some(DelegatedSpawnContext {
+                requirements: vec![
+                    DelegatedCapabilityRequirement::WorkspaceRead {
+                        path: Some(PathBuf::from("/tmp/workspace")),
+                    },
+                    DelegatedCapabilityRequirement::LlmConnection,
+                ],
+            }),
         };
 
         let value = serde_json::to_value(&spec).unwrap();
@@ -141,6 +248,10 @@ mod tests {
         assert_eq!(value["handles"][0], "workspace");
         assert_eq!(value["runtime_overrides"]["model"], "gpt-5.4");
         assert_eq!(value["runtime_overrides"]["model_reasoning_effort"], "high");
+        assert_eq!(
+            value["delegated"]["requirements"][0]["kind"],
+            "workspace_read"
+        );
 
         let parsed: SpawnSpec = serde_json::from_value(value).unwrap();
         assert!(parsed.has_handle(SpawnHandle::Workspace));
@@ -164,6 +275,7 @@ mod tests {
             },
             handles: vec![SpawnHandle::Workspace],
             runtime_overrides: SpawnRuntimeOverrides::default(),
+            delegated: None,
         };
 
         let value = serde_json::to_value(&spec).unwrap();

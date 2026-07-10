@@ -1197,6 +1197,8 @@ pub struct DelegatedSkillResult {
     pub error_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_decision: Option<alan_agent_protocol::DelegatedCapabilityDecision>,
 }
 
 /// Inspectable reference for omitted delegated child output.
@@ -1251,6 +1253,7 @@ impl DelegatedSkillResult {
             warnings: Vec::new(),
             error_kind: None,
             error_message: None,
+            capability_decision: None,
         }
     }
 
@@ -1271,6 +1274,7 @@ impl DelegatedSkillResult {
             warnings: Vec::new(),
             error_kind: None,
             error_message: None,
+            capability_decision: None,
         }
     }
 }

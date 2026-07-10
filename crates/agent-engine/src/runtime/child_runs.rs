@@ -81,6 +81,8 @@ pub struct ChildRunRecord {
     pub error_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub termination: Option<ChildRunTerminationRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_capability_decision: Option<alan_agent_protocol::DelegatedCapabilityDecision>,
 }
 
 impl ChildRunRecord {
@@ -110,7 +112,18 @@ impl ChildRunRecord {
             warnings: Vec::new(),
             error_message: None,
             termination: None,
+            delegation_capability_decision: None,
         }
+    }
+
+    /// Attach bounded delegation requirements and the derived namespace
+    /// summary to this historical launch record.
+    pub fn with_delegation_capability_decision(
+        mut self,
+        decision: alan_agent_protocol::DelegatedCapabilityDecision,
+    ) -> Self {
+        self.delegation_capability_decision = Some(decision);
+        self
     }
 }
 
@@ -387,6 +400,33 @@ mod tests {
             Some("/tmp/workspace/.alan/runtime/stable/sessions/child.jsonl".to_string()),
             Some("repo-coding".to_string()),
         )
+    }
+
+    #[test]
+    fn child_run_launch_record_retains_requirements_and_namespace_summary() {
+        let decision = alan_agent_protocol::DelegatedCapabilityDecision {
+            requirements: vec![
+                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
+                    path: Some(std::path::PathBuf::from("/tmp/workspace")),
+                },
+            ],
+            namespace: alan_agent_protocol::DelegatedNamespaceSummary {
+                mounts: vec!["/agent".to_string(), "/mnt/llm".to_string()],
+                bin_bindings: vec!["/bin/read_file".to_string()],
+                workspace_root: Some(std::path::PathBuf::from("/tmp/workspace")),
+                workspace_access: Some(alan_agent_protocol::DelegatedWorkspaceAccess::ReadOnly),
+                workspace_projection: Some("host_tool_binding_compatibility".to_string()),
+                llm_connection: Some("default".to_string()),
+            },
+            unsatisfied: Vec::new(),
+            recovery: alan_agent_protocol::DelegatedCapabilityRecovery::Satisfied,
+            narrowed_task: None,
+        };
+
+        let record = test_record("run-audit", "parent-audit")
+            .with_delegation_capability_decision(decision.clone());
+
+        assert_eq!(record.delegation_capability_decision, Some(decision));
     }
 
     #[test]

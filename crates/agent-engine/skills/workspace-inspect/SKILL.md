@@ -28,6 +28,21 @@ different local workspace.
 4. Keep the delegated task bounded to read-only inspection, search, synthesis, or comparison.
 5. Return a concise summary and any important residual uncertainty to the parent.
 
+## Namespace Requirement And Recovery Contract
+
+alan checks the requested inspection against the assembled child namespace
+before spawn. A normal workspace-reader launch requires the target workspace
+read projection and an LLM Connection. GitHub, network, browser, shell, write,
+or side-effect work requires corresponding mounts or `/bin` bindings and is not
+implied by this read-only package.
+
+When a capability is unavailable, alan either records `parent_path` recovery,
+passes an explicitly narrowed local-only task, asks for the missing input, or
+returns a limitation. Do not silently treat unrelated local files as remote
+evidence. Decisions are visible in the parent's delegated result/tape; launched
+children also retain bounded requirements and a namespace summary in launch
+metadata, with `/proc/<pid>/namespace` as the live source of truth.
+
 ## Workspace-Reader Expectations
 
 The workspace reader should:
