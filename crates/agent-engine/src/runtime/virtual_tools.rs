@@ -1807,14 +1807,10 @@ async fn persist_delegated_child_evidence(
         length: reference.length,
         debug: Some(DelegatedSkillOutputDebugMetadata {
             session_id: result.session_id.clone(),
-            rollout_path: matches!(result.status, ChildRuntimeStatus::Completed)
-                .then(|| {
-                    result
-                        .rollout_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                })
-                .flatten(),
+            rollout_path: result
+                .rollout_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
             field: "output_text".to_string(),
         }),
     })

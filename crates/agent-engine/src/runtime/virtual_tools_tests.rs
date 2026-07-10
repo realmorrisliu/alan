@@ -1563,6 +1563,39 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_structured_outp
 }
 
 #[test]
+fn test_delegated_rollout_record_flattens_invocation_result() {
+    let request = DelegatedSkillInvocationRequest {
+        skill_id: "repo-review".to_string(),
+        target: "reviewer".to_string(),
+        task: "Review the current diff.".to_string(),
+        workspace_root: None,
+        cwd: None,
+        timeout_secs: None,
+    };
+    let mut result = DelegatedSkillResult::completed("Review completed.", None);
+    result.output_ref = Some(DelegatedSkillOutputRef {
+        path: "/agent/1/actions/a0/output".to_string(),
+        offset: Some(0),
+        length: Some(42),
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: "child-session".to_string(),
+            rollout_path: Some("/tmp/child.jsonl".to_string()),
+            field: "output_text".to_string(),
+        }),
+    });
+
+    let (_, _, rollout_record) =
+        build_bounded_delegated_invocation_persistence(&request, result, None);
+    let serialized = serde_json::to_value(rollout_record).unwrap();
+
+    assert_eq!(
+        serialized.pointer("/result/output_ref/debug/rollout_path"),
+        Some(&json!("/tmp/child.jsonl"))
+    );
+    assert!(serialized.get("invocation").is_none());
+}
+
+#[test]
 fn test_build_bounded_delegated_invocation_persistence_truncates_oversized_summary() {
     let request = DelegatedSkillInvocationRequest {
         skill_id: "repo-review".to_string(),
@@ -3688,7 +3721,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
 }
 
 #[tokio::test]
-async fn failed_delegated_evidence_uses_namespace_refs_without_rollout_paths() {
+async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths() {
     for (index, status) in [ChildRuntimeStatus::TimedOut, ChildRuntimeStatus::Terminated]
         .into_iter()
         .enumerate()
@@ -3727,14 +3760,14 @@ async fn failed_delegated_evidence_uses_namespace_refs_without_rollout_paths() {
                 .debug
                 .as_ref()
                 .and_then(|debug| debug.rollout_path.as_deref()),
-            None
+            Some(format!("/tmp/private-child-{index}.jsonl").as_str())
         );
         assert_eq!(
             String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap(),
             output_text
         );
         assert!(
-            !serde_json::to_string(&output_ref)
+            serde_json::to_string(&output_ref)
                 .unwrap()
                 .contains("/tmp/private-child-")
         );
