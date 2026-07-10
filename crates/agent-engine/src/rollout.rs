@@ -252,6 +252,10 @@ fn is_sensitive_key(key: &str) -> bool {
             | "idtoken"
             | "bearertoken"
             | "clientsecret"
+            | "password"
+            | "passwd"
+            | "passphrase"
+            | "token"
             | "secret"
     ) || normalized.contains("apikey")
 }

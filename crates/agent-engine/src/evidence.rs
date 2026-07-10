@@ -382,6 +382,10 @@ fn sensitive_key(key: &str) -> bool {
             | "idtoken"
             | "bearertoken"
             | "clientsecret"
+            | "password"
+            | "passwd"
+            | "passphrase"
+            | "token"
             | "secret"
     ) || normalized.contains("apikey")
 }
@@ -587,5 +591,27 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn redacts_password_passphrase_and_plain_token_credentials() {
+        let json = redact_durable_evidence_text(
+            r#"{"password":"json-password","passphrase":"json-passphrase"}"#,
+        );
+        let text = redact_durable_evidence_text(
+            "password=line-password\ndownload: https://host/file?token=query-token",
+        );
+
+        for secret in [
+            "json-password",
+            "json-passphrase",
+            "line-password",
+            "query-token",
+        ] {
+            assert!(!json.text.contains(secret));
+            assert!(!text.text.contains(secret));
+        }
+        assert!(json.text.contains("[REDACTED reason=secret_key]"));
+        assert_eq!(text.text.matches("[REDACTED reason=secret_key]").count(), 2);
     }
 }
