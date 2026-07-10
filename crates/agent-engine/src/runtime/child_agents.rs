@@ -413,7 +413,19 @@ where
         generation_capabilities,
     )
     .context("Failed to spawn child-agent namespace runtime")?;
-    let (runtime, startup_metadata) = wait_for_child_runtime_startup(runtime, cancel).await?;
+    let (runtime, startup_metadata) = match wait_for_child_runtime_startup(runtime, cancel).await {
+        Ok(ready) => ready,
+        Err(err) => {
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
@@ -440,6 +452,13 @@ where
         Ok(runtime) => runtime,
         Err(err) => {
             let status = child_run_status_for_launch_error(&err);
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
             global_child_run_registry().mark_terminal(
                 &child_run_id,
                 status,
@@ -1353,6 +1372,25 @@ fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
         ChildRunStatus::Cancelled
     } else {
         ChildRunStatus::Failed
+    }
+}
+
+async fn record_child_launch_failure_process(
+    procfs: &alan_kernel::ProcFs,
+    environment: &super::NamespaceRuntimeEnvironment,
+    pid: &str,
+    error: &anyhow::Error,
+) {
+    let Ok(pid) = pid.parse::<u64>() else {
+        return;
+    };
+    let exit_code = match child_run_status_for_launch_error(error) {
+        ChildRunStatus::Cancelled => 130,
+        _ => 1,
+    };
+    procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
+    if let Some(context) = environment.process_context() {
+        context.agent_root.unbind_process(&pid.to_string()).await;
     }
 }
 
@@ -3387,6 +3425,29 @@ Body
             parent_shell.ls("/agent/1/children").await.unwrap(),
             vec![nested.pid.clone()],
             "delegated Agent Process must be inspectable from the parent AgentFS view"
+        );
+        record_child_launch_failure_process(
+            &launch_procfs,
+            &nested.environment,
+            &nested.pid,
+            &anyhow::anyhow!("simulated child runtime startup failure"),
+        )
+        .await;
+        assert_eq!(
+            nested
+                .environment
+                .read_process_exit_code(&nested.pid)
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        assert!(
+            parent_shell
+                .ls("/agent/1/children")
+                .await
+                .unwrap()
+                .is_empty(),
+            "failed child launch must leave no running child entry"
         );
 
         let tool = launch
