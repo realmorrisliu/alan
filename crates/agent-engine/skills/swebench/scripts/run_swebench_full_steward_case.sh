@@ -405,7 +405,7 @@ spawn_count="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_de
 parent_escalation_count="$(jq -s '[.[] | select(.type == "tool_call") | select((.audit.action // "") == "escalate")] | length' "$rollout_copy_file")"
 parent_inline_write_count="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write")] | length' "$rollout_copy_file")"
 parent_inline_write_names="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write") | .name] | unique' "$rollout_copy_file")"
-child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result as $delegated | $delegated.child_run? | select(. != null) | . + {rollout_debug_path: ($delegated.result.output_ref.debug.rollout_path // $delegated.result.structured_output_ref.debug.rollout_path // null)}]' "$rollout_copy_file")"
+child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result as $delegated | $delegated.child_run? | select(. != null) | . + {rollout_debug_path: ($delegated.invocation.result.output_ref.debug.rollout_path // $delegated.invocation.result.structured_output_ref.debug.rollout_path // null)}]' "$rollout_copy_file")"
 completed_child_count="$(printf '%s' "$child_runs_json" | jq '[.[] | select(.terminal_status == "completed")] | length')"
 child_escalation_count=0
 child_rollout_files=()
