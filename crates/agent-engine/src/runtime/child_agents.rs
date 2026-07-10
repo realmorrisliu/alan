@@ -394,6 +394,7 @@ where
     )
     .await
     .context("Failed to spawn child-agent process namespace")?;
+    let child_process_pid = namespace_launch.pid.clone();
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
     let runtime = spawn_with_namespace_environment(
@@ -413,10 +414,7 @@ where
             .workspace_root_dir
             .as_ref()
             .map(|path| path.display().to_string()),
-        startup_metadata
-            .rollout_path
-            .as_ref()
-            .map(|path| path.display().to_string()),
+        Some(format!("/proc/{child_process_pid}")),
         Some(format!("{:?}", spec.target)),
     );
     if let Some(decision) = delegation_capability_decision {

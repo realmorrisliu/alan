@@ -16,13 +16,14 @@ use crate::approval::{
     TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
 };
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
+use crate::evidence::redact_durable_evidence_text;
 use crate::llm::ToolDefinition;
 use crate::skills::{
-    DelegatedSkillInvocationRecord, DelegatedSkillOutputRef, DelegatedSkillResult,
-    DelegatedSkillResultStatus, DelegatedSkillResultTruncation,
+    DelegatedSkillInvocationRecord, DelegatedSkillOutputDebugMetadata, DelegatedSkillOutputRef,
+    DelegatedSkillResult, DelegatedSkillResultStatus, DelegatedSkillResultTruncation,
 };
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::{NamespaceActionRecord, NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
     ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
 };
@@ -1181,7 +1182,7 @@ where
                     spec.launch.timeout_secs,
                 );
                 match spawn_child(state, spec, cancel).await {
-                    Ok(child_result) => {
+                    Ok(mut child_result) => {
                         if cancel.is_cancelled()
                             && matches!(child_result.status, ChildRuntimeStatus::Cancelled)
                             && check_turn_cancelled(state, emit, cancel).await?
@@ -1189,9 +1190,19 @@ where
                             return Ok(VirtualToolOutcome::EndTurn);
                         }
 
+                        let output_reference =
+                            persist_delegated_child_evidence(state, &request, &child_result).await;
+                        if let (Some(child_run_id), Some(reference)) = (
+                            child_result.child_run_id.as_deref(),
+                            output_reference.as_ref(),
+                        ) {
+                            global_child_run_registry()
+                                .set_state_ref(child_run_id, reference.clone());
+                            child_result.child_run = global_child_run_registry().get(child_run_id);
+                        }
                         (
                             persisted_request,
-                            delegated_result_from_child_result(&child_result),
+                            delegated_result_from_child_result(&child_result, output_reference),
                             Some(delegated_child_run_reference(&child_result)),
                         )
                     }
@@ -1215,7 +1226,9 @@ where
                                 "Failed to launch delegated runtime for skill '{}': {err}",
                                 request.skill_id
                             ),
-                            Some(json!({ "error_kind": error_kind })),
+                            Some(json!({
+                                "error_kind": error_kind
+                            })),
                         );
                         result.error_kind = Some(error_kind.to_string());
                         result.capability_decision = capability_decision;
@@ -1521,9 +1534,14 @@ fn delegated_tool_profile(skill_id: &str) -> Option<SpawnToolProfileOverride> {
     }
 }
 
-fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedSkillResult {
+fn delegated_result_from_child_result(
+    result: &ChildRuntimeResult,
+    output_reference: Option<DelegatedSkillOutputRef>,
+) -> DelegatedSkillResult {
     let mut delegated = match result.status {
-        ChildRuntimeStatus::Completed => delegated_result_from_completed_child(result),
+        ChildRuntimeStatus::Completed => {
+            delegated_result_from_completed_child(result, output_reference.as_ref())
+        }
         ChildRuntimeStatus::Failed => child_failure_result(
             format!(
                 "Delegated runtime failed: {}",
@@ -1535,16 +1553,19 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
             ),
             "child_failed",
             result,
+            output_reference.as_ref(),
         ),
         ChildRuntimeStatus::TimedOut => child_failure_result(
             "Delegated runtime timed out.".to_string(),
             "child_timed_out",
             result,
+            output_reference.as_ref(),
         ),
         ChildRuntimeStatus::Cancelled => child_failure_result(
             "Delegated runtime was cancelled.".to_string(),
             "child_cancelled",
             result,
+            output_reference.as_ref(),
         ),
         ChildRuntimeStatus::Terminated => child_failure_result(
             result
@@ -1553,6 +1574,7 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
                 .unwrap_or_else(|| "Delegated runtime was terminated.".to_string()),
             "child_terminated",
             result,
+            output_reference.as_ref(),
         ),
         ChildRuntimeStatus::Paused => {
             let (pause_kind, request_id) = result
@@ -1590,7 +1612,10 @@ fn delegated_result_from_child_result(result: &ChildRuntimeResult) -> DelegatedS
     delegated
 }
 
-fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> DelegatedSkillResult {
+fn delegated_result_from_completed_child(
+    result: &ChildRuntimeResult,
+    output_reference: Option<&DelegatedSkillOutputRef>,
+) -> DelegatedSkillResult {
     let output_text = non_empty_trimmed(&result.output_text);
     let mut delegated = DelegatedSkillResult::completed(
         completed_child_summary(result),
@@ -1609,11 +1634,15 @@ fn delegated_result_from_completed_child(result: &ChildRuntimeResult) -> Delegat
                 MAX_DELEGATED_RESULT_SUMMARY_CHARS,
                 "... [truncated; inspect output_ref]",
             ));
-            delegated.output_ref = Some(output_ref(result, "output_text"));
+            delegated.output_ref = output_reference.cloned();
             delegated.truncation = Some(DelegatedSkillResultTruncation {
                 output_text: true,
                 original_output_chars: Some(output_chars),
-                note: Some("Full child output is available from output_ref.".to_string()),
+                note: Some(if delegated.output_ref.is_some() {
+                    "Full child output is available from the namespace output_ref.".to_string()
+                } else {
+                    "Child output was truncated, and no parent-resolvable evidence path could be emitted; the inline preview is the declared-complete retained record.".to_string()
+                }),
                 ..DelegatedSkillResultTruncation::default()
             });
         }
@@ -1626,6 +1655,7 @@ fn child_failure_result(
     summary: String,
     error_kind: &str,
     result: &ChildRuntimeResult,
+    output_reference: Option<&DelegatedSkillOutputRef>,
 ) -> DelegatedSkillResult {
     let mut delegated = DelegatedSkillResult::failed(
         summary.clone(),
@@ -1638,13 +1668,17 @@ fn child_failure_result(
     delegated.child_run = child_run_value(result);
     delegated.warnings = result.warnings.clone();
     if !result.output_text.trim().is_empty() {
-        delegated.output_ref = Some(output_ref(result, "output_text"));
+        delegated.output_ref = output_reference.cloned();
         delegated.truncation = Some(DelegatedSkillResultTruncation {
             output_text: true,
             original_output_chars: Some(result.output_text.chars().count()),
-            note: Some(
-                "Child produced output before terminal failure; inspect output_ref.".to_string(),
-            ),
+            note: Some(if delegated.output_ref.is_some() {
+                "Child produced output before terminal failure; inspect the namespace output_ref."
+                    .to_string()
+            } else {
+                "Child produced output before terminal failure, but no parent-resolvable evidence path could be emitted; only the marked preview is retained."
+                    .to_string()
+            }),
             ..DelegatedSkillResultTruncation::default()
         });
     }
@@ -1657,7 +1691,9 @@ struct DelegatedChildRunReference {
     child_run_id: Option<String>,
     session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rollout_path: Option<PathBuf>,
+    process_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_ref: Option<DelegatedSkillOutputRef>,
     terminal_status: String,
 }
 
@@ -1673,7 +1709,14 @@ fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildR
     DelegatedChildRunReference {
         child_run_id: result.child_run_id.clone(),
         session_id: result.session_id.clone(),
-        rollout_path: result.rollout_path.clone(),
+        process_path: result
+            .child_run
+            .as_ref()
+            .and_then(|record| record.process_path.clone()),
+        state_ref: result
+            .child_run
+            .as_ref()
+            .and_then(|record| record.state_ref.clone()),
         terminal_status: child_runtime_status_label(result.status.clone()),
     }
 }
@@ -1690,15 +1733,69 @@ fn child_run_value(result: &ChildRuntimeResult) -> Option<serde_json::Value> {
         })
 }
 
-fn output_ref(result: &ChildRuntimeResult, field: &str) -> DelegatedSkillOutputRef {
-    DelegatedSkillOutputRef {
-        session_id: result.session_id.clone(),
-        rollout_path: result
-            .rollout_path
-            .as_ref()
-            .map(|path| path.display().to_string()),
-        field: field.to_string(),
+async fn persist_delegated_child_evidence(
+    state: &RuntimeLoopState,
+    request: &DelegatedSkillInvocationRequest,
+    result: &ChildRuntimeResult,
+) -> Option<DelegatedSkillOutputRef> {
+    if result.output_text.trim().is_empty()
+        || (matches!(result.status, ChildRuntimeStatus::Completed)
+            && result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS)
+    {
+        return None;
     }
+
+    let redacted = redact_durable_evidence_text(&result.output_text);
+    let result_doc = json!({
+        "child_session_id": result.session_id,
+        "child_run_id": result.child_run_id,
+        "terminal_status": child_runtime_status_label(result.status.clone()),
+        "redactions": redacted.markers,
+    });
+    let action_id = state
+        .namespace_environment()
+        .write_action(
+            NamespaceActionRecord::new(
+                format!("delegate:{}", request.skill_id),
+                child_runtime_status_label(result.status.clone()),
+            )
+            .with_output(redacted.text)
+            .with_result(result_doc.to_string())
+            .with_approval("not_required"),
+        )
+        .await
+        .ok()?;
+    let path = format!(
+        "{}/actions/{action_id}/output",
+        state.namespace_environment().agent_path()
+    );
+    let reference = state
+        .namespace_environment()
+        .evidence_reference(path)
+        .await?;
+    state
+        .namespace_environment()
+        .resolve_evidence_reference(&reference, None, child_run_value(result))
+        .await
+        .ok()?;
+
+    Some(DelegatedSkillOutputRef {
+        path: reference.path,
+        offset: reference.offset,
+        length: reference.length,
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: result.session_id.clone(),
+            rollout_path: matches!(result.status, ChildRuntimeStatus::Completed)
+                .then(|| {
+                    result
+                        .rollout_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                })
+                .flatten(),
+            field: "output_text".to_string(),
+        }),
+    })
 }
 
 fn child_runtime_status_label(status: ChildRuntimeStatus) -> String {

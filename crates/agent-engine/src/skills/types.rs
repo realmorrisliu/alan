@@ -1204,6 +1204,18 @@ pub struct DelegatedSkillResult {
 /// Inspectable reference for omitted delegated child output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegatedSkillOutputRef {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<DelegatedSkillOutputDebugMetadata>,
+}
+
+/// Optional host-debug metadata that is never used to resolve delegated output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegatedSkillOutputDebugMetadata {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<String>,

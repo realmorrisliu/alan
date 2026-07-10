@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap};
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
 };
-use alan_knowledge::{ContentHash, KnowledgeError, KnowledgeStore, RootAccess};
+use alan_knowledge::{ContentHash, KnowledgeError, KnowledgeStore, RetentionPolicy, RootAccess};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -59,6 +59,17 @@ const MACHINE_CTL_HELP: &str = "\
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
 interrupt stop the current turn; the agent process stays alive
+";
+const ACTIONS_HELP: &str = "\
+# actions — Tool effect records and durable evidence.
+clone                         open read-write to allocate an action id
+events                        watch action creation and field changes
+<id>/output                   full durable output; append-only for a retained record
+<id>/result                   structured completion metadata
+evidence_projection           tape record: preview + namespace reference + truncation
+reference                     {path, offset?, length?}; resolve by namespace walk
+evidence_retention_expired    structured output record after storing-server retention expiry
+[REDACTED reason=<class>]      durable redaction marker; distinct from truncation
 ";
 
 const TAPE_ROOT_NAME: &str = "machine/tape";
@@ -81,6 +92,8 @@ struct Action {
     name: String,
     status: String,
     output: String,
+    output_root: Option<ContentHash>,
+    output_retention_expired: bool,
     /// The tool's structured result (agent-file-layout-contract).
     result: String,
     /// The action's approval state.
@@ -179,6 +192,7 @@ enum Node {
     Request(String),
     RequestField(String, &'static str),
     ActionsDir,
+    ActionsHelp,
     ActionsClone,
     ActionsEvents,
     Action(String),
@@ -246,6 +260,35 @@ impl AgentFs {
             .knowledge
             .verify_root_hash(&state.tape_root)
             .map_err(map_knowledge_error)
+    }
+
+    /// Apply the storing server's retention policy to one action output.
+    ///
+    /// Readers keep the namespace path and receive an in-band structured expiry
+    /// record instead of silently shifted or missing bytes.
+    pub async fn expire_action_output_for_retention(
+        &self,
+        action_id: &str,
+        cause: &str,
+    ) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().await;
+        let root_name = action_output_root_name(action_id);
+        state
+            .knowledge
+            .unbind_root(&root_name)
+            .map_err(map_knowledge_error)?;
+        state
+            .knowledge
+            .collect_garbage(RetentionPolicy::CollectUnreachable);
+        let action = state
+            .actions
+            .get_mut(action_id)
+            .ok_or(ErrorCode::NotFound)?;
+        action.output_root = None;
+        action.output_retention_expired = true;
+        action.output = retention_expired_record(&format!("/actions/{action_id}/output"), cause);
+        state.bump(&Node::ActionField(action_id.to_string(), "output"));
+        Ok(())
     }
 
     pub(crate) async fn append_child_event(&self, child_pid: &str) {
@@ -359,6 +402,7 @@ impl State {
                 _ => Err(ErrorCode::NotFound),
             },
             Node::ActionsDir => match name {
+                "help" => Ok(Node::ActionsHelp),
                 "clone" => Ok(Node::ActionsClone),
                 "events" => Ok(Node::ActionsEvents),
                 id if self.actions.contains_key(id) => Ok(Node::Action(id.to_string())),
@@ -399,7 +443,8 @@ impl State {
             // than from external docs (self-describing namespace).
             Node::MachineCtl => MACHINE_CTL_HELP.as_bytes().to_vec(),
             Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
-            Node::ActionsDir => listing(&["clone", "events"], self.actions.keys()),
+            Node::ActionsDir => listing(&["clone", "events", "help"], self.actions.keys()),
+            Node::ActionsHelp => ACTIONS_HELP.as_bytes().to_vec(),
             Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
             Node::Action(_) => b"name\nstatus\noutput\nresult\napproval\nprocess".to_vec(),
             Node::RequestField(id, field) => {
@@ -417,15 +462,24 @@ impl State {
             Node::ActionField(id, field) => {
                 let a = self.actions.get(id).ok_or(ErrorCode::NotFound)?;
                 match *field {
-                    "name" => &a.name,
-                    "status" => &a.status,
-                    "result" => &a.result,
-                    "approval" => &a.approval,
-                    "process" => &a.process,
-                    _ => &a.output,
+                    "name" => a.name.clone().into_bytes(),
+                    "status" => a.status.clone().into_bytes(),
+                    "result" => a.result.clone().into_bytes(),
+                    "approval" => a.approval.clone().into_bytes(),
+                    "process" => a.process.clone().into_bytes(),
+                    "output" if a.output_retention_expired => a.output.clone().into_bytes(),
+                    "output" if a.output_root.is_some() => self
+                        .knowledge
+                        .root(&action_output_root_name(id))
+                        .map_err(map_knowledge_error)
+                        .and_then(|root| {
+                            self.knowledge
+                                .read_bound_root(&root)
+                                .map_err(map_knowledge_error)
+                        })?,
+                    "output" => a.output.clone().into_bytes(),
+                    _ => return Err(ErrorCode::NotFound),
                 }
-                .clone()
-                .into_bytes()
             }
             // Streams are served via stream_for; clone files via the fid's clone_id.
             Node::Input
@@ -479,6 +533,25 @@ impl State {
         self.knowledge
             .read_bound_root(&root)
             .map_err(map_knowledge_error)
+    }
+
+    fn store_action_output(
+        &mut self,
+        action_id: &str,
+        bytes: &[u8],
+    ) -> Result<ContentHash, ErrorCode> {
+        let root = self
+            .knowledge
+            .checkpoint_from_bytes([bytes])
+            .map_err(map_knowledge_error)?;
+        self.knowledge
+            .bind_root(
+                action_output_root_name(action_id),
+                root.clone(),
+                RootAccess::ReadWrite,
+            )
+            .map_err(map_knowledge_error)?;
+        Ok(root)
     }
 }
 
@@ -839,11 +912,20 @@ impl FileServer for AgentFs {
             && f.wrote
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+            let output_root = if *field == "output" {
+                Some(state.store_action_output(id, value.as_bytes())?)
+            } else {
+                None
+            };
             if let Some(a) = state.actions.get_mut(id) {
                 match *field {
                     "name" => a.name = value,
                     "status" => a.status = value,
-                    "output" => a.output = value,
+                    "output" => {
+                        a.output = value;
+                        a.output_root = output_root;
+                        a.output_retention_expired = false;
+                    }
                     "result" => a.result = value,
                     "approval" => a.approval = value,
                     "process" => a.process = value,
@@ -908,6 +990,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::CheckpointsDir => (FileKind::Dir, "machine/checkpoints".into()),
         Node::RequestsDir => (FileKind::Dir, "requests".into()),
         Node::ActionsDir => (FileKind::Dir, "actions".into()),
+        Node::ActionsHelp => (FileKind::File, "actions/help".into()),
         Node::ContextDir => (FileKind::Dir, "context".into()),
         Node::ChildrenDir => (FileKind::Dir, "children".into()),
         Node::Request(id) => (FileKind::Dir, format!("requests/{id}")),
@@ -983,6 +1066,35 @@ fn initial_tape_knowledge() -> (KnowledgeStore, ContentHash) {
         .bind_root(TAPE_ROOT_NAME, root.clone(), RootAccess::ReadWrite)
         .expect("empty tape checkpoint can be bound");
     (knowledge, root)
+}
+
+fn action_output_root_name(action_id: &str) -> String {
+    format!("actions/{action_id}/output")
+}
+
+fn retention_expired_record(reference: &str, cause: &str) -> String {
+    format!(
+        "{{\"type\":\"evidence_retention_expired\",\"reference\":{},\"cause\":{}}}",
+        json_string(reference),
+        json_string(cause)
+    )
+}
+
+fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 fn map_knowledge_error(error: KnowledgeError) -> ErrorCode {

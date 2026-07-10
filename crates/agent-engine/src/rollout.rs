@@ -273,7 +273,10 @@ fn sanitize_payload_for_rollout(
                 let value = map.get(key).expect("key from map iteration must exist");
                 if is_sensitive_key(key) {
                     summary.redacted_fields += 1;
-                    sanitized.insert(key.clone(), Value::String("[REDACTED]".to_string()));
+                    sanitized.insert(
+                        key.clone(),
+                        Value::String("[REDACTED reason=secret_key]".to_string()),
+                    );
                 } else {
                     sanitized.insert(key.clone(), sanitize_payload_for_rollout(value, summary));
                 }
@@ -1857,11 +1860,11 @@ this is not valid json
 
         assert_eq!(
             durable.payload["headers"]["set-cookie"],
-            serde_json::json!("[REDACTED]")
+            serde_json::json!("[REDACTED reason=secret_key]")
         );
         assert_eq!(
             durable.payload["headers"]["authorization"],
-            serde_json::json!("[REDACTED]")
+            serde_json::json!("[REDACTED reason=secret_key]")
         );
         assert_eq!(
             durable.payload["headers"]["content-type"],
@@ -1960,11 +1963,11 @@ this is not valid json
         let record = tool_call.expect("tool call should be persisted");
         assert_eq!(
             record.arguments["headers"]["authorization"],
-            serde_json::json!("[REDACTED]")
+            serde_json::json!("[REDACTED reason=secret_key]")
         );
         assert_eq!(
             record.result["headers"]["set-cookie"],
-            serde_json::json!("[REDACTED]")
+            serde_json::json!("[REDACTED reason=secret_key]")
         );
         assert!(
             record.result_digest.is_some(),

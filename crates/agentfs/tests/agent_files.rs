@@ -317,6 +317,72 @@ async fn an_action_exposes_all_documented_fields() {
 }
 
 #[tokio::test]
+async fn actions_help_describes_projection_retention_and_redaction_in_band() {
+    let fs = AgentFs::new();
+    let help = read_text(&fs, &["actions", "help"], Fid(1)).await;
+
+    assert!(help.contains("evidence_projection"));
+    assert!(help.contains("namespace reference"));
+    assert!(help.contains("evidence_retention_expired"));
+    assert!(help.contains("[REDACTED reason=<class>]"));
+}
+
+#[tokio::test]
+async fn action_output_remains_readable_from_content_store_after_process_exit() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(2),
+        b"durable tool evidence",
+    )
+    .await
+    .unwrap();
+    write_doc(&fs, &["actions", &id, "process"], Fid(3), b"/proc/42")
+        .await
+        .unwrap();
+    write_doc(&fs, &["actions", &id, "status"], Fid(4), b"completed")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "output"], Fid(5)).await,
+        "durable tool evidence"
+    );
+}
+
+#[tokio::test]
+async fn expired_action_output_returns_structured_retention_record() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(2),
+        b"retained until policy expiry",
+    )
+    .await
+    .unwrap();
+
+    fs.expire_action_output_for_retention(&id, "age_limit")
+        .await
+        .unwrap();
+
+    let expired = read_text(&fs, &["actions", &id, "output"], Fid(3)).await;
+    assert!(expired.contains("\"type\":\"evidence_retention_expired\""));
+    assert!(expired.contains("\"cause\":\"age_limit\""));
+}
+
+#[tokio::test]
 async fn machine_tape_holds_an_exclusive_write_lease() {
     let fs = AgentFs::new();
     // One writer holds machine/tape open for write (the generating engine).
