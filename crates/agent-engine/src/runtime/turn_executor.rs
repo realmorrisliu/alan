@@ -950,6 +950,8 @@ where
         state
             .turn_state
             .begin_turn(state.session.tape.messages().len());
+    } else if user_input.is_some() {
+        state.turn_state.note_resumed_user_input();
     }
     if let Some(user_input) = user_input {
         state.session.add_user_message_parts(user_input);

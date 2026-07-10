@@ -120,24 +120,155 @@ fn render_memory_surfaces(
 
 fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
     let source_ref = memory_source_ref(session);
-    turn_state
-        .plan_snapshot()
-        .and_then(|snapshot| snapshot.explanation.as_deref())
+    let user_messages = session
+        .tape
+        .messages()
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| message.is_user() && !message.is_internal_control())
+        .filter_map(|(index, message)| {
+            let text = message.text_content();
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| (index, trimmed.to_string()))
+        })
+        .collect::<Vec<_>>();
+    let latest_user = user_messages.last();
+    let latest_is_substantive = latest_user
+        .map(|(_, text)| is_substantive_goal_message(text))
+        .unwrap_or(false);
+    let latest_is_current_turn = latest_user
+        .zip(turn_state.active_turn_message_start())
+        .is_some_and(|((index, _), start)| *index >= start);
+
+    if turn_state.plan_snapshot_is_from_active_turn()
+        && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+    {
+        return plan_goal;
+    }
+
+    if latest_is_substantive && latest_is_current_turn {
+        return truncate_memory_text(
+            latest_user.unwrap().1.as_str(),
+            MAX_INLINE_TEXT_CHARS,
+            &source_ref,
+        );
+    }
+
+    if let Some((index, substantive)) = user_messages
+        .iter()
+        .rev()
+        .find(|(_, text)| is_substantive_goal_message(text))
+    {
+        if turn_state.plan_snapshot_postdates_message(*index)
+            && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+        {
+            return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
+        }
+        let goal = truncate_memory_text(substantive, MAX_INLINE_TEXT_CHARS, &source_ref);
+        return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
+    }
+
+    if let Some(plan_goal) = derive_active_plan_goal(turn_state) {
+        return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
+    }
+
+    if let Some(summary) = session
+        .tape
+        .summary()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+    {
+        let goal = truncate_memory_text(summary, MAX_INLINE_TEXT_CHARS, &source_ref);
+        return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
+    }
+
+    latest_user
+        .map(|(_, text)| truncate_memory_text(text, MAX_INLINE_TEXT_CHARS, &source_ref))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "No current goal recorded.".to_string())
+}
+
+fn derive_active_plan_goal(turn_state: &TurnState) -> Option<String> {
+    let snapshot = turn_state.plan_snapshot()?;
+    snapshot
+        .explanation
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .or_else(|| {
-            session
-                .tape
-                .messages()
+            snapshot
+                .items
                 .iter()
-                .rev()
-                .find(|message| message.is_user())
-                .map(Message::text_content)
-                .map(|text| truncate_memory_text(text.trim(), MAX_INLINE_TEXT_CHARS, &source_ref))
+                .find(|item| matches!(item.status, alan_agent_protocol::PlanItemStatus::InProgress))
+                .or_else(|| {
+                    snapshot.items.iter().find(|item| {
+                        matches!(item.status, alan_agent_protocol::PlanItemStatus::Pending)
+                    })
+                })
+                .map(|item| item.content.trim())
                 .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
         })
-        .unwrap_or_else(|| "No current goal recorded.".to_string())
+}
+
+fn mark_carried_goal_if_needed(
+    goal: String,
+    latest_user: Option<&(usize, String)>,
+    latest_is_substantive: bool,
+) -> String {
+    if latest_user.is_some() && !latest_is_substantive {
+        format!("[carried forward] {goal}")
+    } else {
+        goal
+    }
+}
+
+fn is_substantive_goal_message(text: &str) -> bool {
+    !is_acknowledgement_class_fragment(text)
+}
+
+fn is_acknowledgement_class_fragment(text: &str) -> bool {
+    let without_emoji_modifiers = text
+        .chars()
+        .filter(|character| !matches!(*character, '\u{fe0f}' | '\u{1f3fb}'..='\u{1f3ff}'))
+        .collect::<String>();
+    let normalized = without_emoji_modifiers
+        .trim()
+        .trim_matches(|character: char| character.is_ascii_punctuation())
+        .trim()
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        return true;
+    }
+    if normalized.chars().count() == 1
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return true;
+    }
+    matches!(
+        normalized.as_str(),
+        "ok" | "okay"
+            | "yes"
+            | "yep"
+            | "yeah"
+            | "sure"
+            | "thanks"
+            | "thank you"
+            | "got it"
+            | "sounds good"
+            | "👍"
+            | "👌"
+    ) || normalized.split_whitespace().count() > 1
+        && normalized.split_whitespace().all(|token| {
+            let token = token.trim_matches(|character: char| character.is_ascii_punctuation());
+            matches!(
+                token,
+                "ok" | "okay" | "yes" | "yep" | "yeah" | "sure" | "thanks" | "👍" | "👌"
+            )
+        })
 }
 
 fn derive_latest_assistant_state(session: &Session, turn_state: &TurnState) -> String {
@@ -535,6 +666,210 @@ mod tests {
     }
 
     #[test]
+    fn one_letter_follow_up_carries_prior_substantive_goal() {
+        let mut session = Session::new();
+        session.add_user_message("Implement namespace-backed child lifecycle reconciliation.");
+        session.add_assistant_message("Ready for confirmation.", None);
+        session.add_user_message("y");
+
+        let goal = derive_current_goal(&session, &TurnState::default());
+
+        assert_eq!(
+            goal,
+            "[carried forward] Implement namespace-backed child lifecycle reconciliation."
+        );
+    }
+
+    #[test]
+    fn request_response_control_message_does_not_replace_goal() {
+        let mut session = Session::new();
+        session.add_user_message("Remove the obsolete daemon child-run endpoints.");
+        session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
+            serde_json::json!({
+                "checkpoint_id": "tool_escalation_call-1",
+                "checkpoint_type": "tool_escalation",
+                "choice": "approve",
+                "__alan_internal_control": {
+                    "kind": "tool_escalation_confirmation",
+                    "version": 1,
+                    "source": "runtime/submission_handlers"
+                }
+            }),
+        )]);
+
+        assert_eq!(
+            derive_current_goal(&session, &TurnState::default()),
+            "Remove the obsolete daemon child-run endpoints."
+        );
+    }
+
+    #[test]
+    fn new_substantive_turn_request_replaces_stale_plan_goal() {
+        let mut session = Session::new();
+        session.add_user_message("Finish the old memory task.");
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot(Some("Finish the old memory task.".to_string()), Vec::new());
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Rewrite the provider connection documentation.");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Rewrite the provider connection documentation."
+        );
+    }
+
+    #[test]
+    fn in_turn_plan_update_refines_the_initial_user_goal() {
+        let mut session = Session::new();
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Implement the memory contract changes.");
+        turn_state.set_plan_snapshot(
+            Some("Validate salience and compaction fallback behavior.".to_string()),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Validate salience and compaction fallback behavior."
+        );
+    }
+
+    #[test]
+    fn substantive_resume_input_overrides_earlier_active_plan() {
+        let mut session = Session::new();
+        let mut turn_state = TurnState::default();
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("Implement the old memory contract.");
+        turn_state.set_plan_snapshot(
+            Some("Finish the old memory contract.".to_string()),
+            Vec::new(),
+        );
+        turn_state.note_resumed_user_input();
+        session.add_user_message("Switch to the provider connection contract.");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "Switch to the provider connection contract."
+        );
+    }
+
+    #[test]
+    fn terse_imperative_passes_salience_filter() {
+        let mut session = Session::new();
+        session.add_user_message("Prepare the release.");
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot(Some("Prepare the release.".to_string()), Vec::new());
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("deploy it");
+
+        assert_eq!(derive_current_goal(&session, &turn_state), "deploy it");
+    }
+
+    #[test]
+    fn active_plan_goal_wins_when_latest_message_is_acknowledgement() {
+        let mut session = Session::new();
+        session.add_user_message("Complete the broader migration.");
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot_at_message_count(
+            Some("Validate the namespace-native migration.".to_string()),
+            Vec::new(),
+            session.tape.messages().len(),
+        );
+        turn_state.begin_turn(session.tape.messages().len());
+        session.add_user_message("ok");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "[carried forward] Validate the namespace-native migration."
+        );
+    }
+
+    #[test]
+    fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
+        let mut session = Session::new();
+        session.add_user_message("Finish task A.");
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot_at_message_count(
+            Some("Complete task A plan.".to_string()),
+            Vec::new(),
+            session.tape.messages().len(),
+        );
+        session.add_assistant_message("Task A paused.", None);
+        session.add_user_message("Switch to substantive task B.");
+        session.add_assistant_message("Task B underway.", None);
+        session.add_user_message("ok");
+
+        assert_eq!(
+            derive_current_goal(&session, &turn_state),
+            "[carried forward] Switch to substantive task B."
+        );
+    }
+
+    #[test]
+    fn compaction_summary_wins_before_acknowledgement_fallback() {
+        let mut session = Session::new();
+        session.tape.set_summary(
+            "Complete the namespace-native lifecycle migration and verify parent visibility."
+                .to_string(),
+        );
+        session.add_user_message("ok");
+
+        assert_eq!(
+            derive_current_goal(&session, &TurnState::default()),
+            "[carried forward] Complete the namespace-native lifecycle migration and verify parent visibility."
+        );
+    }
+
+    #[test]
+    fn acknowledgement_token_sequences_and_emoji_modifiers_do_not_replace_goal() {
+        for acknowledgement in ["ok thanks", "ok 👍", "👍🏻", "okay, thanks!"] {
+            let mut session = Session::new();
+            session.add_user_message("Archive the completed Alan OS contract changes.");
+            session.add_user_message(acknowledgement);
+
+            assert_eq!(
+                derive_current_goal(&session, &TurnState::default()),
+                "[carried forward] Archive the completed Alan OS contract changes.",
+                "acknowledgement {acknowledgement:?} must not become the goal"
+            );
+        }
+    }
+
+    #[test]
+    fn active_plan_goal_prefers_in_progress_before_pending_order() {
+        let mut turn_state = TurnState::default();
+        turn_state.set_plan_snapshot(
+            None,
+            vec![
+                alan_agent_protocol::PlanItem {
+                    id: "future".to_string(),
+                    content: "Archive the next contract.".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::Pending,
+                },
+                alan_agent_protocol::PlanItem {
+                    id: "current".to_string(),
+                    content: "Verify the current contract.".to_string(),
+                    status: alan_agent_protocol::PlanItemStatus::InProgress,
+                },
+            ],
+        );
+
+        assert_eq!(
+            derive_active_plan_goal(&turn_state).as_deref(),
+            Some("Verify the current contract.")
+        );
+    }
+
+    #[test]
+    fn acknowledgement_is_used_verbatim_when_no_better_context_exists() {
+        let mut session = Session::new();
+        session.add_user_message("ok");
+
+        assert_eq!(derive_current_goal(&session, &TurnState::default()), "ok");
+    }
+
+    #[test]
     fn truncate_memory_text_keeps_markdown_lines_and_marks_source() {
         let text = "### Top-level directories\n- crates/agent-engine has the runtime code\n- crates/tui has the terminal UI\n- docs/spec has contracts\n";
 
@@ -637,5 +972,40 @@ mod tests {
             .await
             .unwrap();
         assert!(handoff.contains("Keep the latest handoff fresh."));
+    }
+
+    #[tokio::test]
+    async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let memory_dir = temp.path().join(".alan/memory");
+        let mut session = Session::new();
+        session.id = "sess-no-model".to_string();
+        session.add_user_message("Refresh local memory surfaces mechanically.");
+        let message_count = session.tape.messages().len();
+        let state = RuntimeLoopState {
+            workspace_id: "test-workspace".to_string(),
+            workspace_root_dir: None,
+            session,
+            current_submission_id: None,
+            environment: namespace_environment_for_test(),
+            tool_catalog: crate::tools::ToolRegistry::new(),
+            core_config: {
+                let mut config = crate::Config::default();
+                config.memory.workspace_dir = Some(memory_dir.clone());
+                config
+            },
+            runtime_config: super::super::RuntimeConfig::default(),
+            workspace_persona_dirs: Vec::new(),
+            prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+            turn_state: TurnState::default(),
+        };
+
+        refresh_turn_memory_surfaces(&state).await.unwrap();
+
+        assert_eq!(state.session.tape.messages().len(), message_count);
+        let working = tokio::fs::read_to_string(working_memory_path(&memory_dir, "sess-no-model"))
+            .await
+            .unwrap();
+        assert!(working.contains("Refresh local memory surfaces mechanically."));
     }
 }
