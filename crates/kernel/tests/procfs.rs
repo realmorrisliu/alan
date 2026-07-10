@@ -54,6 +54,18 @@ async fn read_at(fs: &ProcFs, names: &[&str], fid: Fid) -> Result<Vec<u8>, Error
 
 struct EchoRunner;
 
+#[derive(Default)]
+struct RecordingProcessEventSink {
+    events: Mutex<Vec<(String, ProcessEvent)>>,
+}
+
+#[async_trait::async_trait]
+impl ProcessEventSink for RecordingProcessEventSink {
+    async fn process_event(&self, pid: &str, event: ProcessEvent) {
+        self.events.lock().unwrap().push((pid.to_string(), event));
+    }
+}
+
 #[async_trait::async_trait]
 impl ProcessRunner for EchoRunner {
     async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
@@ -528,6 +540,36 @@ async fn process_event_replay_precedes_live_events_for_late_subscribers() {
             },
             ProcessEvent::Output { count: 12 },
             ProcessEvent::Input { count: 10 },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn host_recorded_exit_publishes_terminal_status_event() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(20)).await;
+    fs.record_exit(Pid(pid.parse().unwrap()), 0).await;
+
+    let sink = Arc::new(RecordingProcessEventSink::default());
+    fs.subscribe_process_events(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        sink.events.lock().unwrap().as_slice(),
+        &[
+            (
+                pid.clone(),
+                ProcessEvent::Status {
+                    status: "running".to_string(),
+                },
+            ),
+            (
+                pid,
+                ProcessEvent::Status {
+                    status: "exited".to_string(),
+                },
+            ),
         ]
     );
 }

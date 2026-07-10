@@ -923,6 +923,11 @@ impl FileServer for AgentFs {
         {
             let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
             let output_root = if *field == "output" {
+                if state.actions.get(id).is_some_and(|action| {
+                    action.output_root.is_some() || action.output_retention_expired
+                }) {
+                    return Err(ErrorCode::NoAccess);
+                }
                 Some(state.store_action_output(id, value.as_bytes())?)
             } else {
                 None
