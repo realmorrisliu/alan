@@ -1624,6 +1624,7 @@ where
         return Ok(false);
     }
 
+    state.turn_state.note_resumed_user_input();
     for parts in steering_inputs {
         state.session.add_user_message_parts(parts);
     }
@@ -2800,6 +2801,45 @@ mod tests {
             Event::Error { message, recoverable }
                 if *recoverable && message.contains("Too many queued in-turn user inputs")
         )));
+    }
+
+    #[tokio::test]
+    async fn queued_steering_input_invalidates_earlier_active_plan() {
+        let mut state = create_test_state();
+        state
+            .turn_state
+            .begin_turn(state.session.tape.messages().len());
+        state.session.add_user_message("Initial task");
+        state.turn_state.set_plan_snapshot_at_message_count(
+            Some("Initial plan".to_string()),
+            Vec::new(),
+            state.session.tape.messages().len(),
+        );
+        assert!(state.turn_state.plan_snapshot_is_from_active_turn());
+
+        let broker = TurnInputBroker::default();
+        assert!(
+            broker
+                .push(alan_agent_protocol::Submission::new(Op::Input {
+                    parts: vec![alan_agent_protocol::ContentPart::text(
+                        "Steer to the new task"
+                    )],
+                    mode: InputMode::Steer,
+                }))
+                .await
+        );
+        let mut emit = |_event: Event| async {};
+
+        let handled = handle_queued_steering_inputs(&mut state, &[], 0, Some(&broker), &mut emit)
+            .await
+            .unwrap();
+
+        assert!(handled);
+        assert!(!state.turn_state.plan_snapshot_is_from_active_turn());
+        assert_eq!(
+            state.session.tape.messages().last().unwrap().text_content(),
+            "Steer to the new task"
+        );
     }
 
     #[tokio::test]
