@@ -88,6 +88,11 @@ pub(crate) fn payload_needs_projection(payload: &Value) -> bool {
         .unwrap_or(true)
 }
 
+pub(crate) fn redact_evidence_payload(payload: &Value) -> Value {
+    let mut markers = Vec::new();
+    redact_json_value(payload, &mut markers)
+}
+
 pub(crate) fn project_evidence_payload(
     payload: &Value,
     reference: Option<NamespaceEvidenceReference>,

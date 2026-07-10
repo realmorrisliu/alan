@@ -16,7 +16,8 @@ use crate::approval::{
     append_skill_permission_hints, is_runtime_confirmation_checkpoint_type, replays_tool_calls,
 };
 use crate::evidence::{
-    payload_needs_projection, project_evidence_payload, redaction_markers_in_text,
+    payload_needs_projection, project_evidence_payload, redact_evidence_payload,
+    redaction_markers_in_text,
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
@@ -446,7 +447,7 @@ fn namespace_tool_payload(
                 .or_insert(Value::Bool(tool.exit_code == 0));
             object.entry("exit_code").or_insert(json!(tool.exit_code));
             object.entry("process").or_insert(json!(process));
-            object.entry("action_id").or_insert(json!(tool.action_id));
+            object.insert("action_id".to_string(), json!(tool.action_id));
         }
         other => {
             payload = json!({
@@ -463,7 +464,7 @@ fn namespace_tool_payload(
 
 async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Value {
     if !payload_needs_projection(payload) {
-        return payload.clone();
+        return redact_evidence_payload(payload);
     }
 
     let Some(action_id) = payload.get("action_id").and_then(Value::as_str) else {
@@ -2423,6 +2424,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn short_tool_output_redacts_embedded_secrets_before_tape() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-redacted-short",
+            "read_file",
+            json!({
+                "output": "api_key=short-secret\nAuthorization: Bearer short-token"
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-redacted-short")
+            .expect("inline tool payload should be on tape");
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("short-secret"));
+        assert!(!serialized.contains("short-token"));
+        assert!(serialized.contains("[REDACTED reason=secret_key]"));
+    }
+
+    #[tokio::test]
+    async fn long_tool_output_uses_runtime_action_id_for_evidence_reference() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-forged-action-id",
+            "read_file",
+            json!({
+                "action_id": "forged",
+                "content": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-forged-action-id")
+            .expect("projected tool payload should be on tape");
+        assert_eq!(payload["metadata"]["action_id"], "a0");
+        assert_eq!(payload["reference"]["path"], "/agent/1/actions/a0/output");
+    }
+
+    #[tokio::test]
     async fn long_tool_output_without_action_path_uses_marked_inline_fallback() {
         let state = create_test_state();
         let payload = json!({
@@ -3923,8 +3971,8 @@ default_action: allow
         );
         assert_eq!(
             replayed_payload["payload"]["headers"]["authorization"],
-            json!("Bearer secret-token"),
-            "dedupe replay should preserve the original live payload instead of the durable one"
+            json!("[REDACTED reason=secret_key]"),
+            "dedupe replay should preserve the redacted tape payload"
         );
         let effect = state
             .session
@@ -3943,7 +3991,7 @@ default_action: allow
     }
 
     #[tokio::test]
-    async fn test_effect_record_uses_durable_payload_while_tape_keeps_live_payload() {
+    async fn test_effect_record_and_tape_payload_are_both_redacted() {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut session = Session::new();
         session.add_user_message("call api with auth");
@@ -3982,13 +4030,13 @@ default_action: allow
             Some(&json!("[REDACTED reason=secret_key]"))
         );
 
-        let live_payload = state
+        let tape_payload = state
             .session
             .tool_payload_by_call_id("call-net-secret")
-            .expect("live tool payload should exist on tape");
+            .expect("tool payload should exist on tape");
         assert_eq!(
-            live_payload["payload"]["headers"]["authorization"],
-            json!("Bearer secret-token")
+            tape_payload["payload"]["headers"]["authorization"],
+            json!("[REDACTED reason=secret_key]")
         );
     }
 

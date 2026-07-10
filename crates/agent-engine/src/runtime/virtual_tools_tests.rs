@@ -1243,6 +1243,29 @@ fn test_delegated_result_from_completed_child_inlines_short_output() {
 }
 
 #[test]
+fn test_delegated_result_from_completed_child_redacts_short_output() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: Some("child-run-1".to_string()),
+        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        output_text: "api_key=child-secret\nAuthorization: Bearer child-token".to_string(),
+        turn_summary: Some("Turn summary".to_string()),
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    let delegated = delegated_result_from_completed_child(&child_result, None);
+    let output = delegated.output_text.expect("redacted inline output");
+    assert!(!output.contains("child-secret"));
+    assert!(!output.contains("child-token"));
+    assert!(output.contains("[REDACTED reason=secret_key]"));
+}
+
+#[test]
 fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,

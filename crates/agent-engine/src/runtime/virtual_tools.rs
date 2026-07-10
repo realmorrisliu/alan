@@ -1616,7 +1616,8 @@ fn delegated_result_from_completed_child(
     result: &ChildRuntimeResult,
     output_reference: Option<&DelegatedSkillOutputRef>,
 ) -> DelegatedSkillResult {
-    let output_text = non_empty_trimmed(&result.output_text);
+    let output_text =
+        non_empty_trimmed(&result.output_text).map(|text| redact_durable_evidence_text(&text).text);
     let mut delegated = DelegatedSkillResult::completed(
         completed_child_summary(result),
         result.structured_output.clone(),
