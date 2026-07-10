@@ -1602,6 +1602,21 @@ fn delegated_result_from_child_result(
             delegated.error_message = result.error_message.clone();
             delegated.child_run = child_run_value(result);
             delegated.warnings = result.warnings.clone();
+            if !result.output_text.trim().is_empty() {
+                delegated.output_ref = output_reference;
+                delegated.truncation = Some(DelegatedSkillResultTruncation {
+                    output_text: true,
+                    original_output_chars: Some(result.output_text.chars().count()),
+                    note: Some(if delegated.output_ref.is_some() {
+                        "Child produced output before pausing; inspect the namespace output_ref."
+                            .to_string()
+                    } else {
+                        "Child produced output before pausing, but no parent-resolvable evidence path could be emitted; only the marked preview is retained."
+                            .to_string()
+                    }),
+                    ..DelegatedSkillResultTruncation::default()
+                });
+            }
             delegated
         }
     };

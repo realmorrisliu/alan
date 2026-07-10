@@ -258,6 +258,9 @@ fn is_sensitive_key(key: &str) -> bool {
             | "token"
             | "secret"
     ) || normalized.contains("apikey")
+        || ["token", "secret", "password", "passwd", "passphrase"]
+            .iter()
+            .any(|suffix| normalized.ends_with(suffix))
 }
 
 fn truncate_string_for_rollout(text: &str, summary: &mut ToolPayloadRedactionSummary) -> String {
@@ -1866,6 +1869,8 @@ this is not valid json
     #[test]
     fn test_build_durable_tool_payload_redacts_sensitive_headers() {
         let durable = build_durable_tool_payload(&serde_json::json!({
+            "github_token": "github-secret",
+            "session_token": "session-secret",
             "status": 200,
             "headers": {
                 "set-cookie": "session=secret",
@@ -1874,6 +1879,14 @@ this is not valid json
             }
         }));
 
+        assert_eq!(
+            durable.payload["github_token"],
+            serde_json::json!("[REDACTED reason=secret_key]")
+        );
+        assert_eq!(
+            durable.payload["session_token"],
+            serde_json::json!("[REDACTED reason=secret_key]")
+        );
         assert_eq!(
             durable.payload["headers"]["set-cookie"],
             serde_json::json!("[REDACTED reason=secret_key]")
@@ -1889,7 +1902,7 @@ this is not valid json
         assert_eq!(
             durable.redaction,
             Some(ToolPayloadRedactionSummary {
-                redacted_fields: 2,
+                redacted_fields: 4,
                 truncated_values: 0,
             })
         );

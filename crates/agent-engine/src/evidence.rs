@@ -388,6 +388,9 @@ fn sensitive_key(key: &str) -> bool {
             | "token"
             | "secret"
     ) || normalized.contains("apikey")
+        || ["token", "secret", "password", "passwd", "passphrase"]
+            .iter()
+            .any(|suffix| normalized.ends_with(suffix))
 }
 
 fn marker(reason: &str) -> String {
@@ -596,7 +599,7 @@ mod tests {
     #[test]
     fn redacts_password_passphrase_and_plain_token_credentials() {
         let json = redact_durable_evidence_text(
-            r#"{"password":"json-password","passphrase":"json-passphrase"}"#,
+            r#"{"password":"json-password","passphrase":"json-passphrase","github_token":"github-secret","session_token":"session-secret"}"#,
         );
         let text = redact_durable_evidence_text(
             "password=line-password\ndownload: https://host/file?token=query-token",
@@ -605,6 +608,8 @@ mod tests {
         for secret in [
             "json-password",
             "json-passphrase",
+            "github-secret",
+            "session-secret",
             "line-password",
             "query-token",
         ] {

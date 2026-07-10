@@ -1456,6 +1456,44 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
 }
 
 #[test]
+fn test_delegated_result_from_paused_child_preserves_output_reference() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Paused,
+        session_id: "paused-session".to_string(),
+        child_run_id: Some("paused-run".to_string()),
+        rollout_path: None,
+        output_text: "partial output before pause".to_string(),
+        turn_summary: None,
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: Some(super::super::child_agents::ChildRuntimePause {
+            request_id: "confirmation-1".to_string(),
+            kind: alan_agent_protocol::YieldKind::Confirmation,
+        }),
+        child_run: None,
+    };
+    let output_ref = DelegatedSkillOutputRef {
+        path: "/agent/1/actions/paused/output".to_string(),
+        offset: Some(0),
+        length: Some(child_result.output_text.len() as u64),
+        debug: None,
+    };
+
+    let delegated = delegated_result_from_child_result(&child_result, Some(output_ref.clone()));
+
+    assert_eq!(delegated.error_kind.as_deref(), Some("child_paused"));
+    assert_eq!(delegated.output_ref, Some(output_ref));
+    assert_eq!(
+        delegated
+            .truncation
+            .as_ref()
+            .map(|truncation| truncation.output_text),
+        Some(true)
+    );
+}
+
+#[test]
 fn test_delegated_result_from_terminated_child_uses_namespace_state_reference() {
     let state_ref = DelegatedSkillOutputRef {
         path: "/agent/1/actions/a2/output".to_string(),
