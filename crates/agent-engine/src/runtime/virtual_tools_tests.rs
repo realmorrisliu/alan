@@ -1263,6 +1263,36 @@ fn test_delegated_result_from_completed_child_redacts_short_output() {
     assert!(!output.contains("child-secret"));
     assert!(!output.contains("child-token"));
     assert!(output.contains("[REDACTED reason=secret_key]"));
+    assert!(!delegated.summary.contains("child-secret"));
+    assert!(!delegated.summary.contains("child-token"));
+    assert!(delegated.summary.contains("[REDACTED reason=secret_key]"));
+}
+
+#[test]
+fn test_delegated_result_redacts_structured_summary() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: None,
+        rollout_path: None,
+        output_text: String::new(),
+        turn_summary: None,
+        structured_output: Some(json!({
+            "status": "completed",
+            "summary": "api_key=structured-secret"
+        })),
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    let delegated = delegated_result_from_completed_child(&child_result, None);
+    assert!(!delegated.summary.contains("structured-secret"));
+    assert_eq!(
+        delegated.structured_output.as_ref().unwrap()["summary"],
+        json!("api_key= [REDACTED reason=secret_key]")
+    );
 }
 
 #[tokio::test]

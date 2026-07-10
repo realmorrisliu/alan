@@ -1618,9 +1618,13 @@ fn delegated_result_from_completed_child(
 ) -> DelegatedSkillResult {
     let output_text =
         non_empty_trimmed(&result.output_text).map(|text| redact_durable_evidence_text(&text).text);
+    let structured_output = result
+        .structured_output
+        .as_ref()
+        .map(crate::evidence::redact_evidence_payload);
     let mut delegated = DelegatedSkillResult::completed(
-        completed_child_summary(result),
-        result.structured_output.clone(),
+        completed_child_summary(result, output_text.as_deref(), structured_output.as_ref()),
+        structured_output,
     );
     delegated.child_run = child_run_value(result);
     delegated.warnings = result.warnings.clone();
@@ -1954,18 +1958,27 @@ fn append_truncation_note(truncation: &mut DelegatedSkillResultTruncation, note:
     }
 }
 
-fn completed_child_summary(result: &ChildRuntimeResult) -> String {
-    structured_output_summary(result.structured_output.as_ref())
+fn completed_child_summary(
+    result: &ChildRuntimeResult,
+    redacted_output_text: Option<&str>,
+    redacted_structured_output: Option<&serde_json::Value>,
+) -> String {
+    structured_output_summary(redacted_structured_output)
         .or_else(|| {
-            non_empty_trimmed(&result.output_text).map(|text| {
-                truncate_text_with_suffix(
-                    &text,
-                    MAX_DELEGATED_RESULT_SUMMARY_CHARS,
-                    "... [truncated; inspect output_text or output_ref]",
-                )
-            })
+            redacted_output_text
+                .and_then(non_empty_trimmed)
+                .map(|text| {
+                    truncate_text_with_suffix(
+                        &text,
+                        MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+                        "... [truncated; inspect output_text or output_ref]",
+                    )
+                })
         })
-        .or_else(|| non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default()))
+        .or_else(|| {
+            non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default())
+                .map(|summary| redact_durable_evidence_text(&summary).text)
+        })
         .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
 }
 
