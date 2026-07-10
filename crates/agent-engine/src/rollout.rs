@@ -181,7 +181,18 @@ pub struct DurableToolPayload {
 pub fn build_durable_tool_payload(payload: &Value) -> DurableToolPayload {
     let mut summary = ToolPayloadRedactionSummary::default();
     let redacted_payload = crate::evidence::redact_evidence_payload(payload);
-    let durable_payload = sanitize_payload_for_rollout(&redacted_payload, &mut summary);
+    let projection_preview = crate::evidence::bounded_projection_preview(&redacted_payload);
+    let mut durable_payload = sanitize_payload_for_rollout(&redacted_payload, &mut summary);
+    if let (Some(preview), Some(object)) = (projection_preview, durable_payload.as_object_mut()) {
+        object.insert("preview".to_string(), Value::String(preview.to_string()));
+        if preview
+            .chars()
+            .nth(DURABLE_PAYLOAD_MAX_STRING_CHARS)
+            .is_some()
+        {
+            summary.truncated_values = summary.truncated_values.saturating_sub(1);
+        }
+    }
     let digest = sha256_hex(&canonicalize_json(&durable_payload).to_string());
     let preview = payload_preview(&durable_payload);
     let redaction =
@@ -1918,6 +1929,29 @@ this is not valid json
                 truncated_values: 1,
             })
         );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_preserves_bounded_evidence_projection_preview() {
+        let projection = crate::evidence::project_evidence_payload(
+            &serde_json::json!({
+                "output": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+        let original_preview = projection["preview"].as_str().unwrap();
+        assert!(original_preview.len() > DURABLE_PAYLOAD_MAX_STRING_CHARS);
+
+        let durable = build_durable_tool_payload(&projection);
+
+        assert_eq!(durable.payload["preview"], projection["preview"]);
+        assert_eq!(
+            durable.payload["truncation"]["preview_bytes"],
+            serde_json::json!(original_preview.len())
+        );
+        assert!(durable.redaction.is_none());
     }
 
     #[test]

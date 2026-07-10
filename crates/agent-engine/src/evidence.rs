@@ -94,6 +94,20 @@ pub(crate) fn redact_evidence_payload(payload: &Value) -> Value {
     redact_json_value(payload, &mut markers)
 }
 
+/// Returns the preview from a structurally valid, already-bounded evidence
+/// projection. Rollout persistence uses this to avoid applying the generic
+/// 512-character tool-value cap to the runtime's bounded evidence preview.
+pub(crate) fn bounded_projection_preview(payload: &Value) -> Option<&str> {
+    let projection = serde_json::from_value::<EvidenceProjection>(payload.clone()).ok()?;
+    if projection.record_type != "evidence_projection"
+        || projection.preview.len() > MAX_EVIDENCE_PREVIEW_BYTES
+        || projection.truncation.preview_bytes != projection.preview.len()
+    {
+        return None;
+    }
+    payload.get("preview")?.as_str()
+}
+
 pub(crate) fn project_evidence_payload(
     payload: &Value,
     reference: Option<NamespaceEvidenceReference>,
@@ -423,6 +437,25 @@ mod tests {
         assert!(summary.contains("...[truncated; inspect reference]"));
         assert!(process.contains("...[truncated; inspect reference]"));
         assert!(serde_json::to_vec(&projection).unwrap().len() < 12_000);
+    }
+
+    #[test]
+    fn bounded_projection_preview_accepts_runtime_projection_and_rejects_oversized_preview() {
+        let projection = project_evidence_payload(
+            &json!({"output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1)}),
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+        assert_eq!(
+            bounded_projection_preview(&projection),
+            projection["preview"].as_str()
+        );
+
+        let mut oversized = projection;
+        oversized["preview"] = json!("x".repeat(MAX_EVIDENCE_PREVIEW_BYTES + 1));
+        oversized["truncation"]["preview_bytes"] = json!(MAX_EVIDENCE_PREVIEW_BYTES + 1);
+        assert!(bounded_projection_preview(&oversized).is_none());
     }
 
     #[test]
