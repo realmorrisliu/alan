@@ -175,6 +175,12 @@ pub(crate) fn redact_durable_evidence_text(text: &str) -> RedactedEvidence {
     if let Ok(value) = serde_json::from_str::<Value>(text) {
         let mut markers = Vec::new();
         let value = redact_json_value(&value, &mut markers);
+        if markers.is_empty() {
+            return RedactedEvidence {
+                text: text.to_string(),
+                markers,
+            };
+        }
         return RedactedEvidence {
             text: serde_json::to_string(&value).unwrap_or_else(|_| text.to_string()),
             markers,
@@ -432,6 +438,16 @@ mod tests {
         assert!(redacted.text.contains("[REDACTED reason=secret_key]"));
         assert_eq!(projection["redactions"][0]["reason_class"], "secret_key");
         assert_eq!(projection["truncation"]["full_content_recoverable"], true);
+    }
+
+    #[test]
+    fn json_evidence_without_redactions_preserves_original_bytes() {
+        let original = "{\n  \"duplicate\": 1,\n  \"duplicate\": 2,\n  \"safe\": true\n}\n";
+
+        let redacted = redact_durable_evidence_text(original);
+
+        assert_eq!(redacted.text, original);
+        assert!(redacted.markers.is_empty());
     }
 
     #[test]
