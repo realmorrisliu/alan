@@ -1265,6 +1265,43 @@ fn test_delegated_result_from_completed_child_redacts_short_output() {
     assert!(output.contains("[REDACTED reason=secret_key]"));
 }
 
+#[tokio::test]
+async fn redaction_expansion_preserves_delegated_output_reference() {
+    let (state, shell) = create_namespace_agent_loop_state_and_shell();
+    let request = DelegatedSkillInvocationRequest {
+        skill_id: "repo-review".to_string(),
+        target: "reviewer".to_string(),
+        task: "Review local files".to_string(),
+        workspace_root: None,
+        cwd: None,
+        timeout_secs: None,
+    };
+    let result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: Some("child-run-1".to_string()),
+        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        output_text: "Bearer x ".repeat(400),
+        turn_summary: Some("Turn summary".to_string()),
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    assert!(result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
+    let output_ref = persist_delegated_child_evidence(&state, &request, &result)
+        .await
+        .expect("redaction-expanded child output should retain a reference");
+    let delegated = delegated_result_from_completed_child(&result, Some(&output_ref));
+    assert!(delegated.output_text.is_none());
+    assert_eq!(delegated.output_ref.as_ref(), Some(&output_ref));
+    let retained = String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap();
+    assert!(retained.chars().count() > MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
+    assert!(retained.contains("[REDACTED reason=credential_token]"));
+}
+
 #[test]
 fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
     let child_result = ChildRuntimeResult {

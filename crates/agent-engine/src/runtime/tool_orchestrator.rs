@@ -463,8 +463,9 @@ fn namespace_tool_payload(
 }
 
 async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Value {
-    if !payload_needs_projection(payload) {
-        return redact_evidence_payload(payload);
+    let redacted_payload = redact_evidence_payload(payload);
+    if !payload_needs_projection(&redacted_payload) {
+        return redacted_payload;
     }
 
     let Some(action_id) = payload.get("action_id").and_then(Value::as_str) else {
@@ -2445,6 +2446,33 @@ mod tests {
         assert!(!serialized.contains("short-secret"));
         assert!(!serialized.contains("short-token"));
         assert!(serialized.contains("[REDACTED reason=secret_key]"));
+    }
+
+    #[tokio::test]
+    async fn redaction_expansion_still_projects_tool_payload_to_bounded_evidence() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-redaction-expanded",
+            "read_file",
+            json!({
+                "output": "Bearer x ".repeat(1_000)
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-redaction-expanded")
+            .expect("expanded payload should be projected");
+        assert_eq!(payload["type"], "evidence_projection");
+        assert_eq!(payload["reference"]["path"], "/agent/1/actions/a0/output");
+        assert!(
+            payload["truncation"]["original_bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes > crate::evidence::MAX_INLINE_EVIDENCE_BYTES as u64)
+        );
     }
 
     #[tokio::test]

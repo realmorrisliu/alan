@@ -1739,14 +1739,16 @@ async fn persist_delegated_child_evidence(
     request: &DelegatedSkillInvocationRequest,
     result: &ChildRuntimeResult,
 ) -> Option<DelegatedSkillOutputRef> {
-    if result.output_text.trim().is_empty()
-        || (matches!(result.status, ChildRuntimeStatus::Completed)
-            && result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS)
-    {
+    if result.output_text.trim().is_empty() {
         return None;
     }
 
     let redacted = redact_durable_evidence_text(&result.output_text);
+    if matches!(result.status, ChildRuntimeStatus::Completed)
+        && redacted.text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS
+    {
+        return None;
+    }
     let result_doc = json!({
         "child_session_id": result.session_id,
         "child_run_id": result.child_run_id,
