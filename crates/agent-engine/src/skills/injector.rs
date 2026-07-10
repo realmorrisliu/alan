@@ -268,7 +268,7 @@ When you need this capability, call `invoke_delegated_skill` with a concise boun
 If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
 The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional namespace-path `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
 If `output_ref` or truncation metadata is present, treat the inline text as a preview and resolve the referenced file through the current namespace only when the full delegated output is needed. Raw rollout/session paths are debug metadata, not evidence access paths.
-Use `child_run` metadata only for delegation-scoped launch and handoff context. Inspect live child state through `/agent/<pid>/children` and `/proc`; terminate through governed `terminate_child_run` handling or `/proc/<pid>/ctl`, never a daemon child-run API.
+Use `child_run` metadata only for delegation-scoped launch and handoff context. Inspect live child state through `/agent/<pid>/children` and `/proc`; terminate through governed `terminate_child_run` handling, never a daemon child-run API. Direct `/proc/<pid>/ctl` writes are not yet a runtime-stop path for Agent Processes.
 
 ```json
 {{

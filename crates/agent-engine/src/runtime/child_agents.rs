@@ -224,6 +224,7 @@ pub(crate) struct ChildRuntimeController {
     submission_id: String,
     child_run_id: String,
     timeout: Option<Duration>,
+    process_registry: Option<alan_kernel::ProcFs>,
     process_environment: Option<super::NamespaceRuntimeEnvironment>,
     process_pid: Option<String>,
 }
@@ -452,6 +453,7 @@ where
         submission_id: submission.id,
         child_run_id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
+        process_registry: Some(launch_procfs),
         process_environment: Some(child_process_environment),
         process_pid: Some(child_process_pid),
     })
@@ -716,7 +718,7 @@ impl ChildRuntimeController {
         {
             push_bounded_child_warning(&mut warnings, warning);
         }
-        self.terminate_runtime().await;
+        self.finish_runtime_and_process(&observed.status).await;
         let rollout_fallback_text = if observed.output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
                 .await
@@ -1168,6 +1170,27 @@ impl ChildRuntimeController {
         self.terminate_process_and_reconcile().await;
     }
 
+    async fn finish_runtime_and_process(&mut self, status: &ChildRuntimeStatus) {
+        if let Some(runtime) = self.runtime.take() {
+            let _ = runtime.shutdown().await;
+        }
+        let (Some(process_registry), Some(pid)) =
+            (self.process_registry.as_ref(), self.process_pid.as_deref())
+        else {
+            return;
+        };
+        let Ok(pid) = pid.parse::<u64>() else {
+            return;
+        };
+        process_registry
+            .record_exit(
+                alan_kernel::Pid(pid),
+                child_runtime_process_exit_code(status),
+            )
+            .await;
+        self.reconcile_exited_process().await;
+    }
+
     async fn abort_runtime(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
@@ -1189,6 +1212,18 @@ impl ChildRuntimeController {
         let _ = environment
             .write_process_control_for_pid(pid, "cancel")
             .await;
+        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
+        }
+    }
+
+    async fn reconcile_exited_process(&self) {
+        let (Some(environment), Some(pid)) = (
+            self.process_environment.as_ref(),
+            self.process_pid.as_deref(),
+        ) else {
+            return;
+        };
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
         }
@@ -1244,6 +1279,15 @@ fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunSt
         ChildRuntimeStatus::TimedOut => ChildRunStatus::TimedOut,
         ChildRuntimeStatus::Terminated => ChildRunStatus::Terminated,
         ChildRuntimeStatus::Failed => ChildRunStatus::Failed,
+    }
+}
+
+fn child_runtime_process_exit_code(status: &ChildRuntimeStatus) -> i32 {
+    match status {
+        ChildRuntimeStatus::Completed => 0,
+        ChildRuntimeStatus::TimedOut => 124,
+        ChildRuntimeStatus::Cancelled | ChildRuntimeStatus::Terminated => 130,
+        ChildRuntimeStatus::Paused | ChildRuntimeStatus::Failed => 1,
     }
 }
 
@@ -3282,6 +3326,38 @@ Body
             tool_namespace.lines().any(|line| line == "/bin/alpha ro"),
             "child-spawned processes inherit mounted tools: {tool_namespace:?}"
         );
+
+        let process_reader = launch.environment.clone();
+        let process_pid = launch.pid.clone();
+        let (tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let submission_id = "completed-child-process".to_string();
+        let _ = tx.send(RuntimeEventEnvelope {
+            submission_id: Some(submission_id.clone()),
+            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
+        });
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: test_startup_metadata("child-session", None, false),
+            event_rx,
+            liveness_rx: test_liveness_rx(),
+            submission_id,
+            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            timeout: None,
+            process_registry: Some(launch_procfs),
+            process_environment: Some(launch.environment),
+            process_pid: Some(process_pid.clone()),
+        };
+
+        let result = controller.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            process_reader
+                .read_process_exit_code(&process_pid)
+                .await
+                .unwrap(),
+            Some(0),
+            "normal completion must not be rewritten as ctl cancellation (130)"
+        );
     }
 
     #[tokio::test]
@@ -4097,6 +4173,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4131,6 +4208,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4179,6 +4257,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4243,6 +4322,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4287,6 +4367,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4341,6 +4422,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: child_run_id.clone(),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4387,6 +4469,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: child_run_id.clone(),
             timeout: None,
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
@@ -4499,6 +4582,7 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: Some(Duration::from_millis(80)),
+            process_registry: None,
             process_environment: None,
             process_pid: None,
         };
