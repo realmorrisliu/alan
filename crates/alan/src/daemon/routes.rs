@@ -369,23 +369,6 @@ pub struct SessionListResponse {
 }
 
 #[derive(Serialize)]
-pub struct ChildRunListResponse {
-    pub child_runs: Vec<alan_agent_engine::runtime::ChildRunRecord>,
-}
-
-#[derive(Serialize)]
-pub struct ChildRunResponse {
-    pub child_run: alan_agent_engine::runtime::ChildRunRecord,
-}
-
-#[derive(Deserialize, Default)]
-pub struct TerminateChildRunRequest {
-    pub reason: Option<String>,
-    pub mode: Option<alan_agent_engine::runtime::ChildRunTerminationMode>,
-    pub actor: Option<String>,
-}
-
-#[derive(Serialize)]
 pub struct SessionReadResponse {
     pub session_id: String,
     pub workspace_id: String,
@@ -823,93 +806,6 @@ pub async fn list_sessions(
         .collect();
     data.sort_by(|a, b| a.session_id.cmp(&b.session_id));
     Ok(Json(SessionListResponse { sessions: data }))
-}
-
-pub async fn list_child_runs(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ChildRunListResponse>, StatusCode> {
-    if !state.get_session(&id).await.map_err(|err| {
-        warn!(%id, error = %err, "Failed to recover sessions before listing child runs");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })? {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    Ok(Json(ChildRunListResponse {
-        child_runs: state.runtime_manager.list_child_runs(&id).await,
-    }))
-}
-
-pub async fn get_child_run(
-    State(state): State<AppState>,
-    Path((id, child_run_id)): Path<(String, String)>,
-) -> Result<Json<ChildRunResponse>, StatusCode> {
-    if !state.get_session(&id).await.map_err(|err| {
-        warn!(%id, error = %err, "Failed to recover sessions before reading child run");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })? {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    state
-        .runtime_manager
-        .get_child_run(&id, &child_run_id)
-        .await
-        .map(|child_run| Json(ChildRunResponse { child_run }))
-        .ok_or(StatusCode::NOT_FOUND)
-}
-
-pub async fn terminate_child_run(
-    State(state): State<AppState>,
-    Path((id, child_run_id)): Path<(String, String)>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Json<ChildRunResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if !state.get_session(&id).await.map_err(|err| {
-        warn!(%id, error = %err, "Failed to recover sessions before terminating child run");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("{:#}", err) })),
-        )
-    })? {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Session not found" })),
-        ));
-    }
-
-    let payload = parse_optional_json_body::<TerminateChildRunRequest>(&headers, &body)
-        .map_err(json_body_error_response)?
-        .unwrap_or_default();
-    let reason = payload
-        .reason
-        .filter(|reason| !reason.trim().is_empty())
-        .unwrap_or_else(|| "operator requested child termination".to_string());
-    let actor = payload
-        .actor
-        .filter(|actor| !actor.trim().is_empty())
-        .unwrap_or_else(|| "operator".to_string());
-    let mode = payload
-        .mode
-        .unwrap_or(alan_agent_engine::runtime::ChildRunTerminationMode::Graceful);
-
-    match state
-        .runtime_manager
-        .terminate_child_run(&id, &child_run_id, actor, mode, reason)
-        .await
-    {
-        Ok(child_run) => Ok(Json(ChildRunResponse { child_run })),
-        Err(alan_agent_engine::runtime::ChildRunRegistryError::AlreadyTerminal(child_run)) => {
-            Ok(Json(ChildRunResponse {
-                child_run: *child_run,
-            }))
-        }
-        Err(alan_agent_engine::runtime::ChildRunRegistryError::NotFound) => Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Child run not found" })),
-        )),
-    }
 }
 
 /// Read session metadata and persisted message history in one response.
@@ -2333,10 +2229,7 @@ mod tests {
     use super::*;
     use alan_agent_engine::{
         Config, MessageRecord,
-        runtime::{
-            ChildRunRecord, ChildRunStatus, RuntimeEventEnvelope, SessionDurabilityState,
-            WorkspaceRuntimeConfig, global_child_run_registry,
-        },
+        runtime::{RuntimeEventEnvelope, SessionDurabilityState, WorkspaceRuntimeConfig},
     };
     use alan_agent_protocol::{Event, Op};
     use axum::{
@@ -2578,20 +2471,6 @@ Body
             None,
         );
         (entry, submission_rx)
-    }
-
-    fn test_child_run_record(child_run_id: &str, parent_session_id: &str) -> ChildRunRecord {
-        ChildRunRecord::new(
-            child_run_id.to_string(),
-            parent_session_id.to_string(),
-            format!("child-session-{child_run_id}"),
-            Some("/tmp/alan-child-route-workspace".to_string()),
-            Some(
-                "/tmp/alan-child-route-workspace/.alan/runtime/stable/sessions/child.jsonl"
-                    .to_string(),
-            ),
-            Some("repo-coding".to_string()),
-        )
     }
 
     struct SessionsDirPermissionGuard {
@@ -3156,147 +3035,6 @@ Body
             .unwrap();
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(!state.get_session("sess-del").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn child_run_routes_list_and_read_registered_runs() {
-        let state = test_state();
-        let temp = tempfile::TempDir::new().unwrap();
-        let session_id = format!("sess-child-{}", uuid::Uuid::new_v4());
-        let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-        let (entry, _rx) = session_entry(temp.path());
-        state
-            .sessions
-            .write()
-            .await
-            .insert(session_id.clone(), entry);
-        global_child_run_registry().register(test_child_run_record(&child_run_id, &session_id));
-
-        let Json(list) = list_child_runs(State(state.clone()), Path(session_id.clone()))
-            .await
-            .unwrap();
-        assert_eq!(list.child_runs.len(), 1);
-        assert_eq!(list.child_runs[0].id, child_run_id);
-
-        let Json(read) = get_child_run(
-            State(state.clone()),
-            Path((session_id.clone(), child_run_id.clone())),
-        )
-        .await
-        .unwrap();
-        assert_eq!(read.child_run.id, child_run_id);
-        assert_eq!(read.child_run.parent_session_id, session_id);
-    }
-
-    #[tokio::test]
-    async fn child_run_routes_return_not_found_for_missing_session_or_child() {
-        let state = test_state();
-        let temp = tempfile::TempDir::new().unwrap();
-        let session_id = format!("sess-child-{}", uuid::Uuid::new_v4());
-        let (entry, _rx) = session_entry(temp.path());
-        state
-            .sessions
-            .write()
-            .await
-            .insert(session_id.clone(), entry);
-
-        let missing_session = list_child_runs(State(state.clone()), Path("missing".to_string()))
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(missing_session, StatusCode::NOT_FOUND);
-
-        let missing_child = get_child_run(
-            State(state.clone()),
-            Path((session_id, "missing".to_string())),
-        )
-        .await
-        .err()
-        .unwrap();
-        assert_eq!(missing_child, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn child_run_route_terminates_and_preserves_already_terminal_runs() {
-        let state = test_state();
-        let temp = tempfile::TempDir::new().unwrap();
-        let session_id = format!("sess-child-{}", uuid::Uuid::new_v4());
-        let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-        let (entry, _rx) = session_entry(temp.path());
-        state
-            .sessions
-            .write()
-            .await
-            .insert(session_id.clone(), entry);
-        global_child_run_registry().register(test_child_run_record(&child_run_id, &session_id));
-
-        let body = Bytes::from(
-            serde_json::json!({
-                "actor": "tui",
-                "reason": "operator stop",
-                "mode": "forceful"
-            })
-            .to_string(),
-        );
-        let Json(terminated) = terminate_child_run(
-            State(state.clone()),
-            Path((session_id.clone(), child_run_id.clone())),
-            json_headers(),
-            body,
-        )
-        .await
-        .unwrap();
-        assert_eq!(terminated.child_run.status, ChildRunStatus::Terminating);
-        let termination = terminated.child_run.termination.as_ref().unwrap();
-        assert_eq!(termination.actor, "tui");
-        assert_eq!(termination.reason, "operator stop");
-
-        global_child_run_registry().mark_terminal(&child_run_id, ChildRunStatus::Terminated, None);
-        let Json(already_terminal) = terminate_child_run(
-            State(state.clone()),
-            Path((session_id, child_run_id)),
-            HeaderMap::new(),
-            Bytes::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            already_terminal.child_run.status,
-            ChildRunStatus::Terminated
-        );
-        assert_eq!(
-            already_terminal
-                .child_run
-                .termination
-                .as_ref()
-                .map(|request| request.reason.as_str()),
-            Some("operator stop")
-        );
-    }
-
-    #[tokio::test]
-    async fn child_run_route_terminate_unknown_child_returns_json_404() {
-        let state = test_state();
-        let temp = tempfile::TempDir::new().unwrap();
-        let session_id = format!("sess-child-{}", uuid::Uuid::new_v4());
-        let (entry, _rx) = session_entry(temp.path());
-        state
-            .sessions
-            .write()
-            .await
-            .insert(session_id.clone(), entry);
-
-        let (status, body) = terminate_child_run(
-            State(state.clone()),
-            Path((session_id, "missing-child-run".to_string())),
-            HeaderMap::new(),
-            Bytes::new(),
-        )
-        .await
-        .err()
-        .unwrap();
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body.0["error"], "Child run not found");
     }
 
     #[tokio::test]

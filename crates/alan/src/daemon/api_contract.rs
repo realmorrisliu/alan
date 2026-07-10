@@ -114,9 +114,6 @@ pub enum EndpointId {
     SessionsCreate,
     SessionGet,
     SessionDelete,
-    SessionChildRunsList,
-    SessionChildRunGet,
-    SessionChildRunTerminate,
     SessionRead,
     SessionReconnectSnapshot,
     SessionHistory,
@@ -167,9 +164,6 @@ impl EndpointId {
             Self::SessionsCreate => "sessions_create",
             Self::SessionGet => "session_get",
             Self::SessionDelete => "session_delete",
-            Self::SessionChildRunsList => "session_child_runs_list",
-            Self::SessionChildRunGet => "session_child_run_get",
-            Self::SessionChildRunTerminate => "session_child_run_terminate",
             Self::SessionRead => "session_read",
             Self::SessionReconnectSnapshot => "session_reconnect_snapshot",
             Self::SessionHistory => "session_history",
@@ -350,10 +344,6 @@ pub mod paths {
 
     pub const SESSIONS: &str = "/api/v1/sessions";
     pub const SESSION: &str = "/api/v1/sessions/{id}";
-    pub const SESSION_CHILD_RUNS: &str = "/api/v1/sessions/{id}/child_runs";
-    pub const SESSION_CHILD_RUN: &str = "/api/v1/sessions/{id}/child_runs/{child_run_id}";
-    pub const SESSION_CHILD_RUN_TERMINATE: &str =
-        "/api/v1/sessions/{id}/child_runs/{child_run_id}/terminate";
     pub const SESSION_READ: &str = "/api/v1/sessions/{id}/read";
     pub const SESSION_RECONNECT_SNAPSHOT: &str = "/api/v1/sessions/{id}/reconnect_snapshot";
     pub const SESSION_HISTORY: &str = "/api/v1/sessions/{id}/history";
@@ -382,22 +372,6 @@ pub mod paths {
 
     pub fn session(session_id: &str) -> String {
         format!("{SESSIONS}/{}", encode_segment(session_id))
-    }
-
-    pub fn session_child_runs(session_id: &str) -> String {
-        format!("{}/child_runs", session(session_id))
-    }
-
-    pub fn session_child_run(session_id: &str, child_run_id: &str) -> String {
-        format!(
-            "{}/{}",
-            session_child_runs(session_id),
-            encode_segment(child_run_id)
-        )
-    }
-
-    pub fn session_child_run_terminate(session_id: &str, child_run_id: &str) -> String {
-        format!("{}/terminate", session_child_run(session_id, child_run_id))
     }
 
     pub fn session_read(session_id: &str) -> String {
@@ -747,33 +721,6 @@ pub const ENDPOINTS: &[EndpointDescriptor] = &[
         RelayPolicy::session(),
     ),
     EndpointDescriptor::new(
-        EndpointId::SessionChildRunsList,
-        HttpMethod::Get,
-        paths::SESSION_CHILD_RUNS,
-        &["id"],
-        ApiArea::Sessions,
-        Some(SessionScope::Read),
-        RelayPolicy::session(),
-    ),
-    EndpointDescriptor::new(
-        EndpointId::SessionChildRunGet,
-        HttpMethod::Get,
-        paths::SESSION_CHILD_RUN,
-        &["id", "child_run_id"],
-        ApiArea::Sessions,
-        Some(SessionScope::Read),
-        RelayPolicy::session(),
-    ),
-    EndpointDescriptor::new(
-        EndpointId::SessionChildRunTerminate,
-        HttpMethod::Post,
-        paths::SESSION_CHILD_RUN_TERMINATE,
-        &["id", "child_run_id"],
-        ApiArea::Sessions,
-        Some(SessionScope::Write),
-        RelayPolicy::session(),
-    ),
-    EndpointDescriptor::new(
         EndpointId::SessionRead,
         HttpMethod::Get,
         paths::SESSION_READ,
@@ -974,9 +921,6 @@ pub const SERVER_ROUTES: &[RouteRegistration] = &[
     RouteRegistration::new(paths::SKILLS_CHANGED, &[HttpMethod::Get]),
     RouteRegistration::new(paths::SKILLS_OVERRIDES, &[HttpMethod::Post]),
     RouteRegistration::new(paths::SESSION, &[HttpMethod::Get, HttpMethod::Delete]),
-    RouteRegistration::new(paths::SESSION_CHILD_RUNS, &[HttpMethod::Get]),
-    RouteRegistration::new(paths::SESSION_CHILD_RUN, &[HttpMethod::Get]),
-    RouteRegistration::new(paths::SESSION_CHILD_RUN_TERMINATE, &[HttpMethod::Post]),
     RouteRegistration::new(paths::SESSION_READ, &[HttpMethod::Get]),
     RouteRegistration::new(paths::SESSION_RECONNECT_SNAPSHOT, &[HttpMethod::Get]),
     RouteRegistration::new(paths::SESSION_HISTORY, &[HttpMethod::Get]),

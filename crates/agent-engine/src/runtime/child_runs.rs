@@ -190,6 +190,31 @@ impl ChildRunRegistry {
         });
     }
 
+    /// Reconcile cached lifecycle from authoritative `/proc` exit state.
+    /// Delegation metadata remains record-owned; process state never flows in
+    /// the opposite direction.
+    pub fn reconcile_process_exit(&self, child_run_id: &str, exit_code: i32) {
+        let mut records = self.inner.write().expect("child run registry poisoned");
+        let Some(record) = records.get_mut(child_run_id) else {
+            return;
+        };
+        if record.status.is_terminal() {
+            return;
+        }
+        record.status = match (record.status, exit_code) {
+            (ChildRunStatus::Terminating, _) | (_, 130) => ChildRunStatus::Terminated,
+            (_, 0) => ChildRunStatus::Completed,
+            (_, 124) => ChildRunStatus::TimedOut,
+            _ => ChildRunStatus::Failed,
+        };
+        record.latest_event_kind = Some("proc_exited".to_string());
+        record.latest_status_summary = Some(format!(
+            "authoritative process {} exited with code {exit_code}",
+            record.process_path.as_deref().unwrap_or("/proc/<unknown>")
+        ));
+        record.updated_at_ms = now_ms();
+    }
+
     pub fn set_state_ref(
         &self,
         child_run_id: &str,
@@ -253,7 +278,9 @@ impl ChildRunRegistry {
         let mut records = self.inner.write().expect("child run registry poisoned");
         let now = now_ms();
         if let Some(record) = records.get_mut(child_run_id) {
-            record.status = status;
+            if !record.status.is_terminal() {
+                record.status = status;
+            }
             record.error_message = error_message.map(|message| {
                 truncate_text_with_suffix(&message, MAX_CHILD_RUN_ERROR_MESSAGE_CHARS, "...")
             });
@@ -649,6 +676,59 @@ mod tests {
             }
             other => panic!("expected already-terminal error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn registry_reconciles_stale_running_record_from_authoritative_process_exit() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+        registry.mark_running("run-1");
+
+        registry.reconcile_process_exit("run-1", 17);
+
+        let record = registry.get("run-1").unwrap();
+        assert_eq!(record.status, ChildRunStatus::Failed);
+        assert_eq!(record.latest_event_kind.as_deref(), Some("proc_exited"));
+        assert_eq!(record.process_path.as_deref(), Some("/proc/42"));
+        assert!(
+            record
+                .latest_status_summary
+                .as_deref()
+                .unwrap()
+                .contains("exited with code 17")
+        );
+    }
+
+    #[test]
+    fn registry_preserves_runtime_terminal_status_from_process_exit_codes() {
+        let registry = ChildRunRegistry::default();
+
+        for (id, exit_code, expected) in [
+            ("completed", 0, ChildRunStatus::Completed),
+            ("timed-out", 124, ChildRunStatus::TimedOut),
+            ("terminated", 130, ChildRunStatus::Terminated),
+            ("failed", 17, ChildRunStatus::Failed),
+        ] {
+            registry.register(test_record(id, "parent-1"));
+            registry.mark_running(id);
+            registry.reconcile_process_exit(id, exit_code);
+            assert_eq!(registry.get(id).unwrap().status, expected);
+        }
+    }
+
+    #[test]
+    fn registry_does_not_overwrite_authoritative_process_terminal_status() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+        registry.mark_running("run-1");
+        registry.reconcile_process_exit("run-1", 130);
+
+        registry.mark_terminal("run-1", ChildRunStatus::Completed, None);
+
+        assert_eq!(
+            registry.get("run-1").unwrap().status,
+            ChildRunStatus::Terminated
+        );
     }
 
     #[test]

@@ -4,8 +4,7 @@
 //! middle layer and managing the `session -> runtime` mapping directly.
 
 use alan_agent_engine::runtime::{
-    ChildRunRecord, ChildRunRegistryError, ChildRunTerminationMode, RuntimeController,
-    RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig, global_child_run_registry,
+    RuntimeController, RuntimeHandle, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
     spawn_with_tool_registry,
 };
 use alan_agent_engine::{AlanHomePaths, ModelCatalog};
@@ -462,38 +461,6 @@ impl RuntimeManager {
             last_activity: e.last_activity,
             is_running: !e.controller.is_finished(),
         })
-    }
-
-    /// List known child runs for a parent session.
-    pub async fn list_child_runs(&self, session_id: &str) -> Vec<ChildRunRecord> {
-        global_child_run_registry().list_for_parent(session_id)
-    }
-
-    /// Read a known child run for a parent session.
-    pub async fn get_child_run(
-        &self,
-        session_id: &str,
-        child_run_id: &str,
-    ) -> Option<ChildRunRecord> {
-        global_child_run_registry().get_for_parent(session_id, child_run_id)
-    }
-
-    /// Request child-run termination through the shared registry transition.
-    pub async fn terminate_child_run(
-        &self,
-        session_id: &str,
-        child_run_id: &str,
-        actor: impl Into<String>,
-        mode: ChildRunTerminationMode,
-        reason: impl Into<String>,
-    ) -> Result<ChildRunRecord, ChildRunRegistryError> {
-        global_child_run_registry().request_termination(
-            session_id,
-            child_run_id,
-            actor,
-            mode,
-            reason,
-        )
     }
 
     /// List all running runtimes

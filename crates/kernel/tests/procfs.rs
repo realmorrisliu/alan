@@ -54,6 +54,18 @@ async fn read_at(fs: &ProcFs, names: &[&str], fid: Fid) -> Result<Vec<u8>, Error
 
 struct EchoRunner;
 
+#[derive(Default)]
+struct RecordingProcessEventSink {
+    events: Mutex<Vec<(String, ProcessEvent)>>,
+}
+
+#[async_trait::async_trait]
+impl ProcessEventSink for RecordingProcessEventSink {
+    async fn process_event(&self, pid: &str, event: ProcessEvent) {
+        self.events.lock().unwrap().push((pid.to_string(), event));
+    }
+}
+
 #[async_trait::async_trait]
 impl ProcessRunner for EchoRunner {
     async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
@@ -530,6 +542,60 @@ async fn process_event_replay_precedes_live_events_for_late_subscribers() {
             ProcessEvent::Input { count: 10 },
         ]
     );
+}
+
+#[tokio::test]
+async fn host_recorded_exit_publishes_terminal_status_event() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(20)).await;
+    fs.record_exit(Pid(pid.parse().unwrap()), 0).await;
+
+    let sink = Arc::new(RecordingProcessEventSink::default());
+    fs.subscribe_process_events(&pid, sink.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        sink.events.lock().unwrap().as_slice(),
+        &[
+            (
+                pid.clone(),
+                ProcessEvent::Status {
+                    status: "running".to_string(),
+                },
+            ),
+            (
+                pid,
+                ProcessEvent::Status {
+                    status: "exited".to_string(),
+                },
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn host_recorded_exit_aborts_active_runner_task() {
+    let runner = Arc::new(DelayedOutputRunner::new("late runner output\n"));
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let pid = spawn(&fs, Fid(30)).await;
+
+    fs.record_exit(Pid(pid.parse().unwrap()), 124).await;
+    runner.release();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let output_fid = Fid(31);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    let output_stat = fs.stat(output_fid).await.unwrap();
+    let exit = String::from_utf8(read_at(&fs, &[&pid, "exit"], Fid(32)).await.unwrap()).unwrap();
+    assert_eq!(output_stat.length, 0);
+    assert_eq!(exit, "124");
 }
 
 #[tokio::test]

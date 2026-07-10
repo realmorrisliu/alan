@@ -508,13 +508,6 @@ mod tests {
             Some(SessionScope::Resume)
         );
         assert_eq!(
-            required_scope_for_request(
-                &Method::POST,
-                "/api/v1/sessions/s1/child_runs/c1/terminate"
-            ),
-            Some(SessionScope::Write)
-        );
-        assert_eq!(
             required_scope_for_request(&Method::GET, "/api/v1/skills/catalog"),
             Some(SessionScope::Read)
         );
@@ -594,13 +587,6 @@ mod tests {
                 "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/resume"
             ),
             Some(SessionScope::Resume)
-        );
-        assert_eq!(
-            required_scope_for_request(
-                &Method::POST,
-                "/api/v1/relay/nodes/node-a/api/v1/sessions/s1/child_runs/c1/terminate"
-            ),
-            Some(SessionScope::Write)
         );
         assert_eq!(
             required_scope_for_request(
@@ -782,51 +768,6 @@ mod tests {
             .unwrap();
         assert_eq!(ws_context.required_scope, Some(SessionScope::Write));
         assert!(ws_context.authenticated);
-    }
-
-    #[test]
-    fn authorize_request_allows_write_scope_for_child_run_terminate() {
-        let mut token_scopes = HashMap::new();
-        token_scopes.insert(
-            "token-read".to_string(),
-            HashSet::from([SessionScope::Read]),
-        );
-        token_scopes.insert(
-            "token-write".to_string(),
-            HashSet::from([SessionScope::Write]),
-        );
-        let control = RemoteAccessControl {
-            enabled: true,
-            token_scopes,
-        };
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer token-write"),
-        );
-        let context = control
-            .authorize_request(
-                &Method::POST,
-                "/api/v1/sessions/s1/child_runs/c1/terminate",
-                &headers,
-            )
-            .unwrap();
-        assert_eq!(context.required_scope, Some(SessionScope::Write));
-        assert!(context.authenticated);
-
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer token-read"),
-        );
-        let err = control
-            .authorize_request(
-                &Method::POST,
-                "/api/v1/sessions/s1/child_runs/c1/terminate",
-                &headers,
-            )
-            .unwrap_err();
-        assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 
     #[test]

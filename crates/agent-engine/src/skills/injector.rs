@@ -266,9 +266,9 @@ This skill executes through alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this session.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
 If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
-The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
-If `output_ref` or truncation metadata is present, treat the inline text as a preview. When the full delegated output is needed, open or read the namespace file at `output_ref.path`; do not use child rollout/session metadata as the resolver.
-Use `child_run` metadata to inspect or terminate a still-active child run through the available child-run controls.
+The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional namespace-path `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
+If `output_ref` or truncation metadata is present, treat the inline text as a preview. When the full delegated output is needed, open or read the namespace file at `output_ref.path`; raw rollout/session paths are debug metadata, not evidence access paths.
+Use `child_run` metadata only for delegation-scoped launch and handoff context. Inspect live child state through `/agent/<pid>/children` and `/proc`. Parent Agent Processes terminate children through governed `terminate_child_run` handling; external operators may stop a child through `/proc/<pid>/ctl` with `cancel` or `interrupt`. Never rely on a daemon child-run API.
 
 ```json
 {{

@@ -235,11 +235,19 @@ pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
+    process_context: Option<NamespaceProcessContext>,
     shared_services: Option<NamespaceSharedServices>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NamespaceProcessContext {
+    pub(crate) procfs: alan_kernel::ProcFs,
+    pub(crate) agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pub(crate) pid: alan_kernel::Pid,
 }
 
 #[derive(Clone)]
@@ -276,12 +284,31 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
+            process_context: None,
             shared_services: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
         }
+    }
+
+    pub(crate) fn with_process_context(
+        mut self,
+        procfs: alan_kernel::ProcFs,
+        agent_root: Arc<alan_agentfs::AgentRootFs>,
+        pid: alan_kernel::Pid,
+    ) -> Self {
+        self.process_context = Some(NamespaceProcessContext {
+            procfs,
+            agent_root,
+            pid,
+        });
+        self
+    }
+
+    pub(crate) fn process_context(&self) -> Option<NamespaceProcessContext> {
+        self.process_context.clone()
     }
 
     pub(crate) fn with_shared_services(
@@ -627,6 +654,35 @@ impl NamespaceRuntimeEnvironment {
             .write_document(&ctl_path, command.as_bytes())
             .await
             .with_context(|| format!("write process control command to {ctl_path}"))
+    }
+
+    /// Read terminal process state from authoritative `/proc`.
+    pub(crate) async fn read_process_exit_code(&self, pid: &str) -> Result<Option<i32>> {
+        let client = NamespaceClient::new(self.root.clone());
+        let status_path = format!("/proc/{pid}/status");
+        let status = String::from_utf8(
+            client
+                .read_file(&status_path)
+                .await
+                .with_context(|| format!("read process status from {status_path}"))?,
+        )
+        .context("process status is utf8")?;
+        if status.trim() != "exited" {
+            return Ok(None);
+        }
+        let exit_path = format!("/proc/{pid}/exit");
+        let exit = String::from_utf8(
+            client
+                .read_file(&exit_path)
+                .await
+                .with_context(|| format!("read process exit from {exit_path}"))?,
+        )
+        .context("process exit is utf8")?;
+        let code = exit
+            .trim()
+            .parse::<i32>()
+            .with_context(|| format!("parse process exit code from {exit_path}"))?;
+        Ok(Some(code))
     }
 
     pub async fn write_request(&self, record: NamespaceRequestRecord) -> Result<String> {
@@ -3115,6 +3171,10 @@ mod tests {
         assert_eq!(action.action_id, "a0");
         assert_eq!(action.output, "hello from-process\n");
         assert_eq!(action.exit_code, 0);
+        assert_eq!(
+            environment.read_process_exit_code("1").await.unwrap(),
+            Some(0)
+        );
         assert_eq!(
             String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
             "exited\n"
