@@ -180,7 +180,19 @@ pub struct DurableToolPayload {
 
 pub fn build_durable_tool_payload(payload: &Value) -> DurableToolPayload {
     let mut summary = ToolPayloadRedactionSummary::default();
-    let durable_payload = sanitize_payload_for_rollout(payload, &mut summary);
+    let redacted_payload = crate::evidence::redact_evidence_payload(payload);
+    let projection_preview = crate::evidence::bounded_projection_preview(&redacted_payload);
+    let mut durable_payload = sanitize_payload_for_rollout(&redacted_payload, &mut summary);
+    if let (Some(preview), Some(object)) = (projection_preview, durable_payload.as_object_mut()) {
+        object.insert("preview".to_string(), Value::String(preview.to_string()));
+        if preview
+            .chars()
+            .nth(DURABLE_PAYLOAD_MAX_STRING_CHARS)
+            .is_some()
+        {
+            summary.truncated_values = summary.truncated_values.saturating_sub(1);
+        }
+    }
     let digest = sha256_hex(&canonicalize_json(&durable_payload).to_string());
     let preview = payload_preview(&durable_payload);
     let redaction =
@@ -240,8 +252,15 @@ fn is_sensitive_key(key: &str) -> bool {
             | "idtoken"
             | "bearertoken"
             | "clientsecret"
+            | "password"
+            | "passwd"
+            | "passphrase"
+            | "token"
             | "secret"
     ) || normalized.contains("apikey")
+        || ["token", "secret", "password", "passwd", "passphrase"]
+            .iter()
+            .any(|suffix| normalized.ends_with(suffix))
 }
 
 fn truncate_string_for_rollout(text: &str, summary: &mut ToolPayloadRedactionSummary) -> String {
@@ -1850,6 +1869,8 @@ this is not valid json
     #[test]
     fn test_build_durable_tool_payload_redacts_sensitive_headers() {
         let durable = build_durable_tool_payload(&serde_json::json!({
+            "github_token": "github-secret",
+            "session_token": "session-secret",
             "status": 200,
             "headers": {
                 "set-cookie": "session=secret",
@@ -1858,6 +1879,14 @@ this is not valid json
             }
         }));
 
+        assert_eq!(
+            durable.payload["github_token"],
+            serde_json::json!("[REDACTED reason=secret_key]")
+        );
+        assert_eq!(
+            durable.payload["session_token"],
+            serde_json::json!("[REDACTED reason=secret_key]")
+        );
         assert_eq!(
             durable.payload["headers"]["set-cookie"],
             serde_json::json!("[REDACTED reason=secret_key]")
@@ -1873,9 +1902,30 @@ this is not valid json
         assert_eq!(
             durable.redaction,
             Some(ToolPayloadRedactionSummary {
-                redacted_fields: 2,
+                redacted_fields: 4,
                 truncated_values: 0,
             })
+        );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_redacts_secrets_embedded_in_strings() {
+        let durable = build_durable_tool_payload(&serde_json::json!({
+            "output": "api_key=embedded-secret\nAuthorization: Bearer embedded-token"
+        }));
+
+        let output = durable.payload["output"]
+            .as_str()
+            .expect("output should remain a string");
+        assert!(!output.contains("embedded-secret"));
+        assert!(!output.contains("embedded-token"));
+        assert!(output.contains("[REDACTED reason=secret_key]"));
+        assert!(!durable.digest.is_empty());
+        assert!(
+            durable
+                .preview
+                .as_deref()
+                .is_none_or(|preview| !preview.contains("embedded-secret"))
         );
     }
 
@@ -1896,6 +1946,29 @@ this is not valid json
                 truncated_values: 1,
             })
         );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_preserves_bounded_evidence_projection_preview() {
+        let projection = crate::evidence::project_evidence_payload(
+            &serde_json::json!({
+                "output": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+        let original_preview = projection["preview"].as_str().unwrap();
+        assert!(original_preview.len() > DURABLE_PAYLOAD_MAX_STRING_CHARS);
+
+        let durable = build_durable_tool_payload(&projection);
+
+        assert_eq!(durable.payload["preview"], projection["preview"]);
+        assert_eq!(
+            durable.payload["truncation"]["preview_bytes"],
+            serde_json::json!(original_preview.len())
+        );
+        assert!(durable.redaction.is_none());
     }
 
     #[test]

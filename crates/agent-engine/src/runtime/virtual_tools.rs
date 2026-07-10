@@ -1602,6 +1602,21 @@ fn delegated_result_from_child_result(
             delegated.error_message = result.error_message.clone();
             delegated.child_run = child_run_value(result);
             delegated.warnings = result.warnings.clone();
+            if !result.output_text.trim().is_empty() {
+                delegated.output_ref = output_reference;
+                delegated.truncation = Some(DelegatedSkillResultTruncation {
+                    output_text: true,
+                    original_output_chars: Some(result.output_text.chars().count()),
+                    note: Some(if delegated.output_ref.is_some() {
+                        "Child produced output before pausing; inspect the namespace output_ref."
+                            .to_string()
+                    } else {
+                        "Child produced output before pausing, but no parent-resolvable evidence path could be emitted; only the marked preview is retained."
+                            .to_string()
+                    }),
+                    ..DelegatedSkillResultTruncation::default()
+                });
+            }
             delegated
         }
     };
@@ -1616,10 +1631,15 @@ fn delegated_result_from_completed_child(
     result: &ChildRuntimeResult,
     output_reference: Option<&DelegatedSkillOutputRef>,
 ) -> DelegatedSkillResult {
-    let output_text = non_empty_trimmed(&result.output_text);
+    let output_text =
+        non_empty_trimmed(&result.output_text).map(|text| redact_durable_evidence_text(&text).text);
+    let structured_output = result
+        .structured_output
+        .as_ref()
+        .map(crate::evidence::redact_evidence_payload);
     let mut delegated = DelegatedSkillResult::completed(
-        completed_child_summary(result),
-        result.structured_output.clone(),
+        completed_child_summary(result, output_text.as_deref(), structured_output.as_ref()),
+        structured_output,
     );
     delegated.child_run = child_run_value(result);
     delegated.warnings = result.warnings.clone();
@@ -1694,6 +1714,8 @@ struct DelegatedChildRunReference {
     process_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state_ref: Option<DelegatedSkillOutputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollout_debug_path: Option<String>,
     terminal_status: String,
 }
 
@@ -1717,6 +1739,10 @@ fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildR
             .child_run
             .as_ref()
             .and_then(|record| record.state_ref.clone()),
+        rollout_debug_path: result
+            .rollout_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
         terminal_status: child_runtime_status_label(result.status.clone()),
     }
 }
@@ -1738,14 +1764,16 @@ async fn persist_delegated_child_evidence(
     request: &DelegatedSkillInvocationRequest,
     result: &ChildRuntimeResult,
 ) -> Option<DelegatedSkillOutputRef> {
-    if result.output_text.trim().is_empty()
-        || (matches!(result.status, ChildRuntimeStatus::Completed)
-            && result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS)
-    {
+    if result.output_text.trim().is_empty() {
         return None;
     }
 
     let redacted = redact_durable_evidence_text(&result.output_text);
+    if matches!(result.status, ChildRuntimeStatus::Completed)
+        && redacted.text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS
+    {
+        return None;
+    }
     let result_doc = json!({
         "child_session_id": result.session_id,
         "child_run_id": result.child_run_id,
@@ -1785,14 +1813,10 @@ async fn persist_delegated_child_evidence(
         length: reference.length,
         debug: Some(DelegatedSkillOutputDebugMetadata {
             session_id: result.session_id.clone(),
-            rollout_path: matches!(result.status, ChildRuntimeStatus::Completed)
-                .then(|| {
-                    result
-                        .rollout_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                })
-                .flatten(),
+            rollout_path: result
+                .rollout_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
             field: "output_text".to_string(),
         }),
     })
@@ -1951,18 +1975,27 @@ fn append_truncation_note(truncation: &mut DelegatedSkillResultTruncation, note:
     }
 }
 
-fn completed_child_summary(result: &ChildRuntimeResult) -> String {
-    structured_output_summary(result.structured_output.as_ref())
+fn completed_child_summary(
+    result: &ChildRuntimeResult,
+    redacted_output_text: Option<&str>,
+    redacted_structured_output: Option<&serde_json::Value>,
+) -> String {
+    structured_output_summary(redacted_structured_output)
         .or_else(|| {
-            non_empty_trimmed(&result.output_text).map(|text| {
-                truncate_text_with_suffix(
-                    &text,
-                    MAX_DELEGATED_RESULT_SUMMARY_CHARS,
-                    "... [truncated; inspect output_text or output_ref]",
-                )
-            })
+            redacted_output_text
+                .and_then(non_empty_trimmed)
+                .map(|text| {
+                    truncate_text_with_suffix(
+                        &text,
+                        MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+                        "... [truncated; inspect output_text or output_ref]",
+                    )
+                })
         })
-        .or_else(|| non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default()))
+        .or_else(|| {
+            non_empty_trimmed(result.turn_summary.as_deref().unwrap_or_default())
+                .map(|summary| redact_durable_evidence_text(&summary).text)
+        })
         .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
 }
 
