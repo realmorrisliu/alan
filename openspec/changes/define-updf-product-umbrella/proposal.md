@@ -47,7 +47,10 @@ license records, but they should not be mandatory for ordinary readers.
   first authoring editor.
 - Capture how future authoring should work: writing flow in Markdown, publishing
   flow through Typst profiles/templates, review flow through preview comments,
-  QA issues, agent patches, visual diffs, and human approval.
+  QA issues, bounded Agent Process patches, visual diffs, and human approval.
+- Define agent-assisted review as opening project/package/QA descriptors,
+  binding the `updf` executable as a Tool, and spawning a role-specific Agent
+  Executable; no embedded agent engine or daemon/session API is part of UPDF.
 - Record additional publishing-industry concerns for later follow-up specs,
   including accessibility, metadata, validation, editioning, samples, sales
   operations, reader data portability, print/POD, citations, indexing, and
@@ -80,9 +83,18 @@ license records, but they should not be mandatory for ordinary readers.
 - `macos-shell-build-test-contract`: Apple client verification must cover `.updf`
   package parsing and preview-routing model behavior.
 
+### Dependencies
+
+- `alan-app-service-integration`: UPDF consumes its descriptor-passing, Agent
+  Executable spawn, file-client, and compatibility-bridge rules. UPDF remains a
+  file/package workflow and does not require a long-running app service in V0.
+
 ## Impact
 
 - This umbrella change captures product direction and capability boundaries.
+- Alan for macOS preview remains a read-only file/package client. Any current
+  shell content-instance wiring is a named compatibility bridge, not UPDF
+  authority.
 - Follow-up implementation changes should separately cover:
   - the first `crates/updf` harness and standalone binary;
   - Alan for macOS read-only `.updf` package preview;

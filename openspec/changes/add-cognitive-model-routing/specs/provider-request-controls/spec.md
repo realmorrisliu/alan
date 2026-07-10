@@ -1,29 +1,25 @@
 ## ADDED Requirements
 
-### Requirement: Request Controls Compose With Cognitive Routing
-alan SHALL resolve request controls after cognitive routing selects the
-effective cognitive model binding, and the existing request-control resolver SHALL
-remain the sole authority for effective reasoning effort.
+### Requirement: Request controls compose with cognitive Connection selection
+Alan SHALL select the cognitive-role llmfs Connection before resolving and
+validating canonical reasoning-effort intent for that Generation. The normalized
+control SHALL be written into the provider-neutral llmfs request document;
+provider adapters SHALL NOT infer cognitive roles or routing precedence.
 
-#### Scenario: System 1 model binding has effort intent
-- **WHEN** cognitive routing selects System 1 with configured reasoning effort
-  `low`
-- **THEN** alan passes that intent through request-control resolution and
-  validates it against the selected System 1 provider/model binding
+#### Scenario: System 1 has effort intent
+- **WHEN** a System 1 attempt uses a Connection with configured reasoning-effort
+  intent
+- **THEN** Alan validates the effort against that Connection's model metadata and
+  includes the normalized value in the Generation request
 
-#### Scenario: System 2 model binding has effort intent
-- **WHEN** cognitive routing selects System 2 with configured reasoning effort
-  `high`
-- **THEN** alan passes that intent through request-control resolution and
-  validates it against the selected System 2 provider/model binding
+#### Scenario: System 2 uses a different model
+- **WHEN** escalation selects a System 2 Connection with different supported
+  effort values
+- **THEN** request-control resolution runs against the System 2 Connection
+- **AND** no System 1 effective control is copied blindly
 
-#### Scenario: Turn effort override still wins
-- **WHEN** a turn has an explicit reasoning-effort override and cognitive
-  routing selects a model binding with a different configured effort
-- **THEN** the request-control resolver applies the existing turn-override
-  precedence for the selected model binding
-
-#### Scenario: Provider adapters do not route
-- **WHEN** a provider adapter receives a `GenerationRequest`
-- **THEN** it projects the normalized request controls and does not select,
-  override, or reinterpret the cognitive system
+#### Scenario: Provider adapter receives the request
+- **WHEN** llmfs maps the committed provider-neutral document into
+  `GenerationRequest`
+- **THEN** the adapter receives normalized reasoning controls only
+- **AND** it does not receive or decide the System 1/System 2 role

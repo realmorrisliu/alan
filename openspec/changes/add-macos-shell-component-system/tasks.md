@@ -1,6 +1,6 @@
-## 0. Programmable Environment Alignment
+## 0. Alan OS And App Alignment
 
-- [x] 0.1 Record the macOS shell component system as a host-surface/design-system capability that may render programmable environment views later, while leaving object, command, buffer, view, query, ledger, agent-policy, and app-domain semantics outside the component layer
+- [x] 0.1 Record the macOS shell component system as a host-surface/design-system capability that may render terminal, Alan OS, Agent Process, and Alan App file projections while leaving Kernel, file-server, Agent Runtime Service, and app-domain authority outside the component layer
 
 ## 1. Establish the design-system home
 

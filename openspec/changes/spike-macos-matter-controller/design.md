@@ -1,133 +1,137 @@
 ## Context
 
-alan currently treats tools as side-effect boundaries and keeps platform-specific
-client code out of `alan-runtime`. Smart-home control raises the stakes because
-it affects physical devices. The first step should therefore prove the platform
-controller path with a low-risk device before defining product-level `home.*`
-tools or broader governance policy.
+Apple's public `Matter.framework` and `MTRDeviceController` make a direct macOS
+controller spike possible without Apple Home, Home Assistant, vendor cloud APIs,
+or an upstream Matter sidecar. A directly Matter-capable light is a bounded,
+low-risk target that avoids bridge topology and high-risk actuators.
 
-Apple exposes a public `Matter.framework` on macOS with `MTRDeviceController`.
-That makes a macOS-only spike possible without bridging Apple Home, Home
-Assistant, or a cloud smart-home service. The spike target is a directly
-Matter-capable light that can enter normal Matter pairing or multi-admin pairing
-mode and join Alan's own Matter fabric.
+`define-alan-app-service-integration` permits Apple frameworks, XPC, and host
+storage behind an aP adapter, but files must remain the Alan OS authority surface.
+This spike therefore proves both the platform controller and the host-backed
+file-server boundary.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Prove Alan for macOS can act as a local Matter controller through Apple's
-  public `Matter.framework`.
-- Commission one directly Matter-capable light from a setup payload.
-- Persist enough controller/fabric state to reuse the commissioned node after
-  app restart.
-- Read and write low-risk On/Off state and record an auditable action result.
-- Keep Matter framework integration in the Apple client/service layer, behind a
-  local service boundary that can later back typed `home.*` tools.
+- Commission one direct Matter light into Alan's own fabric.
+- Persist controller/fabric state across Alan for macOS restart.
+- List the light, read current On/Off, and write On/Off.
+- Expose the spike through a fakeable `/mnt/matter` file contract.
+- Record inspectable physical-action results and exact failures.
 
 **Non-Goals:**
 
-- Do not control Apple Home, read HomeKit rooms/scenes/automations, or depend on
-  a Mac Catalyst HomeKit helper.
-- Do not bridge Home Assistant, Aqara cloud, Aqara app APIs, or Apple Home APIs.
-- Do not support HomeKit-only devices, bridges, bridged endpoints, locks,
-  garage doors, cameras, security systems, appliances, or high-power devices.
-- Do not expose raw Matter endpoint/cluster/command control to the LLM.
-- Do not productize `home.*` tools, device naming, user-facing UI, or full
-  physical-device governance in this spike.
+- Apple Home/HomeKit, bridges, bridged endpoints, Home Assistant, vendor cloud,
+  or high-risk device types.
+- Raw cluster/endpoint commands visible to an LLM.
+- Final device naming, home automation, UI, `home.*` Tools, or general
+  physical-device governance.
+- Matter types in Alan Kernel, Agent Execution Engine, `alan-tools`, or portable
+  domain crates.
+- A public XPC/RPC controller API.
 
 ## Decisions
 
-1. **Use Apple `Matter.framework` for the macOS spike.**
+### 1. Matter.framework stays behind a host-backed file server
 
-   The spike should use the platform framework that is already present in the
-   macOS SDK instead of starting with upstream `connectedhomeip`, `matter.js`, or
-   a Rust implementation. This keeps the first verification close to the Alan
-   for macOS product surface and avoids introducing a sidecar runtime before the
-   core controller feasibility is known.
+Alan for macOS hosts a Matter adapter that speaks aP at the Alan OS boundary.
+Internally it may call `MTRDeviceController` directly or through a signed XPC
+helper, but clients see only files. Non-Apple builds use fake fixtures and never
+link the framework.
 
-   Alternative considered: use upstream `connectedhomeip` directly. That is the
-   most portable Matter implementation, but it adds C++ build, storage, and
-   packaging complexity before we know whether the Apple platform path is enough.
+Alternative considered: define a typed local RPC provider and later wrap it in
+Tools. Rejected: RPC would become the real authority and prevent symmetric file,
+remote, and agent clients.
 
-2. **Keep Matter code out of `alan-runtime`.**
+### 2. The spike tree separates controller, commissioning, and devices
 
-   Matter controller setup, fabric storage, setup payload parsing, and device
-   command execution are Apple-platform concerns. The spike should place them in
-   a macOS Matter controller service under the Apple client boundary. The future
-   runtime-facing surface is a typed local RPC/tool provider, not direct linkage
-   from Rust runtime core to `Matter.framework`.
+```text
+/mnt/matter/
+├── status
+├── controller/
+│   ├── status
+│   └── fabric
+├── commissioning/
+│   ├── clone
+│   ├── events
+│   └── <attempt-id>/
+│       ├── request
+│       ├── status
+│       ├── result
+│       ├── events
+│       └── ctl            # start/cancel/retry
+└── devices/
+    ├── events
+    └── <node-id>/
+        ├── info
+        ├── status
+        ├── onoff          # readable/writable whole document
+        ├── actions/
+        │   └── <action-id>/result
+        └── events
+```
 
-   Alternative considered: add built-in Rust tools that call Apple APIs. That
-   would pollute generic runtime/tool code with macOS-only dependencies and make
-   Linux support harder.
+The service posts `/srv/matter`; Service Manager mounts `/mnt/matter` only into
+authorized namespaces. Setup payload is a whole request document committed on
+clunk. Commissioning lifecycle uses its adjacent `ctl`. On/Off is a bounded
+state document; a write commits only after validation and produces an action
+record plus event.
 
-3. **Target one directly Matter-capable light.**
+### 3. One direct light is the only physical scope
 
-   A light is low risk and maps cleanly to Matter On/Off behavior. Using a direct
-   Matter light also avoids bridge endpoint mapping, vendor-specific device
-   exposure, and Aqara gateway firmware variability during the first spike.
+The adapter rejects unsupported payloads and devices for the spike. Direct light
+On/Off is the sole write. Bridge nodes, locks, garage doors, cameras, security
+systems, appliances, and high-power devices are out of scope even if the
+framework exposes them.
 
-   Alternative considered: commission an Aqara Matter bridge and control a
-   bridged light endpoint. That is valuable later but adds bridge-node topology
-   and supported-device-type uncertainty to the first proof.
+### 4. Persistence belongs to the Matter Service
 
-4. **Treat setup payload entry as an operator/debug surface.**
+The service owns fabric credentials, controller metadata, commissioned-node
+records, and secure host storage. The file tree exposes safe status and references,
+not operational secrets. Restart must reopen the same service backing and repost
+the handle; Kernel persists nothing.
 
-   The spike can accept a setup payload from a local debug command or narrow
-   developer UI. It does not need final onboarding UX. The payload source may be
-   the physical light's setup code or a multi-admin pairing code from an existing
-   ecosystem, but Alan must treat the resulting commissioned node as part of
-   Alan's own fabric.
+### 5. Physical action evidence is app/service data
 
-   Alternative considered: design full pairing UI now. That would prematurely
-   couple the spike to product UX before controller feasibility and persistence
-   are proven.
+Every On/Off write produces a result containing node reference, requested state,
+execution status, observed state when read-back succeeds, timestamp, and error
+details. These files may later support AgentFS action records or Tools, but
+Evidence is not a Kernel primitive and the spike does not invent a global
+evidence API.
 
-5. **Record physical action evidence even in the spike.**
+### 6. Debug clients use the canonical tree
 
-   Every write action should produce a structured result that includes target,
-   requested action, execution status, timestamp, and error details when
-   available. This is not the final governance/audit contract, but it ensures the
-   later `home.*` tools can build on an evidence-producing service.
-
-   Alternative considered: rely on logs only. Logs are useful for debugging but
-   not enough for future agent-visible tool results or owner decisions.
+A narrow developer UI or CLI may collect a setup payload and display state, but
+it allocates commissioning and reads/writes device files like any client. No
+spike-only RPC route or direct framework call from the UI is allowed.
 
 ## Risks / Trade-offs
 
-- **Matter commissioning can fail due to network, Thread border router, setup
-  code, or device state issues.** -> Keep the target to one direct Matter light
-  and require manual verification notes with exact failure modes.
-- **Apple framework storage behavior may require additional delegate work.** ->
-  Make controller/fabric persistence an explicit spike requirement and test app
-  restart before declaring success.
-- **Physical writes can surprise users even when low risk.** -> Limit writes to
-  On/Off on a light and record each action result.
-- **A successful direct-light spike may not prove bridge support.** -> Treat
-  bridge and bridged endpoint support as a follow-up product/spike scope.
-- **Temporary debug entry points can become accidental product API.** -> Mark
-  any setup payload entry or debug command as spike-only unless the later
-  `add-home-control-tools` change adopts it.
+- [Risk] Commissioning depends on network/Thread/device state → Mitigation:
+  preserve exact attempt status/result/events and record manual environment.
+- [Risk] Framework storage is opaque → Mitigation: require restart reuse and
+  expose safe controller readiness without leaking credentials.
+- [Risk] File writes race device state → Mitigation: validate whole document,
+  serialize per-node writes, and record read-back separately from requested state.
+- [Risk] In-process host authority exceeds namespace rights → Mitigation: the
+  adapter enforces fid rights and the host/service confinement remains a second
+  security layer; do not overclaim mount-only confinement.
+- [Risk] Debug path becomes product API → Mitigation: same file operations,
+  spike-only name, and removal/review gate.
 
 ## Migration Plan
 
-1. Add a macOS Matter controller service prototype behind an internal boundary.
-2. Add setup payload intake for a direct Matter light through a spike/debug path.
-3. Create or load the Matter controller and commission the light into Alan's
-   fabric.
-4. Persist controller/fabric state and verify restart reuse.
-5. Add read/list/set OnOff operations and structured result records.
-6. Add fake-service tests for the service boundary and manual verification notes
-   for the real light path.
-7. After the spike, decide whether to proceed to `add-home-control-tools`.
+1. Implement the aP tree against a deterministic fake Matter backend.
+2. Connect Apple `Matter.framework` behind the adapter.
+3. Add secure controller/fabric persistence and restart verification.
+4. Commission one real direct light and verify list/read/On/Off/action records.
+5. Decide in a separate change whether to add product UI, `/bin` Tools, more
+   device types, or broader governance.
 
 ## Open Questions
 
-- Which local storage backend should the product path use for Matter controller
-  credentials: framework-managed storage, Application Support with restricted
-  permissions, Keychain-backed material, or a combination?
-- Should the first productized service be in-process in Alan.app or split into a
-  signed XPC helper?
-- Which additional low-risk clusters, if any, should enter the next product
-  change after On/Off succeeds?
+- Whether platform state uses framework-managed storage, protected Application
+  Support, Keychain, or an XPC helper combination.
+- Whether Thread commissioning requires a specific border-router setup for the
+  first physical fixture.

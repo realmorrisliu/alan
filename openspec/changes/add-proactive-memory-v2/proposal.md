@@ -1,61 +1,53 @@
 ## Why
 
-alan already has pure-text memory, turn-end memory promotion, recall bundles,
-and pre-compaction memory flushes, but the behavior is still too conservative
-and too hard to audit as a first-class product surface. alan should feel more
-intelligent by proactively remembering durable user and workspace facts while
-keeping every write inspectable and reversible.
+Alan should proactively retain durable user and workspace facts without turning
+memory into hidden provider state. The previous proposal put durable mutation,
+ledger authority, and review/revert APIs inside runtime and daemon surfaces;
+under the Plan 9-like design those responsibilities belong to mounted Memory
+Stores and their file-server owner.
 
 ## What Changes
 
-- Add proactive memory write planning that can promote stable facts from direct
-  user statements, repeated behavior, and external or repository evidence.
-- Add a durable memory write ledger that records provenance, confidence, write
-  rationale, target file, and revert state for every stable memory mutation.
-- Add low-disturbance review and revert surfaces through CLI and daemon APIs;
-  normal turns should not be interrupted by memory write confirmations.
-- Ensure reverted memory writes cannot be reintroduced into prompt-facing
-  recall, handoff, session-summary, or daily-note surfaces.
-- Extend memory validation so invalid, over-broad, duplicate, or unsafe write
-  plans are rejected or downgraded before they mutate stable memory.
-- Honor disabled memory configuration so proactive planning and durable memory
-  writes do not run for workspaces that opt out of memory.
-- Add sensitive-data guardrails so secrets, credentials, and private tokens are
-  not written into stable memory, staged/inbox/daily memory, or ledger evidence
-  in plaintext.
-- Add consolidation rules so ambiguous or conflicting observations can remain
-  staged until a stronger consolidation pass resolves them.
-- Keep memory writes file-backed, auditable, and compatible with the existing
-  pure-text memory direction.
+- Keep model-mediated candidate planning for semantic judgment, but make it
+  produce a bounded write proposal rather than mutate memory.
+- Make the selected Memory Store the only authority that validates paths,
+  commits durable memory and ledger records, applies redaction, and reverts its
+  own writes.
+- Expose write proposals, status, result, ledger records, recent-write events,
+  and revert control as files under `/mnt/mem`; remove the proposed daemon memory
+  endpoints.
+- Preserve the current pure-text workspace memory layout as a compatibility
+  backing tree while separating Personal, System-Continuity, App, and Workspace
+  Memory Store authority.
+- Make `[memory].enabled = false` a namespace/configuration decision that withholds
+  writable Memory Store surfaces and suppresses proactive candidate planning.
+- Keep recall, handoff, and generated memory surfaces bounded, source-linked,
+  and unable to reintroduce reverted content.
+- Keep `alan memory recent|show|revert` only as file-client convenience commands;
+  they do not own memory policy or storage.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `runtime-memory-write-audit`: Owns proactive memory write planning, provenance,
-  ledger entries, recent write inspection, and revert behavior.
+- `memory-store-write-audit`: Defines proactive write proposals, Memory Store
+  commit authority, file-backed ledger and recent-write streams, redaction,
+  inspection, and precise revert semantics.
 
 ### Modified Capabilities
 
-- `runtime-memory-surfaces`: Memory and handoff surfaces must reference
-  proactive write provenance, replace the prior ordinary-tool memory-skill write
-  contract with the runtime writer or compatibility bridge, and remain compact
-  continuation aids rather than becoming the write ledger.
-- `daemon-api-contract`: Daemon APIs must expose authorized workspace/session-
-  scoped recent memory writes, write inspection, and revert operations without
-  leaking hidden model reasoning.
+- `runtime-memory-contract`: Splits candidate planning from Memory Store commit
+  authority; runtime no longer directly mutates durable memory files.
+- `runtime-memory-surfaces`: Generated surfaces reference store-owned write and
+  evidence paths and exclude reverted store content.
 
 ## Impact
 
-- Affected runtime modules: `memory_promotion`, `memory_flush`,
-  `memory_recall`, prompt assets, session/rollout metadata, and memory layout
-  helpers.
-- Affected built-in skills: the memory skill and session-end guidance must route
-  stable, staged, inbox, daily-note, and ledger writes through the runtime writer
-  or a compatibility bridge once the writer exists.
-- Affected CLI/daemon areas: memory inspection commands and daemon memory
-  endpoints.
-- Affected storage: `.alan/memory/` gains ledger/recent-write metadata while
-  preserving plain Markdown as the source of truth.
-- Affected tests: unit tests for write-plan validation and revert mechanics,
-  integration tests for daemon/CLI surfaces, and contract tests for auditability.
+- `alan-agent-engine` still schedules bounded candidate planning and consumes
+  Memory Store results, but no longer owns durable memory mutation.
+- `alan-memfs` owns write transactions, ledger records, redaction enforcement,
+  revert, retention, and recent-write events under `/mnt/mem`.
+- Existing `.alan/memory/` workspace files may remain a compatibility backend
+  behind the Workspace Memory Store adapter; callers use namespace paths.
+- CLI and future UI review surfaces become file clients; no new daemon endpoints,
+  session scopes, or artifact-read APIs are introduced.

@@ -15,9 +15,10 @@ routing in OpenSpec.
 - **WHEN** a change modifies policy `allow`, `deny`, or `escalate` semantics,
   execution-backend boundaries, owner-boundary classes, audit requirements, or
   approval/resume behavior
-- **THEN** the change updates this capability, `runtime-evidence-provenance`,
-  `agent-capability-routing`, `human-visible-run-lifecycle`, or another active
-  OpenSpec owner
+- **THEN** the change updates this capability,
+  `evidence-retention-and-projection`, `delegation-capability-alignment`,
+  `agent-file-layout-contract`, `agent-runtime-ui-file-surfaces`, or another
+  active OpenSpec owner
 
 #### Scenario: Tool binding behavior changes
 - **WHEN** a change modifies tool catalog entries, runtime binding, locality,

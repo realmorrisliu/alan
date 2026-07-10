@@ -1,42 +1,44 @@
-## 1. Spike Boundaries And Project Setup
+## 1. Fakeable Matter Service Tree
 
-- [ ] 1.1 Confirm the macOS deployment target and Apple `Matter.framework` availability for the Alan for macOS target.
-- [ ] 1.2 Add a macOS-only Matter controller service boundary under the Apple client without importing Matter types into `alan-runtime`.
-- [ ] 1.3 Define a narrow spike/debug invocation path for setup payload intake, device list/read, and OnOff commands.
-- [ ] 1.4 Add compile-time gates so non-macOS runtime crates and non-Apple builds do not require Apple Matter APIs.
+- [ ] 1.1 Implement `/mnt/matter` controller, commissioning, device, action,
+  status, result, events, and `ctl` semantics against a deterministic fake backend.
+- [ ] 1.2 Post `/srv/matter`, mount `/mnt/matter`, and verify filtered-handle,
+  access-right, multi-write commit, and event-offset behavior.
+- [ ] 1.3 Add non-Apple tests proving no `Matter.framework` dependency outside the
+  macOS adapter.
 
-## 2. Controller State And Commissioning
+## 2. Apple Controller And Persistence
 
-- [ ] 2.1 Create or load a local `MTRDeviceController` through Apple `Matter.framework`.
-- [ ] 2.2 Implement spike storage for controller/fabric state with restricted local access and clear failure reporting.
-- [ ] 2.3 Accept a setup payload for one directly Matter-capable light in pairing or multi-admin pairing mode.
-- [ ] 2.4 Commission the light into Alan's own Matter fabric and record structured success or failure details.
-- [ ] 2.5 Verify app restart reloads controller state and can address the commissioned light without repeating commissioning.
+- [ ] 2.1 Connect `MTRDeviceController` behind the adapter with no framework types
+  in Kernel, Agent Execution Engine, Tools, or portable domain code.
+- [ ] 2.2 Implement protected controller/fabric storage and restart reopening.
+- [ ] 2.3 Implement commissioning request commit, start/cancel/retry `ctl`, status,
+  result, and events.
 
-## 3. Light Registry And Low-Risk Operations
+## 3. Direct-Light Operations
 
-- [ ] 3.1 Project the commissioned light into a minimal local device registry with stable node identity and human-readable debug metadata.
-- [ ] 3.2 Implement list commissioned devices for the spike path.
-- [ ] 3.3 Implement read OnOff state with a structured current-state or unavailable result.
-- [ ] 3.4 Implement set OnOff state for the commissioned light only.
-- [ ] 3.5 Record each physical write with target, requested action, status, timestamp, and error details when available.
+- [ ] 3.1 List the commissioned direct light and expose safe metadata/readiness.
+- [ ] 3.2 Implement current On/Off reads with explicit unavailable state.
+- [ ] 3.3 Implement whole-document On/Off writes, per-node serialization, action
+  result records, events, and optional observed-state read-back.
+- [ ] 3.4 Reject bridges, bridged endpoints, raw clusters, and excluded high-risk
+  device types.
 
-## 4. Safety Constraints
+## 4. Debug And Physical Verification
 
-- [ ] 4.1 Reject unsupported target categories such as HomeKit-only devices, bridges, bridged endpoints, locks, cameras, security systems, appliances, and high-power devices.
-- [ ] 4.2 Keep raw Matter endpoint, cluster, and command invocation out of LLM-visible surfaces.
-- [ ] 4.3 Document that final `home.*` tools, device naming, governance risk levels, and skill instructions belong to the follow-up product change.
+- [ ] 4.1 Add a spike-only CLI or developer UI that uses only canonical Matter
+  Service files.
+- [ ] 4.2 Manually commission one real direct Matter light and retain environment
+  notes plus result files for commissioning, restart, list, read, On, and Off.
+- [ ] 4.3 Record concrete blockers without broadening the spike to vendor cloud,
+  Apple Home, or bridge support.
 
-## 5. Verification
+## 5. Verification And Archive Readiness
 
-- [ ] 5.1 Add fake-service or adapter tests for setup payload validation, state-load failure, list/read/write result shaping, and unsupported target rejection where practical.
-- [ ] 5.2 Run focused Apple build checks covering the Matter-gated code path.
-- [ ] 5.3 Manually commission a real directly Matter-capable light and capture verification evidence for commissioning, restart persistence, list, read OnOff, set On, and set Off.
-- [ ] 5.4 Run `openspec validate spike-macos-matter-controller --strict`.
-- [ ] 5.5 Run `openspec validate --all --strict`.
-
-## 6. Archive Readiness
-
-- [ ] 6.1 Summarize spike findings, including framework limitations, storage decision gaps, and real-device failure modes.
-- [ ] 6.2 Decide whether the follow-up product change should proceed as `add-home-control-tools`.
-- [ ] 6.3 After implementation merges, sync accepted requirements into `openspec/specs/` before archiving.
+- [ ] 5.1 Run fake-backend, persistence, file-contract, rights, invalid-write, and
+  non-Apple build tests.
+- [ ] 5.2 Run strict validation for this change and the full OpenSpec tree.
+- [ ] 5.3 Decide in a separate proposal whether to productize UI, `/bin` Tools,
+  additional device types, or governance.
+- [ ] 5.4 After merge, sync `macos-matter-controller-spike` into canonical specs
+  before archiving.

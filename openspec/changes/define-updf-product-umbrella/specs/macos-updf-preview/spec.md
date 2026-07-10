@@ -51,14 +51,25 @@ package includes QA artifacts.
 - **AND** it shows that QA data is unavailable rather than treating the package
   as invalid
 
-### Requirement: UPDF Preview Fits The Shell Content Model
-Alan for macOS SHALL integrate `.updf` preview as shell content that can live in
-the existing workspace pane and split model.
+### Requirement: UPDF Preview Fits The Alan For macOS Host
+Alan for macOS SHALL integrate `.updf` preview as read-only shell content that
+can live in the existing pane and split model while package files remain the
+source of truth. Any temporary content-instance integration SHALL be a named
+compatibility bridge with no bridge-owned package or review state.
 
 #### Scenario: UPDF opens in a content pane
 - **WHEN** a `.updf` package is opened from the shell workspace
-- **THEN** Alan mounts a UPDF preview content instance in a pane
+- **THEN** Alan opens the package file contract and renders a UPDF preview in a
+  pane
 - **AND** terminal panes remain the center of the shell workspace model
+
+#### Scenario: Current host needs content-instance wiring
+- **WHEN** the parked macOS host cannot yet consume the package file contract
+  directly
+- **THEN** `UPDFPreviewHostCompatibilityBridge` translates the current content
+  action into package-file reads
+- **AND** the bridge adds no behavior unavailable through the file/package
+  contract and documents its deletion gate
 
 #### Scenario: Preview is not authoring mode
 - **WHEN** a user previews a `.updf` package

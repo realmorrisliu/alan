@@ -134,8 +134,11 @@ author accepts or rejects
 
 Comments should be attached to preview targets, pages, and regions. UPDF should
 resolve each comment to the nearest known block when possible and present the
-agent with relevant context: manuscript source, publishing templates, target
-profile, QA report, preview crop, and package artifacts.
+agent with relevant context by opening bounded descriptors: manuscript source,
+publishing templates, target profile, QA report, preview crop, and package
+artifacts. The review host binds the `updf` executable and the role Skill, then
+spawns a role-specific Agent Executable. Proposed patches land in a writable
+review/proposal tree; committed source remains human-controlled.
 
 Agents should be role-specific:
 
@@ -191,7 +194,7 @@ crates/updf
 ```
 
 `src/main.rs` exposes the `updf` binary. The crate remains independent from
-Alan runtime and macOS app code. Internal modules provide the same logical
+Agent Execution Engine and Alan for macOS code. Internal modules provide the same logical
 boundaries as the long-term architecture: core models, Typst integration, QA,
 package handling, and templates. Separate `updf-core`, `updf-typst`, and
 `updf-qa` crates can be extracted later if the interfaces stabilize.
@@ -218,8 +221,9 @@ direction strict:
 
 ```text
 Alan macOS → reads .updf package contract
-updf crate → does not depend on Alan runtime or app code
-agents/CI → call updf binary through CLI and JSON
+updf crate → does not depend on Agent Execution Engine or app code
+CI/humans → execute updf binary through CLI and JSON
+Agent Process → receives bounded project/package descriptors + /bin/updf
 ```
 
 Alternative considered: build only the harness first. That would make the
@@ -467,6 +471,12 @@ Show QA badge and issue list when qa/report.json exists
 This likely maps to a new shell content kind such as `updfPreview`, parallel to
 the existing terminal, markdown, and settings content kinds. It should fit the
 current pane/split model rather than creating a separate application mode.
+
+While the macOS line is parked, a named `UPDFPreviewHostCompatibilityBridge` may
+translate the current content-kind action into opening the `.updf` package and
+rendering its files. The bridge owns no package, QA, comment, or review truth,
+adds no bridge-only behavior, and is deleted when the surface consumes the file
+contract directly.
 
 The first preview is read-only. It should not edit source, mutate packages,
 invoke agent repair, or display raw build internals by default.
