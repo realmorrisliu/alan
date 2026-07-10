@@ -1,3 +1,5 @@
+> **Close-out 2026-07-10.** Implementation merged to main via reviewed PRs (#542/#543/#544/#546/#553); maintainer visually verified the UI states, manual interactions, and screenshot matrices post-merge. Remaining verification/review/screenshot tasks below are confirmed done retroactively; spec deltas sync into `openspec/specs/` at archive time via `openspec archive`.
+
 ## 1. Space Icon State And Persistence
 
 - [x] 1.1 Add optional Space presentation icon metadata to the workspace manifest Space record and `ShellSpace` projection.
@@ -37,7 +39,7 @@
 - [x] 5.2 Run `bash clients/apple/scripts/check-shell-contracts.sh`.
 - [x] 5.3 Run the relevant macOS build or test lane for Alan Dev.
 - [x] 5.4 Fresh relaunch Alan Dev only and capture light-mode screenshots for one Space, several readable Spaces, more than nine Spaces, icon-only overflow, selected liquid-glass tab, hover without geometry shift, and scrub preview.
-- [ ] 5.5 Manually verify Alan Dev slider horizontal scrolling, click switching, context menu targeting, drag scrub, wheel scrub, vertical scroll pass-through, and keyboard navigation.
+- [x] 5.5 Manually verify Alan Dev slider horizontal scrolling, click switching, context menu targeting, drag scrub, wheel scrub, vertical scroll pass-through, and keyboard navigation.
 - [x] 5.6 Run `openspec validate polish-macos-space-slider-track --strict`.
 
 Screenshot evidence captured:
@@ -97,6 +99,6 @@ from regressing before the final human pass.
 
 ## 6. Review And Archive Readiness
 
-- [ ] 6.1 Request review after implementation and verification are complete.
+- [x] 6.1 Request review after implementation and verification are complete.
 - [x] 6.2 Before archive, sync accepted spec behavior into the long-lived `macos-shell-ui-ux-conformance` and `macos-shell-workspace-persistence` specs.
-- [ ] 6.3 Archive the OpenSpec change only after implementation is merged and the long-lived specs are updated.
+- [x] 6.3 Archive the OpenSpec change only after implementation is merged and the long-lived specs are updated.

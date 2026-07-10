@@ -19,16 +19,37 @@ Tool execution SHALL be constrained by a selectable sandbox backend behind a com
 - **THEN** backend selection falls back to the workspace path guard
 
 ### Requirement: Kernel-enforced confinement independent of command syntax
-When an OS sandbox backend is active, confinement of filesystem writes to the workspace and control of network access SHALL be enforced by the operating system regardless of how a command is written.
+When an OS sandbox backend is active, the operating system SHALL enforce
+filesystem writes to the writable roots of the active `SandboxSpec` and control
+network access regardless of how a command is written. The workspace is the seed
+writable root, and additional human/config-declared writable host directory
+mounts SHALL also be writable roots. Read-only host directory mounts SHALL NOT
+grant native-subprocess write authority.
 
 #### Scenario: Internal-write command is confined
-- **WHEN** a command writes outside the workspace through program-internal logic without an explicit path operand
-- **THEN** the OS sandbox blocks the out-of-workspace write
+- **WHEN** a command writes outside the active `SandboxSpec` writable roots
+  through program-internal logic without an explicit path operand
+- **THEN** the OS sandbox blocks the out-of-writable-roots write
 - **AND** confinement does not depend on parsing the command string
 
 #### Scenario: Network is controlled by the sandbox
-- **WHEN** a confined command attempts network access that the active policy does not permit
+- **WHEN** a confined command attempts network access that the active policy does
+  not permit
 - **THEN** the OS sandbox prevents it
+
+#### Scenario: Declared writable host mount permits native writes there
+- **WHEN** a host directory is declared with write access and projected into the
+  active `SandboxSpec`
+- **THEN** a native subprocess confined by the OS sandbox can write below that
+  declared host path
+- **AND** writes outside all writable roots remain blocked
+
+#### Scenario: Declared read-only host mount does not permit native writes
+- **WHEN** a host directory is declared read-only
+- **THEN** that host path is not included in the active `SandboxSpec` writable
+  roots
+- **AND** a native subprocess is not granted write authority there by the
+  sandbox projection
 
 ### Requirement: Safe degradation when no sandbox is available
 When no enforcing sandbox backend is available, the system SHALL NOT auto-approve bash or network operations and SHALL escalate them instead. Sandbox-unavailable SHALL NOT be treated as sandbox-disabled-and-allow.
@@ -62,4 +83,129 @@ On Linux, the OS sandbox backend SHALL confine network access (in addition to La
 #### Scenario: Missing network confinement falls back to the human
 - **WHEN** no backend that confines network is available on the host
 - **THEN** network operations are surfaced to the human rather than reviewer-judged or auto-allowed
+
+### Requirement: Confinement input is a projected SandboxSpec
+The OS sandbox SHALL confine a native subprocess from a `SandboxSpec` value —
+writable roots, a read denylist, and a default network posture — rather than a
+single hard-coded workspace path. The spec SHALL be a projection of the mount
+declaration list, with the workspace modeled as the seed (first, default)
+writable entry. When the spec carries exactly one writable root and an empty read
+denylist, the emitted Seatbelt profile and Landlock ruleset SHALL be identical to
+those produced from that path directly (this change is behavior-preserving).
+
+#### Scenario: Single-root spec preserves the current profile
+- **WHEN** a `SandboxSpec` is built with one writable root (the workspace) and an
+  empty read denylist
+- **THEN** the generated Seatbelt profile / Landlock ruleset is byte-for-byte the
+  one produced today from a lone `workspace_root`
+- **AND** no read-deny rule is emitted
+
+#### Scenario: The workspace is the seed writable entry
+- **WHEN** a session confines tool execution with only a workspace
+- **THEN** the spec's writable roots contain exactly the workspace path
+- **AND** enforcement is indistinguishable from the prior single-path confinement
+
+#### Scenario: The read denylist is plumbed but inert at this stage
+- **WHEN** the spec's read denylist is empty
+- **THEN** the backends emit no read-deny rules and reads follow the existing
+  allow-default posture
+- **AND** the denylist parameter still threads to the backends so it can be
+  populated later without changing their signatures
+
+### Requirement: macOS sensitive-read denylist
+Default sandbox specs SHALL include a sensitive-read denylist for common
+home-directory secret, credential, keychain, and browser-profile locations.
+When the active backend is macOS Seatbelt, those paths SHALL be projected into
+the generated Seatbelt profile as read-deny rules. Backends that cannot express
+broad reads with selected deny paths SHALL NOT claim sensitive-read denylist
+enforcement.
+
+#### Scenario: Default sandbox spec includes sensitive paths
+- **WHEN** a sandbox spec is seeded from a workspace root on a host with a known user home directory
+- **THEN** the spec includes read-deny entries for Alan home stores, common credential stores, macOS keychains, and browser profile directories
+
+#### Scenario: Seatbelt profile denies sensitive reads
+- **WHEN** a macOS Seatbelt profile is generated from a sandbox spec with read-deny entries
+- **THEN** the profile contains `deny file-read*` rules for those read-deny entries
+
+#### Scenario: Host mount projection preserves read denies
+- **WHEN** the `alan` composition root projects host mount declarations into a sandbox spec
+- **THEN** the resulting spec keeps the default sensitive-read denylist while adding read-write host mount roots
+
+#### Scenario: Linux does not over-claim read-deny enforcement
+- **WHEN** the Linux Landlock backend receives a sandbox spec with read-deny entries
+- **THEN** write and network confinement remain active where supported
+- **AND** sensitive-read denylist enforcement is not reported as provided by Landlock
+
+### Requirement: Linux reified namespace backend provides full read isolation
+The Linux reified namespace backend SHALL run native subprocesses inside a
+reified filesystem view derived from host-backed Alan OS mount declarations when
+the host has the required namespace capabilities. In this mode, undeclared host
+paths SHALL be absent from the subprocess view by default, providing full read
+isolation through filesystem reification rather than command parsing or a
+sensitive-read denylist.
+
+#### Scenario: Reified backend exposes declared host mounts at namespace paths
+- **WHEN** a Linux runtime starts a native subprocess with a declared host-backed mount `/mnt/project`
+- **THEN** the subprocess sees the mounted content at `/mnt/project`
+- **AND** the subprocess does not need to use the original host path to access that mount
+
+#### Scenario: Undeclared host paths are absent
+- **WHEN** a command running under the reified backend attempts to read an undeclared host path such as the user's home secret directory
+- **THEN** that path is absent or unreachable from the subprocess filesystem view
+- **AND** read isolation does not depend on the command-shape parser
+
+#### Scenario: Virtual Alan OS mounts are not exposed as native paths
+- **WHEN** the Alan OS namespace contains virtual mounts such as `/agent`, `/srv`, `/proc`, or `/mnt/llm`
+- **THEN** the reified native subprocess view does not expose those mounts as host filesystem paths
+- **AND** only host-backed declarations contribute native bind mounts
+
+### Requirement: Reification preserves mount access and execution substrate boundaries
+The reified Linux backend SHALL distinguish declared host mounts from execution
+substrate. Declared read-write host mounts SHALL be writable where mounted;
+declared read-only host mounts SHALL be readable but not writable; execution
+substrate needed to launch commands SHALL be mounted read-only and SHALL NOT
+grant access to user data outside declared mounts.
+
+#### Scenario: Read-write host mount permits mutation at the reified path
+- **WHEN** a declared host mount has read-write access
+- **THEN** a native subprocess running under the reified backend can write under the corresponding reified namespace path
+- **AND** writes outside declared writable mounts are rejected
+
+#### Scenario: Read-only host mount rejects mutation at the reified path
+- **WHEN** a declared host mount has read-only access
+- **THEN** a native subprocess running under the reified backend can read under the corresponding reified namespace path
+- **AND** write attempts under that path are rejected
+
+#### Scenario: Execution substrate does not expose user data
+- **WHEN** the reified backend mounts system paths needed to execute `/bin/sh` and common tools
+- **THEN** those system paths are mounted only as execution substrate
+- **AND** user home directories and secret stores are not exposed unless explicitly declared
+
+### Requirement: Linux reification degrades safely
+The Linux reified namespace backend SHALL be selected only when the host can
+create the required user namespace, mount namespace, bind mounts, read-only
+mounts, and network confinement. If any required capability is unavailable, the
+runtime SHALL fall back to the existing Linux projection backend or path guard
+according to current safe-degradation rules and SHALL report why reification is
+unavailable.
+
+#### Scenario: Missing namespace capability falls back
+- **WHEN** the host cannot create an unprivileged user or mount namespace
+- **THEN** the Linux reified backend is not selected
+- **AND** backend reporting includes the missing capability reason
+- **AND** the runtime continues with Landlock or path-guard fallback behavior
+
+#### Scenario: Missing network confinement is degraded
+- **WHEN** the filesystem view can be reified but network confinement is unavailable for a network-denied command
+- **THEN** the backend reports degraded network confinement
+- **AND** policy routes network-capable operations to a human, denies them, or
+  falls back to a backend with network confinement
+- **AND** the autonomous reviewer cannot approve network-capable execution
+  without an OS network-confinement backstop
+
+#### Scenario: Backend audit names the active path
+- **WHEN** a native subprocess is evaluated or executed
+- **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `workspace_path_guard`
+- **AND** the audit distinguishes reified namespace paths from projected host paths
 
