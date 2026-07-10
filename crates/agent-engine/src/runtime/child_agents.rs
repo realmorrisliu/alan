@@ -866,7 +866,8 @@ impl ChildRuntimeController {
             if let Some(cap) = wall_clock_cap
                 && started_at.elapsed() >= cap
             {
-                self.abort_runtime().await;
+                self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut)
+                    .await;
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     self.timed_out_observed_event("Child-agent wall-clock cap exceeded"),
                 ));
@@ -882,7 +883,7 @@ impl ChildRuntimeController {
                             return Ok(ChildRuntimeWaitOutcome::Cancelled);
                         }
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime().await;
+                            self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut).await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
@@ -904,7 +905,7 @@ impl ChildRuntimeController {
                 } else {
                     tokio::select! {
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime().await;
+                            self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut).await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
@@ -1239,6 +1240,27 @@ impl ChildRuntimeController {
             runtime.abort().await;
         }
         self.terminate_process_and_reconcile().await;
+    }
+
+    async fn abort_runtime_for_status(&mut self, status: &ChildRuntimeStatus) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.abort().await;
+        }
+        let (Some(process_registry), Some(pid)) =
+            (self.process_registry.as_ref(), self.process_pid.as_deref())
+        else {
+            return;
+        };
+        let Ok(pid) = pid.parse::<u64>() else {
+            return;
+        };
+        process_registry
+            .record_exit(
+                alan_kernel::Pid(pid),
+                child_runtime_process_exit_code(status),
+            )
+            .await;
+        self.reconcile_exited_process().await;
     }
 
     async fn terminate_process_and_reconcile(&self) {
@@ -4890,11 +4912,20 @@ model_reasoning_effort = "high"
         })
         .await
         .unwrap();
+        let process_environment = child.process_environment.clone().unwrap();
+        let process_pid = child.process_pid.clone().unwrap();
 
         let started_at = std::time::Instant::now();
         let result = child.join().await.unwrap();
 
         assert_eq!(result.status, ChildRuntimeStatus::TimedOut);
+        assert_eq!(
+            process_environment
+                .read_process_exit_code(&process_pid)
+                .await
+                .unwrap(),
+            Some(124)
+        );
         assert!(
             started_at.elapsed() < Duration::from_secs(8),
             "timed-out child join should abort promptly instead of waiting for graceful shutdown"
