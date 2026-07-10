@@ -406,13 +406,26 @@ where
     let child_process_pid = namespace_launch.pid.clone();
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
-    let runtime = spawn_with_namespace_environment(
+    let runtime = match spawn_with_namespace_environment(
         child_config,
         namespace_launch.environment,
         child_tools,
         generation_capabilities,
     )
-    .context("Failed to spawn child-agent namespace runtime")?;
+    .context("Failed to spawn child-agent namespace runtime")
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
     let (runtime, startup_metadata) = match wait_for_child_runtime_startup(runtime, cancel).await {
         Ok(ready) => ready,
         Err(err) => {
