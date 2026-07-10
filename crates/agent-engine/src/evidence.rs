@@ -145,17 +145,8 @@ pub(crate) fn redact_durable_evidence_text(text: &str) -> RedactedEvidence {
     }
 
     let mut markers = Vec::new();
-    let redacted_lines = text
-        .lines()
-        .map(|line| redact_sensitive_line(line, &mut markers))
-        .collect::<Vec<_>>()
-        .join("\n");
     RedactedEvidence {
-        text: if text.ends_with('\n') {
-            format!("{redacted_lines}\n")
-        } else {
-            redacted_lines
-        },
+        text: redact_line_oriented_text(text, &mut markers),
         markers,
     }
 }
@@ -207,7 +198,7 @@ fn redact_json_value(value: &Value, markers: &mut Vec<EvidenceRedactionMarker>) 
                 .map(|value| redact_json_value(value, markers))
                 .collect(),
         ),
-        Value::String(value) => Value::String(redact_bearer(value, markers)),
+        Value::String(value) => Value::String(redact_line_oriented_text(value, markers)),
         _ => value.clone(),
     }
 }
@@ -226,6 +217,19 @@ fn redact_sensitive_line(line: &str, markers: &mut Vec<EvidenceRedactionMarker>)
         return redact_bearer(line, markers);
     }
     line.to_string()
+}
+
+fn redact_line_oriented_text(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
+    let redacted_lines = text
+        .lines()
+        .map(|line| redact_sensitive_line(line, markers))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.ends_with('\n') {
+        format!("{redacted_lines}\n")
+    } else {
+        redacted_lines
+    }
 }
 
 fn redact_bearer(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
@@ -370,6 +374,30 @@ mod tests {
         assert!(preview.contains("[REDACTED reason=secret_key]"));
         assert!(!preview.contains("preview-secret"));
         assert_eq!(projection["redactions"][0]["reason_class"], "secret_key");
+    }
+
+    #[test]
+    fn projection_preview_redacts_line_oriented_secrets_inside_output_strings() {
+        let projection = project_evidence_payload(
+            &json!({
+                "output": format!(
+                    "api_key=preview-secret\nSECRET: another-secret\n{}",
+                    "x".repeat(MAX_INLINE_EVIDENCE_BYTES)
+                )
+            }),
+            Some(NamespaceEvidenceReference {
+                path: "/agent/1/actions/a0/output".to_string(),
+                offset: Some(0),
+                length: None,
+            }),
+            Vec::new(),
+            None,
+        );
+
+        let serialized = projection.to_string();
+        assert!(!serialized.contains("preview-secret"));
+        assert!(!serialized.contains("another-secret"));
+        assert!(serialized.contains("[REDACTED reason=secret_key]"));
     }
 
     #[test]
