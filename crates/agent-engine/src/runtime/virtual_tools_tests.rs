@@ -141,7 +141,7 @@ fn test_child_run_record(child_run_id: &str, parent_session_id: &str) -> ChildRu
         parent_session_id.to_string(),
         format!("child-session-{child_run_id}"),
         Some("/tmp/alan-delegated-parent".to_string()),
-        Some("/tmp/alan-delegated-parent/.alan/runtime/stable/sessions/child.jsonl".to_string()),
+        Some("/proc/42".to_string()),
         Some("repo-coding".to_string()),
     )
 }
@@ -1018,7 +1018,9 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
     let child_run = Some(DelegatedChildRunReference {
         session_id: "child-session".to_string(),
         child_run_id: None,
-        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        process_path: Some("/proc/42".to_string()),
+        state_ref: None,
+        rollout_debug_path: None,
         terminal_status: "completed".to_string(),
     });
     let (arguments, record, rollout_record) =
@@ -1068,7 +1070,9 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
     let child_run = Some(DelegatedChildRunReference {
         session_id: "child-session".to_string(),
         child_run_id: None,
-        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        process_path: Some("/proc/42".to_string()),
+        state_ref: None,
+        rollout_debug_path: Some("/tmp/inline-child.jsonl".to_string()),
         terminal_status: "completed".to_string(),
     });
 
@@ -1083,9 +1087,14 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
         json!("child-session")
     );
     assert_eq!(
-        rollout_payload["child_run"]["rollout_path"],
-        json!("/tmp/child-rollout.jsonl")
+        rollout_payload["child_run"]["process_path"],
+        json!("/proc/42")
     );
+    assert_eq!(
+        rollout_payload["child_run"]["rollout_debug_path"],
+        json!("/tmp/inline-child.jsonl")
+    );
+    assert!(rollout_payload["child_run"].get("rollout_path").is_none());
     assert_eq!(tape_payload["workspace_root"], json!("/tmp/repo"));
     assert_eq!(tape_payload["cwd"], json!("/tmp/repo/src"));
     assert_eq!(tape_payload["timeout_secs"], json!(600));
@@ -1172,7 +1181,7 @@ fn test_delegated_result_from_completed_child_prefers_structured_output_summary(
         child_run: None,
     };
 
-    let delegated = delegated_result_from_completed_child(&child_result);
+    let delegated = delegated_result_from_completed_child(&child_result, None);
     assert_eq!(delegated.summary, "Structured delivery");
     assert_eq!(
         delegated
@@ -1199,7 +1208,7 @@ fn test_delegated_result_from_completed_child_prefers_output_text_over_turn_summ
         child_run: None,
     };
 
-    let delegated = delegated_result_from_completed_child(&child_result);
+    let delegated = delegated_result_from_completed_child(&child_result, None);
     assert_eq!(
         delegated.summary,
         "Verification was environment_blocked: pytest was not installed."
@@ -1223,7 +1232,7 @@ fn test_delegated_result_from_completed_child_inlines_short_output() {
         child_run: None,
     };
 
-    let delegated = delegated_result_from_completed_child(&child_result);
+    let delegated = delegated_result_from_completed_child(&child_result, None);
     assert_eq!(
         delegated.output_text.as_deref(),
         Some("Short delegated delivery.")
@@ -1237,6 +1246,96 @@ fn test_delegated_result_from_completed_child_inlines_short_output() {
             .and_then(|value| value.get("child_run_id")),
         Some(&json!("child-run-1"))
     );
+}
+
+#[test]
+fn test_delegated_result_from_completed_child_redacts_short_output() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: Some("child-run-1".to_string()),
+        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        output_text: "api_key=child-secret\nAuthorization: Bearer child-token".to_string(),
+        turn_summary: Some("Turn summary".to_string()),
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    let delegated = delegated_result_from_completed_child(&child_result, None);
+    let output = delegated.output_text.expect("redacted inline output");
+    assert!(!output.contains("child-secret"));
+    assert!(!output.contains("child-token"));
+    assert!(output.contains("[REDACTED reason=secret_key]"));
+    assert!(!delegated.summary.contains("child-secret"));
+    assert!(!delegated.summary.contains("child-token"));
+    assert!(delegated.summary.contains("[REDACTED reason=secret_key]"));
+}
+
+#[test]
+fn test_delegated_result_redacts_structured_summary() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: None,
+        rollout_path: None,
+        output_text: String::new(),
+        turn_summary: None,
+        structured_output: Some(json!({
+            "status": "completed",
+            "summary": "api_key=structured-secret"
+        })),
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    let delegated = delegated_result_from_completed_child(&child_result, None);
+    assert!(!delegated.summary.contains("structured-secret"));
+    assert_eq!(
+        delegated.structured_output.as_ref().unwrap()["summary"],
+        json!("api_key= [REDACTED reason=secret_key]")
+    );
+}
+
+#[tokio::test]
+async fn redaction_expansion_preserves_delegated_output_reference() {
+    let (state, shell) = create_namespace_agent_loop_state_and_shell();
+    let request = DelegatedSkillInvocationRequest {
+        skill_id: "repo-review".to_string(),
+        target: "reviewer".to_string(),
+        task: "Review local files".to_string(),
+        workspace_root: None,
+        cwd: None,
+        timeout_secs: None,
+    };
+    let result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Completed,
+        session_id: "child-session".to_string(),
+        child_run_id: Some("child-run-1".to_string()),
+        rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
+        output_text: "Bearer x ".repeat(400),
+        turn_summary: Some("Turn summary".to_string()),
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: None,
+        child_run: None,
+    };
+
+    assert!(result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
+    let output_ref = persist_delegated_child_evidence(&state, &request, &result)
+        .await
+        .expect("redaction-expanded child output should retain a reference");
+    let delegated = delegated_result_from_completed_child(&result, Some(&output_ref));
+    assert!(delegated.output_text.is_none());
+    assert_eq!(delegated.output_ref.as_ref(), Some(&output_ref));
+    let retained = String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap();
+    assert!(retained.chars().count() > MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
+    assert!(retained.contains("[REDACTED reason=credential_token]"));
 }
 
 #[test]
@@ -1255,18 +1354,28 @@ fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
         child_run: None,
     };
 
-    let delegated = delegated_result_from_completed_child(&child_result);
+    let output_ref = DelegatedSkillOutputRef {
+        path: "/agent/1/actions/a0/output".to_string(),
+        offset: Some(0),
+        length: Some((MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 1) as u64),
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: "child-session".to_string(),
+            rollout_path: None,
+            field: "output_text".to_string(),
+        }),
+    };
+    let delegated = delegated_result_from_completed_child(&child_result, Some(&output_ref));
     assert!(delegated.output_text.is_none());
     assert_eq!(
         delegated.output_ref.as_ref().map(|reference| (
-            reference.session_id.as_str(),
-            reference.rollout_path.as_deref(),
-            reference.field.as_str()
+            reference.path.as_str(),
+            reference.offset,
+            reference.length
         )),
         Some((
-            "child-session",
-            Some("/tmp/child-rollout.jsonl"),
-            "output_text"
+            "/agent/1/actions/a0/output",
+            Some(0),
+            Some((MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 1) as u64)
         ))
     );
     assert_eq!(
@@ -1301,7 +1410,23 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
         child_run: Some(test_child_run_record("child-run-1", "parent-session")),
     };
 
-    let delegated = delegated_result_from_child_result(&child_result);
+    let output_ref = DelegatedSkillOutputRef {
+        path: "/agent/1/actions/a1/output".to_string(),
+        offset: Some(0),
+        length: Some(child_result.output_text.len() as u64),
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: "child-session".to_string(),
+            rollout_path: None,
+            field: "output_text".to_string(),
+        }),
+    };
+    assert_eq!(
+        delegated_child_run_reference(&child_result)
+            .rollout_debug_path
+            .as_deref(),
+        Some("/tmp/child-rollout.jsonl")
+    );
+    let delegated = delegated_result_from_child_result(&child_result, Some(output_ref));
     assert_eq!(delegated.status, DelegatedSkillResultStatus::Failed);
     assert_eq!(delegated.error_kind.as_deref(), Some("child_timed_out"));
     assert_eq!(
@@ -1318,14 +1443,14 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
     );
     assert_eq!(
         delegated.output_ref.as_ref().map(|reference| (
-            reference.session_id.as_str(),
-            reference.rollout_path.as_deref(),
-            reference.field.as_str()
+            reference.path.as_str(),
+            reference.offset,
+            reference.length
         )),
         Some((
-            "child-session",
-            Some("/tmp/child-rollout.jsonl"),
-            "output_text"
+            "/agent/1/actions/a1/output",
+            Some(0),
+            Some(child_result.output_text.len() as u64)
         ))
     );
     assert_eq!(
@@ -1335,6 +1460,92 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
             .map(|truncation| truncation.output_text),
         Some(true)
     );
+    assert!(
+        !serde_json::to_string(&delegated)
+            .unwrap()
+            .contains("/tmp/child-rollout.jsonl")
+    );
+}
+
+#[test]
+fn test_delegated_result_from_paused_child_preserves_output_reference() {
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Paused,
+        session_id: "paused-session".to_string(),
+        child_run_id: Some("paused-run".to_string()),
+        rollout_path: None,
+        output_text: "partial output before pause".to_string(),
+        turn_summary: None,
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: None,
+        pause: Some(super::super::child_agents::ChildRuntimePause {
+            request_id: "confirmation-1".to_string(),
+            kind: alan_agent_protocol::YieldKind::Confirmation,
+        }),
+        child_run: None,
+    };
+    let output_ref = DelegatedSkillOutputRef {
+        path: "/agent/1/actions/paused/output".to_string(),
+        offset: Some(0),
+        length: Some(child_result.output_text.len() as u64),
+        debug: None,
+    };
+
+    let delegated = delegated_result_from_child_result(&child_result, Some(output_ref.clone()));
+
+    assert_eq!(delegated.error_kind.as_deref(), Some("child_paused"));
+    assert_eq!(delegated.output_ref, Some(output_ref));
+    assert_eq!(
+        delegated
+            .truncation
+            .as_ref()
+            .map(|truncation| truncation.output_text),
+        Some(true)
+    );
+}
+
+#[test]
+fn test_delegated_result_from_terminated_child_uses_namespace_state_reference() {
+    let state_ref = DelegatedSkillOutputRef {
+        path: "/agent/1/actions/a2/output".to_string(),
+        offset: Some(0),
+        length: Some(18),
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: "child-session".to_string(),
+            rollout_path: None,
+            field: "output_text".to_string(),
+        }),
+    };
+    let child_result = ChildRuntimeResult {
+        status: ChildRuntimeStatus::Terminated,
+        session_id: "child-session".to_string(),
+        child_run_id: Some("child-run-2".to_string()),
+        rollout_path: Some(PathBuf::from("/tmp/terminated-child-rollout.jsonl")),
+        output_text: "partial termination".to_string(),
+        turn_summary: None,
+        structured_output: None,
+        warnings: Vec::new(),
+        error_message: Some("operator requested stop".to_string()),
+        pause: None,
+        child_run: Some(
+            test_child_run_record("child-run-2", "parent-session")
+                .with_state_ref(state_ref.clone()),
+        ),
+    };
+
+    let delegated = delegated_result_from_child_result(&child_result, Some(state_ref));
+    let encoded = serde_json::to_string(&delegated).unwrap();
+    assert_eq!(delegated.error_kind.as_deref(), Some("child_terminated"));
+    assert_eq!(
+        delegated
+            .child_run
+            .as_ref()
+            .and_then(|value| value.pointer("/state_ref/path")),
+        Some(&json!("/agent/1/actions/a2/output"))
+    );
+    assert!(encoded.contains("/proc/42"));
+    assert!(!encoded.contains("/tmp/terminated-child-rollout.jsonl"));
 }
 
 #[test]
@@ -1361,6 +1572,39 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_structured_outp
     let structured = tape_record.result.structured_output.unwrap();
     assert!(structured.to_string().len() <= MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS);
     assert_eq!(structured["status"], json!("completed"));
+}
+
+#[test]
+fn test_delegated_rollout_record_flattens_invocation_result() {
+    let request = DelegatedSkillInvocationRequest {
+        skill_id: "repo-review".to_string(),
+        target: "reviewer".to_string(),
+        task: "Review the current diff.".to_string(),
+        workspace_root: None,
+        cwd: None,
+        timeout_secs: None,
+    };
+    let mut result = DelegatedSkillResult::completed("Review completed.", None);
+    result.output_ref = Some(DelegatedSkillOutputRef {
+        path: "/agent/1/actions/a0/output".to_string(),
+        offset: Some(0),
+        length: Some(42),
+        debug: Some(DelegatedSkillOutputDebugMetadata {
+            session_id: "child-session".to_string(),
+            rollout_path: Some("/tmp/child.jsonl".to_string()),
+            field: "output_text".to_string(),
+        }),
+    });
+
+    let (_, _, rollout_record) =
+        build_bounded_delegated_invocation_persistence(&request, result, None);
+    let serialized = serde_json::to_value(rollout_record).unwrap();
+
+    assert_eq!(
+        serialized.pointer("/result/output_ref/debug/rollout_path"),
+        Some(&json!("/tmp/child.jsonl"))
+    );
+    assert!(serialized.get("invocation").is_none());
 }
 
 #[test]
@@ -2453,7 +2697,7 @@ async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
     let tool_call = NormalizedToolCall {
         id: "call_capability_mismatch".to_string(),
         name: "invoke_delegated_skill".to_string(),
-        arguments: serde_json::json!({
+        arguments: json!({
             "skill_id": "repo-review",
             "target": "reviewer",
             "task": "Review GitHub issue 42"
@@ -3416,6 +3660,212 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
             .count()
             <= MAX_DELEGATED_RESULT_SUMMARY_CHARS
     );
+}
+
+#[tokio::test]
+async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
+    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+    activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+    let tool_call = NormalizedToolCall {
+        id: "call_long_child".to_string(),
+        name: "invoke_delegated_skill".to_string(),
+        arguments: json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review local files"
+        }),
+    };
+    let cancel = CancellationToken::new();
+    let mut emit = |_event: Event| async {};
+
+    let output_len = (1 << 20) + 1_024;
+    handle_invoke_delegated_skill(
+        &mut state,
+        &tool_call,
+        &tool_call.arguments,
+        &cancel,
+        &mut emit,
+        move |_state, _spec, _cancel| {
+            Box::pin(async move {
+                Ok(ChildRuntimeResult {
+                    status: ChildRuntimeStatus::Completed,
+                    session_id: "child-session".to_string(),
+                    child_run_id: Some("child-run".to_string()),
+                    rollout_path: Some(PathBuf::from("/tmp/debug-child.jsonl")),
+                    output_text: "x".repeat(output_len),
+                    turn_summary: Some("Long child completed".to_string()),
+                    structured_output: None,
+                    warnings: Vec::new(),
+                    error_message: None,
+                    pause: None,
+                    child_run: None,
+                })
+            })
+        },
+    )
+    .await
+    .unwrap();
+
+    let tool_result = tool_result_text_for_call(&state, "call_long_child");
+    let record: DelegatedSkillInvocationRecord = serde_json::from_str(&tool_result).unwrap();
+    let output_ref = record.result.output_ref.unwrap();
+    assert_eq!(output_ref.path, "/agent/1/actions/a0/output");
+    assert_eq!(
+        output_ref
+            .debug
+            .as_ref()
+            .and_then(|debug| debug.rollout_path.as_deref()),
+        Some("/tmp/debug-child.jsonl")
+    );
+    let full = String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap();
+    assert_eq!(full.len(), output_len);
+    let namespace_ref = crate::evidence::NamespaceEvidenceReference {
+        path: output_ref.path,
+        offset: output_ref.offset,
+        length: output_ref.length,
+    };
+    let resolved = state
+        .namespace_environment()
+        .resolve_evidence_reference(&namespace_ref, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resolved.len(), full.len());
+}
+
+#[tokio::test]
+async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths() {
+    for (index, status) in [ChildRuntimeStatus::TimedOut, ChildRuntimeStatus::Terminated]
+        .into_iter()
+        .enumerate()
+    {
+        let (state, shell) = create_namespace_agent_loop_state_and_shell();
+        let request = DelegatedSkillInvocationRequest {
+            skill_id: "repo-review".to_string(),
+            target: "reviewer".to_string(),
+            task: "Review local files".to_string(),
+            workspace_root: None,
+            cwd: None,
+            timeout_secs: None,
+        };
+        let output_text = format!("partial child evidence {index}");
+        let child_run_id = format!("failed-child-{index}");
+        let result = ChildRuntimeResult {
+            status,
+            session_id: format!("failed-session-{index}"),
+            child_run_id: Some(child_run_id.clone()),
+            rollout_path: Some(PathBuf::from(format!("/tmp/private-child-{index}.jsonl"))),
+            output_text: output_text.clone(),
+            turn_summary: None,
+            structured_output: None,
+            warnings: Vec::new(),
+            error_message: Some("delegated child did not complete".to_string()),
+            pause: None,
+            child_run: Some(test_child_run_record(&child_run_id, "parent-session")),
+        };
+
+        let output_ref = persist_delegated_child_evidence(&state, &request, &result)
+            .await
+            .expect("failed child output reference");
+        assert!(output_ref.path.starts_with("/agent/1/actions/"));
+        assert_eq!(
+            output_ref
+                .debug
+                .as_ref()
+                .and_then(|debug| debug.rollout_path.as_deref()),
+            Some(format!("/tmp/private-child-{index}.jsonl").as_str())
+        );
+        assert_eq!(
+            String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap(),
+            output_text
+        );
+        assert!(
+            serde_json::to_string(&output_ref)
+                .unwrap()
+                .contains("/tmp/private-child-")
+        );
+    }
+}
+
+#[tokio::test]
+async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
+    let (state, _shell) = create_namespace_agent_loop_state_and_shell();
+    let preview = Some("bounded preview".to_string());
+    let child_run = Some(json!({"child_run_id": "child-1"}));
+    let missing_ref = crate::evidence::NamespaceEvidenceReference {
+        path: "/agent/1/actions/missing/output".to_string(),
+        offset: Some(0),
+        length: None,
+    };
+
+    let missing = state
+        .namespace_environment()
+        .resolve_evidence_reference(&missing_ref, preview.clone(), child_run.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        missing.code,
+        crate::evidence::EvidenceResolutionErrorCode::Missing
+    );
+    assert_eq!(missing.preview, preview);
+    assert_eq!(missing.child_run, child_run);
+
+    let expired_record = json!({
+        "type": crate::evidence::RETENTION_EXPIRED_RECORD_TYPE,
+        "reference": "/agent/1/actions/a0/output",
+        "cause": "simulated_gc"
+    });
+    let action_id = state
+        .namespace_environment()
+        .write_action(
+            NamespaceActionRecord::new("expired-test", "completed")
+                .with_output(expired_record.to_string()),
+        )
+        .await
+        .unwrap();
+    let mut expired_ref = state
+        .namespace_environment()
+        .evidence_reference(format!("/agent/1/actions/{action_id}/output"))
+        .await
+        .unwrap();
+    expired_ref.length = Some(10_000);
+    let expired = state
+        .namespace_environment()
+        .resolve_evidence_reference(&expired_ref, None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        expired.code,
+        crate::evidence::EvidenceResolutionErrorCode::RetentionExpired
+    );
+}
+
+#[tokio::test]
+async fn evidence_resolution_honors_open_ended_ranges() {
+    let (state, _shell) = create_namespace_agent_loop_state_and_shell();
+    let action_id = state
+        .namespace_environment()
+        .write_action(NamespaceActionRecord::new("range-test", "completed").with_output("abcdef"))
+        .await
+        .unwrap();
+    let path = format!("/agent/1/actions/{action_id}/output");
+
+    for (offset, length, expected) in [
+        (Some(2), None, b"cdef".as_slice()),
+        (None, Some(3), b"abc".as_slice()),
+        (None, None, b"abcdef".as_slice()),
+    ] {
+        let reference = crate::evidence::NamespaceEvidenceReference {
+            path: path.clone(),
+            offset,
+            length,
+        };
+        let resolved = state
+            .namespace_environment()
+            .resolve_evidence_reference(&reference, None, None)
+            .await
+            .unwrap();
+        assert_eq!(resolved, expected);
+    }
 }
 
 #[tokio::test]

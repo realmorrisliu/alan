@@ -94,6 +94,7 @@ impl AgentConformanceChecker {
             ("actions", FileKind::Dir),
             ("actions/clone", FileKind::Clone),
             ("actions/events", FileKind::Stream),
+            ("actions/help", FileKind::File),
             ("context", FileKind::Dir),
             ("children", FileKind::Dir),
         ] {

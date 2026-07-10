@@ -61,7 +61,9 @@ pub struct ChildRunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rollout_path: Option<String>,
+    pub process_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_ref: Option<crate::skills::DelegatedSkillOutputRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_target: Option<String>,
     pub status: ChildRunStatus,
@@ -91,7 +93,7 @@ impl ChildRunRecord {
         parent_session_id: String,
         child_session_id: String,
         workspace_root: Option<String>,
-        rollout_path: Option<String>,
+        process_path: Option<String>,
         launch_target: Option<String>,
     ) -> Self {
         let now = now_ms();
@@ -100,7 +102,8 @@ impl ChildRunRecord {
             parent_session_id,
             child_session_id,
             workspace_root,
-            rollout_path,
+            process_path,
+            state_ref: None,
             launch_target,
             status: ChildRunStatus::Starting,
             created_at_ms: now,
@@ -123,6 +126,11 @@ impl ChildRunRecord {
         decision: alan_agent_protocol::DelegatedCapabilityDecision,
     ) -> Self {
         self.delegation_capability_decision = Some(decision);
+        self
+    }
+
+    pub fn with_state_ref(mut self, state_ref: crate::skills::DelegatedSkillOutputRef) -> Self {
+        self.state_ref = Some(state_ref);
         self
     }
 }
@@ -180,6 +188,18 @@ impl ChildRunRegistry {
                 record.latest_progress_at_ms = Some(now);
             }
         });
+    }
+
+    pub fn set_state_ref(
+        &self,
+        child_run_id: &str,
+        state_ref: crate::skills::DelegatedSkillOutputRef,
+    ) {
+        let mut records = self.inner.write().expect("child run registry poisoned");
+        if let Some(record) = records.get_mut(child_run_id) {
+            record.state_ref = Some(state_ref);
+            record.updated_at_ms = now_ms();
+        }
     }
 
     pub fn observe_heartbeat(&self, child_run_id: &str, summary: Option<String>) {
@@ -397,7 +417,7 @@ mod tests {
             parent_session_id.to_string(),
             format!("child-session-{child_run_id}"),
             Some("/tmp/workspace".to_string()),
-            Some("/tmp/workspace/.alan/runtime/stable/sessions/child.jsonl".to_string()),
+            Some("/proc/42".to_string()),
             Some("repo-coding".to_string()),
         )
     }

@@ -14,6 +14,7 @@ mod agent_root;
 mod approval;
 mod config;
 mod connections;
+mod evidence;
 mod install_channel;
 mod llm;
 mod models;

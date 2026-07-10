@@ -24,6 +24,11 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::evidence::{
+    EvidenceResolutionError, EvidenceResolutionErrorCode, NamespaceEvidenceReference,
+    is_retention_expired_record, redact_durable_evidence_text,
+};
+
 static NEXT_FID: AtomicU64 = AtomicU64::new(10_000);
 
 /// Configuration for one namespace-native Agent Process turn driver.
@@ -634,6 +639,76 @@ impl NamespaceRuntimeEnvironment {
         write_action_record(&client, &self.agent_path, record).await
     }
 
+    /// Build a bounded reference only when the path currently resolves in this
+    /// Agent Process namespace.
+    pub(crate) async fn evidence_reference(
+        &self,
+        path: impl Into<String>,
+    ) -> Option<NamespaceEvidenceReference> {
+        let path = path.into();
+        let client = NamespaceClient::new(self.root.clone());
+        let stat = client.stat_path(&path).await.ok()?;
+        Some(NamespaceEvidenceReference {
+            path,
+            offset: Some(0),
+            length: Some(stat.length),
+        })
+    }
+
+    /// Resolve evidence through the same namespace walk used for ordinary
+    /// files, preserving preview and child metadata in structured failures.
+    pub(crate) async fn resolve_evidence_reference(
+        &self,
+        reference: &NamespaceEvidenceReference,
+        preview: Option<String>,
+        child_run: Option<serde_json::Value>,
+    ) -> std::result::Result<Vec<u8>, EvidenceResolutionError> {
+        let client = NamespaceClient::new(self.root.clone());
+        let full_bytes =
+            client
+                .read_file(&reference.path)
+                .await
+                .map_err(|_| EvidenceResolutionError {
+                    code: EvidenceResolutionErrorCode::Missing,
+                    reference: reference.clone(),
+                    message: "evidence reference is not reachable in this namespace".to_string(),
+                    preview: preview.clone(),
+                    child_run: child_run.clone(),
+                })?;
+
+        if is_retention_expired_record(&full_bytes) {
+            return Err(EvidenceResolutionError {
+                code: EvidenceResolutionErrorCode::RetentionExpired,
+                reference: reference.clone(),
+                message: "evidence expired under the storing file server retention policy"
+                    .to_string(),
+                preview,
+                child_run,
+            });
+        }
+        let range = match (reference.offset, reference.length) {
+            (Some(offset), Some(length)) => usize::try_from(offset)
+                .ok()
+                .zip(usize::try_from(length).ok())
+                .and_then(|(start, length)| start.checked_add(length).map(|end| (start, end))),
+            (Some(offset), None) => usize::try_from(offset)
+                .ok()
+                .map(|start| (start, full_bytes.len())),
+            (None, Some(length)) => usize::try_from(length).ok().map(|end| (0, end)),
+            (None, None) => return Ok(full_bytes),
+        };
+        range
+            .filter(|(start, end)| *start <= *end && *end <= full_bytes.len())
+            .map(|(start, end)| full_bytes[start..end].to_vec())
+            .ok_or_else(|| EvidenceResolutionError {
+                code: EvidenceResolutionErrorCode::Missing,
+                reference: reference.clone(),
+                message: "evidence reference range is not available".to_string(),
+                preview,
+                child_run,
+            })
+    }
+
     pub(crate) async fn write_ui_activity_snapshot(
         &self,
         snapshot: &UiActivitySnapshot,
@@ -763,10 +838,11 @@ impl NamespaceRuntimeEnvironment {
                 serde_json::json!(result.exit_code),
             );
         }
+        let durable_output = redact_durable_evidence_text(&result.output);
         let action_id = self
             .write_action(
                 NamespaceActionRecord::new(tool_name, action_status)
-                    .with_output(result.output.clone())
+                    .with_output(durable_output.text)
                     .with_result(result_doc.to_string())
                     .with_approval("not_required")
                     .with_process(format!("/proc/{pid}")),

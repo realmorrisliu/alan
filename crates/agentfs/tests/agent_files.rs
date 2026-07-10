@@ -254,14 +254,14 @@ async fn read_write_field_range_edits_preserve_existing_bytes() {
         .unwrap();
     fs.open(Fid(5), OpenMode::ReadWrite).await.unwrap();
     let action_id = String::from_utf8(fs.read(Fid(5), 0, 64).await.unwrap()).unwrap();
-    write_doc(&fs, &["actions", &action_id, "output"], Fid(6), b"tool")
+    write_doc(&fs, &["actions", &action_id, "result"], Fid(6), b"tool")
         .await
         .unwrap();
 
     fs.walk(
         Fid::ROOT,
         Fid(7),
-        &["actions".into(), action_id.clone(), "output".into()],
+        &["actions".into(), action_id.clone(), "result".into()],
     )
     .await
     .unwrap();
@@ -270,7 +270,7 @@ async fn read_write_field_range_edits_preserve_existing_bytes() {
     fs.clunk(Fid(7)).await.unwrap();
 
     assert_eq!(
-        read_text(&fs, &["actions", &action_id, "output"], Fid(8)).await,
+        read_text(&fs, &["actions", &action_id, "result"], Fid(8)).await,
         "tool output"
     );
 }
@@ -314,6 +314,104 @@ async fn an_action_exposes_all_documented_fields() {
         read_text(&fs, &["actions", &id, "process"], Fid(8)).await,
         "/proc/42"
     );
+}
+
+#[tokio::test]
+async fn actions_help_describes_projection_retention_and_redaction_in_band() {
+    let fs = AgentFs::new();
+    let help = read_text(&fs, &["actions", "help"], Fid(1)).await;
+
+    assert!(help.contains("evidence_projection"));
+    assert!(help.contains("namespace reference"));
+    assert!(help.contains("evidence_retention_expired"));
+    assert!(help.contains("[REDACTED reason=<class>]"));
+}
+
+#[tokio::test]
+async fn action_output_remains_readable_from_content_store_after_process_exit() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(2),
+        b"durable tool evidence",
+    )
+    .await
+    .unwrap();
+    write_doc(&fs, &["actions", &id, "process"], Fid(3), b"/proc/42")
+        .await
+        .unwrap();
+    write_doc(&fs, &["actions", &id, "status"], Fid(4), b"completed")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "output"], Fid(5)).await,
+        "durable tool evidence"
+    );
+}
+
+#[tokio::test]
+async fn action_output_is_immutable_after_its_first_durable_write() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(2),
+        b"original evidence",
+    )
+    .await
+    .unwrap();
+
+    let rewrite = write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(3),
+        b"replacement evidence",
+    )
+    .await;
+
+    assert_eq!(rewrite, Err(ErrorCode::NoAccess));
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "output"], Fid(4)).await,
+        "original evidence"
+    );
+}
+
+#[tokio::test]
+async fn expired_action_output_returns_structured_retention_record() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["actions".into(), "clone".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    let id = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
+    write_doc(
+        &fs,
+        &["actions", &id, "output"],
+        Fid(2),
+        b"retained until policy expiry",
+    )
+    .await
+    .unwrap();
+
+    fs.expire_action_output_for_retention(&id, "age_limit")
+        .await
+        .unwrap();
+
+    let expired = read_text(&fs, &["actions", &id, "output"], Fid(3)).await;
+    assert!(expired.contains("\"type\":\"evidence_retention_expired\""));
+    assert!(expired.contains("\"cause\":\"age_limit\""));
 }
 
 #[tokio::test]

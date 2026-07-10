@@ -4190,7 +4190,7 @@ mod tests {
                 if let Ok(content) = tokio::fs::read_to_string(&rollout_path).await
                     && content.contains("\"role\":\"tool\"")
                     && content.contains("\"tool_name\":\"call_789\"")
-                    && content.contains("\\\"set-cookie\\\":\\\"[REDACTED]\\\"")
+                    && content.contains("\\\"set-cookie\\\":\\\"[REDACTED reason=secret_key]\\\"")
                     && !content.contains("secret-cookie")
                 {
                     found = true;

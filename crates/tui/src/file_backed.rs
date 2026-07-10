@@ -716,7 +716,7 @@ async fn read_action_snapshots(
         .await
         .map_err(|err| anyhow!("list actions failed: {err:?}"))?
         .into_iter()
-        .filter(|entry| entry != "clone" && entry != "events")
+        .filter(|entry| entry != "clone" && entry != "events" && entry != "help")
         .collect::<Vec<_>>();
     ids.sort_by_key(|id| request_sort_key(id));
 

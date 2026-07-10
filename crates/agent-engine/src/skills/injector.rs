@@ -267,7 +267,7 @@ Do not inline or restate the full `SKILL.md` body in this session.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
 If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
 The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
-If `output_ref` or truncation metadata is present, treat the inline text as a preview and inspect the referenced child rollout/session only when the full delegated output is needed.
+If `output_ref` or truncation metadata is present, treat the inline text as a preview. When the full delegated output is needed, open or read the namespace file at `output_ref.path`; do not use child rollout/session metadata as the resolver.
 Use `child_run` metadata to inspect or terminate a still-active child run through the available child-run controls.
 
 ```json
@@ -1262,6 +1262,8 @@ mod tests {
         assert!(rendered.contains("### Delegated Capability"));
         assert!(rendered.contains("invoke_delegated_skill"));
         assert!(rendered.contains("output_ref"));
+        assert!(rendered.contains("namespace file at `output_ref.path`"));
+        assert!(!rendered.contains("referenced child rollout/session"));
         assert!(rendered.contains("child_run"));
         assert!(rendered.contains("\"target\": \"reviewer\""));
         assert!(!rendered.contains("SECRET INLINE BODY"));

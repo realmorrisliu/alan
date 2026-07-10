@@ -15,6 +15,10 @@ use crate::approval::{
     TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
     append_skill_permission_hints, is_runtime_confirmation_checkpoint_type, replays_tool_calls,
 };
+use crate::evidence::{
+    payload_needs_projection, project_evidence_payload, redact_evidence_payload,
+    redaction_markers_in_text,
+};
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::bound_workspace_root;
@@ -443,7 +447,7 @@ fn namespace_tool_payload(
                 .or_insert(Value::Bool(tool.exit_code == 0));
             object.entry("exit_code").or_insert(json!(tool.exit_code));
             object.entry("process").or_insert(json!(process));
-            object.entry("action_id").or_insert(json!(tool.action_id));
+            object.insert("action_id".to_string(), json!(tool.action_id));
         }
         other => {
             payload = json!({
@@ -456,6 +460,51 @@ fn namespace_tool_payload(
         }
     }
     Ok(payload)
+}
+
+async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Value {
+    let redacted_payload = redact_evidence_payload(payload);
+    if !payload_needs_projection(&redacted_payload) {
+        return redacted_payload;
+    }
+
+    let Some(action_id) = payload.get("action_id").and_then(Value::as_str) else {
+        return project_evidence_payload(
+            payload,
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+    };
+    if action_id.is_empty() || action_id.contains('/') {
+        return project_evidence_payload(
+            payload,
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+    }
+    let path = format!(
+        "{}/actions/{action_id}/output",
+        state.namespace_environment().agent_path()
+    );
+    let reference = state.namespace_environment().evidence_reference(path).await;
+    let redactions = if let Some(reference) = reference.as_ref() {
+        state
+            .namespace_environment()
+            .resolve_evidence_reference(reference, None, None)
+            .await
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .map(|text| redaction_markers_in_text(&text))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let fallback_reason = reference
+        .is_none()
+        .then(|| "reference_unresolvable".to_string());
+    project_evidence_payload(payload, reference, redactions, fallback_reason)
 }
 
 async fn execute_tool_effect(
@@ -1196,6 +1245,7 @@ where
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 });
             }
+            let tape_value = tool_payload_for_tape(state, &value).await;
             emit(Event::ToolCallCompleted {
                 presentation: super::tool_presentation::tool_presentation(
                     &tool_call.name,
@@ -1218,7 +1268,7 @@ where
             );
             state
                 .session
-                .add_tool_message(&tool_call.id, &tool_call.name, value);
+                .add_tool_message(&tool_call.id, &tool_call.name, tape_value);
             info!(
                 tool_name = %tool_call.name,
                 elapsed_ms = tool_start.elapsed().as_millis(),
@@ -2347,6 +2397,154 @@ mod tests {
             String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
             r#"{"exit_code":0}"#
         );
+    }
+
+    #[tokio::test]
+    async fn long_tool_output_projects_to_resolvable_action_output_reference() {
+        let (mut state, shell) = create_namespace_test_state_and_shell();
+        let long_text = "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1);
+
+        execute_single_tool_call(
+            &mut state,
+            "call-long",
+            "read_file",
+            json!({ "content": long_text }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-long")
+            .expect("projected tool payload should be on tape");
+        assert_eq!(payload["type"], "evidence_projection");
+        assert_eq!(payload["reference"]["path"], "/agent/1/actions/a0/output");
+        assert_eq!(payload["truncation"]["full_content_recoverable"], true);
+        let full = read_shell_utf8(&shell, "/agent/1/actions/a0/output").await;
+        assert!(full.len() > crate::evidence::MAX_INLINE_EVIDENCE_BYTES);
+        assert!(full.contains(&"x".repeat(1024)));
+    }
+
+    #[tokio::test]
+    async fn short_tool_output_redacts_embedded_secrets_before_tape() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-redacted-short",
+            "read_file",
+            json!({
+                "output": "api_key=short-secret\nAuthorization: Bearer short-token"
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-redacted-short")
+            .expect("inline tool payload should be on tape");
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("short-secret"));
+        assert!(!serialized.contains("short-token"));
+        assert!(serialized.contains("[REDACTED reason=secret_key]"));
+    }
+
+    #[tokio::test]
+    async fn redaction_expansion_still_projects_tool_payload_to_bounded_evidence() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-redaction-expanded",
+            "read_file",
+            json!({
+                "output": "Bearer x ".repeat(1_000)
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-redaction-expanded")
+            .expect("expanded payload should be projected");
+        assert_eq!(payload["type"], "evidence_projection");
+        assert_eq!(payload["reference"]["path"], "/agent/1/actions/a0/output");
+        assert!(
+            payload["truncation"]["original_bytes"]
+                .as_u64()
+                .is_some_and(|bytes| bytes > crate::evidence::MAX_INLINE_EVIDENCE_BYTES as u64)
+        );
+    }
+
+    #[tokio::test]
+    async fn long_tool_output_uses_runtime_action_id_for_evidence_reference() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell();
+
+        execute_single_tool_call(
+            &mut state,
+            "call-forged-action-id",
+            "read_file",
+            json!({
+                "action_id": "forged",
+                "content": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-forged-action-id")
+            .expect("projected tool payload should be on tape");
+        assert_eq!(payload["metadata"]["action_id"], "a0");
+        assert_eq!(payload["reference"]["path"], "/agent/1/actions/a0/output");
+    }
+
+    #[tokio::test]
+    async fn long_tool_output_without_action_path_uses_marked_inline_fallback() {
+        let state = create_test_state();
+        let payload = json!({
+            "content": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+        });
+
+        let projected = tool_payload_for_tape(&state, &payload).await;
+
+        assert!(projected.get("reference").is_none());
+        assert_eq!(
+            projected["truncation"]["fallback_reason"],
+            "reference_unresolvable"
+        );
+        assert_eq!(projected["truncation"]["full_content_recoverable"], false);
+    }
+
+    #[tokio::test]
+    async fn durable_action_evidence_marks_secret_redaction_separately_from_truncation() {
+        let (mut state, shell) = create_namespace_test_state_and_shell();
+        execute_single_tool_call(
+            &mut state,
+            "call-redacted-long",
+            "read_file",
+            json!({
+                "authorization": "Bearer top-secret",
+                "content": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+        )
+        .await;
+
+        let payload = state
+            .session
+            .tool_payload_by_call_id("call-redacted-long")
+            .unwrap();
+        assert!(!payload["preview"].as_str().unwrap().contains("top-secret"));
+        assert!(
+            payload["preview"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED reason=secret_key]")
+        );
+        assert_eq!(payload["redactions"][0]["reason_class"], "secret_key");
+        assert_eq!(payload["truncation"]["full_content_recoverable"], true);
+        let full = read_shell_utf8(&shell, "/agent/1/actions/a0/output").await;
+        assert!(full.contains("[REDACTED reason=secret_key]"));
+        assert!(!full.contains("top-secret"));
     }
 
     #[tokio::test]
@@ -3776,6 +3974,7 @@ default_action: allow
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
+            "output": "api_key=embedded-secret",
             "headers": {
                 "authorization": "Bearer secret-token"
             }
@@ -3801,8 +4000,8 @@ default_action: allow
         );
         assert_eq!(
             replayed_payload["payload"]["headers"]["authorization"],
-            json!("Bearer secret-token"),
-            "dedupe replay should preserve the original live payload instead of the durable one"
+            json!("[REDACTED reason=secret_key]"),
+            "dedupe replay should preserve the redacted tape payload"
         );
         let effect = state
             .session
@@ -3815,13 +4014,13 @@ default_action: allow
                 .and_then(|payload| payload.get("payload"))
                 .and_then(|payload| payload.get("headers"))
                 .and_then(|headers| headers.get("authorization")),
-            Some(&json!("[REDACTED]")),
+            Some(&json!("[REDACTED reason=secret_key]")),
             "durable effect payloads should stay redacted for persistence"
         );
     }
 
     #[tokio::test]
-    async fn test_effect_record_uses_durable_payload_while_tape_keeps_live_payload() {
+    async fn test_effect_record_and_tape_payload_are_both_redacted() {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut session = Session::new();
         session.add_user_message("call api with auth");
@@ -3837,6 +4036,7 @@ default_action: allow
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
+            "output": "api_key=embedded-secret",
             "headers": {
                 "authorization": "Bearer secret-token"
             }
@@ -3857,16 +4057,28 @@ default_action: allow
                 .and_then(|payload| payload.get("payload"))
                 .and_then(|payload| payload.get("headers"))
                 .and_then(|headers| headers.get("authorization")),
-            Some(&json!("[REDACTED]"))
+            Some(&json!("[REDACTED reason=secret_key]"))
+        );
+        assert_eq!(
+            effect
+                .result_payload
+                .as_ref()
+                .and_then(|payload| payload.get("payload"))
+                .and_then(|payload| payload.get("output")),
+            Some(&json!("api_key= [REDACTED reason=secret_key]"))
         );
 
-        let live_payload = state
+        let tape_payload = state
             .session
             .tool_payload_by_call_id("call-net-secret")
-            .expect("live tool payload should exist on tape");
+            .expect("tool payload should exist on tape");
         assert_eq!(
-            live_payload["payload"]["headers"]["authorization"],
-            json!("Bearer secret-token")
+            tape_payload["payload"]["headers"]["authorization"],
+            json!("[REDACTED reason=secret_key]")
+        );
+        assert_eq!(
+            tape_payload["payload"]["output"],
+            json!("api_key= [REDACTED reason=secret_key]")
         );
     }
 
