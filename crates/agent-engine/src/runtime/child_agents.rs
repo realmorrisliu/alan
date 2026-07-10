@@ -369,7 +369,11 @@ where
     .context("Failed to build child-agent tool registry")?;
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
-    let launch_procfs = alan_kernel::ProcFs::new();
+    let parent_process_context = parent.namespace_environment().process_context();
+    let launch_procfs = parent_process_context
+        .as_ref()
+        .map(|context| context.procfs.clone())
+        .unwrap_or_default();
     let runtime_procfs = launch_procfs
         .clone()
         .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools.clone())));
@@ -392,6 +396,7 @@ where
         &runtime_procfs,
         &child_namespace_plan,
         handles,
+        parent_process_context,
         child_config.mount_grant_applicator_factory.clone(),
         "/bin/alan-agent",
     )
@@ -1578,19 +1583,26 @@ async fn spawn_child_namespace_runtime_environment(
     runtime_procfs: &alan_kernel::ProcFs,
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
+    parent_process_context: Option<super::agent_loop::NamespaceProcessContext>,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
     validate_child_namespace_launch_handles(plan, &handles)?;
 
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(
-        launch_procfs.clone(),
-    )));
+    let (agent_root, parent_pid) = match parent_process_context {
+        Some(context) => (context.agent_root, Some(context.pid)),
+        None => (
+            Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(
+                launch_procfs.clone(),
+            ))),
+            None,
+        ),
+    };
     let agent_root_tree = InProcessTransport::new(agent_root.clone());
     let spawner_namespace =
         child_spawner_namespace_from_launch_handles(plan, agent_root_tree.clone(), &handles);
     let spawner_procfs = launch_procfs.for_spawner(
-        None,
+        parent_pid,
         spawner_namespace,
         alan_kernel::Credentials::user("root-agent"),
     );
@@ -1652,6 +1664,7 @@ async fn spawn_child_namespace_runtime_environment(
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
+    .with_process_context(launch_procfs.clone(), agent_root, child_pid)
     .with_shared_services(handles.srv.clone(), handles.route.clone());
     let environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
@@ -3242,6 +3255,7 @@ Body
             &plan,
             handles,
             None,
+            None,
             "/bin/alan-agent",
         )
         .await
@@ -3292,12 +3306,47 @@ Body
             "allowed tool mount is present: {namespace:?}"
         );
 
+        let child_handles = ChildNamespaceLaunchHandles::new(
+            Arc::new(alan_agentfs::AgentFs::new()),
+            memfs_transport(),
+            memfs_transport(),
+            memfs_transport(),
+        )
+        .with_bin_tool("/bin/alpha", memfs_transport());
+        let nested = spawn_child_namespace_runtime_environment(
+            &launch_procfs,
+            &runtime_procfs,
+            &plan,
+            child_handles,
+            launch.environment.process_context(),
+            None,
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
+        assert_eq!(nested.pid, "2");
+        assert_eq!(
+            read_proc_path(
+                &launch_procfs,
+                vec![nested.pid.clone(), "parent".to_string()],
+                Fid(94),
+            )
+            .await,
+            "1"
+        );
+        let parent_shell = alan_shell::Shell::new(launch.environment.root_transport());
+        assert_eq!(
+            parent_shell.ls("/agent/1/children").await.unwrap(),
+            vec![nested.pid.clone()],
+            "delegated Agent Process must be inspectable from the parent AgentFS view"
+        );
+
         let tool = launch
             .environment
             .run_tool_action("alpha", "/bin/alpha", ["{}"])
             .await
             .unwrap();
-        assert_eq!(tool.pid, "2");
+        assert_eq!(tool.pid, "3");
         assert_eq!(tool.action_id, "a0");
         assert_eq!(tool.output.trim(), r#"{"ok":true}"#);
         let tool_namespace = read_proc_path(
@@ -3397,6 +3446,7 @@ Body
             &runtime_procfs,
             &plan,
             handles,
+            None,
             Some(factory.clone()),
             "/bin/alan-agent",
         )
@@ -3486,6 +3536,7 @@ Body
             &runtime_procfs,
             &plan,
             handles,
+            None,
             None,
             "/bin/alan-agent",
         )
