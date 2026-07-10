@@ -406,14 +406,39 @@ where
     let child_process_pid = namespace_launch.pid.clone();
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
-    let runtime = spawn_with_namespace_environment(
+    let runtime = match spawn_with_namespace_environment(
         child_config,
         namespace_launch.environment,
         child_tools,
         generation_capabilities,
     )
-    .context("Failed to spawn child-agent namespace runtime")?;
-    let (runtime, startup_metadata) = wait_for_child_runtime_startup(runtime, cancel).await?;
+    .context("Failed to spawn child-agent namespace runtime")
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
+    let (runtime, startup_metadata) = match wait_for_child_runtime_startup(runtime, cancel).await {
+        Ok(ready) => ready,
+        Err(err) => {
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
+            return Err(err);
+        }
+    };
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
@@ -440,6 +465,13 @@ where
         Ok(runtime) => runtime,
         Err(err) => {
             let status = child_run_status_for_launch_error(&err);
+            record_child_launch_failure_process(
+                &launch_procfs,
+                &child_process_environment,
+                &child_process_pid,
+                &err,
+            )
+            .await;
             global_child_run_registry().mark_terminal(
                 &child_run_id,
                 status,
@@ -806,6 +838,7 @@ impl ChildRuntimeController {
         let started_at = Instant::now();
         let wall_clock_cap = self.timeout.map(|timeout| timeout.saturating_mul(4));
         let mut liveness_closed = false;
+        let mut check_process_stop = false;
 
         loop {
             if let Some(observed) = self.observe_buffered_child_events(
@@ -813,6 +846,15 @@ impl ChildRuntimeController {
                 &mut warnings,
                 &mut latest_liveness_at,
             ) {
+                if self.external_process_stop_observed().await {
+                    self.abort_runtime().await;
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        self.externally_stopped_observed_event(
+                            &observed.output_text,
+                            &observed.warnings,
+                        ),
+                    ));
+                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(observed));
             }
 
@@ -835,10 +877,19 @@ impl ChildRuntimeController {
                 ));
             }
 
+            if check_process_stop && self.external_process_stop_observed().await {
+                self.abort_runtime().await;
+                return Ok(ChildRuntimeWaitOutcome::Observed(
+                    self.externally_stopped_observed_event(&output_text, &warnings),
+                ));
+            }
+            check_process_stop = false;
+
             if let Some(cap) = wall_clock_cap
                 && started_at.elapsed() >= cap
             {
-                self.abort_runtime().await;
+                self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut)
+                    .await;
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     self.timed_out_observed_event("Child-agent wall-clock cap exceeded"),
                 ));
@@ -854,12 +905,13 @@ impl ChildRuntimeController {
                             return Ok(ChildRuntimeWaitOutcome::Cancelled);
                         }
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime().await;
+                            self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut).await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                            check_process_stop = true;
                             continue;
                         }
                         liveness = self.liveness_rx.recv(), if !liveness_closed => {
@@ -875,12 +927,13 @@ impl ChildRuntimeController {
                 } else {
                     tokio::select! {
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime().await;
+                            self.abort_runtime_for_status(&ChildRuntimeStatus::TimedOut).await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
                         _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                            check_process_stop = true;
                             continue;
                         }
                         liveness = self.liveness_rx.recv(), if !liveness_closed => {
@@ -908,6 +961,10 @@ impl ChildRuntimeController {
                         );
                         continue;
                     }
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        check_process_stop = true;
+                        continue;
+                    }
                     recv = self.event_rx.recv() => recv,
                 }
             } else {
@@ -920,12 +977,25 @@ impl ChildRuntimeController {
                         );
                         continue;
                     }
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        check_process_stop = true;
+                        continue;
+                    }
                     recv = self.event_rx.recv() => recv,
                 }
             };
 
             match self.observe_child_event(recv, &mut output_text, &mut warnings) {
                 ChildEventObservation::Terminal(observed) => {
+                    if self.external_process_stop_observed().await {
+                        self.abort_runtime().await;
+                        return Ok(ChildRuntimeWaitOutcome::Observed(
+                            self.externally_stopped_observed_event(
+                                &observed.output_text,
+                                &observed.warnings,
+                            ),
+                        ));
+                    }
                     return Ok(ChildRuntimeWaitOutcome::Observed(observed));
                 }
                 ChildEventObservation::Progress => {
@@ -1203,6 +1273,27 @@ impl ChildRuntimeController {
         self.terminate_process_and_reconcile().await;
     }
 
+    async fn abort_runtime_for_status(&mut self, status: &ChildRuntimeStatus) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.abort().await;
+        }
+        let (Some(process_registry), Some(pid)) =
+            (self.process_registry.as_ref(), self.process_pid.as_deref())
+        else {
+            return;
+        };
+        let Ok(pid) = pid.parse::<u64>() else {
+            return;
+        };
+        process_registry
+            .record_exit(
+                alan_kernel::Pid(pid),
+                child_runtime_process_exit_code(status),
+            )
+            .await;
+        self.reconcile_exited_process().await;
+    }
+
     async fn terminate_process_and_reconcile(&self) {
         let (Some(environment), Some(pid)) = (
             self.process_environment.as_ref(),
@@ -1234,6 +1325,16 @@ impl ChildRuntimeController {
         }
     }
 
+    async fn external_process_stop_observed(&self) -> bool {
+        let (Some(environment), Some(pid)) = (
+            self.process_environment.as_ref(),
+            self.process_pid.as_deref(),
+        ) else {
+            return false;
+        };
+        matches!(environment.read_process_exit_code(pid).await, Ok(Some(130)))
+    }
+
     fn timed_out_observed_event(&self, message: &str) -> ObservedChildTerminalEvent {
         ObservedChildTerminalEvent {
             output_text: String::new(),
@@ -1259,6 +1360,25 @@ impl ChildRuntimeController {
                 "Child-agent terminated by {} with {:?} mode: {}",
                 request.actor, request.mode, request.reason
             )),
+            pause: None,
+            status: ChildRuntimeStatus::Terminated,
+        }
+    }
+
+    fn externally_stopped_observed_event(
+        &self,
+        output_text: &str,
+        warnings: &[String],
+    ) -> ObservedChildTerminalEvent {
+        ObservedChildTerminalEvent {
+            output_text: output_text.to_string(),
+            turn_summary: None,
+            structured_output: parse_child_structured_output(output_text),
+            warnings: warnings.to_vec(),
+            error_message: Some(
+                "Child-agent terminated through external /proc/<pid>/ctl process control"
+                    .to_string(),
+            ),
             pause: None,
             status: ChildRuntimeStatus::Terminated,
         }
@@ -1305,6 +1425,25 @@ fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
         ChildRunStatus::Cancelled
     } else {
         ChildRunStatus::Failed
+    }
+}
+
+async fn record_child_launch_failure_process(
+    procfs: &alan_kernel::ProcFs,
+    environment: &super::NamespaceRuntimeEnvironment,
+    pid: &str,
+    error: &anyhow::Error,
+) {
+    let Ok(pid) = pid.parse::<u64>() else {
+        return;
+    };
+    let exit_code = match child_run_status_for_launch_error(error) {
+        ChildRunStatus::Cancelled => 130,
+        _ => 1,
+    };
+    procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
+    if let Some(context) = environment.process_context() {
+        context.agent_root.unbind_process(&pid.to_string()).await;
     }
 }
 
@@ -3340,6 +3479,29 @@ Body
             vec![nested.pid.clone()],
             "delegated Agent Process must be inspectable from the parent AgentFS view"
         );
+        record_child_launch_failure_process(
+            &launch_procfs,
+            &nested.environment,
+            &nested.pid,
+            &anyhow::anyhow!("simulated child runtime startup failure"),
+        )
+        .await;
+        assert_eq!(
+            nested
+                .environment
+                .read_process_exit_code(&nested.pid)
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        assert!(
+            parent_shell
+                .ls("/agent/1/children")
+                .await
+                .unwrap()
+                .is_empty(),
+            "failed child launch must leave no running child entry"
+        );
 
         let tool = launch
             .environment
@@ -3406,6 +3568,97 @@ Body
                 .unwrap(),
             Some(0),
             "normal completion must not be rewritten as ctl cancellation (130)"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_proc_ctl_stops_child_runtime_controller() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child should be stopped externally.");
+        let parent = make_parent_state(&temp, requests, response);
+        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let mut spec = launch_spec(root_dir);
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
+            allowed_tools: vec!["alpha".to_string()],
+        });
+        let plan =
+            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let child_tools = build_child_tool_registry_from_namespace_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            &plan,
+        )
+        .unwrap();
+        let launch_procfs = KernelProcFs::new();
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let handles = ChildNamespaceLaunchHandles::new(
+            Arc::new(alan_agentfs::AgentFs::new()),
+            memfs_transport(),
+            memfs_transport(),
+            memfs_transport(),
+        )
+        .with_bin_tool("/bin/alpha", memfs_transport());
+        let launch = spawn_child_namespace_runtime_environment(
+            &launch_procfs,
+            &runtime_procfs,
+            &plan,
+            handles,
+            None,
+            None,
+            "/bin/alan-agent",
+        )
+        .await
+        .unwrap();
+        let process_pid = launch.pid.clone();
+        let process_environment = launch.environment.clone();
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let submission_id = "externally-stopped-child".to_string();
+        let controller = ChildRuntimeController {
+            runtime: None,
+            startup_metadata: test_startup_metadata("child-session", None, false),
+            event_rx,
+            liveness_rx: test_liveness_rx(),
+            submission_id: submission_id.clone(),
+            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            timeout: None,
+            process_registry: Some(launch_procfs),
+            process_environment: Some(launch.environment),
+            process_pid: Some(process_pid.clone()),
+        };
+
+        process_environment
+            .write_process_control_for_pid(&process_pid, "cancel")
+            .await
+            .unwrap();
+        event_tx
+            .send(RuntimeEventEnvelope {
+                submission_id: Some(submission_id),
+                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
+            })
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), controller.join())
+            .await
+            .expect("controller must observe external proc cancellation")
+            .unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Terminated);
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("/proc/<pid>/ctl"))
+        );
+        assert_eq!(
+            process_environment
+                .read_process_exit_code(&process_pid)
+                .await
+                .unwrap(),
+            Some(130)
         );
     }
 
@@ -4697,11 +4950,20 @@ model_reasoning_effort = "high"
         })
         .await
         .unwrap();
+        let process_environment = child.process_environment.clone().unwrap();
+        let process_pid = child.process_pid.clone().unwrap();
 
         let started_at = std::time::Instant::now();
         let result = child.join().await.unwrap();
 
         assert_eq!(result.status, ChildRuntimeStatus::TimedOut);
+        assert_eq!(
+            process_environment
+                .read_process_exit_code(&process_pid)
+                .await
+                .unwrap(),
+            Some(124)
+        );
         assert!(
             started_at.elapsed() < Duration::from_secs(8),
             "timed-out child join should abort promptly instead of waiting for graceful shutdown"

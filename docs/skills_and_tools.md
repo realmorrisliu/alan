@@ -422,13 +422,16 @@ The parent consumes that bounded record instead of replaying the child's full
 transcript into parent context. If `output_text` is present, it is the complete
 inline child output. If `output_ref` or truncation metadata is present, the
 inline text is only a preview and the parent or operator should inspect the
-referenced child rollout/session for full detail.
+namespace file at `output_ref.path` for full detail. Raw rollout and session
+paths are optional debug metadata, not evidence access paths.
 
 The parent rollout keeps a richer out-of-band reference for debugging and
 auditing. Its delegated tool-call record stores the `child_run` object with the
 child session id, child-run id, rollout path when durable, and terminal status.
-Operators can inspect that child run separately and, when it is still active,
-request termination through the child-run control plane.
+Operators inspect live child Agent Processes through `/agent/<pid>/children`
+and `/proc`. Parent Agent Processes request governed termination through
+`terminate_child_run`; external operators may write `cancel` or `interrupt` to
+`/proc/<child-pid>/ctl`. There is no daemon child-run control-plane API.
 
 `alan skills list` and `alan skills packages` also surface each resolved
 execution mode and flag unresolved delegated-package shapes with explicit

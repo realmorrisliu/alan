@@ -575,6 +575,30 @@ async fn host_recorded_exit_publishes_terminal_status_event() {
 }
 
 #[tokio::test]
+async fn host_recorded_exit_aborts_active_runner_task() {
+    let runner = Arc::new(DelayedOutputRunner::new("late runner output\n"));
+    let fs = ProcFs::new().with_runner(runner.clone());
+    let pid = spawn(&fs, Fid(30)).await;
+
+    fs.record_exit(Pid(pid.parse().unwrap()), 124).await;
+    runner.release();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let output_fid = Fid(31);
+    fs.walk(
+        Fid::ROOT,
+        output_fid,
+        &[pid.clone(), "io".to_string(), "output".to_string()],
+    )
+    .await
+    .unwrap();
+    let output_stat = fs.stat(output_fid).await.unwrap();
+    let exit = String::from_utf8(read_at(&fs, &[&pid, "exit"], Fid(32)).await.unwrap()).unwrap();
+    assert_eq!(output_stat.length, 0);
+    assert_eq!(exit, "124");
+}
+
+#[tokio::test]
 async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());
