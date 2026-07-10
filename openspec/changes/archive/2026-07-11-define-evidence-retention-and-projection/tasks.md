@@ -27,5 +27,5 @@
 
 - [x] 5.1 Run `just verify` and fix fallout.
 - [x] 5.2 Run `openspec validate define-evidence-retention-and-projection --strict`.
-- [ ] 5.3 Open PR, address review, merge.
-- [ ] 5.4 After merge, sync delta specs into `openspec/specs/` and confirm archive readiness.
+- [x] 5.3 Open PR, address review, merge. (PR #618, merged 2026-07-10; follow-up fix in PR #623)
+- [x] 5.4 After merge, sync delta specs into `openspec/specs/` and confirm archive readiness. (synced 2026-07-11)

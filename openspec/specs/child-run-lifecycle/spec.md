@@ -2,8 +2,9 @@
 
 ## Purpose
 Define delegated child-run lifecycle behavior: registration before first
-submission, liveness and timeout classification, progress metadata, daemon and
-TUI control surfaces, and governed parent-initiated termination.
+submission, liveness and timeout classification, progress metadata, projection
+authority relative to `/proc` and the agent overlay, and governed
+parent-initiated termination.
 ## Requirements
 ### Requirement: Child Run Registration
 The system SHALL create a child-run record before submitting the first operation to a delegated child runtime.
@@ -39,39 +40,25 @@ The system SHALL update child-run progress metadata from child events and heartb
 - **WHEN** a child runtime is still active but produces no user-visible output
 - **THEN** the child runtime or supervising controller records heartbeat freshness so the operator can distinguish quiet activity from a dead child
 
-### Requirement: Daemon Child-Run Control Plane
-The daemon SHALL expose APIs to list, read, and terminate child runs for a parent session.
+### Requirement: Child-Run Records Are A Projection, Not A Second Process Table
+Child-run records SHALL be a delegation-scoped projection over `/proc`
+parentage plus launch and handoff metadata. For process state (existence,
+parentage, liveness, terminal exit), `/proc` and the agent overlay
+(`children/`, aggregate `events`) SHALL be authoritative; a child-run record
+that disagrees with them SHALL be treated as stale and corrected from the
+authoritative surfaces, never the reverse.
 
-#### Scenario: List child runs
-- **WHEN** a client requests child runs for a parent session
-- **THEN** the daemon returns all known child runs for that session with status, workspace, rollout path, latest heartbeat/progress, and terminal metadata
+#### Scenario: Record disagrees with /proc
+- **WHEN** a child-run record reports a child as running while `/proc` shows the
+  process exited
+- **THEN** consumers and reconciliation logic treat the process state from
+  `/proc` as truth and update the record to terminal
 
-#### Scenario: Read one child run
-- **WHEN** a client requests a child run by id under a parent session
-- **THEN** the daemon returns the child-run record or a not-found error if the parent has no matching child run
-
-#### Scenario: Request termination
-- **WHEN** a client requests child termination with a reason and graceful or forceful mode
-- **THEN** the daemon routes the request through the runtime child-run lifecycle transition and records actor, reason, mode, requested time, and final status
-
-### Requirement: TUI Child-Agent Commands
-The TUI SHALL expose child-agent management commands backed by the daemon child-run control plane.
-
-#### Scenario: List child agents
-- **WHEN** the operator enters `/agents`
-- **THEN** the TUI lists child runs for the current session grouped or marked by lifecycle status
-
-#### Scenario: Inspect child agent
-- **WHEN** the operator enters `/agent <id>`
-- **THEN** the TUI shows status, workspace, rollout path, latest heartbeat/progress, and current tool or plan summary when available
-
-#### Scenario: Terminate child agent
-- **WHEN** the operator enters `/agent terminate <id> [reason]`
-- **THEN** the TUI requests graceful child-run termination and reports the resulting lifecycle state
-
-#### Scenario: Kill child agent
-- **WHEN** the operator enters `/agent kill <id> [reason]`
-- **THEN** the TUI requests forceful child-run termination and reports the resulting lifecycle state
+#### Scenario: Delegation metadata has no /proc equivalent
+- **WHEN** a consumer needs delegation-scoped metadata (launch metadata,
+  classified requirements, handoff references, termination actor/reason)
+- **THEN** the child-run record is the owner of that metadata, because `/proc`
+  deliberately does not model delegation semantics
 
 ### Requirement: Governed Parent Child Termination
 The parent runtime SHALL expose a governed virtual tool for terminating a known child run.

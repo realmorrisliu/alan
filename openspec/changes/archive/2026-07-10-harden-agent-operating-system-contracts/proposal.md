@@ -1,3 +1,31 @@
+> **SUPERSEDED — archived 2026-07-10 without implementation.** This change was
+> designed (2026-05-14, PR #402) before the Plan 9-like namespace-native
+> substrate landed (PRs #573–#607) and before
+> `openspec/specs/agent-file-layout-contract/spec.md` became authoritative. Its
+> delta specs were NOT synced into `openspec/specs/`. Disposition of its five
+> problem observations:
+>
+> - Capability routing → re-proposed as `align-delegation-capability-with-namespace`
+>   (capability = what is mounted in the child namespace, not a descriptor-matching
+>   engine; delegation moves to the spawn model).
+> - Evidence provenance + authorized artifact reads → re-proposed as
+>   `define-evidence-retention-and-projection` (durable evidence is already
+>   structurally provided by append-only `io/output`/`machine/tape`; references
+>   become namespace paths; an "authorized artifact reader" API violates the
+>   iron law).
+> - Memory goal salience → re-proposed as `improve-memory-goal-salience`
+>   (content-layer logic, survives the architecture change nearly intact).
+> - Human-visible run lifecycle / parent-visible child events → already covered
+>   by the agent overlay's aggregate `events` stream, `requests/<id>/` trees, and
+>   `machine/ui/events` (`agent-runtime-ui-file-surfaces`); no re-proposal.
+> - Legacy child-run registry authority plus daemon/TUI child-control surfaces →
+>   re-proposed as `reconcile-child-run-lifecycle-with-namespace` (`/proc`
+>   parentage and the `/agent` overlay remain authoritative; dead daemon routes
+>   and daemon-backed TUI commands are removal targets).
+> - Daemon evidence/lifecycle endpoint metadata → dropped; the TUI is a file
+>   client (`remove-daemon-backed-tui-compat`, archived 2026-07-08) and remote
+>   access belongs to `define-remote-access-service`.
+
 ## Why
 
 alan can already delegate work, persist rollouts, gate tools, and refresh memory
