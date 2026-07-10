@@ -16,8 +16,8 @@ coding eval ladders in OpenSpec.
   worker responsibilities, minimum repo-worker loop behavior, verification
   reporting, delivery summaries, or coding governance boundaries
 - **THEN** the requirement is updated in this capability,
-  `agent-capability-routing`, `delegated-result-handoff`, `runtime-evidence-provenance`,
-  or another active OpenSpec owner
+  `delegation-capability-alignment`, `delegated-result-handoff`,
+  `evidence-retention-and-projection`, or another active OpenSpec owner
 
 #### Scenario: Repo-worker package layout is described
 - **WHEN** docs describe the first-party repo-worker package path, child launch
