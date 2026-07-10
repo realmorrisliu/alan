@@ -405,14 +405,20 @@ spawn_count="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_de
 parent_escalation_count="$(jq -s '[.[] | select(.type == "tool_call") | select((.audit.action // "") == "escalate")] | length' "$rollout_copy_file")"
 parent_inline_write_count="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write")] | length' "$rollout_copy_file")"
 parent_inline_write_names="$(jq -s '[.[] | select(.type == "tool_call" and .name != "invoke_delegated_skill") | select((.audit.capability // "") == "write") | .name] | unique' "$rollout_copy_file")"
-child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result.child_run? | select(. != null)]' "$rollout_copy_file")"
+child_runs_json="$(jq -s '[.[] | select(.type == "tool_call" and .name == "invoke_delegated_skill") | .result as $delegated | $delegated.child_run? | select(. != null) | . + {rollout_debug_path: ($delegated.result.output_ref.debug.rollout_path // $delegated.result.structured_output_ref.debug.rollout_path // null)}]' "$rollout_copy_file")"
 completed_child_count="$(printf '%s' "$child_runs_json" | jq '[.[] | select(.terminal_status == "completed")] | length')"
 child_escalation_count=0
 child_rollout_files=()
 
 while IFS= read -r child_run; do
-    child_rollout="$(printf '%s' "$child_run" | jq -r '.rollout_path // empty')"
     child_session="$(printf '%s' "$child_run" | jq -r '.session_id // "child"')"
+    child_rollout="$(printf '%s' "$child_run" | jq -r '.rollout_debug_path // empty')"
+    if [[ -z "$child_rollout" ]]; then
+        child_read_response=""
+        if child_read_response="$(curl -fsS "$base_url/api/v1/sessions/$child_session/read" 2>/dev/null)"; then
+            child_rollout="$(printf '%s' "$child_read_response" | jq -r '.rollout_path // empty')"
+        fi
+    fi
     if [[ -n "$child_rollout" && -f "$child_rollout" ]]; then
         child_rollout_copy="$output_dir/${child_session}.jsonl"
         cp "$child_rollout" "$child_rollout_copy"

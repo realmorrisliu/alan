@@ -250,10 +250,67 @@ fn redact_sensitive_line(line: &str, markers: &mut Vec<EvidenceRedactionMarker>)
             return format!("{}{} {}", key, &line[separator..=separator], marker);
         }
     }
+    let line = redact_url_query_secrets(line, markers);
     if lower.contains("bearer ") {
-        return redact_bearer(line, markers);
+        return redact_bearer(&line, markers);
     }
-    line.to_string()
+    line
+}
+
+fn redact_url_query_secrets(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
+    let bytes = text.as_bytes();
+    let mut cursor = 0;
+    let mut copied_through = 0;
+    let mut redacted = String::with_capacity(text.len());
+    let mut found = false;
+
+    while cursor < bytes.len() {
+        if !matches!(bytes[cursor], b'?' | b'&') {
+            cursor += 1;
+            continue;
+        }
+
+        let key_start = cursor + 1;
+        let mut separator = key_start;
+        while separator < bytes.len()
+            && !matches!(
+                bytes[separator],
+                b'=' | b'&' | b'#' | b' ' | b'\t' | b'\r' | b'\n'
+            )
+        {
+            separator += 1;
+        }
+        if separator >= bytes.len()
+            || bytes[separator] != b'='
+            || !sensitive_key(&text[key_start..separator])
+        {
+            cursor = separator.max(cursor + 1);
+            continue;
+        }
+
+        let value_start = separator + 1;
+        let mut value_end = value_start;
+        while value_end < bytes.len()
+            && !matches!(
+                bytes[value_end],
+                b'&' | b'#' | b' ' | b'\t' | b'\r' | b'\n' | b'\'' | b'"' | b'<' | b'>'
+            )
+        {
+            value_end += 1;
+        }
+        redacted.push_str(&text[copied_through..value_start]);
+        redacted.push_str("[REDACTED reason=secret_key]");
+        copied_through = value_end;
+        cursor = value_end;
+        found = true;
+    }
+
+    if !found {
+        return text.to_string();
+    }
+    redacted.push_str(&text[copied_through..]);
+    push_marker(markers, marker("secret_key"), "secret_key");
+    redacted
 }
 
 fn redact_line_oriented_text(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
@@ -493,6 +550,24 @@ mod tests {
             redacted
                 .text
                 .matches("[REDACTED reason=credential_token]")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn redacts_sensitive_url_query_parameters_anywhere_in_a_line() {
+        let redacted = redact_durable_evidence_text(
+            "download: https://host/cb?api_key=first&safe=ok\nurl=https://host/file?access_token=second#fragment",
+        );
+
+        assert!(!redacted.text.contains("first"));
+        assert!(!redacted.text.contains("second"));
+        assert!(redacted.text.contains("safe=ok"));
+        assert_eq!(
+            redacted
+                .text
+                .matches("[REDACTED reason=secret_key]")
                 .count(),
             2
         );
