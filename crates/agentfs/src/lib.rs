@@ -49,6 +49,11 @@ pub use root::AgentRootFs;
 /// Cap on a buffered document write (request/action field), so a hostile offset
 /// cannot allocate unbounded memory.
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
+// Action output is the durable evidence body and can be materially larger than
+// control-plane documents. Keep a separate bound so model/tool output above the
+// generic document cap remains referenceable without making every AgentFS
+// document equally large.
+const MAX_ACTION_OUTPUT_BYTES: usize = 16 << 20; // 16 MiB
 
 /// In-band help for `machine/ctl`: reading the control file lists its accepted
 /// commands so a namespace-native client need not consult external docs
@@ -792,7 +797,12 @@ impl FileServer for AgentFs {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
                 let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
                 let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                if end > MAX_DOC_BYTES {
+                let max_bytes = if matches!(node, Node::ActionField(_, "output")) {
+                    MAX_ACTION_OUTPUT_BYTES
+                } else {
+                    MAX_DOC_BYTES
+                };
+                if end > max_bytes {
                     return Err(ErrorCode::BadRequest);
                 }
                 if f.write_buf.len() < end {

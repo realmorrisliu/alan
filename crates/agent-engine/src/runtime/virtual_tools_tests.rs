@@ -3505,20 +3505,21 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
 
+    let output_len = (1 << 20) + 1_024;
     handle_invoke_delegated_skill(
         &mut state,
         &tool_call,
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
-            Box::pin(async {
+        move |_state, _spec, _cancel| {
+            Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
                     session_id: "child-session".to_string(),
                     child_run_id: Some("child-run".to_string()),
                     rollout_path: Some(PathBuf::from("/tmp/debug-child.jsonl")),
-                    output_text: "x".repeat(MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 500),
+                    output_text: "x".repeat(output_len),
                     turn_summary: Some("Long child completed".to_string()),
                     structured_output: None,
                     warnings: Vec::new(),
@@ -3544,7 +3545,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
         Some("/tmp/debug-child.jsonl")
     );
     let full = String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap();
-    assert_eq!(full.len(), MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 500);
+    assert_eq!(full.len(), output_len);
     let namespace_ref = crate::evidence::NamespaceEvidenceReference {
         path: output_ref.path,
         offset: output_ref.offset,
