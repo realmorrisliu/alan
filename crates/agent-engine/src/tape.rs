@@ -315,6 +315,11 @@ impl Message {
         matches!(self, Message::User { .. })
     }
 
+    /// Whether this message records runtime control input rather than user-authored chat intent.
+    pub(crate) fn is_internal_control(&self) -> bool {
+        is_internal_control_message(self)
+    }
+
     /// Check if this message is an assistant message.
     pub fn is_assistant(&self) -> bool {
         matches!(self, Message::Assistant { .. })
