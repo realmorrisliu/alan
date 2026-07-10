@@ -180,7 +180,8 @@ pub struct DurableToolPayload {
 
 pub fn build_durable_tool_payload(payload: &Value) -> DurableToolPayload {
     let mut summary = ToolPayloadRedactionSummary::default();
-    let durable_payload = sanitize_payload_for_rollout(payload, &mut summary);
+    let redacted_payload = crate::evidence::redact_evidence_payload(payload);
+    let durable_payload = sanitize_payload_for_rollout(&redacted_payload, &mut summary);
     let digest = sha256_hex(&canonicalize_json(&durable_payload).to_string());
     let preview = payload_preview(&durable_payload);
     let redaction =
@@ -1876,6 +1877,27 @@ this is not valid json
                 redacted_fields: 2,
                 truncated_values: 0,
             })
+        );
+    }
+
+    #[test]
+    fn test_build_durable_tool_payload_redacts_secrets_embedded_in_strings() {
+        let durable = build_durable_tool_payload(&serde_json::json!({
+            "output": "api_key=embedded-secret\nAuthorization: Bearer embedded-token"
+        }));
+
+        let output = durable.payload["output"]
+            .as_str()
+            .expect("output should remain a string");
+        assert!(!output.contains("embedded-secret"));
+        assert!(!output.contains("embedded-token"));
+        assert!(output.contains("[REDACTED reason=secret_key]"));
+        assert!(!durable.digest.is_empty());
+        assert!(
+            durable
+                .preview
+                .as_deref()
+                .is_none_or(|preview| !preview.contains("embedded-secret"))
         );
     }
 

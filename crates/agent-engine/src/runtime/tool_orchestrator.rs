@@ -3974,6 +3974,7 @@ default_action: allow
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
+            "output": "api_key=embedded-secret",
             "headers": {
                 "authorization": "Bearer secret-token"
             }
@@ -4035,6 +4036,7 @@ default_action: allow
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
         let arguments = json!({
             "command": "curl https://example.com",
+            "output": "api_key=embedded-secret",
             "headers": {
                 "authorization": "Bearer secret-token"
             }
@@ -4057,6 +4059,14 @@ default_action: allow
                 .and_then(|headers| headers.get("authorization")),
             Some(&json!("[REDACTED reason=secret_key]"))
         );
+        assert_eq!(
+            effect
+                .result_payload
+                .as_ref()
+                .and_then(|payload| payload.get("payload"))
+                .and_then(|payload| payload.get("output")),
+            Some(&json!("api_key= [REDACTED reason=secret_key]"))
+        );
 
         let tape_payload = state
             .session
@@ -4065,6 +4075,10 @@ default_action: allow
         assert_eq!(
             tape_payload["payload"]["headers"]["authorization"],
             json!("[REDACTED reason=secret_key]")
+        );
+        assert_eq!(
+            tape_payload["payload"]["output"],
+            json!("api_key= [REDACTED reason=secret_key]")
         );
     }
 
