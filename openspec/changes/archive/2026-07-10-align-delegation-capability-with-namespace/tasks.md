@@ -24,5 +24,5 @@
 
 - [x] 5.1 Run `just verify` and fix fallout.
 - [x] 5.2 Run `openspec validate align-delegation-capability-with-namespace --strict`.
-- [ ] 5.3 Open PR, address review, merge.
-- [ ] 5.4 After merge, sync delta specs into `openspec/specs/` and confirm archive readiness.
+- [x] 5.3 Open PR, address review, merge.
+- [x] 5.4 After merge, sync delta specs into `openspec/specs/` and confirm archive readiness.
