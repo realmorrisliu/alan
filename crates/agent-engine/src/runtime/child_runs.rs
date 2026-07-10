@@ -201,12 +201,11 @@ impl ChildRunRegistry {
         if record.status.is_terminal() {
             return;
         }
-        record.status = if matches!(record.status, ChildRunStatus::Terminating) {
-            ChildRunStatus::Terminated
-        } else if exit_code == 0 {
-            ChildRunStatus::Completed
-        } else {
-            ChildRunStatus::Failed
+        record.status = match (record.status, exit_code) {
+            (ChildRunStatus::Terminating, _) | (_, 130) => ChildRunStatus::Terminated,
+            (_, 0) => ChildRunStatus::Completed,
+            (_, 124) => ChildRunStatus::TimedOut,
+            _ => ChildRunStatus::Failed,
         };
         record.latest_event_kind = Some("proc_exited".to_string());
         record.latest_status_summary = Some(format!(
@@ -696,6 +695,23 @@ mod tests {
                 .unwrap()
                 .contains("exited with code 17")
         );
+    }
+
+    #[test]
+    fn registry_preserves_runtime_terminal_status_from_process_exit_codes() {
+        let registry = ChildRunRegistry::default();
+
+        for (id, exit_code, expected) in [
+            ("completed", 0, ChildRunStatus::Completed),
+            ("timed-out", 124, ChildRunStatus::TimedOut),
+            ("terminated", 130, ChildRunStatus::Terminated),
+            ("failed", 17, ChildRunStatus::Failed),
+        ] {
+            registry.register(test_record(id, "parent-1"));
+            registry.mark_running(id);
+            registry.reconcile_process_exit(id, exit_code);
+            assert_eq!(registry.get(id).unwrap().status, expected);
+        }
     }
 
     #[test]
