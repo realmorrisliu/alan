@@ -10,7 +10,7 @@ use alan_agent_protocol::{
 };
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const READ_TOOL_BINDINGS: &[&str] = &["read_file", "grep", "glob", "list_dir", "bash"];
 const WRITE_TOOL_BINDINGS: &[&str] = &["write_file", "edit_file", "bash"];
@@ -291,8 +291,38 @@ fn workspace_path_is_covered(required: Option<&Path>, mounted: Option<&Path>) ->
     match (required, mounted) {
         (_, None) => false,
         (None, Some(_)) => true,
-        (Some(required), Some(mounted)) => required.starts_with(mounted),
+        (Some(required), Some(mounted)) => {
+            let (Some(required), Some(mounted)) = (
+                normalize_absolute_requirement_path(required),
+                normalize_absolute_requirement_path(mounted),
+            ) else {
+                return false;
+            };
+            required.starts_with(mounted)
+        }
     }
+}
+
+fn normalize_absolute_requirement_path(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Some(normalized)
 }
 
 fn contains_binding(bindings: &BTreeSet<&str>, candidates: &[&str]) -> bool {
@@ -416,6 +446,36 @@ mod tests {
 
         assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
         assert!(decision.narrowed_task.is_none());
+    }
+
+    #[test]
+    fn workspace_requirement_cannot_escape_mounted_root_with_parent_components() {
+        let child = summary(&["read_file"], true);
+        let requirements = vec![DelegatedCapabilityRequirement::WorkspaceRead {
+            path: Some(PathBuf::from("/tmp/repo/../other")),
+        }];
+
+        let decision = evaluate_delegated_namespace(
+            "Inspect files outside the mounted workspace",
+            &requirements,
+            child,
+            &DelegatedNamespaceSummary::default(),
+        );
+
+        assert_ne!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
+        assert_eq!(decision.unsatisfied, requirements);
+    }
+
+    #[test]
+    fn workspace_requirement_normalizes_components_inside_mounted_root() {
+        assert!(workspace_path_is_covered(
+            Some(Path::new("/tmp/repo/src/../tests")),
+            Some(Path::new("/tmp/repo")),
+        ));
+        assert!(!workspace_path_is_covered(
+            Some(Path::new("relative/path")),
+            Some(Path::new("/tmp/repo")),
+        ));
     }
 
     #[test]
