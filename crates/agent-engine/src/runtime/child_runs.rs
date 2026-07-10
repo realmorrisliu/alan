@@ -190,6 +190,32 @@ impl ChildRunRegistry {
         });
     }
 
+    /// Reconcile cached lifecycle from authoritative `/proc` exit state.
+    /// Delegation metadata remains record-owned; process state never flows in
+    /// the opposite direction.
+    pub fn reconcile_process_exit(&self, child_run_id: &str, exit_code: i32) {
+        let mut records = self.inner.write().expect("child run registry poisoned");
+        let Some(record) = records.get_mut(child_run_id) else {
+            return;
+        };
+        if record.status.is_terminal() {
+            return;
+        }
+        record.status = if matches!(record.status, ChildRunStatus::Terminating) {
+            ChildRunStatus::Terminated
+        } else if exit_code == 0 {
+            ChildRunStatus::Completed
+        } else {
+            ChildRunStatus::Failed
+        };
+        record.latest_event_kind = Some("proc_exited".to_string());
+        record.latest_status_summary = Some(format!(
+            "authoritative process {} exited with code {exit_code}",
+            record.process_path.as_deref().unwrap_or("/proc/<unknown>")
+        ));
+        record.updated_at_ms = now_ms();
+    }
+
     pub fn set_state_ref(
         &self,
         child_run_id: &str,
@@ -649,6 +675,27 @@ mod tests {
             }
             other => panic!("expected already-terminal error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn registry_reconciles_stale_running_record_from_authoritative_process_exit() {
+        let registry = ChildRunRegistry::default();
+        registry.register(test_record("run-1", "parent-1"));
+        registry.mark_running("run-1");
+
+        registry.reconcile_process_exit("run-1", 17);
+
+        let record = registry.get("run-1").unwrap();
+        assert_eq!(record.status, ChildRunStatus::Failed);
+        assert_eq!(record.latest_event_kind.as_deref(), Some("proc_exited"));
+        assert_eq!(record.process_path.as_deref(), Some("/proc/42"));
+        assert!(
+            record
+                .latest_status_summary
+                .as_deref()
+                .unwrap()
+                .contains("exited with code 17")
+        );
     }
 
     #[test]

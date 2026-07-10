@@ -5,10 +5,9 @@ use alan::daemon::connection_routes::{
     ConnectionCatalogResponse, ConnectionListResponse, ProviderDescriptorView,
 };
 use alan::daemon::routes::{
-    ChildRunListResponse, ChildRunResponse, CreateSessionResponse, ForkSessionResponse,
-    SessionDurabilityInfo, SessionListItem, SessionListResponse, SessionReadResponse,
+    CreateSessionResponse, ForkSessionResponse, SessionDurabilityInfo, SessionListItem,
+    SessionListResponse, SessionReadResponse,
 };
-use alan_agent_engine::runtime::ChildRunRecord;
 use alan_agent_engine::{CredentialKind, LlmProvider, PartialStreamRecoveryMode, StreamingMode};
 use alan_agent_protocol::GovernanceConfig;
 use chrono::Utc;
@@ -50,19 +49,6 @@ fn selected_dynamic_tui_payloads_remain_json_objects() {
         },
     );
     assert_payload_is_json_object("SessionReadResponse", &sample_session_read_response());
-    assert_payload_is_json_object("ChildRunRecord", &sample_child_run_record());
-    assert_payload_is_json_object(
-        "ChildRunListResponse",
-        &ChildRunListResponse {
-            child_runs: vec![sample_child_run_record()],
-        },
-    );
-    assert_payload_is_json_object(
-        "ChildRunResponse",
-        &ChildRunResponse {
-            child_run: sample_child_run_record(),
-        },
-    );
     assert_payload_is_json_object(
         "ConnectionCatalogResponse",
         &ConnectionCatalogResponse {
@@ -167,20 +153,6 @@ fn sample_session_read_response() -> SessionReadResponse {
         latest_plan_snapshot: None,
         messages: vec![],
     }
-}
-
-fn sample_child_run_record() -> ChildRunRecord {
-    let mut record = ChildRunRecord::new(
-        "child-1".to_string(),
-        "sess-1".to_string(),
-        "sess-child".to_string(),
-        Some("/tmp/workspace".to_string()),
-        Some("/tmp/workspace/.alan/runtime/stable/sessions/child.jsonl".to_string()),
-        Some("repo-coding".to_string()),
-    );
-    record.latest_event_kind = Some("text_delta".to_string());
-    record.latest_status_summary = Some("working".to_string());
-    record
 }
 
 fn sample_provider_descriptor() -> ProviderDescriptorView {

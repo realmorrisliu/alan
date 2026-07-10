@@ -224,6 +224,8 @@ pub(crate) struct ChildRuntimeController {
     submission_id: String,
     child_run_id: String,
     timeout: Option<Duration>,
+    process_environment: Option<super::NamespaceRuntimeEnvironment>,
+    process_pid: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -394,6 +396,7 @@ where
     )
     .await
     .context("Failed to spawn child-agent process namespace")?;
+    let child_process_environment = namespace_launch.environment.clone();
     let child_process_pid = namespace_launch.pid.clone();
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
@@ -449,6 +452,8 @@ where
         submission_id: submission.id,
         child_run_id,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
+        process_environment: Some(child_process_environment),
+        process_pid: Some(child_process_pid),
     })
 }
 
@@ -1160,11 +1165,32 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             let _ = runtime.shutdown().await;
         }
+        self.terminate_process_and_reconcile().await;
     }
 
     async fn abort_runtime(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
+        }
+        self.terminate_process_and_reconcile().await;
+    }
+
+    async fn terminate_process_and_reconcile(&self) {
+        let (Some(environment), Some(pid)) = (
+            self.process_environment.as_ref(),
+            self.process_pid.as_deref(),
+        ) else {
+            return;
+        };
+        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
+            return;
+        }
+        let _ = environment
+            .write_process_control_for_pid(pid, "cancel")
+            .await;
+        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
         }
     }
 
@@ -4071,6 +4097,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4103,6 +4131,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4149,6 +4179,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4211,6 +4243,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4253,6 +4287,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
         let cancel = CancellationToken::new();
 
@@ -4305,6 +4341,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: child_run_id.clone(),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4349,6 +4387,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: child_run_id.clone(),
             timeout: None,
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();
@@ -4459,6 +4499,8 @@ model_reasoning_effort = "high"
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: Some(Duration::from_millis(80)),
+            process_environment: None,
+            process_pid: None,
         };
 
         let result = controller.join().await.unwrap();

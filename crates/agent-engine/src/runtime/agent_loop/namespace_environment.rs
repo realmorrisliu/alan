@@ -629,6 +629,35 @@ impl NamespaceRuntimeEnvironment {
             .with_context(|| format!("write process control command to {ctl_path}"))
     }
 
+    /// Read terminal process state from authoritative `/proc`.
+    pub(crate) async fn read_process_exit_code(&self, pid: &str) -> Result<Option<i32>> {
+        let client = NamespaceClient::new(self.root.clone());
+        let status_path = format!("/proc/{pid}/status");
+        let status = String::from_utf8(
+            client
+                .read_file(&status_path)
+                .await
+                .with_context(|| format!("read process status from {status_path}"))?,
+        )
+        .context("process status is utf8")?;
+        if status.trim() != "exited" {
+            return Ok(None);
+        }
+        let exit_path = format!("/proc/{pid}/exit");
+        let exit = String::from_utf8(
+            client
+                .read_file(&exit_path)
+                .await
+                .with_context(|| format!("read process exit from {exit_path}"))?,
+        )
+        .context("process exit is utf8")?;
+        let code = exit
+            .trim()
+            .parse::<i32>()
+            .with_context(|| format!("parse process exit code from {exit_path}"))?;
+        Ok(Some(code))
+    }
+
     pub async fn write_request(&self, record: NamespaceRequestRecord) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
         write_request_record(&client, &self.agent_path, record).await
@@ -3099,6 +3128,10 @@ mod tests {
         assert_eq!(action.action_id, "a0");
         assert_eq!(action.output, "hello from-process\n");
         assert_eq!(action.exit_code, 0);
+        assert_eq!(
+            environment.read_process_exit_code("1").await.unwrap(),
+            Some(0)
+        );
         assert_eq!(
             String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
             "exited\n"

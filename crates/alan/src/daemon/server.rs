@@ -165,12 +165,6 @@ pub async fn run_server_with_loaded_config(loaded_config: LoadedConfig) -> Resul
             post(routes::write_skill_override_route),
         )
         .route(paths::SESSION, get(routes::get_session))
-        .route(paths::SESSION_CHILD_RUNS, get(routes::list_child_runs))
-        .route(paths::SESSION_CHILD_RUN, get(routes::get_child_run))
-        .route(
-            paths::SESSION_CHILD_RUN_TERMINATE,
-            post(routes::terminate_child_run),
-        )
         .route(paths::SESSION_READ, get(routes::read_session))
         .route(
             paths::SESSION_RECONNECT_SNAPSHOT,
