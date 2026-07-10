@@ -235,11 +235,19 @@ pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
+    process_context: Option<NamespaceProcessContext>,
     shared_services: Option<NamespaceSharedServices>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NamespaceProcessContext {
+    pub(crate) procfs: alan_kernel::ProcFs,
+    pub(crate) agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pub(crate) pid: alan_kernel::Pid,
 }
 
 #[derive(Clone)]
@@ -276,12 +284,31 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
+            process_context: None,
             shared_services: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
         }
+    }
+
+    pub(crate) fn with_process_context(
+        mut self,
+        procfs: alan_kernel::ProcFs,
+        agent_root: Arc<alan_agentfs::AgentRootFs>,
+        pid: alan_kernel::Pid,
+    ) -> Self {
+        self.process_context = Some(NamespaceProcessContext {
+            procfs,
+            agent_root,
+            pid,
+        });
+        self
+    }
+
+    pub(crate) fn process_context(&self) -> Option<NamespaceProcessContext> {
+        self.process_context.clone()
     }
 
     pub(crate) fn with_shared_services(
