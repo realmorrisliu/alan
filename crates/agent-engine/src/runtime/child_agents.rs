@@ -833,6 +833,15 @@ impl ChildRuntimeController {
                 &mut warnings,
                 &mut latest_liveness_at,
             ) {
+                if self.external_process_stop_observed().await {
+                    self.abort_runtime().await;
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        self.externally_stopped_observed_event(
+                            &observed.output_text,
+                            &observed.warnings,
+                        ),
+                    ));
+                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(observed));
             }
 
@@ -965,6 +974,15 @@ impl ChildRuntimeController {
 
             match self.observe_child_event(recv, &mut output_text, &mut warnings) {
                 ChildEventObservation::Terminal(observed) => {
+                    if self.external_process_stop_observed().await {
+                        self.abort_runtime().await;
+                        return Ok(ChildRuntimeWaitOutcome::Observed(
+                            self.externally_stopped_observed_event(
+                                &observed.output_text,
+                                &observed.warnings,
+                            ),
+                        ));
+                    }
                     return Ok(ChildRuntimeWaitOutcome::Observed(observed));
                 }
                 ChildEventObservation::Progress => {
@@ -3585,13 +3603,14 @@ Body
         .unwrap();
         let process_pid = launch.pid.clone();
         let process_environment = launch.environment.clone();
-        let (_event_tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let submission_id = "externally-stopped-child".to_string();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-session", None, false),
             event_rx,
             liveness_rx: test_liveness_rx(),
-            submission_id: "externally-stopped-child".to_string(),
+            submission_id: submission_id.clone(),
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             timeout: None,
             process_registry: Some(launch_procfs),
@@ -3602,6 +3621,12 @@ Body
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
             .await
+            .unwrap();
+        event_tx
+            .send(RuntimeEventEnvelope {
+                submission_id: Some(submission_id),
+                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
+            })
             .unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), controller.join())
             .await
