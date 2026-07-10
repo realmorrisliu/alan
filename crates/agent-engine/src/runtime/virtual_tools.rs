@@ -1714,6 +1714,8 @@ struct DelegatedChildRunReference {
     process_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state_ref: Option<DelegatedSkillOutputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollout_debug_path: Option<String>,
     terminal_status: String,
 }
 
@@ -1737,6 +1739,10 @@ fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildR
             .child_run
             .as_ref()
             .and_then(|record| record.state_ref.clone()),
+        rollout_debug_path: result
+            .rollout_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
         terminal_status: child_runtime_status_label(result.status.clone()),
     }
 }

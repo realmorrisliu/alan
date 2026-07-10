@@ -1020,6 +1020,7 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
         child_run_id: None,
         process_path: Some("/proc/42".to_string()),
         state_ref: None,
+        rollout_debug_path: None,
         terminal_status: "completed".to_string(),
     });
     let (arguments, record, rollout_record) =
@@ -1071,6 +1072,7 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
         child_run_id: None,
         process_path: Some("/proc/42".to_string()),
         state_ref: None,
+        rollout_debug_path: Some("/tmp/inline-child.jsonl".to_string()),
         terminal_status: "completed".to_string(),
     });
 
@@ -1087,6 +1089,10 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
     assert_eq!(
         rollout_payload["child_run"]["process_path"],
         json!("/proc/42")
+    );
+    assert_eq!(
+        rollout_payload["child_run"]["rollout_debug_path"],
+        json!("/tmp/inline-child.jsonl")
     );
     assert!(rollout_payload["child_run"].get("rollout_path").is_none());
     assert_eq!(tape_payload["workspace_root"], json!("/tmp/repo"));
@@ -1414,6 +1420,12 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
             field: "output_text".to_string(),
         }),
     };
+    assert_eq!(
+        delegated_child_run_reference(&child_result)
+            .rollout_debug_path
+            .as_deref(),
+        Some("/tmp/child-rollout.jsonl")
+    );
     let delegated = delegated_result_from_child_result(&child_result, Some(output_ref));
     assert_eq!(delegated.status, DelegatedSkillResultStatus::Failed);
     assert_eq!(delegated.error_kind.as_deref(), Some("child_timed_out"));
