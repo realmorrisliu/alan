@@ -3757,6 +3757,35 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
 }
 
 #[tokio::test]
+async fn evidence_resolution_honors_open_ended_ranges() {
+    let (state, _shell) = create_namespace_agent_loop_state_and_shell();
+    let action_id = state
+        .namespace_environment()
+        .write_action(NamespaceActionRecord::new("range-test", "completed").with_output("abcdef"))
+        .await
+        .unwrap();
+    let path = format!("/agent/1/actions/{action_id}/output");
+
+    for (offset, length, expected) in [
+        (Some(2), None, b"cdef".as_slice()),
+        (None, Some(3), b"abc".as_slice()),
+        (None, None, b"abcdef".as_slice()),
+    ] {
+        let reference = crate::evidence::NamespaceEvidenceReference {
+            path: path.clone(),
+            offset,
+            length,
+        };
+        let resolved = state
+            .namespace_environment()
+            .resolve_evidence_reference(&reference, None, None)
+            .await
+            .unwrap();
+        assert_eq!(resolved, expected);
+    }
+}
+
+#[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
     let mut state = create_test_agent_loop_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");

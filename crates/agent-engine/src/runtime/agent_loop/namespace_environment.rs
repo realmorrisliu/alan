@@ -686,26 +686,27 @@ impl NamespaceRuntimeEnvironment {
                 child_run,
             });
         }
-        let bytes = match (reference.offset, reference.length) {
-            (Some(offset), Some(length)) => {
-                let start = usize::try_from(offset).ok();
-                let length = usize::try_from(length).ok();
-                start
-                    .zip(length)
-                    .and_then(|(start, length)| start.checked_add(length).map(|end| (start, end)))
-                    .filter(|(start, end)| *start <= *end && *end <= full_bytes.len())
-                    .map(|(start, end)| full_bytes[start..end].to_vec())
-                    .ok_or_else(|| EvidenceResolutionError {
-                        code: EvidenceResolutionErrorCode::Missing,
-                        reference: reference.clone(),
-                        message: "evidence reference range is not available".to_string(),
-                        preview,
-                        child_run,
-                    })?
-            }
-            _ => full_bytes,
+        let range = match (reference.offset, reference.length) {
+            (Some(offset), Some(length)) => usize::try_from(offset)
+                .ok()
+                .zip(usize::try_from(length).ok())
+                .and_then(|(start, length)| start.checked_add(length).map(|end| (start, end))),
+            (Some(offset), None) => usize::try_from(offset)
+                .ok()
+                .map(|start| (start, full_bytes.len())),
+            (None, Some(length)) => usize::try_from(length).ok().map(|end| (0, end)),
+            (None, None) => return Ok(full_bytes),
         };
-        Ok(bytes)
+        range
+            .filter(|(start, end)| *start <= *end && *end <= full_bytes.len())
+            .map(|(start, end)| full_bytes[start..end].to_vec())
+            .ok_or_else(|| EvidenceResolutionError {
+                code: EvidenceResolutionErrorCode::Missing,
+                reference: reference.clone(),
+                message: "evidence reference range is not available".to_string(),
+                preview,
+                child_run,
+            })
     }
 
     pub(crate) async fn write_ui_activity_snapshot(
