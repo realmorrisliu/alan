@@ -10,8 +10,11 @@ surfaces omit detail.
 Generated fallback memory and handoff surfaces SHALL derive `Current Goal` from
 substantive user intent, active plan state, or durable task context rather than
 blindly using the latest user message. The preference order SHALL be mechanical
-(no additional model request): active plan state, then the latest substantive
-user request, then the latest message only when nothing better exists.
+(no additional model request): current active plan state, then the latest
+substantive user request, then the latest message only when nothing better
+exists. A plan snapshot SHALL be treated as stale — and excluded from this
+precedence — when a newer substantive user request or in-band steering changed
+the task objective after the plan was recorded.
 
 #### Scenario: Latest input is a request-response control payload
 - **WHEN** the latest user input arrived as a `requests/<id>/response` write
