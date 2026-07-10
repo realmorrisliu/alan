@@ -29,6 +29,9 @@ one of:
    constraint
 3. the user authorizes a source lookup that directly states the fact
 4. the fact is already in stable memory and the new turn updates it
+5. repeated behavior is supported by multiple distinct observations, has no
+   contradictory recent evidence, and meets the configured high-confidence
+   threshold for a stable preference or constraint
 
 #### Scenario: Write plan is over-broad
 - **WHEN** the model proposes a write that spans unrelated facts, mismatches its
