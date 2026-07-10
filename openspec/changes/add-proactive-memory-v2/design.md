@@ -62,7 +62,7 @@ Each writable store exposes a service-owned surface equivalent to:
 │       ├── proposal        # whole document, commit on clunk
 │       ├── status
 │       ├── result
-│       └── ctl             # cancel/retry when owned by this transaction
+│       └── ctl             # cancel/retry before commit; revert after commit
 └── ledger/
     └── YYYY/MM/<write-id>.md
 ```
@@ -71,7 +71,9 @@ The exact store segment is selected by the spawner's mount layout; the contract
 does not require globally visible store ids. `proposal` carries observation,
 target namespace path, evidence class and references, confidence, disposition,
 and rationale. Successful commit creates or updates the target and ledger as one
-store operation.
+store operation. The store retains `writes/<write-id>/` for the write lifecycle;
+after commit its `ctl` accepts `revert`, while the dated ledger record remains a
+read-only audit document.
 
 Alternative considered: expose `alan memory write` or daemon JSON as the real
 transaction API. Rejected: that makes the namespace a secondary projection.
@@ -92,9 +94,11 @@ paths are debug metadata, never the agent-facing reference.
 Every committed stable mutation receives a write id and a Markdown ledger record
 containing target namespace path, inserted anchor/range, normalized observation,
 confidence, bounded evidence references, rationale, timestamps, redaction
-summary, and revert state. `ledger/<id>/ctl` or the transaction's owning `ctl`
-accepts `revert`; the store verifies the recorded anchor and commits target plus
-ledger state atomically.
+summary, and revert state. `/mnt/mem/<store>/writes/<write-id>/ctl` accepts
+`revert` after commit; the store verifies the recorded anchor and commits target
+plus ledger state atomically. The dated
+`ledger/YYYY/MM/<write-id>.md` path is read-only and points back to the retained
+write transaction id.
 
 `alan memory recent|show|revert` merely walks, reads, or writes these files. A
 future UI does the same. No workspace/session authorization endpoint exists;

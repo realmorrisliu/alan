@@ -55,13 +55,16 @@ timestamps, redaction summary, and revert state.
 - **AND** it does not need a daemon API or raw rollout path
 
 ### Requirement: Revert is store-owned lifecycle control
-The Memory Store SHALL expose precise revert as an owning `ctl` operation on the
-write or ledger record. It SHALL verify the recorded anchor or content identity
-before atomically updating the target and revert state.
+The Memory Store SHALL retain `/mnt/mem/<store>/writes/<write-id>/ctl` after
+commit and expose precise revert there. Dated
+`ledger/YYYY/MM/<write-id>.md` records are read-only audit documents. The store
+SHALL verify the recorded anchor or content identity before atomically updating
+the target and revert state.
 
 #### Scenario: A write is reverted cleanly
-- **WHEN** an authorized client writes `revert` to the write's owning `ctl` and
-  the target still matches its recorded anchor
+- **WHEN** an authorized client writes `revert` to
+  `/mnt/mem/<store>/writes/<write-id>/ctl` and the target still matches its
+  recorded anchor
 - **THEN** the store removes or reverses the memory mutation
 - **AND** the ledger and events record the completed revert
 
