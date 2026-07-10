@@ -66,6 +66,8 @@ pub(crate) struct TurnState {
     plan_snapshot: Option<PlanSnapshot>,
     /// Turn boundary active when the latest plan snapshot was published.
     plan_snapshot_turn_start: Option<usize>,
+    /// Tape message count when the latest plan snapshot was published.
+    plan_snapshot_message_count: Option<usize>,
     /// Best-effort follow-up work queued after a turn completes.
     deferred_runtime_actions: VecDeque<DeferredRuntimeAction>,
     /// Guardian rejection circuit breaker: consecutive denials and a rolling
@@ -123,6 +125,7 @@ impl TurnState {
     pub(crate) fn clear_plan_snapshot(&mut self) {
         self.plan_snapshot = None;
         self.plan_snapshot_turn_start = None;
+        self.plan_snapshot_message_count = None;
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
@@ -230,6 +233,14 @@ impl TurnState {
         } else if let Some(plan_snapshot_turn_start) = &mut self.plan_snapshot_turn_start {
             *plan_snapshot_turn_start -= retention_start;
         }
+        if self
+            .plan_snapshot_message_count
+            .is_some_and(|count| count < retention_start)
+        {
+            self.plan_snapshot_message_count = None;
+        } else if let Some(plan_snapshot_message_count) = &mut self.plan_snapshot_message_count {
+            *plan_snapshot_message_count -= retention_start;
+        }
     }
 
     pub(crate) fn note_resumed_user_input(&mut self) {
@@ -247,6 +258,17 @@ impl TurnState {
     pub(crate) fn set_plan_snapshot(&mut self, explanation: Option<String>, items: Vec<PlanItem>) {
         self.plan_snapshot = Some(PlanSnapshot { explanation, items });
         self.plan_snapshot_turn_start = self.active_turn_message_start;
+        self.plan_snapshot_message_count = None;
+    }
+
+    pub(crate) fn set_plan_snapshot_at_message_count(
+        &mut self,
+        explanation: Option<String>,
+        items: Vec<PlanItem>,
+        tape_message_count: usize,
+    ) {
+        self.set_plan_snapshot(explanation, items);
+        self.plan_snapshot_message_count = Some(tape_message_count);
     }
 
     pub(crate) fn plan_snapshot(&self) -> Option<&PlanSnapshot> {
@@ -256,6 +278,11 @@ impl TurnState {
     pub(crate) fn plan_snapshot_is_from_active_turn(&self) -> bool {
         self.active_turn_message_start.is_some()
             && self.plan_snapshot_turn_start == self.active_turn_message_start
+    }
+
+    pub(crate) fn plan_snapshot_postdates_message(&self, message_index: usize) -> bool {
+        self.plan_snapshot_message_count
+            .is_some_and(|count| count > message_index)
     }
 
     pub(crate) fn push_deferred_runtime_action(&mut self, action: DeferredRuntimeAction) {
