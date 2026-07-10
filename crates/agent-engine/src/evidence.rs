@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 
 pub(crate) const MAX_INLINE_EVIDENCE_BYTES: usize = 30_000;
 const MAX_EVIDENCE_PREVIEW_BYTES: usize = 8_000;
+const MAX_EVIDENCE_METADATA_VALUE_BYTES: usize = 512;
 pub(crate) const RETENTION_EXPIRED_RECORD_TYPE: &str = "evidence_retention_expired";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,7 +120,7 @@ pub(crate) fn project_evidence_payload(
             "summary",
         ] {
             if let Some(value) = object.get(key) {
-                metadata.insert(key.to_string(), value.clone());
+                metadata.insert(key.to_string(), bounded_metadata_value(value));
             }
         }
     }
@@ -137,6 +138,23 @@ pub(crate) fn project_evidence_payload(
         metadata,
     })
     .expect("evidence projection is serializable")
+}
+
+fn bounded_metadata_value(value: &Value) -> Value {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
+        Value::String(text) => Value::String(utf8_prefix_with_marker(
+            text,
+            MAX_EVIDENCE_METADATA_VALUE_BYTES,
+        )),
+        Value::Array(_) | Value::Object(_) => {
+            let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+            Value::String(utf8_prefix_with_marker(
+                &serialized,
+                MAX_EVIDENCE_METADATA_VALUE_BYTES,
+            ))
+        }
+    }
 }
 
 pub(crate) fn redact_durable_evidence_text(text: &str) -> RedactedEvidence {
@@ -379,6 +397,32 @@ mod tests {
         assert!(preview.contains("[REDACTED reason=secret_key]"));
         assert!(!preview.contains("preview-secret"));
         assert_eq!(projection["redactions"][0]["reason_class"], "secret_key");
+    }
+
+    #[test]
+    fn projection_metadata_is_bounded_and_scalar_normalized() {
+        let projection = project_evidence_payload(
+            &json!({
+                "output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1),
+                "summary": "s".repeat(100_000),
+                "process": {"nested": "p".repeat(100_000)}
+            }),
+            Some(NamespaceEvidenceReference {
+                path: "/agent/1/actions/a0/output".to_string(),
+                offset: Some(0),
+                length: None,
+            }),
+            Vec::new(),
+            None,
+        );
+
+        let summary = projection["metadata"]["summary"].as_str().unwrap();
+        let process = projection["metadata"]["process"].as_str().unwrap();
+        assert!(summary.len() <= MAX_EVIDENCE_METADATA_VALUE_BYTES);
+        assert!(process.len() <= MAX_EVIDENCE_METADATA_VALUE_BYTES);
+        assert!(summary.contains("...[truncated; inspect reference]"));
+        assert!(process.contains("...[truncated; inspect reference]"));
+        assert!(serde_json::to_vec(&projection).unwrap().len() < 12_000);
     }
 
     #[test]
