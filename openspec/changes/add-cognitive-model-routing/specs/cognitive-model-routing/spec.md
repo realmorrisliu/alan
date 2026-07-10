@@ -67,17 +67,27 @@ explicit decision SHALL append a bounded record to routing events.
 - **WHEN** no explicit next intent or deterministic gate applies
 - **THEN** the configured default role is selected, falling back to System 1
 
-### Requirement: Explicit routing intent uses the owning ctl
+### Requirement: Explicit routing intent uses the owning machine ctl
 The coordinating Agent Process SHALL accept `auto` and next-attempt cognitive
-role intent through `machine/routing/ctl`. A next-attempt intent SHALL be consumed
-by one logical input and SHALL NOT create an independent session or daemon
-override authority.
+role intent as `route` commands on the agent-runtime-owned `machine/ctl` (for
+example `route next system-2`, `route auto`). `machine/routing/` SHALL carry no
+`ctl` file: per `agent-file-layout-contract`, the agent overlay's only control
+surfaces are the kernel `/proc/<pid>/ctl` and the runtime `machine/ctl`, and new
+control actions are added as new commands on the owning `ctl`, not as new files.
+A next-attempt intent SHALL be consumed by one logical input and SHALL NOT
+create an independent session or daemon override authority.
 
 #### Scenario: User requests the deep route
-- **WHEN** an authorized client writes `next system-2` to routing `ctl`
+- **WHEN** an authorized client writes `route next system-2` to `machine/ctl`
 - **THEN** the next logical input uses System 2 unless the command is invalidated
   before consumption
-- **AND** status/events record the command and consumption
+- **AND** routing status/events record the command and consumption
+
+#### Scenario: A routing ctl file is proposed
+- **WHEN** an implementation change proposes `machine/routing/ctl` or another
+  routing-specific control file
+- **THEN** the change is rejected in favor of new `route` commands on
+  `machine/ctl`, unless it also modifies `agent-file-layout-contract` explicitly
 
 ### Requirement: System 1 escalation is typed stream content
 Alan SHALL allow System 1 to emit a provider-neutral `route/escalate` record
@@ -92,9 +102,10 @@ coordinator SHALL record its decision before spawning System 2.
 - **AND** no `escalate_to_system2` Tool or virtual action is required
 
 ### Requirement: Routing state is projected under machine routing
-AgentFS SHALL expose routing `config`, `status`, `current`, `result`, `events`,
-and `ctl` under `machine/routing/`. Snapshot files and the offset-resumable events
-stream SHALL be the canonical client observability surface.
+AgentFS SHALL expose routing `config`, `status`, `current`, `result`, and
+`events` under `machine/routing/`. Snapshot files and the offset-resumable events
+stream SHALL be the canonical client observability surface; they are read-only
+state and carry no control file.
 
 #### Scenario: A renderer attaches mid-attempt
 - **WHEN** a renderer opens the coordinating agent after an attempt has started

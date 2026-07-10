@@ -9,10 +9,12 @@
 
 ## 2. Routing Files And Control
 
-- [ ] 2.1 Add AgentFS `machine/routing/{config,status,current,result,events,ctl}`
-  surfaces with bounded renderer-safe metadata and offset-resumable events.
-- [ ] 2.2 Implement `auto`, `next system-1`, and `next system-2` `ctl` commands,
-  one-input consumption, deterministic gate precedence, and refusal records.
+- [ ] 2.1 Add AgentFS `machine/routing/{config,status,current,result,events}`
+  read-only surfaces with bounded renderer-safe metadata and offset-resumable
+  events; no routing-specific `ctl` file.
+- [ ] 2.2 Implement `route auto`, `route next system-1`, and `route next
+  system-2` commands on the agent-runtime-owned `machine/ctl`, with one-input
+  consumption, deterministic gate precedence, and refusal records.
 - [ ] 2.3 Remove planned daemon create/list/read/reconnect/fork routing metadata
   and session/fork/turn override requirements; any temporary mirror must be named
   compatibility code with a deletion gate.
@@ -44,7 +46,8 @@
 ## 5. Verification And Archive Readiness
 
 - [ ] 5.1 Add tests for role mount resolution, unavailable mounts, routing
-  precedence, `ctl` consumption, forced gates, and routing event resume.
+  precedence, `machine/ctl` route-command consumption, forced gates, and routing
+  event resume.
 - [ ] 5.2 Add tests proving System 1 cannot see or execute side-effecting Tools,
   escalation spawns System 2, speculative drafts stay unaccepted, and accepted
   provenance names both attempts.

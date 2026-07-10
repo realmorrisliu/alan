@@ -21,8 +21,9 @@ Processes, files, and streams.
   a privileged virtual Tool.
 - Project routing configuration, current attempt, bounded reason, result,
   status, and ordered events under `machine/routing/` in the agent overlay.
-- Accept explicit next-attempt/default control through the owning routing `ctl`;
-  remove new session/fork/turn daemon DTO requirements.
+- Accept explicit next-attempt/default control as `route` commands on the
+  agent-runtime-owned `machine/ctl` — the agent overlay gains no third `ctl`
+  file — and remove new session/fork/turn daemon DTO requirements.
 - Compose the selected LLM Connection with canonical reasoning-effort controls
   in the provider-neutral llmfs Generation request. Provider adapters remain
   unaware of cognitive roles.

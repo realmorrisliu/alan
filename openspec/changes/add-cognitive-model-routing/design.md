@@ -85,11 +85,14 @@ The coordinator applies:
 4. the configured default role;
 5. System 1 fallback with self-escalation available.
 
-`machine/routing/ctl` accepts owner-defined commands such as `next system-1`,
-`next system-2`, and `auto`. `next` is consumed by the next logical input. A
-deterministic System 2 gate may refuse `next system-1`; the refusal is recorded
-in routing status/events. Compatibility transports may translate an old override
-into the same `ctl` write but gain no independent semantics.
+The agent-runtime-owned `machine/ctl` accepts routing commands such as `route
+next system-1`, `route next system-2`, and `route auto`; `machine/routing/`
+carries state and events but no `ctl` file, keeping the agent overlay's control
+surfaces to the two defined by `agent-file-layout-contract` (`/proc/<pid>/ctl`
+and `machine/ctl`). `route next` is consumed by the next logical input. A
+deterministic System 2 gate may refuse `route next system-1`; the refusal is
+recorded in routing status/events. Compatibility transports may translate an old
+override into the same `machine/ctl` write but gain no independent semantics.
 
 ### 4. Escalation is typed stream content, not a Tool
 
@@ -153,7 +156,7 @@ Generation and reprojects accepted context.
 1. Add cognitive role alias resolution and `machine/routing` files without
    changing the single-Connection default.
 2. Add restricted System 1 attempt spawn and accepted-result handoff.
-3. Add deterministic gates and explicit routing `ctl` intent.
+3. Add deterministic gates and explicit `route` intent on `machine/ctl`.
 4. Add typed stream escalation and sequential System 2 attempt spawn.
 5. Remove cognitive session/fork/turn DTO deltas and internal virtual escalation
    Tool assumptions.
