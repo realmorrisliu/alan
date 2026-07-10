@@ -91,14 +91,20 @@ pub(crate) fn payload_needs_projection(payload: &Value) -> bool {
 pub(crate) fn project_evidence_payload(
     payload: &Value,
     reference: Option<NamespaceEvidenceReference>,
-    redactions: Vec<EvidenceRedactionMarker>,
+    mut redactions: Vec<EvidenceRedactionMarker>,
     fallback_reason: Option<String>,
 ) -> Value {
-    let serialized = serde_json::to_string(payload).unwrap_or_else(|_| payload.to_string());
+    let mut projection_redactions = Vec::new();
+    let redacted_payload = redact_json_value(payload, &mut projection_redactions);
+    for redaction in projection_redactions {
+        push_marker(&mut redactions, redaction.marker, &redaction.reason_class);
+    }
+    let serialized =
+        serde_json::to_string(&redacted_payload).unwrap_or_else(|_| redacted_payload.to_string());
     let preview = utf8_prefix_with_marker(&serialized, MAX_EVIDENCE_PREVIEW_BYTES);
     let recoverable = reference.is_some();
     let mut metadata = Map::new();
-    if let Some(object) = payload.as_object() {
+    if let Some(object) = redacted_payload.as_object() {
         for key in [
             "success",
             "exit_code",
@@ -223,18 +229,34 @@ fn redact_sensitive_line(line: &str, markers: &mut Vec<EvidenceRedactionMarker>)
 }
 
 fn redact_bearer(text: &str, markers: &mut Vec<EvidenceRedactionMarker>) -> String {
-    let lower = text.to_ascii_lowercase();
-    let Some(start) = lower.find("bearer ") else {
-        return text.to_string();
-    };
-    let token_start = start + "bearer ".len();
-    let token_end = text[token_start..]
-        .find(char::is_whitespace)
-        .map(|offset| token_start + offset)
-        .unwrap_or(text.len());
     let marker = marker("credential_token");
-    push_marker(markers, marker.clone(), "credential_token");
-    format!("{}{}{}", &text[..token_start], marker, &text[token_end..])
+    let mut remaining = text;
+    let mut redacted = String::with_capacity(text.len());
+    let mut found = false;
+
+    loop {
+        let lower = remaining.to_ascii_lowercase();
+        let Some(start) = lower.find("bearer ") else {
+            redacted.push_str(remaining);
+            break;
+        };
+        let token_start = start + "bearer ".len();
+        let token_end = remaining[token_start..]
+            .find(char::is_whitespace)
+            .map(|offset| token_start + offset)
+            .unwrap_or(remaining.len());
+        redacted.push_str(&remaining[..token_start]);
+        redacted.push_str(&marker);
+        remaining = &remaining[token_end..];
+        found = true;
+    }
+
+    if found {
+        push_marker(markers, marker, "credential_token");
+        redacted
+    } else {
+        text.to_string()
+    }
 }
 
 fn sensitive_key(key: &str) -> bool {
@@ -329,6 +351,40 @@ mod tests {
         assert_eq!(
             projection["truncation"]["fallback_reason"],
             "reference_unresolvable"
+        );
+    }
+
+    #[test]
+    fn projection_preview_redacts_sensitive_payload_fields() {
+        let projection = project_evidence_payload(
+            &json!({
+                "authorization": "Bearer preview-secret",
+                "output": "x".repeat(MAX_INLINE_EVIDENCE_BYTES + 1)
+            }),
+            None,
+            Vec::new(),
+            Some("reference_unresolvable".to_string()),
+        );
+
+        let preview = projection["preview"].as_str().unwrap();
+        assert!(preview.contains("[REDACTED reason=secret_key]"));
+        assert!(!preview.contains("preview-secret"));
+        assert_eq!(projection["redactions"][0]["reason_class"], "secret_key");
+    }
+
+    #[test]
+    fn redacts_every_bearer_token_in_one_value() {
+        let redacted =
+            redact_durable_evidence_text(r#"{"message":"Bearer first token-gap Bearer second"}"#);
+
+        assert!(!redacted.text.contains("first"));
+        assert!(!redacted.text.contains("second"));
+        assert_eq!(
+            redacted
+                .text
+                .matches("[REDACTED reason=credential_token]")
+                .count(),
+            2
         );
     }
 }

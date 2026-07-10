@@ -3648,11 +3648,12 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
         )
         .await
         .unwrap();
-    let expired_ref = state
+    let mut expired_ref = state
         .namespace_environment()
         .evidence_reference(format!("/agent/1/actions/{action_id}/output"))
         .await
         .unwrap();
+    expired_ref.length = Some(10_000);
     let expired = state
         .namespace_environment()
         .resolve_evidence_reference(&expired_ref, None, None)

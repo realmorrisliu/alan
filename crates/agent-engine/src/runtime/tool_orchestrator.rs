@@ -2457,6 +2457,13 @@ mod tests {
             .session
             .tool_payload_by_call_id("call-redacted-long")
             .unwrap();
+        assert!(!payload["preview"].as_str().unwrap().contains("top-secret"));
+        assert!(
+            payload["preview"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED reason=secret_key]")
+        );
         assert_eq!(payload["redactions"][0]["reason_class"], "secret_key");
         assert_eq!(payload["truncation"]["full_content_recoverable"], true);
         let full = read_shell_utf8(&shell, "/agent/1/actions/a0/output").await;
