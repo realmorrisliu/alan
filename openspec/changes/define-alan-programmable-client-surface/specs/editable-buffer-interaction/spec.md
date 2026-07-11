@@ -58,6 +58,36 @@ projection remains a permanent second enforcement mechanism for them.
   layer instead of assuming the subprocess can inspect or enforce the Alan
   Namespace directly
 
+### Requirement: Buffer activity is observable as events
+
+Alan OS SHALL expose edits, address changes, validated execution starts, and
+result materializations through the buffer `event` stream using blocking-read
+semantics. Execution outcome, exit state, and output SHALL be read from the
+evaluator's `/proc/<pid>` files; buffer events link to that Process truth and
+SHALL NOT record a parallel accepted, denied, yielded, or failed execution
+status.
+
+#### Scenario: Edit event is observed
+
+- **WHEN** a client writes new content to `body`
+- **THEN** another client reading `event` at the live edge blocks until an edit
+  event is appended and then receives that event
+
+#### Scenario: Execution-start event is observed
+
+- **WHEN** an evaluator Process commits a valid `ctl exec` snapshot
+- **THEN** a client reading `event` at the live edge receives an
+  execution-started event carrying the source range, command text, and the
+  evaluator's `/proc/<pid>` Path
+- **AND** execution status and outcome are read from the Process files, not from
+  a buffer-event status field
+
+#### Scenario: Materialization event is observed
+
+- **WHEN** an evaluator's finite result append commits to `body`
+- **THEN** the `event` stream records the result range, committed body revision,
+  and the evaluator's `/proc/<pid>` Path
+
 ## ADDED Requirements
 
 ### Requirement: Process IO is the execution output authority
