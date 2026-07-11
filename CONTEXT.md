@@ -291,6 +291,13 @@ It is stored under `/lib/exec/<name>/manifest` and complements the Tool's
 `--help` output and manual page.
 _Avoid_: hidden registry entry, agent-only schema, permission source
 
+**WASM Component**:
+A portable compiled Alan extension with a WIT boundary and explicitly granted
+Descriptors and Access Rights. It is projected into Alan OS as a Tool or a
+File-Server Service rather than becoming a separate client API.
+_Avoid_: ambient host plugin, replacement for aP, user-facing scripting language,
+unclassified extension
+
 **Skill**:
 A manual-like knowledge package installed under `/lib/skill/<name>` and
 documented under `/man/skill/<name>`. Skills are read by Agent Processes through
@@ -589,6 +596,22 @@ surface for using the Namespace, files, processes, Agent Processes, Tools,
 Skills, Memory Stores, and system services. It may be rendered by the current
 Ratatui path in `crates/tui` and by Alan for macOS.
 _Avoid_: Alan TUI as product name, daemon client, terminal product naming, chat UI
+
+**Programmable Client Surface**:
+The Alan Shell interaction contract that lets humans and agents compose mounted
+Files, Streams, and executable Processes through editable text and file
+operations. It is part of Alan Shell, not a separate component, service, app, or
+product.
+_Avoid_: ClientSurface object, client service, UI framework, app runtime,
+separate programmable environment
+
+**Alan Shell Evaluator Process**:
+An ordinary Process spawned by an Alan Shell client to execute one explicit
+editable-text selection under the caller's bounded Namespace. Its `/proc` path
+is the execution identity; it is created through the `run` Tool, and `editfs`
+never owns a separate execution registry.
+_Avoid_: buffer-local execution object, hidden evaluator task, editfs command
+runner, opaque execution id
 
 **Primary Shell Window**:
 The single main Alan shell window used by the macOS app. Short-term product
