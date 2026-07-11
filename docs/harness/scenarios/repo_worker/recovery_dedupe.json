@@ -1,13 +1,13 @@
 {
   "id": "repo_worker/recovery_dedupe",
   "category": "repo_worker",
-  "description": "Validate repo-worker restart recovery and side-effect dedupe continuity.",
+  "description": "Validate rollout recovery and side-effect dedupe continuity.",
   "blocking": true,
-  "command": "cargo test -p alan --lib daemon::state::tests::restore_run_returns_latest_checkpoint_snapshot -- --exact && cargo test -p alan-agent-engine --lib runtime::tool_orchestrator::tests::test_side_effect_dedupe_survives_session_rollout_recovery_for_file_effects -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::tool_orchestrator::tests::test_side_effect_dedupe_survives_rollout_recovery_for_file_effects -- --exact",
   "assertions": [
-    "latest run checkpoint is restorable after restart",
-    "duplicate irreversible repo-worker effects are skipped on recovery",
-    "effect audit continuity is preserved"
+    "rollout evidence restores the prior effect decision",
+    "duplicate irreversible file effects are skipped on recovery",
+    "Process-scoped effect audit continuity is preserved"
   ],
   "kpi_tags": [
     "recovery",

@@ -3,8 +3,8 @@
 This first-party package productizes alan's repo-scoped coding worker under
 `crates/agent-engine/skills/repo-coding/`.
 
-It is not the full coding product boundary by itself. The steward/worker model
-is defined in `docs/spec/alan_coding_steward_contract.md`.
+It is not the full coding product boundary by itself. The current stewardship
+contract lives in `openspec/specs/coding-steward-contract/spec.md`.
 
 ## Package Principles
 
