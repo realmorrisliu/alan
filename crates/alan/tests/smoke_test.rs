@@ -707,7 +707,7 @@ async fn smoke_multiple_turns() {
 }
 
 #[tokio::test]
-async fn smoke_cross_session_persona_memory_is_reinjected() {
+async fn smoke_cross_process_persona_memory_is_reinjected() {
     let temp_home = TempDir::new().expect("temp home");
     let temp_workspace = TempDir::new().expect("temp workspace");
     let workspace_root = temp_workspace.path().join("workspace");
@@ -791,7 +791,7 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
         .submission_tx
         .send(Submission::new(Op::Turn {
             parts: vec![ContentPart::text(
-                "Remember a stable smoke marker across sessions.",
+                "Remember a stable smoke marker across Agent Processes.",
             )],
             context: None,
         }))
@@ -890,7 +890,7 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
         .expect("expected recorded system prompt containing persisted persona memory");
     assert!(
         system_prompt.contains(marker),
-        "expected persisted persona marker to be reinjected into the next session prompt"
+        "expected persisted persona marker to be reinjected into the next Process prompt"
     );
     assert!(
         system_prompt.contains(&format!(
@@ -902,7 +902,7 @@ async fn smoke_cross_session_persona_memory_is_reinjected() {
 }
 
 #[tokio::test]
-async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
+async fn smoke_cross_process_runtime_memory_recall_bundle_is_reinjected() {
     let temp_home = TempDir::new().expect("temp home");
     let temp_workspace = TempDir::new().expect("temp workspace");
     let workspace_root = temp_workspace.path().join("workspace");
@@ -1001,7 +1001,7 @@ async fn smoke_cross_session_runtime_memory_recall_bundle_is_reinjected() {
 }
 
 #[tokio::test]
-async fn smoke_cross_session_handoff_continuity_is_recalled() {
+async fn smoke_cross_process_handoff_continuity_is_recalled() {
     let temp_home = TempDir::new().expect("temp home");
     let temp_workspace = TempDir::new().expect("temp workspace");
     let workspace_root = temp_workspace.path().join("workspace");
@@ -1119,7 +1119,7 @@ async fn smoke_cross_session_handoff_continuity_is_recalled() {
         .submission_tx
         .send(Submission::new(Op::Turn {
             parts: vec![ContentPart::text(
-                "What were we doing in the previous session? Reply with exactly the saved continuity marker.",
+                "What were we doing in the previous Agent Process? Reply with exactly the saved continuity marker.",
             )],
             context: None,
         }))

@@ -351,13 +351,13 @@ struct TerminalPaneView: View {
     private var alanBindingCard: some View {
         TerminalInfoCard(title: "alan binding", accent: ShellPalette.ink) {
             if let binding = host.selectedPane?.alanBinding {
-                TerminalInfoRow(label: "Session", value: binding.sessionID)
-                TerminalInfoRow(label: "Run", value: binding.runStatus)
-                TerminalInfoRow(label: "Yield", value: binding.pendingYield ? "pending" : "none")
+                TerminalInfoRow(label: "Process", value: binding.processPath)
+                TerminalInfoRow(label: "Machine", value: binding.machineState)
+                TerminalInfoRow(label: "Request", value: binding.pendingRequest ? "pending" : "none")
                 TerminalInfoRow(label: "Source", value: binding.source ?? "binding file")
                 TerminalInfoRow(label: "Projected", value: binding.lastProjectedAt ?? "pending")
             } else {
-                Text("This pane is shell-addressable even when no alan session is projected onto it.")
+                Text("This pane is shell-addressable even when no Alan Process is projected onto it.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(ShellPalette.mutedInk)
             }
@@ -630,14 +630,9 @@ private struct ShellPaneTreeLayoutView: View {
         paneSlotID: String,
         backingPane: ShellPane?
     ) -> some View {
-        let settingsWorkspaceContext =
-            descriptor.renderKind == .settings
-            ? host.settingsWorkspaceContext(forPaneSlotID: paneSlotID)
-            : .none
         return ShellBoundedContentLeafView(
             descriptor: descriptor,
             paneSlotID: paneSlotID,
-            settingsWorkspaceContext: settingsWorkspaceContext,
             isSelected: selectedPaneID == paneSlotID,
             isZoomed: host.isPaneZoomed(paneSlotID),
             canZoom: host.canZoomPane(paneSlotID),
@@ -1064,7 +1059,6 @@ private enum ShellPaneTitleBarAccessoryMode: Equatable {
 private struct ShellBoundedContentLeafView: View {
     let descriptor: ShellContentRenderDescriptor
     let paneSlotID: String
-    let settingsWorkspaceContext: ShellSettingsWorkspaceContext
     let isSelected: Bool
     let isZoomed: Bool
     let canZoom: Bool
@@ -1094,10 +1088,7 @@ private struct ShellBoundedContentLeafView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onFocusPane)
             case .settings:
-                ShellSettingsContentView(
-                    descriptor: descriptor,
-                    workspaceContext: settingsWorkspaceContext
-                )
+                ShellSettingsContentView(descriptor: descriptor)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onFocusPane)
             case .terminal, .unavailable:
@@ -1267,7 +1258,6 @@ private enum ShellMarkdownContentLoadResult {
 
 private struct ShellSettingsContentView: View {
     let descriptor: ShellContentRenderDescriptor
-    let workspaceContext: ShellSettingsWorkspaceContext
 
     @AppStorage("alanShellAppearanceMode") private var appearanceMode = ShellAppearanceMode.system
     @AppStorage("alanShellSidebarCollapsed") private var isSidebarCollapsed = false
@@ -1275,9 +1265,6 @@ private struct ShellSettingsContentView: View {
     @AppStorage(AlanPerformanceDiagnosticsController.preferenceKey)
     private var performanceDiagnosticsEnabled = false
     @State private var localSummary = ShellSettingsLocalSummary.current()
-    @State private var remoteSnapshot = ShellSettingsRemoteSnapshot.unavailable(
-        reason: "Daemon unavailable"
-    )
     @State private var terminalProfilesSummary = TerminalProfileSettingsSummary.current()
     @State private var privilegedHelperSummary = PrivilegedHelperSettingsSummary.current()
     @State private var managedTerminalAccountsSummary = ManagedTerminalAccountSettingsSummary.empty
@@ -1303,7 +1290,6 @@ private struct ShellSettingsContentView: View {
 
     private var snapshot: ShellSettingsSurfaceSnapshot {
         ShellSettingsSurfaceSnapshot.make(
-            remote: remoteSnapshot,
             local: localSummary,
             terminalProfiles: terminalProfilesSummary,
             privilegedHelper: privilegedHelperSummary,
@@ -1399,15 +1385,7 @@ private struct ShellSettingsContentView: View {
     }
 
     private var refreshTaskID: String {
-        [
-            descriptor.contentID ?? descriptor.title,
-            workspaceContext.connectionWorkspaceDir,
-            workspaceContext.skillCatalogWorkspaceDir,
-            workspaceContext.skillCatalogUnavailableReason,
-            workspaceContext.agentName,
-        ]
-        .compactMap { $0 }
-        .joined(separator: "|")
+        descriptor.contentID ?? descriptor.title
     }
 
     private var sidebarVisible: Binding<Bool> {
@@ -1771,80 +1749,9 @@ private struct ShellSettingsContentView: View {
 
     @MainActor
     private func refreshSettingsSummaries() async {
-        let local = ShellSettingsLocalSummary.current()
-        localSummary = local
+        localSummary = ShellSettingsLocalSummary.current()
         privilegedHelperSummary = PrivilegedHelperSettingsSummary.current()
         refreshLocalTerminalIdentitySummaries()
-
-        do {
-            let client = try AlanAPIClient(baseURLString: local.daemonURL)
-            async let catalogResponse = client.connectionCatalog()
-            async let profilesResponse = client.listConnectionProfiles()
-            async let currentResponse = client.currentConnection(
-                workspaceDir: workspaceContext.connectionWorkspaceDir
-            )
-
-            let (catalog, profiles, current) = try await (
-                catalogResponse,
-                profilesResponse,
-                currentResponse
-            )
-            let capabilitiesSummary: ShellSettingsCapabilitiesSummary
-            if let reason = workspaceContext.skillCatalogUnavailableReason {
-                capabilitiesSummary = .unavailable(reason: reason)
-            } else {
-                let skills = try await client.skillCatalog(
-                    workspaceDir: workspaceContext.skillCatalogWorkspaceDir,
-                    agentName: workspaceContext.agentName
-                )
-                capabilitiesSummary = ShellSettingsCapabilitiesSummary(
-                    skills: skills.skills.map { skill in
-                        ShellSettingsSkillSummary(
-                            id: skill.id,
-                            name: skill.name,
-                            enabled: skill.enabled,
-                            allowImplicitInvocation: skill.allowImplicitInvocation,
-                            available: skill.available
-                        )
-                    },
-                    unavailableReason: nil
-                )
-            }
-            remoteSnapshot = ShellSettingsRemoteSnapshot(
-                accounts: ShellSettingsAccountsSummary(
-                    current: ShellSettingsConnectionSelection(
-                        defaultProfile: current.defaultProfile ?? profiles.defaultProfile,
-                        effectiveProfile: current.effectiveProfile,
-                        effectiveSource: current.effectiveSource
-                    ),
-                    profiles: profiles.profiles.map { profile in
-                        ShellSettingsConnectionProfile(
-                            profileID: profile.profileID,
-                            label: profile.label,
-                            provider: profile.provider,
-                            credentialStatus: profile.credentialStatus,
-                            settings: profile.settings,
-                            isDefault: profile.isDefault
-                        )
-                    },
-                    providers: catalog.providers.map { provider in
-                        ShellSettingsConnectionProvider(
-                            providerID: provider.providerID,
-                            displayName: provider.displayName,
-                            supportsBrowserLogin: provider.supportsBrowserLogin,
-                            supportsDeviceLogin: provider.supportsDeviceLogin,
-                            supportsSecretEntry: provider.supportsSecretEntry,
-                            supportsLogout: provider.supportsLogout,
-                            supportsTest: provider.supportsTest
-                        )
-                    },
-                    unavailableReason: nil
-                ),
-                capabilities: capabilitiesSummary
-            )
-        } catch {
-            remoteSnapshot = .unavailable(reason: "Daemon unavailable")
-        }
     }
 }
 
@@ -2141,23 +2048,7 @@ private struct ShellSettingsSectionView: View {
                             : ShellSettingsMetrics.disabledButtonOpacity
                     )
             }
-        case "agentSelector":
-            ShellSettingsAgentSummaryRow()
-        case "daemonEndpoint":
-            ShellSettingsRow(
-                systemName: row.systemName,
-                title: row.title,
-                detail: row.value
-            ) {
-                ShellSettingsInlineValueAction(
-                    isEnabled: row.value != nil,
-                    buttonSystemName: "doc.on.doc",
-                    buttonHelp: "Copy daemon endpoint"
-                ) {
-                    shellSettingsCopyToPasteboard(row.value)
-                }
-            }
-        case "applicationSupport", "dataRoot", "publicSkills":
+        case "applicationSupport", "dataRoot":
             ShellSettingsRow(
                 systemName: row.systemName,
                 title: row.title,
@@ -2281,41 +2172,6 @@ private extension ShellSettingsRow where Accessory == EmptyView {
         self.title = title
         self.detail = detail
         self.accessory = { EmptyView() }
-    }
-}
-
-private struct ShellSettingsAgentSummaryRow: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: ShellSettingsMetrics.rowColumnSpacing) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Alan")
-                    .font(ShellSettingsTypography.agentName)
-                    .foregroundStyle(ShellPalette.settingsPrimaryInk)
-
-                Text("Current agent")
-                    .font(ShellSettingsTypography.rowDetail)
-                    .foregroundStyle(ShellPalette.settingsSecondaryInk)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text("Configurable")
-                .font(ShellSettingsTypography.badge)
-                .foregroundStyle(ShellPalette.settingsValueInk)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                        .fill(ShellPalette.panel.opacity(0.56))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: ShellRadii.control, style: .continuous)
-                        .stroke(ShellPalette.line.opacity(0.18), lineWidth: 0.7)
-                )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, ShellSettingsMetrics.rowVerticalPadding)
-        .frame(minHeight: ShellSettingsMetrics.agentSummaryRowMinHeight)
-        .accessibilityLabel(Text("Alan, current configurable agent"))
     }
 }
 
@@ -3201,7 +3057,7 @@ private struct ShellPaneTitleBarView: View {
             return shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .awaitingUser
                 || shellEffectiveAttention(for: pane, now: activityFreshnessNow) == .notable
         case "alan":
-            return pane.alanBinding?.pendingYield == true
+            return pane.alanBinding?.pendingRequest == true
         default:
             return false
         }

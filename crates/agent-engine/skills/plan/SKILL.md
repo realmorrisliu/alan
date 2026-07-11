@@ -163,9 +163,9 @@ Shall I proceed with step 1?
 
 - Finish the current step
 - Commit and update the plan
-- Stop — the next session will pick up from the plan
+- Stop — the next Agent Process will pick up from the plan
 
-## Session Resume Protocol
+## Process Continuation Protocol
 
 When resuming work on an existing plan:
 

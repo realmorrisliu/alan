@@ -2495,14 +2495,14 @@ enum ShellTabActiveTaskState: String, Codable, Equatable, CaseIterable {
     case foregroundCommand = "foreground_command"
     case alanRunning = "alan_running"
     case alanPendingYield = "alan_pending_yield"
-    case alanSession = "alan_session"
+    case alanProcess = "alan_process"
     case unknown
 
     var protectsFromPruning: Bool {
         switch self {
         case .inactive:
             return false
-        case .foregroundCommand, .alanRunning, .alanPendingYield, .alanSession, .unknown:
+        case .foregroundCommand, .alanRunning, .alanPendingYield, .alanProcess, .unknown:
             return true
         }
     }

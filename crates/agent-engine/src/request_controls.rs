@@ -8,7 +8,7 @@ use crate::llm::{ProviderCapabilities, factory::ProviderType};
 use alan_agent_protocol::{ReasoningControls, ReasoningEffort};
 use serde::{Deserialize, Serialize};
 
-/// Raw request-control intent from config, session launch, or a single turn.
+/// Raw request-control intent from config, machine launch, or a single turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RequestControlIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +40,7 @@ impl RequestControlIntent {
 #[serde(rename_all = "snake_case")]
 pub enum RequestControlSource {
     TurnOverride,
-    SessionOverride,
+    AgentMachineOverride,
     AgentConfig,
     ModelDefault,
     ProviderDefault,
@@ -82,20 +82,20 @@ impl ResolvedRequestControls {
 pub struct RequestControlResolutionInput<'a> {
     pub config: &'a Config,
     pub provider_capabilities: ProviderCapabilities,
-    pub session_intent: RequestControlIntent,
+    pub runtime_intent: RequestControlIntent,
     pub turn_intent: RequestControlIntent,
 }
 
-/// Resolve session-scoped request controls.
-pub fn resolve_session_request_controls(
+/// Resolve machine-scoped request controls.
+pub fn resolve_runtime_request_controls(
     config: &Config,
     provider_capabilities: ProviderCapabilities,
-    session_intent: RequestControlIntent,
+    runtime_intent: RequestControlIntent,
 ) -> anyhow::Result<ResolvedRequestControls> {
     resolve_request_controls(RequestControlResolutionInput {
         config,
         provider_capabilities,
-        session_intent,
+        runtime_intent,
         turn_intent: RequestControlIntent::default(),
     })
 }
@@ -104,18 +104,18 @@ pub fn resolve_session_request_controls(
 pub fn resolve_turn_request_controls(
     config: &Config,
     provider_capabilities: ProviderCapabilities,
-    session_intent: RequestControlIntent,
+    runtime_intent: RequestControlIntent,
     turn_intent: RequestControlIntent,
 ) -> anyhow::Result<ResolvedRequestControls> {
     resolve_request_controls(RequestControlResolutionInput {
         config,
         provider_capabilities,
-        session_intent,
+        runtime_intent,
         turn_intent,
     })
 }
 
-/// Resolve effective request controls from turn/session/config/model/provider inputs.
+/// Resolve effective request controls from turn/machine/config/model/provider inputs.
 pub fn resolve_request_controls(
     input: RequestControlResolutionInput<'_>,
 ) -> anyhow::Result<ResolvedRequestControls> {
@@ -124,11 +124,11 @@ pub fn resolve_request_controls(
         return Ok(effort_controls(effort, RequestControlSource::TurnOverride));
     }
 
-    if let Some(effort) = input.session_intent.reasoning_effort {
+    if let Some(effort) = input.runtime_intent.reasoning_effort {
         validate_reasoning_effort(input.config, input.provider_capabilities, effort)?;
         return Ok(effort_controls(
             effort,
-            RequestControlSource::SessionOverride,
+            RequestControlSource::AgentMachineOverride,
         ));
     }
 
@@ -250,10 +250,10 @@ mod tests {
     }
 
     #[test]
-    fn session_override_precedes_agent_config() {
+    fn runtime_override_precedes_agent_config() {
         let mut config = openai_config();
         config.model_reasoning_effort = Some(ReasoningEffort::High);
-        let resolved = resolve_session_request_controls(
+        let resolved = resolve_runtime_request_controls(
             &config,
             openai_caps(),
             RequestControlIntent::reasoning_effort(Some(ReasoningEffort::Low)),
@@ -261,14 +261,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolved.reasoning.effort, Some(ReasoningEffort::Low));
-        assert_eq!(resolved.source, RequestControlSource::SessionOverride);
+        assert_eq!(resolved.source, RequestControlSource::AgentMachineOverride);
     }
 
     #[test]
     fn agent_config_effort_precedes_model_default() {
         let mut config = openai_config();
         config.model_reasoning_effort = Some(ReasoningEffort::High);
-        let resolved = resolve_session_request_controls(
+        let resolved = resolve_runtime_request_controls(
             &config,
             openai_caps(),
             RequestControlIntent::default(),
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn model_default_applies_when_no_explicit_intent() {
         let config = openai_config();
-        let resolved = resolve_session_request_controls(
+        let resolved = resolve_runtime_request_controls(
             &config,
             openai_caps(),
             RequestControlIntent::default(),
@@ -297,7 +297,7 @@ mod tests {
     fn unknown_model_metadata_uses_provider_default() {
         let mut config = openai_config();
         config.llm_provider = LlmProvider::OpenRouter;
-        let resolved = resolve_session_request_controls(
+        let resolved = resolve_runtime_request_controls(
             &config,
             provider_capabilities_for_config(&config),
             RequestControlIntent::default(),
@@ -313,7 +313,7 @@ mod tests {
         let config = openai_config();
         let mut caps = openai_caps();
         caps.supports_reasoning_effort_control = false;
-        let err = resolve_session_request_controls(
+        let err = resolve_runtime_request_controls(
             &config,
             caps,
             RequestControlIntent::reasoning_effort(Some(ReasoningEffort::High)),
@@ -347,7 +347,7 @@ default_reasoning_effort = "high"
             crate::ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap();
         config.set_model_catalog(std::sync::Arc::new(catalog));
 
-        let err = resolve_session_request_controls(
+        let err = resolve_runtime_request_controls(
             &config,
             provider_capabilities_for_config(&config),
             RequestControlIntent::reasoning_effort(Some(ReasoningEffort::XHigh)),
@@ -365,7 +365,7 @@ default_reasoning_effort = "high"
             .expect("default OpenAI Responses model should be cataloged");
         assert_eq!(model_info.provider, ModelCatalogProvider::OpenAiResponses);
 
-        let resolved = resolve_session_request_controls(
+        let resolved = resolve_runtime_request_controls(
             &config,
             openai_caps(),
             RequestControlIntent::default(),
@@ -386,19 +386,6 @@ default_reasoning_effort = "high"
             assert!(
                 !turn_executor.contains(forbidden),
                 "`turn_executor` must consume request-control resolver output, found `{forbidden}`"
-            );
-        }
-
-        let daemon_routes = include_str!("../../alan/src/daemon/routes.rs");
-        for forbidden in [
-            "source_reasoning_effort",
-            "reasoning_effort.or(",
-            "effective_model_reasoning_effort",
-            "validate_reasoning_effort_for_resolved_model",
-        ] {
-            assert!(
-                !daemon_routes.contains(forbidden),
-                "daemon routes must mirror runtime resolver metadata, found `{forbidden}`"
             );
         }
     }

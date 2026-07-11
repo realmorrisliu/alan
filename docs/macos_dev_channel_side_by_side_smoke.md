@@ -18,8 +18,7 @@ It covers the OpenSpec side-by-side boundary:
 5. dev shell-control state is created for the current run in the
    `alan-dev-shell-control` namespace;
 6. `alan-dev init` writes the current smoke workspace to the dev registry and
-   writes workspace runtime state under `.alan/runtime/dev/` without creating
-   legacy stable `.alan/sessions` or `.alan/memory` paths.
+   writes rollouts and Memory Store state only under `.alan/runtime/dev/`.
 
 ## Prerequisites
 

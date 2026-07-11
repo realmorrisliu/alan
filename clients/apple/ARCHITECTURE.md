@@ -51,14 +51,6 @@ Xcode target.
 | `Services/Shell/ShellSocketServer.swift` | 415 | Foundation, Darwin; macOS gates | Bounded local socket transport, request parsing, and client response handling | `Services/Shell/` |
 | `Services/Shell/ShellStatePersistenceStore.swift` | 221 | Foundation; macOS gates | Shell state save/restore, persistence URL selection, and restored window context lookup | `Services/Shell/` |
 | `ShellControlPlane.swift` | 463 | Foundation; macOS gates | Shell control-plane orchestration across socket, file polling, state publishing, pane support directories, event store, and diagnostics | `Services/Shell/` |
-| `Models/API/DaemonAPIModels.swift` | 529 | Foundation | Daemon API response DTOs, operation payloads, JSON values, and API error type | `Models/API/` |
-| `Models/Console/ConsoleModels.swift` | 148 | Foundation | Console chat messages, timeline entries, structured questions, and pending-yield value state | `Models/Console/` |
-| `Services/Daemon/AlanAPIClient.swift` | 292 | Foundation | Daemon HTTP client, request construction, endpoint routing, and response validation | `Services/Daemon/` |
-| `Services/Daemon/ConsoleEventReducer.swift` | 195 | Foundation | Console event page reader and event-to-message/timeline/pending-yield projection reducer | `Services/Daemon/` |
-| `Controllers/Console/AlanConsoleViewModel.swift` | 609 | Foundation, SwiftUI | Legacy/mobile console observable state, action coordination, and event pump ownership | `Controllers/Console/` |
-| `Views/Console/ContentView.swift` | 808 | SwiftUI | Legacy/mobile console UI composition | `Views/Console/` |
-| `Views/Console/ConsoleSupportViews.swift` | 262 | SwiftUI | Console theme tokens, button styles, message bubbles, and timeline rows | `Views/Console/` |
-| `Support/ConsoleAdaptiveColor.swift` | 33 | SwiftUI, AppKit; iOS/macOS gates | Platform-adaptive console color bridge | `Support/` |
 
 ## Target Layout
 
@@ -68,15 +60,13 @@ The accepted target under `clients/apple/alan-macos` is:
   shell owner creation, app commands, and primary window coordination.
 - `Views/Shell/`: the default macOS shell composition, sidebar, workspace,
   command palette, pane title/search UI, and shell-specific SwiftUI components.
-- `Views/Console/`: mobile or legacy remote-control console screens and local
-  console view support that are not the primary macOS shell path.
-- `Models/`: API DTOs, shell snapshots, shell IDs, enums, value types, and
+- `Models/`: shell snapshots, shell IDs, enums, value types, and
   current-format decoding.
 - `Controllers/`: observable app and shell controllers that own UI state and
   delegate IO or domain work to services. This folder currently records the
   target owner while `ShellHostController.swift` remains tracked migration debt.
-- `Services/`: daemon API clients, event readers/reducers, terminal runtime
-  services, Ghostty bootstrap, shell projection services, shell control plane,
+- `Services/`: terminal runtime services, Ghostty bootstrap, shell projection
+  services, shell control plane,
   socket server, persistence, and other process or IO code.
 - `Support/`: design tokens, formatting helpers, window placement, AppKit
   adapters, and small utilities.

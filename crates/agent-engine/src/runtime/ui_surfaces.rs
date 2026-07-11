@@ -90,7 +90,7 @@ impl RuntimeUiProjector {
                 self.publish_plan(UiPlanSnapshot::new(explanation.clone(), items.clone()))
                     .await?;
             }
-            Event::SessionRolledBack { turns, .. } => {
+            Event::MachineRolledBack { turns, .. } => {
                 self.publish_plan(UiPlanSnapshot::empty()).await?;
                 self.publish_notice(UiNoticeSnapshot::new(
                     UiNoticeKind::Rollback,

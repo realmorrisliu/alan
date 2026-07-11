@@ -2,7 +2,6 @@ import SwiftUI
 
 @main
 struct AlanApp: App {
-    #if os(macOS)
     private let singletonGuard: AlanAppSingletonGuard
     @StateObject private var primaryShellOwner: AlanMacPrimaryShellOwner
     @StateObject private var updateController: AlanMacUpdateController
@@ -16,10 +15,8 @@ struct AlanApp: App {
         _primaryShellOwner = StateObject(wrappedValue: AlanMacPrimaryShellOwner())
         _updateController = StateObject(wrappedValue: AlanMacUpdateController())
     }
-    #endif
 
     var body: some Scene {
-        #if os(macOS)
         Window("alan", id: "main") {
             MacShellRootView(
                 host: primaryShellOwner.host,
@@ -49,11 +46,6 @@ struct AlanApp: App {
         .windowResizability(.contentMinSize)
         .restorationBehavior(.disabled)
         .defaultLaunchBehavior(.presented)
-        #else
-        WindowGroup("alan") {
-            ContentView()
-        }
-        #endif
     }
 
 }

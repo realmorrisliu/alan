@@ -1,5 +1,4 @@
 pub mod connection;
-pub mod daemon;
 pub mod init;
 pub mod shell;
 pub mod skill_authoring;
@@ -10,8 +9,4 @@ pub mod workspace;
 pub(crate) fn load_agent_config_metadata_with_notice()
 -> anyhow::Result<alan_agent_engine::LoadedConfig> {
     alan_agent_engine::Config::load_with_metadata()
-}
-
-pub(crate) fn load_agent_config_with_notice() -> anyhow::Result<alan_agent_engine::Config> {
-    Ok(load_agent_config_metadata_with_notice()?.into_config())
 }

@@ -241,6 +241,7 @@ pub struct NamespaceRuntimeEnvironment {
     control_offset: Arc<AtomicU64>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
+    child_run_registry: super::super::child_runs::ChildRunRegistry,
 }
 
 #[derive(Clone)]
@@ -290,6 +291,7 @@ impl NamespaceRuntimeEnvironment {
             control_offset: Arc::new(AtomicU64::new(0)),
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
+            child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
         }
     }
 
@@ -344,6 +346,16 @@ impl NamespaceRuntimeEnvironment {
 
     pub fn agent_path(&self) -> &str {
         &self.agent_path
+    }
+
+    /// Authoritative `/proc/<pid>` path corresponding to this AgentFS view.
+    pub fn process_path(&self) -> Result<String> {
+        Ok(format!("/proc/{}", agent_pid_from_path(&self.agent_path)?))
+    }
+
+    /// Process-local projection registry for delegated child Agent Processes.
+    pub(crate) fn child_run_registry(&self) -> &super::super::child_runs::ChildRunRegistry {
+        &self.child_run_registry
     }
 
     pub fn llm_connection(&self) -> &str {
@@ -2899,7 +2911,7 @@ mod tests {
         let mut state = super::super::RuntimeLoopState {
             workspace_id: "namespace-resume-test".to_string(),
             workspace_root_dir: None,
-            session: crate::Session::new(),
+            machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment: super::super::RuntimeEnvironment::namespace(environment),
             tool_catalog: crate::tools::ToolRegistry::new(),
@@ -2934,7 +2946,7 @@ mod tests {
         );
         assert!(!state.turn_state.has_pending_interaction());
         assert!(events.is_empty());
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].tool_responses()[0].id, "r0");
         assert_eq!(

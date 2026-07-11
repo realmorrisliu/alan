@@ -29,16 +29,16 @@ coding line.
    behavior.
 2. Keep benchmark orchestration separate from `$repo-coding`.
 3. Use this package to prepare benchmark inputs, materialize suite manifests,
-   run full-steward cases, and score predictions.
-4. Let benchmark cases exercise the real coding product path:
-   steward session -> `$repo-coding` -> repo worker child.
+   validate the official harness environment, and score predictions produced
+   by an independent Agent Process execution path.
+4. Keep execution orchestration outside this package until Alan has a
+   file-native benchmark Process launcher.
 
 ## Package Surfaces
 
 - `bin/`: package-local executable entrypoints for deterministic SWE-bench
   preparation/materialization helpers
-- `scripts/`: shell glue for full-steward case/subset runs and official harness
-  scoring
+- `scripts/`: official harness environment setup and scoring
 - `references/`: package map and operator guidance
 - `evals/files/`: benchmark templates and curated instance-id lists
 

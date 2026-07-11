@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn redacts_password_passphrase_and_plain_token_credentials() {
         let json = redact_durable_evidence_text(
-            r#"{"password":"json-password","passphrase":"json-passphrase","github_token":"github-secret","session_token":"session-secret"}"#,
+            r#"{"password":"json-password","passphrase":"json-passphrase","github_token":"github-secret","session_token":"machine-secret"}"#,
         );
         let text = redact_durable_evidence_text(
             "password=line-password\ndownload: https://host/file?token=query-token",
@@ -609,7 +609,7 @@ mod tests {
             "json-password",
             "json-passphrase",
             "github-secret",
-            "session-secret",
+            "machine-secret",
             "line-password",
             "query-token",
         ] {

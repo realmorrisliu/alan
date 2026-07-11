@@ -19,7 +19,9 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{config::Config, retry, runtime::RuntimeConfig, session::Session, tools::ToolRegistry};
+use crate::{
+    agent_machine::AgentMachine, config::Config, retry, runtime::RuntimeConfig, tools::ToolRegistry,
+};
 
 use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
 use super::tool_orchestrator::{
@@ -85,7 +87,7 @@ impl RuntimeEnvironment {
 pub struct RuntimeLoopState {
     pub workspace_id: String,
     pub workspace_root_dir: Option<std::path::PathBuf>,
-    pub session: Session,
+    pub machine: AgentMachine,
     pub current_submission_id: Option<String>,
     pub environment: RuntimeEnvironment,
     pub tool_catalog: ToolRegistry,
@@ -97,6 +99,22 @@ pub struct RuntimeLoopState {
 }
 
 impl RuntimeLoopState {
+    /// Authoritative AgentFS path for the Process that owns this runtime state.
+    pub(crate) fn process_path(&self) -> String {
+        self.namespace_environment()
+            .process_path()
+            .expect("runtime namespace was created with a valid /agent/<pid> path")
+    }
+
+    /// AgentFS projection path for the owning Process.
+    pub(crate) fn agent_path(&self) -> &str {
+        self.namespace_environment().agent_path()
+    }
+
+    pub(crate) fn child_run_registry(&self) -> &super::child_runs::ChildRunRegistry {
+        self.namespace_environment().child_run_registry()
+    }
+
     pub(crate) fn namespace_environment(&self) -> &NamespaceRuntimeEnvironment {
         match &self.environment {
             RuntimeEnvironment::Namespace { namespace, .. } => namespace,
@@ -147,29 +165,9 @@ impl RuntimeLoopState {
         Ok(Some(request_id))
     }
 
-    pub(crate) async fn write_namespace_dynamic_tool_request(
-        &self,
-        pending: &crate::approval::PendingDynamicToolCall,
-    ) -> Result<Option<String>> {
-        let prompt = format!("Resolve dynamic tool: {}", pending.tool_name);
-        let options = serde_json::to_string(&serde_json::json!({
-            "call_id": pending.call_id.clone(),
-            "tool_name": pending.tool_name.clone(),
-            "arguments": pending.arguments.clone(),
-        }))?;
-        let request_id = self
-            .namespace_environment()
-            .write_request(
-                namespace_environment::NamespaceRequestRecord::new("dynamic_tool", prompt)
-                    .with_options(options),
-            )
-            .await?;
-        Ok(Some(request_id))
-    }
-
     pub(crate) fn project_generation_messages(
         &self,
-        messages: &[crate::session::Message],
+        messages: &[crate::agent_machine::Message],
     ) -> Vec<crate::llm::Message> {
         super::turn_support::project_messages_for_namespace(messages)
     }
@@ -342,7 +340,7 @@ where
                 },
             );
             if activate_task {
-                state.session.has_active_task = true;
+                state.machine.has_active_task = true;
             }
             Ok(())
         }
@@ -669,7 +667,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session: Session::new(),
+            machine: AgentMachine::new(),
             current_submission_id: None,
             environment,
             tool_catalog: ToolRegistry::new(),
@@ -866,12 +864,12 @@ mod tests {
     fn create_replay_memory_test_state(
         memory_dir: std::path::PathBuf,
         turn_state: TurnState,
-        session: Session,
+        machine: AgentMachine,
     ) -> RuntimeLoopState {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1248,13 +1246,13 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_current_task() {
         let config = Config::default();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1277,8 +1275,8 @@ mod tests {
                 turn_state
             },
         };
-        state.session.add_user_message("existing history");
-        state.session.has_active_task = true;
+        state.machine.add_user_message("existing history");
+        state.machine.has_active_task = true;
 
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -1290,10 +1288,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(state.turn_state.pending_confirmation().is_none());
-        assert!(!state.session.has_active_task);
-        assert_eq!(state.session.tape.messages().len(), 1);
+        assert!(!state.machine.has_active_task);
+        assert_eq!(state.machine.tape.messages().len(), 1);
         assert_eq!(
-            state.session.tape.messages()[0].text_content(),
+            state.machine.tape.messages()[0].text_content(),
             "existing history"
         );
 
@@ -1313,9 +1311,8 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
 
         let checkpoint_id = "tool_escalation_call-1";
-        let mut session = Session::new();
-        session.id = "sess-replay-call".to_string();
-        session.add_user_message("My name is Morris.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Morris.");
 
         let mut turn_state = TurnState::default();
         turn_state.begin_turn(0);
@@ -1333,7 +1330,7 @@ mod tests {
             options: vec!["approve".to_string(), "reject".to_string()],
         });
 
-        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, session);
+        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, machine);
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
@@ -1364,9 +1361,8 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
 
         let checkpoint_id = "tool_escalation_batch-1";
-        let mut session = Session::new();
-        session.id = "sess-replay-batch".to_string();
-        session.add_user_message("My name is Morris.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Morris.");
 
         let mut turn_state = TurnState::default();
         turn_state.begin_turn(0);
@@ -1386,7 +1382,7 @@ mod tests {
             }],
         );
 
-        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, session);
+        let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, machine);
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
@@ -1444,13 +1440,13 @@ mod tests {
     #[test]
     fn test_agent_loop_state_creation() {
         let config = Config::default();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1499,13 +1495,13 @@ mod tests {
     #[tokio::test]
     async fn test_maybe_compact_context_no_compaction_needed() {
         let config = Config::default();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1525,7 +1521,7 @@ mod tests {
             async {}
         };
 
-        // Session is empty, no compaction needed
+        // AgentMachine is empty, no compaction needed
         let result = maybe_compact_context_for_request(
             &mut state,
             &mut emit,
@@ -1540,11 +1536,11 @@ mod tests {
     #[tokio::test]
     async fn test_maybe_compact_context_with_mock_llm() {
         let config = Config::default();
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
 
         // Add enough messages to trigger compaction
         for i in 0..65 {
-            session.add_user_message(&format!("Message {}", i));
+            machine.add_user_message(&format!("Message {}", i));
         }
 
         let runtime_config = super::RuntimeConfig::default();
@@ -1552,7 +1548,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1587,9 +1583,9 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message(&"x".repeat(1200));
-        session.add_assistant_message(&"y".repeat(1200), None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message(&"x".repeat(1200));
+        machine.add_assistant_message(&"y".repeat(1200), None);
 
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
@@ -1600,7 +1596,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1623,15 +1619,15 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 1);
-        let prompt_messages = state.session.tape.messages_for_prompt();
+        assert_eq!(state.machine.tape.len(), 1);
+        let prompt_messages = state.machine.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from token-triggered compaction")
         }));
         assert_eq!(
-            state.session.tape.messages()[0].text_content(),
+            state.machine.tape.messages()[0].text_content(),
             "y".repeat(1200)
         );
     }
@@ -1640,9 +1636,9 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message(&"x".repeat(1200));
-        session.add_assistant_message(&"y".repeat(1200), None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message(&"x".repeat(1200));
+        machine.add_assistant_message(&"y".repeat(1200), None);
 
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
@@ -1653,7 +1649,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1676,15 +1672,15 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), 1);
-        let prompt_messages = state.session.tape.messages_for_prompt();
+        assert_eq!(state.machine.tape.len(), 1);
+        let prompt_messages = state.machine.tape.messages_for_prompt();
         assert!(prompt_messages.iter().any(|m| {
             m.is_context()
                 && m.text_content()
                     .contains("Summary from zero-ratio compaction")
         }));
         assert_eq!(
-            state.session.tape.messages()[0].text_content(),
+            state.machine.tape.messages()[0].text_content(),
             "y".repeat(1200)
         );
     }
@@ -1693,9 +1689,9 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message(&"x".repeat(1200));
-        session.add_assistant_message(&"y".repeat(1200), None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message(&"x".repeat(1200));
+        machine.add_assistant_message(&"y".repeat(1200), None);
 
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
@@ -1706,7 +1702,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -1720,7 +1716,7 @@ mod tests {
             turn_state: TurnState::default(),
         };
 
-        let original_len = state.session.tape.len();
+        let original_len = state.machine.tape.len();
         let mut emit = |_event: Event| async {};
         let result = maybe_compact_context_for_request(
             &mut state,
@@ -1730,8 +1726,8 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.len(), original_len);
-        assert!(state.session.tape.summary().is_none());
+        assert_eq!(state.machine.tape.len(), original_len);
+        assert!(state.machine.tape.summary().is_none());
     }
 
     #[tokio::test]
@@ -1744,16 +1740,16 @@ mod tests {
         let mut config = Config::default();
         config.memory.workspace_dir = Some(memory_dir.clone());
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         for i in 0..6 {
-            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
-            session.add_assistant_message(
+            machine.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            machine.add_assistant_message(
                 &format!("Need to preserve file paths and next steps for blocker {i}."),
                 None,
             );
         }
 
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1767,7 +1763,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success(memory_flush_json_response()),
@@ -1826,7 +1822,7 @@ mod tests {
         assert!(note.contains("attempt_id"));
         assert!(note.contains("crates/agent-engine/src/runtime/compaction.rs"));
         assert_eq!(
-            state.session.latest_memory_flush_attempt(),
+            state.machine.latest_memory_flush_attempt(),
             Some(&flush_attempt)
         );
     }
@@ -1841,16 +1837,16 @@ mod tests {
         let mut config = Config::default();
         config.memory.workspace_dir = Some(memory_dir.clone());
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         for i in 0..6 {
-            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
-            session.add_assistant_message(
+            machine.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            machine.add_assistant_message(
                 &format!("Need to preserve file paths and next steps for blocker {i}."),
                 None,
             );
         }
 
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1864,7 +1860,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Error("synthetic memory flush failure".to_string()),
@@ -1941,16 +1937,16 @@ mod tests {
         let mut config = Config::default();
         config.memory.workspace_dir = Some(memory_dir.clone());
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         for i in 0..6 {
-            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
-            session.add_assistant_message(
+            machine.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            machine.add_assistant_message(
                 &format!("Need to preserve file paths and next steps for blocker {i}."),
                 None,
             );
         }
 
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -1964,7 +1960,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success(
@@ -2044,17 +2040,17 @@ mod tests {
         let mut config = Config::default();
         config.memory.workspace_dir = Some(memory_dir.clone());
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         for i in 0..6 {
-            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
-            session.add_assistant_message(
+            machine.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            machine.add_assistant_message(
                 &format!("Need to preserve file paths and next steps for blocker {i}."),
                 None,
             );
         }
-        session.note_auto_memory_flush_attempt();
+        machine.note_auto_memory_flush_attempt();
 
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -2068,7 +2064,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success("Summary after already-flushed-cycle skip".to_string()),
@@ -2142,16 +2138,16 @@ mod tests {
         let mut config = Config::default();
         config.memory.workspace_dir = Some(memory_dir);
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         for i in 0..6 {
-            session.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
-            session.add_assistant_message(
+            machine.add_user_message(&format!("Investigate blocker {i} in runtime compaction."));
+            machine.add_assistant_message(
                 &format!("Need to preserve file paths and next steps for blocker {i}."),
                 None,
             );
         }
 
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
@@ -2165,7 +2161,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success("Summary at hard threshold".to_string()),
@@ -2215,9 +2211,9 @@ mod tests {
     #[tokio::test]
     async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flush() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message("Investigate the compaction contract.");
-        session.add_assistant_message("Need to preserve the current next step.", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Investigate the compaction contract.");
+        machine.add_assistant_message("Need to preserve the current next step.", None);
 
         let runtime_config = super::RuntimeConfig {
             compaction_trigger_messages: 100,
@@ -2232,7 +2228,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -2267,7 +2263,7 @@ mod tests {
                 .any(|event| matches!(event, Event::MemoryFlushObserved { .. }))
         );
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("Manual compaction below threshold")
         );
     }
@@ -2276,10 +2272,10 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message(&"x".repeat(1200));
-        session.add_assistant_message(&"y".repeat(1200), None);
-        let estimated_prompt_tokens = session.tape.estimated_prompt_tokens();
+        let mut machine = AgentMachine::new();
+        machine.add_user_message(&"x".repeat(1200));
+        machine.add_assistant_message(&"y".repeat(1200), None);
+        let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
 
         let mut runtime_config = super::RuntimeConfig::default();
         runtime_config.compaction_trigger_messages = 100;
@@ -2290,7 +2286,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -2314,7 +2310,7 @@ mod tests {
 
         assert!(matches!(result, Ok(CompactionOutcome::Applied(_))));
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("Summary from emergency mid-turn compaction")
         );
     }
@@ -2323,20 +2319,24 @@ mod tests {
     async fn test_manual_compaction_records_audit_fields() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let config = Config::default();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         for i in 0..65 {
-            session.add_user_message(&format!("Message {}", i));
+            machine.add_user_message(&format!("Message {}", i));
         }
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: Some("sub-compact".to_string()),
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -2362,7 +2362,7 @@ mod tests {
         )
         .await
         .unwrap();
-        state.session.flush().await;
+        state.machine.flush().await;
 
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let attempt = items.iter().find_map(|item| match item {
@@ -2415,20 +2415,24 @@ mod tests {
     async fn test_compaction_retry_result_is_audited_when_trimming_succeeds() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let config = Config::default();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         for i in 0..65 {
-            session.add_user_message(&format!("Message {}", i));
+            machine.add_user_message(&format!("Message {}", i));
         }
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(FailThenSucceedMockProvider::new(
                 1,
@@ -2450,7 +2454,7 @@ mod tests {
         )
         .await
         .unwrap();
-        state.session.flush().await;
+        state.machine.flush().await;
 
         match outcome {
             CompactionOutcome::Applied(outcome) => {
@@ -2487,20 +2491,24 @@ mod tests {
     async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let config = Config::default();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         for i in 0..65 {
-            session.add_user_message(&format!("Message {}", i));
+            machine.add_user_message(&format!("Message {}", i));
         }
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
@@ -2535,7 +2543,7 @@ mod tests {
         }
         assert!(
             state
-                .session
+                .machine
                 .tape
                 .summary()
                 .is_some_and(|summary| summary.contains("Deterministic fallback summary"))
@@ -2544,7 +2552,7 @@ mod tests {
             matches!(event, Event::Warning { message } if message.contains("deterministic fallback summary"))
         }));
 
-        state.session.flush().await;
+        state.machine.flush().await;
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let compacted = items.iter().find_map(|item| match item {
             RolloutItem::Compacted(compacted) => Some(compacted),
@@ -2573,10 +2581,10 @@ mod tests {
     #[tokio::test]
     async fn test_degraded_compaction_rebases_active_turn_start() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message("older turn 1");
-        session.add_user_message("older turn 2");
-        session.add_user_message("current turn");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("older turn 1");
+        machine.add_user_message("older turn 2");
+        machine.add_user_message("current turn");
 
         let runtime_config = super::RuntimeConfig {
             compaction_keep_last: 1,
@@ -2586,7 +2594,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
@@ -2600,7 +2608,7 @@ mod tests {
         };
 
         let retention_start = state
-            .session
+            .machine
             .tape
             .compaction_retention_start(state.runtime_config.compaction_keep_last);
         assert!(retention_start > 0);
@@ -2659,21 +2667,25 @@ mod tests {
     async fn test_compaction_failure_without_fallback_escalates_warning_and_preserves_tape() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
         let config = Config::default();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         for _ in 0..65 {
-            session.tape.push(crate::tape::Message::assistant(""));
+            machine.tape.push(crate::tape::Message::assistant(""));
         }
 
-        let original_messages = stateful_messages_snapshot(&session);
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let original_messages = stateful_messages_snapshot(&machine);
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
@@ -2710,10 +2722,10 @@ mod tests {
         assert!(matches!(first, CompactionOutcome::Failed(_)));
         assert!(matches!(second, CompactionOutcome::Failed(_)));
         assert_eq!(
-            stateful_messages_snapshot(&state.session),
+            stateful_messages_snapshot(&state.machine),
             original_messages
         );
-        assert!(state.session.tape.summary().is_none());
+        assert!(state.machine.tape.summary().is_none());
 
         let warning_messages: Vec<&str> = events
             .iter()
@@ -2723,9 +2735,9 @@ mod tests {
             })
             .collect();
         assert_eq!(warning_messages.len(), 2);
-        assert!(warning_messages[1].contains("consider starting a new session"));
+        assert!(warning_messages[1].contains("consider starting a new machine"));
 
-        state.session.flush().await;
+        state.machine.flush().await;
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let failure_attempts: Vec<_> = items
             .iter()
@@ -2742,8 +2754,8 @@ mod tests {
         );
     }
 
-    fn stateful_messages_snapshot(session: &Session) -> Vec<String> {
-        session
+    fn stateful_messages_snapshot(machine: &AgentMachine) -> Vec<String> {
+        machine
             .tape
             .messages()
             .iter()
@@ -2756,15 +2768,15 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_handle_submission_cancel() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message("existing history");
-        session.has_active_task = true;
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("existing history");
+        machine.has_active_task = true;
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_live_process(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -2791,12 +2803,12 @@ mod tests {
 
         assert!(result.is_ok(), "interrupt should succeed: {result:?}");
         assert_eq!(events.len(), 1);
-        assert_eq!(state.session.tape.messages().len(), 1);
+        assert_eq!(state.machine.tape.messages().len(), 1);
         assert_eq!(
-            state.session.tape.messages()[0].text_content(),
+            state.machine.tape.messages()[0].text_content(),
             "existing history"
         );
-        assert!(!state.session.has_active_task);
+        assert!(!state.machine.has_active_task);
         match &events[0] {
             Event::TurnCompleted { summary } => {
                 assert_eq!(summary.as_deref(), Some("Task cancelled by user"));
@@ -2809,18 +2821,18 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     async fn test_handle_submission_rollback() {
         let config = Config::default();
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.add_user_message("u2");
-        session.add_assistant_message("a2", None);
-        session.has_active_task = true;
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.add_user_message("u2");
+        machine.add_assistant_message("a2", None);
+        machine.has_active_task = true;
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
                 tokio::time::Duration::from_millis(0),
@@ -2845,11 +2857,11 @@ mod tests {
         let result = handle_submission(&mut state, submission, &mut emit).await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.messages().len(), 2);
+        assert_eq!(state.machine.tape.messages().len(), 2);
         assert_eq!(events.len(), 3);
         assert!(events.iter().any(|event| matches!(
             event,
-            Event::SessionRolledBack {
+            Event::MachineRolledBack {
                 turns: 1,
                 removed_messages: 2,
             }

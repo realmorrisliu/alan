@@ -16,16 +16,16 @@ struct ShellViewportSnapshot: Codable, Equatable {
 }
 
 struct ShellAlanBinding: Codable, Equatable {
-    let sessionID: String
-    let runStatus: String
-    let pendingYield: Bool
+    let processPath: String
+    let machineState: String
+    let pendingRequest: Bool
     let source: String?
     let lastProjectedAt: String?
 
     private enum CodingKeys: String, CodingKey {
-        case sessionID = "session_id"
-        case runStatus = "run_status"
-        case pendingYield = "pending_yield"
+        case processPath = "process_path"
+        case machineState = "machine_state"
+        case pendingRequest = "pending_request"
         case source
         case lastProjectedAt = "last_projected_at"
     }

@@ -705,7 +705,7 @@ pub fn os_backend_active() -> bool {
     detect_backend().is_os_enforced()
 }
 
-/// Name of the active execution backend for audits/sessions/snapshots (the
+/// Name of the active execution backend for audits, rollouts, and snapshots (the
 /// real `seatbelt`/`landlock` when one is enforcing, else the path guard).
 pub fn active_backend_name() -> &'static str {
     detect_backend().name()
@@ -859,7 +859,7 @@ fn read_deny_matches_any_writable_root(deny_path: &Path, writable_roots: &[PathB
 /// all outbound/listening TCP network access (Landlock ABI v4, best-effort).
 ///
 /// Intended to run in a `pre_exec` hook so it confines the spawned shell, not
-/// the daemon. Returns an `io::Error` (fail-closed) when enforcement fails.
+/// the host Process. Returns an `io::Error` (fail-closed) when enforcement fails.
 #[cfg(target_os = "linux")]
 pub fn apply_landlock(
     writable_roots: &[PathBuf],

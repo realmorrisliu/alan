@@ -68,7 +68,7 @@ pub struct StructuredInputQuestion {
     pub presentation_hints: Vec<AdaptivePresentationHint>,
 }
 
-/// Typed adaptive form contract shared by `dynamic_tool` and `custom` yields.
+/// Typed adaptive form contract for custom yields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AdaptiveForm {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -100,18 +100,6 @@ pub struct StructuredInputYieldPayload {
     pub questions: Vec<StructuredInputQuestion>,
 }
 
-/// Payload for `YieldKind::DynamicTool`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DynamicToolYieldPayload {
-    pub tool_name: String,
-    pub arguments: serde_json::Value,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form: Option<AdaptiveForm>,
-}
-
 /// Payload for `YieldKind::Custom`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CustomYieldPayload {
@@ -123,45 +111,6 @@ pub struct CustomYieldPayload {
     pub details: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<AdaptiveForm>,
-}
-
-/// Adaptive UI support negotiated between client and runtime.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AdaptiveYieldCapabilities {
-    /// Client can render richer confirmation cards/details.
-    #[serde(default = "default_true")]
-    pub rich_confirmation: bool,
-    /// Client can render protocol-level structured input forms.
-    #[serde(default = "default_true")]
-    pub structured_input: bool,
-    /// Client can render typed schema/form contracts for dynamic/custom yields.
-    #[serde(default)]
-    pub schema_driven_forms: bool,
-    /// Client understands presentation hints such as `toggle` or `dangerous`.
-    #[serde(default)]
-    pub presentation_hints: bool,
-}
-
-impl Default for AdaptiveYieldCapabilities {
-    fn default() -> Self {
-        Self {
-            rich_confirmation: true,
-            structured_input: true,
-            schema_driven_forms: false,
-            presentation_hints: false,
-        }
-    }
-}
-
-/// Top-level protocol capability declaration for frontends.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct ClientCapabilities {
-    #[serde(default)]
-    pub adaptive_yields: AdaptiveYieldCapabilities,
-}
-
-const fn default_true() -> bool {
-    true
 }
 
 #[cfg(test)]
@@ -197,15 +146,6 @@ mod tests {
         assert!(value.get("details").is_none());
         assert!(value.get("options").is_none());
         assert!(value.get("presentation_hints").is_none());
-    }
-
-    #[test]
-    fn client_capabilities_default_to_safe_baseline() {
-        let capabilities = ClientCapabilities::default();
-        assert!(capabilities.adaptive_yields.rich_confirmation);
-        assert!(capabilities.adaptive_yields.structured_input);
-        assert!(!capabilities.adaptive_yields.schema_driven_forms);
-        assert!(!capabilities.adaptive_yields.presentation_hints);
     }
 
     #[test]

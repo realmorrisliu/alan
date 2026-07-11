@@ -64,14 +64,6 @@ pub struct PendingConfirmation {
     pub options: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingDynamicToolCall {
-    pub call_id: String,
-    pub tool_name: String,
-    #[allow(dead_code)]
-    pub arguments: serde_json::Value,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SkillPermissionHintContext {
     pub skill_id: String,
@@ -196,17 +188,6 @@ mod tests {
         assert_eq!(pending.checkpoint_id, "chk-123");
         assert_eq!(pending.checkpoint_type, TOOL_ESCALATION_CHECKPOINT_TYPE);
         assert_eq!(pending.options.len(), 2);
-    }
-
-    #[test]
-    fn test_pending_dynamic_tool_call_creation() {
-        let call = PendingDynamicToolCall {
-            call_id: "call-123".to_string(),
-            tool_name: "custom_tool".to_string(),
-            arguments: serde_json::json!({"arg1": "value1"}),
-        };
-        assert_eq!(call.call_id, "call-123");
-        assert_eq!(call.tool_name, "custom_tool");
     }
 
     #[test]

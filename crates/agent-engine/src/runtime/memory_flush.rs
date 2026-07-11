@@ -173,8 +173,9 @@ pub(crate) async fn perform_memory_flush_attempt(
     let note_path = memory_dir
         .join(MEMORY_DAILY_DIRNAME)
         .join(format!("{note_date}.md"));
+    let process_path = state.process_path().to_string();
     let entry = render_memory_flush_entry(
-        &state.session.id,
+        &process_path,
         &attempt_id,
         compaction_mode,
         pressure_level,
@@ -185,7 +186,7 @@ pub(crate) async fn perform_memory_flush_attempt(
     match append_memory_entry(&note_path, &entry).await {
         Ok(()) => {
             if let Some(inbox_draft) =
-                build_memory_flush_inbox_draft(&state.session.id, &attempt_id, &flush_content)
+                build_memory_flush_inbox_draft(&process_path, &attempt_id, &flush_content)
                 && let Err(err) = stage_inbox_entry(&memory_dir, inbox_draft, now).await
             {
                 tracing::warn!(
@@ -296,7 +297,7 @@ async fn generate_flush_content(
     cancel: &CancellationToken,
 ) -> Result<Option<MemoryFlushContent>> {
     let mut llm_messages = Vec::new();
-    if let Some(existing_summary) = state.session.tape.summary() {
+    if let Some(existing_summary) = state.machine.tape.summary() {
         llm_messages.push(Message {
             role: MessageRole::Context,
             content: format!("[Current compaction summary]\n{existing_summary}"),
@@ -384,7 +385,7 @@ fn extract_json_object(raw: &str) -> Option<&str> {
 }
 
 fn render_memory_flush_entry(
-    session_id: &str,
+    process_path: &str,
     attempt_id: &str,
     compaction_mode: CompactionMode,
     pressure_level: CompactionPressureLevel,
@@ -395,7 +396,7 @@ fn render_memory_flush_entry(
     let mut lines = vec![
         format!("## {timestamp}"),
         String::new(),
-        format!("- session_id: `{session_id}`"),
+        format!("- process_path: `{process_path}`"),
         format!("- attempt_id: `{attempt_id}`"),
         format!("- compaction_mode: `{}`", mode_label(compaction_mode)),
         format!("- pressure_level: `{}`", pressure_label(pressure_level)),
@@ -420,7 +421,7 @@ fn render_memory_flush_entry(
 }
 
 fn build_memory_flush_inbox_draft(
-    session_id: &str,
+    process_path: &str,
     attempt_id: &str,
     content: &MemoryFlushContent,
 ) -> Option<InboxEntryDraft> {
@@ -456,9 +457,9 @@ fn build_memory_flush_inbox_draft(
         observation,
         evidence,
         promotion_rationale: format!(
-            "Captured from automatic memory flush attempt `{attempt_id}` in session `{session_id}`. Review before promoting into stable memory."
+            "Captured from automatic memory flush attempt `{attempt_id}` in machine `{process_path}`. Review before promoting into stable memory."
         ),
-        source_sessions: vec![session_id.to_string()],
+        source_processes: vec![process_path.to_string()],
     })
 }
 
@@ -571,12 +572,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::{
+        agent_machine::AgentMachine,
         config::Config,
         runtime::{
             NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
             TurnState, prompt_cache::PromptAssemblyCache,
         },
-        session::Session,
     };
     use std::path::PathBuf;
 
@@ -642,7 +643,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session: Session::new(),
+            machine: AgentMachine::new(),
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
                 root, "/agent/1", "default",
@@ -665,9 +666,9 @@ mod tests {
                 .to_string(),
         });
         state
-            .session
+            .machine
             .add_user_message("remember this namespace fact");
-        let messages = state.session.tape.messages().to_vec();
+        let messages = state.machine.tape.messages().to_vec();
 
         let content = generate_flush_content(&mut state, &messages, &CancellationToken::new())
             .await
@@ -735,7 +736,7 @@ mod tests {
             "2026-03-18T08:00:00Z",
         );
 
-        assert!(entry.contains("session_id: `sess-123`"));
+        assert!(entry.contains("process_path: `sess-123`"));
         assert!(entry.contains("attempt_id: `flush-456`"));
         assert!(entry.contains("compaction_mode: `auto_pre_turn`"));
         assert!(entry.contains("pressure_level: `soft`"));

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::agent_loop::{DeferredRuntimeAction, NormalizedToolCall};
-use crate::approval::{PendingConfirmation, PendingDynamicToolCall, PendingStructuredInputRequest};
+use crate::approval::{PendingConfirmation, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
 use alan_agent_protocol::{PlanItem, Submission};
@@ -23,7 +23,6 @@ pub(super) fn is_auto_mid_turn_compaction_emergency(
 pub(super) enum PendingYield {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
-    DynamicToolCall(PendingDynamicToolCall),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,7 +61,7 @@ pub(crate) struct TurnState {
     active_skills: Vec<ActiveSkillEnvelope>,
     /// Optional request-control intent scoped to the active logical turn.
     active_turn_request_control_intent: crate::RequestControlIntent,
-    /// Latest explicit plan/progress state published during the current session.
+    /// Latest explicit plan/progress state published during the current machine.
     plan_snapshot: Option<PlanSnapshot>,
     /// Turn boundary active when the latest plan snapshot was published.
     plan_snapshot_turn_start: Option<usize>,
@@ -384,22 +383,6 @@ impl TurnState {
         push_latest_key(&mut self.pending_order, key);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn set_dynamic_tool_call(&mut self, pending: PendingDynamicToolCall) {
-        self.set_dynamic_tool_call_for_request(pending.call_id.clone(), pending);
-    }
-
-    pub(crate) fn set_dynamic_tool_call_for_request(
-        &mut self,
-        request_id: impl Into<String>,
-        pending: PendingDynamicToolCall,
-    ) {
-        let key = request_id.into();
-        self.pending
-            .insert(key.clone(), PendingYield::DynamicToolCall(pending));
-        push_latest_key(&mut self.pending_order, key);
-    }
-
     /// Unified lookup: take any pending item by request_id.
     pub(super) fn take_pending(&mut self, request_id: &str) -> Option<PendingYield> {
         let item = self.pending.remove(request_id)?;
@@ -477,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_resets_all_pending_types() {
+    fn test_clear_resets_pending_interactions() {
         let mut state = TurnState::default();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp".to_string(),
@@ -485,11 +468,6 @@ mod tests {
             summary: "Approve?".to_string(),
             details: json!({}),
             options: vec!["approve".to_string()],
-        });
-        state.set_dynamic_tool_call(PendingDynamicToolCall {
-            call_id: "d1".to_string(),
-            tool_name: "lookup".to_string(),
-            arguments: json!({"id":"1"}),
         });
         state.clear();
         assert!(state.pending_confirmation().is_none());
@@ -648,20 +626,6 @@ mod tests {
     }
 
     #[test]
-    fn test_take_pending_removes_dynamic_tool_call() {
-        let mut state = TurnState::default();
-        state.set_dynamic_tool_call(PendingDynamicToolCall {
-            call_id: "d1".to_string(),
-            tool_name: "lookup".to_string(),
-            arguments: json!({"id":"1"}),
-        });
-
-        let taken = state.take_pending("d1").unwrap();
-        assert!(matches!(taken, PendingYield::DynamicToolCall(_)));
-        assert!(!state.has_pending_interaction());
-    }
-
-    #[test]
     fn test_latest_pending_key_tracks_cross_type_insertion_order() {
         let mut state = TurnState::default();
         state.set_confirmation(PendingConfirmation {
@@ -673,14 +637,15 @@ mod tests {
         });
         assert_eq!(state.latest_pending_key().as_deref(), Some("cp-1"));
 
-        state.set_dynamic_tool_call(PendingDynamicToolCall {
-            call_id: "dyn-1".to_string(),
-            tool_name: "lookup".to_string(),
-            arguments: json!({"id":"1"}),
+        state.set_structured_input(PendingStructuredInputRequest {
+            request_id: "input-1".to_string(),
+            title: "Input".to_string(),
+            prompt: "Value?".to_string(),
+            questions: vec![],
         });
-        assert_eq!(state.latest_pending_key().as_deref(), Some("dyn-1"));
+        assert_eq!(state.latest_pending_key().as_deref(), Some("input-1"));
 
-        let _ = state.take_pending("dyn-1");
+        let _ = state.take_pending("input-1");
         assert_eq!(state.latest_pending_key().as_deref(), Some("cp-1"));
     }
 

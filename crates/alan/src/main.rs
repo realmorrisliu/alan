@@ -1,13 +1,10 @@
-//! alan — AI Turing Machine CLI & daemon.
+//! alan — AI Turing Machine CLI.
 //!
 //! This is the unified entry point for all alan operations:
-//! - `alan daemon start` — run the workspace daemon
 //! - `alan init` — initialize a workspace
 //! - `alan workspace` — manage workspaces
 
 mod cli;
-mod daemon;
-mod host_config;
 #[allow(dead_code)]
 mod host_mounts;
 pub mod registry;
@@ -17,8 +14,6 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::Path;
 use std::path::PathBuf;
-use tracing::Level;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "alan", about = "alan — AI Turing Machine", version)]
@@ -36,11 +31,6 @@ enum Commands {
     Connection {
         #[command(subcommand)]
         action: ConnectionAction,
-    },
-    /// Start or manage the daemon server
-    Daemon {
-        #[command(subcommand)]
-        action: DaemonAction,
     },
     /// Initialize a directory as a workspace
     Init {
@@ -69,23 +59,6 @@ enum Commands {
         #[command(subcommand)]
         action: ShellAction,
     },
-}
-
-#[derive(Subcommand)]
-enum DaemonAction {
-    /// Start the daemon server (default: detach to background)
-    Start {
-        /// Run in foreground instead of detaching
-        #[arg(long)]
-        foreground: bool,
-    },
-    /// Stop the daemon
-    Stop,
-    /// Show daemon status
-    Status,
-    /// Emit the daemon API contract for generated clients
-    #[command(name = "api-contract", hide = true)]
-    ApiContract,
 }
 
 #[derive(Subcommand)]
@@ -141,7 +114,7 @@ enum ConnectionAction {
     },
     /// Remove stored credentials for a profile
     Logout { profile_id: String },
-    /// Manage the default profile for future sessions
+    /// Manage the default profile for future Agent Processes
     Default {
         #[command(subcommand)]
         action: ConnectionDefaultAction,
@@ -182,13 +155,13 @@ enum ConnectionAction {
 
 #[derive(Subcommand)]
 enum ConnectionDefaultAction {
-    /// Set the default profile for future sessions
+    /// Set the default profile for future Agent Processes
     Set {
         profile_id: String,
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
-    /// Clear the default profile for future sessions
+    /// Clear the default profile for future Agent Processes
     Clear {
         #[arg(long)]
         workspace: Option<PathBuf>,
@@ -209,7 +182,7 @@ enum ConnectionPinScopeArg {
     Workspace,
 }
 
-impl From<ConnectionPinScopeArg> for crate::daemon::connection_control::ConnectionPinScope {
+impl From<ConnectionPinScopeArg> for crate::cli::connection::ConnectionPinScope {
     fn from(value: ConnectionPinScopeArg) -> Self {
         match value {
             ConnectionPinScopeArg::Global => Self::Global,
@@ -805,31 +778,6 @@ async fn main() -> Result<()> {
                 }
             }
         },
-        Some(Commands::Daemon { action }) => match action {
-            DaemonAction::Start { foreground } => {
-                if foreground {
-                    // Run in foreground (blocking)
-                    init_tracing();
-                    let loaded_config = cli::load_agent_config_metadata_with_notice()?;
-                    daemon::server::run_server_with_loaded_config(loaded_config).await?;
-                } else {
-                    // Detach to background
-                    cli::daemon::start_daemon_background().await?;
-                }
-            }
-            DaemonAction::Stop => {
-                cli::daemon::stop_daemon().await?;
-            }
-            DaemonAction::Status => {
-                cli::daemon::daemon_status().await?;
-            }
-            DaemonAction::ApiContract => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&daemon::api_contract::endpoint_manifest())?
-                );
-            }
-        },
         Some(Commands::Init { path, name, silent }) => {
             cli::init::run_init(path, name, silent)?;
         }
@@ -1168,7 +1116,7 @@ async fn prepare_file_backed_tui_config(
     runtime_config.workspace_root_dir = Some(workspace_root.clone());
     runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
     // Approved request_mount grants must reach the live namespace from bare
-    // `alan` too, not only from the daemon launch path — without the factory
+    // `alan` too; without the factory
     // the runtime falls back to "live namespace mount applicator unavailable".
     runtime_config.mount_grant_applicator_factory = Some(std::sync::Arc::new(
         crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory,
@@ -1179,20 +1127,19 @@ async fn prepare_file_backed_tui_config(
         runtime_config.agent_home_paths = Some(paths.clone());
     }
 
-    let skill_candidates = match skill_catalog::resolve_skill_catalog_context(&runtime_config)
-        .and_then(|context| skill_catalog::build_skill_catalog_snapshot(&context))
-    {
-        Ok(snapshot) => snapshot
-            .skills
+    let skill_candidates = match skill_catalog::resolve_skill_catalog_context(&runtime_config) {
+        Ok(context) => context
+            .registry
+            .list_sorted()
             .into_iter()
             .map(|skill| {
                 alan_tui::completion::CompletionCandidate::new(
                     if skill.name.is_empty() {
-                        skill.id
+                        skill.id.clone()
                     } else {
-                        skill.name
+                        skill.name.clone()
                     },
-                    Some(skill.description),
+                    Some(skill.description.clone()),
                 )
             })
             .collect(),
@@ -1235,16 +1182,6 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive(Level::INFO.into())
-                .add_directive("alan=debug".parse().unwrap()),
-        )
-        .init();
-}
-
 #[cfg(test)]
 mod tests {
     use super::Cli;
@@ -1252,7 +1189,7 @@ mod tests {
 
     #[test]
     fn hidden_tui_backend_flag_is_unavailable() {
-        let err = Cli::try_parse_from(["alan", "--tui-backend", "daemon"])
+        let err = Cli::try_parse_from(["alan", "--tui-backend", "network"])
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("--tui-backend"));

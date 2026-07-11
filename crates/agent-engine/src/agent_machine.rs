@@ -1,14 +1,11 @@
-//! Session state management.
+//! AgentMachine state management.
 
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
-use alan_agent_protocol::{
-    CompactionAttemptSnapshot, CompactionMode, CompactionReason, CompactionRequestMetadata,
-    CompactionResult, CompactionTrigger, MemoryFlushAttemptSnapshot,
-};
+use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
 
 use crate::approval::{
     RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
@@ -43,21 +40,15 @@ pub struct ResponsesContinuationState {
     pub reference_context_revision: u64,
 }
 
-/// Represents a conversation/task session
+/// Transition state for one Agent Process.
 #[derive(Debug)]
-pub struct Session {
-    /// Session ID
-    pub id: String,
+pub struct AgentMachine {
     /// Conversation history and summary
     pub tape: Tape,
     /// Optional recorder for persistence
     pub recorder: Option<RolloutRecorder>,
-    /// Whether a sourcing task has been started in this session
+    /// Whether a sourcing task has been started in this machine
     pub has_active_task: bool,
-    /// Session-scoped client-provided dynamic tools exposed to the model.
-    pub dynamic_tools: HashMap<String, alan_agent_protocol::DynamicToolSpec>,
-    /// Session-scoped negotiated client capabilities for adaptive UI emission.
-    pub client_capabilities: alan_agent_protocol::ClientCapabilities,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
     effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
@@ -78,7 +69,7 @@ pub struct Session {
 
 pub use crate::tape::{Message, MessageRole};
 
-impl Session {
+impl AgentMachine {
     const RESPONSES_CONTINUATION_EVENT_TYPE: &'static str = "responses_continuation";
 
     fn responses_continuation_from_event_records(
@@ -190,58 +181,6 @@ impl Session {
                 == Some(RUNTIME_CONFIRMATION_CONTROL_SOURCE)
     }
 
-    fn is_legacy_runtime_confirmation_control_payload_for_restore(
-        payload: &serde_json::Value,
-        known_checkpoints: &HashMap<String, String>,
-    ) -> bool {
-        let Some((checkpoint_id, checkpoint_type)) =
-            Self::runtime_confirmation_control_checkpoint(payload)
-        else {
-            return false;
-        };
-
-        known_checkpoints.get(checkpoint_id).map(String::as_str) == Some(checkpoint_type)
-            && Self::has_runtime_confirmation_control_kind_and_version(payload, checkpoint_type)
-            && Self::runtime_confirmation_control_source(payload).is_none()
-    }
-
-    fn normalize_runtime_confirmation_control_payload_for_restore(
-        payload: &mut serde_json::Value,
-        known_checkpoints: &HashMap<String, String>,
-    ) -> bool {
-        let Some((checkpoint_id, checkpoint_type)) =
-            Self::runtime_confirmation_control_checkpoint(payload)
-        else {
-            return false;
-        };
-        let has_known_checkpoint =
-            known_checkpoints.get(checkpoint_id).map(String::as_str) == Some(checkpoint_type);
-        if !has_known_checkpoint {
-            return false;
-        }
-
-        if Self::is_runtime_confirmation_control_payload(payload) {
-            return true;
-        }
-        if !Self::is_legacy_runtime_confirmation_control_payload_for_restore(
-            payload,
-            known_checkpoints,
-        ) {
-            return false;
-        }
-
-        if let Some(marker) = payload
-            .get_mut("__alan_internal_control")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            marker.insert(
-                "source".to_string(),
-                serde_json::Value::String(RUNTIME_CONFIRMATION_CONTROL_SOURCE.to_string()),
-            );
-        }
-        true
-    }
-
     fn is_runtime_confirmation_control_parts(parts: &[crate::tape::ContentPart]) -> bool {
         parts.iter().any(|part| {
             matches!(
@@ -259,143 +198,12 @@ impl Session {
         }
     }
 
-    fn normalize_runtime_confirmation_control_message_for_restore(
-        message: &mut Message,
-        known_checkpoints: &HashMap<String, String>,
-    ) -> bool {
-        let Message::User { parts } = message else {
-            return false;
-        };
-
-        let mut is_control = false;
-        for part in parts.iter_mut() {
-            match part {
-                crate::tape::ContentPart::Structured { data } => {
-                    is_control |= Self::normalize_runtime_confirmation_control_payload_for_restore(
-                        data,
-                        known_checkpoints,
-                    );
-                }
-                crate::tape::ContentPart::Text { text } => {
-                    if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(text.trim())
-                        && Self::normalize_runtime_confirmation_control_payload_for_restore(
-                            &mut payload,
-                            known_checkpoints,
-                        )
-                    {
-                        *part = crate::tape::ContentPart::structured(payload);
-                        is_control = true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        is_control
-    }
-
-    fn normalize_runtime_confirmation_control_content_for_restore(
-        content: &str,
-        known_checkpoints: &HashMap<String, String>,
-    ) -> Option<serde_json::Value> {
-        let trimmed = content.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        let mut payload = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
-        if Self::normalize_runtime_confirmation_control_payload_for_restore(
-            &mut payload,
-            known_checkpoints,
-        ) {
-            return Some(payload);
-        }
-        None
-    }
-
     fn turn_ordinal_from_effect_idempotency_key(key: &str) -> Option<u64> {
-        let payload = key.strip_prefix("run:")?;
+        let payload = key.strip_prefix("process:")?;
         let marker_index = payload.rfind(":turn:")?;
         let tail = &payload[(marker_index + ":turn:".len())..];
         let turn_segment = tail.split(':').next()?;
         turn_segment.parse::<u64>().ok()
-    }
-
-    fn legacy_compaction_attempt_id(event: &EventRecord, item_index: usize) -> Option<String> {
-        let payload = serde_json::to_vec(&event.payload).ok()?;
-        let mut hasher = Sha256::new();
-        hasher.update(event.event_type.as_bytes());
-        hasher.update(b"\n");
-        hasher.update(event.timestamp.as_bytes());
-        hasher.update(b"\n");
-        hasher.update(item_index.to_be_bytes());
-        hasher.update(b"\n");
-        hasher.update(payload);
-        Some(format!("legacy-{}", hex::encode(hasher.finalize())))
-    }
-
-    fn legacy_compaction_attempt_from_event(
-        event: &EventRecord,
-        item_index: usize,
-    ) -> Option<CompactionAttemptSnapshot> {
-        if event.event_type != "compaction_attempt" {
-            return None;
-        }
-
-        let payload = &event.payload;
-        let mode = serde_json::from_value::<CompactionMode>(payload.get("mode")?.clone()).ok()?;
-        let trigger =
-            serde_json::from_value::<CompactionTrigger>(payload.get("trigger")?.clone()).ok()?;
-        let reason =
-            serde_json::from_value::<CompactionReason>(payload.get("reason")?.clone()).ok()?;
-        let result =
-            serde_json::from_value::<CompactionResult>(payload.get("result")?.clone()).ok()?;
-        let retry_count = payload
-            .get("retry_count")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(0);
-        let failure_streak = payload
-            .get("failure_streak")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok());
-        let reference_context_revision = payload
-            .get("reference_context_revision")
-            .and_then(serde_json::Value::as_u64);
-        let focus = payload
-            .get("focus")
-            .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string);
-
-        Some(CompactionAttemptSnapshot {
-            attempt_id: Self::legacy_compaction_attempt_id(event, item_index)?,
-            submission_id: None,
-            request: CompactionRequestMetadata {
-                mode,
-                trigger,
-                reason,
-                focus,
-            },
-            result,
-            pressure_level: None,
-            memory_flush_attempt_id: None,
-            input_messages: None,
-            output_messages: None,
-            input_prompt_tokens: None,
-            output_prompt_tokens: None,
-            retry_count,
-            tape_mutated: matches!(
-                result,
-                CompactionResult::Success | CompactionResult::Retry | CompactionResult::Degraded
-            ),
-            warning_message: None,
-            error_message: payload
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string),
-            failure_streak,
-            reference_context_revision_before: reference_context_revision,
-            reference_context_revision_after: reference_context_revision,
-            timestamp: event.timestamp.clone(),
-        })
     }
 
     fn latest_compaction_attempt_from_rollout_items_internal(
@@ -423,18 +231,6 @@ impl Session {
                         latest.as_ref().map(|(latest_index, _)| *latest_index),
                     ) {
                         latest = Some((item_index, attempt));
-                    }
-                }
-                RolloutItem::Event(event) => {
-                    if let Some(attempt) =
-                        Self::legacy_compaction_attempt_from_event(event, item_index)
-                    {
-                        Self::track_compaction_attempt(
-                            &mut latest,
-                            &mut pending_tape_mutating_attempts,
-                            item_index,
-                            attempt,
-                        );
                     }
                 }
                 _ => {}
@@ -510,15 +306,12 @@ impl Session {
         compacted
     }
 
-    /// Create a new session without persistence
+    /// Create a new machine without persistence
     pub fn new() -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
             tape: Tape::new(),
             recorder: None,
             has_active_task: false,
-            dynamic_tools: HashMap::new(),
-            client_capabilities: alan_agent_protocol::ClientCapabilities::default(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -531,19 +324,16 @@ impl Session {
     }
 
     pub(crate) async fn new_with_recorder_options(
-        session_id: Option<&str>,
+        process_path: &str,
         model: &str,
-        sessions_dir: Option<&Path>,
+        rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let id = session_id
-            .map(str::to_string)
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let recorder = match sessions_dir {
+        let recorder = match rollouts_dir {
             Some(dir) => {
                 RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
-                    &id,
+                    process_path,
                     model,
                     dir,
                     rollout_cwd,
@@ -553,7 +343,7 @@ impl Session {
             }
             None => {
                 RolloutRecorder::new_with_cwd_and_reasoning_effort(
-                    &id,
+                    process_path,
                     model,
                     rollout_cwd,
                     reasoning_effort,
@@ -563,12 +353,9 @@ impl Session {
         };
 
         Ok(Self {
-            id,
             tape: Tape::new(),
             recorder: Some(recorder),
             has_active_task: false,
-            dynamic_tools: HashMap::new(),
-            client_capabilities: alan_agent_protocol::ClientCapabilities::default(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -580,88 +367,53 @@ impl Session {
         })
     }
 
-    /// Create a new session with recorder for persistence
-    pub async fn new_with_recorder(model: &str) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(None, model, None, None, None).await
+    /// Create a new machine with recorder for persistence
+    pub async fn new_with_recorder(process_path: &str, model: &str) -> anyhow::Result<Self> {
+        Self::new_with_recorder_options(process_path, model, None, None, None).await
     }
 
-    /// Create a new session with recorder under a specific sessions directory.
+    /// Create a new machine with recorder under a specific rollouts directory.
     pub async fn new_with_recorder_in_dir(
+        process_path: &str,
         model: &str,
-        sessions_dir: &Path,
+        rollouts_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(None, model, Some(sessions_dir), None, None).await
+        Self::new_with_recorder_options(process_path, model, Some(rollouts_dir), None, None).await
     }
 
-    /// Create a new session with a specific ID and recorder
-    pub async fn new_with_id_and_recorder(session_id: &str, model: &str) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(Some(session_id), model, None, None, None).await
-    }
-
-    /// Create a new session with a specific ID and recorder in a specific sessions directory.
-    pub async fn new_with_id_and_recorder_in_dir(
-        session_id: &str,
-        model: &str,
-        sessions_dir: &Path,
-    ) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(Some(session_id), model, Some(sessions_dir), None, None)
-            .await
-    }
-
-    /// Load a session from a rollout file
-    pub async fn load_from_rollout(path: &PathBuf, model: &str) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, None, None, None).await
-    }
-
-    /// Load a session from a rollout file while overriding the session ID for new persistence.
-    pub async fn load_from_rollout_with_id(
+    /// Load a machine from a rollout file
+    pub async fn load_from_rollout(
         path: &PathBuf,
-        session_id: &str,
+        process_path: &str,
         model: &str,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, Some(session_id), model, None, None, None).await
+        Self::load_from_rollout_impl(path, process_path, model, None, None, None).await
     }
 
-    /// Load a session from a rollout file, writing future persistence to a specific sessions dir.
+    /// Load a machine from a rollout file, writing future persistence to a specific rollouts dir.
     pub async fn load_from_rollout_in_dir(
         path: &PathBuf,
+        process_path: &str,
         model: &str,
-        sessions_dir: &Path,
+        rollouts_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, None, model, Some(sessions_dir), None, None).await
-    }
-
-    /// Load a session from a rollout file with an explicit session ID and sessions dir.
-    pub async fn load_from_rollout_in_dir_with_id(
-        path: &PathBuf,
-        session_id: &str,
-        model: &str,
-        sessions_dir: &Path,
-    ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(
-            path,
-            Some(session_id),
-            model,
-            Some(sessions_dir),
-            None,
-            None,
-        )
-        .await
+        Self::load_from_rollout_impl(path, process_path, model, Some(rollouts_dir), None, None)
+            .await
     }
 
     pub(crate) async fn load_from_rollout_with_recorder_cwd(
         path: &PathBuf,
-        session_id_override: Option<&str>,
+        process_path: &str,
         model: &str,
-        sessions_dir: Option<&Path>,
+        rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
         Self::load_from_rollout_impl(
             path,
-            session_id_override,
+            process_path,
             model,
-            sessions_dir,
+            rollouts_dir,
             rollout_cwd,
             reasoning_effort,
         )
@@ -670,34 +422,23 @@ impl Session {
 
     async fn load_from_rollout_impl(
         path: &PathBuf,
-        session_id_override: Option<&str>,
+        process_path: &str,
         model: &str,
-        sessions_dir: Option<&Path>,
+        rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
         let items = RolloutRecorder::load_history(path).await?;
+        if !matches!(items.first(), Some(RolloutItem::AgentMachineMeta(_))) {
+            anyhow::bail!("rollout does not begin with current Agent Machine metadata");
+        }
 
-        // Use a hashed storage key when the host provides an external session identifier.
-        let session_id = if let Some(session_id_override) = session_id_override {
-            let mut hasher = Sha256::new();
-            hasher.update(session_id_override.as_bytes());
-            hex::encode(hasher.finalize())
-        } else {
-            items
-                .first()
-                .and_then(|item| match item {
-                    RolloutItem::SessionMeta(meta) => Some(meta.session_id.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-        };
-
-        // Create a new session with recorder
-        let mut session = Self::new_with_recorder_options(
-            Some(&session_id),
+        // Recovery is explicitly scoped to the newly launched Agent Process. The
+        // source rollout is evidence, not a globally addressable execution identity.
+        let mut machine = Self::new_with_recorder_options(
+            process_path,
             model,
-            sessions_dir,
+            rollouts_dir,
             rollout_cwd,
             reasoning_effort,
         )
@@ -708,101 +449,29 @@ impl Session {
         let recovered_latest_memory_flush_attempt =
             Self::latest_memory_flush_attempt_from_rollout_items_internal(&items);
         let mut context_items: Vec<ContextItem> = Vec::new();
-        let mut fallback_tool_calls: Vec<crate::rollout::ToolCallRecord> = Vec::new();
         let mut compaction_attempt_records: Vec<CompactionAttemptSnapshot> = Vec::new();
         let mut memory_flush_attempt_records: Vec<MemoryFlushAttemptSnapshot> = Vec::new();
         let mut recovered_compaction: Option<CompactedItem> = None;
         let mut effect_records: Vec<EffectRecord> = Vec::new();
         let mut event_records: Vec<EventRecord> = Vec::new();
-        let mut has_tool_message_content = false;
-        let known_runtime_confirmation_checkpoints = items
-            .iter()
-            .filter_map(|item| match item {
-                RolloutItem::Checkpoint(checkpoint)
-                    if is_runtime_confirmation_checkpoint_type(&checkpoint.checkpoint_type) =>
-                {
-                    Some((
-                        checkpoint.checkpoint_id.clone(),
-                        checkpoint.checkpoint_type.clone(),
-                    ))
-                }
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
 
         // Replay messages from history
-        for (item_index, item) in items.into_iter().enumerate() {
+        for item in items {
             match item {
                 RolloutItem::Message(msg) => {
-                    if let Some(mut message) = msg.message {
-                        if message.is_context() {
-                            continue;
-                        }
-                        let is_control_message =
-                            Self::normalize_runtime_confirmation_control_message_for_restore(
-                                &mut message,
-                                &known_runtime_confirmation_checkpoints,
-                            );
-                        if message.is_user() && !is_control_message {
-                            session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
-                        }
-                        if message.is_tool() {
-                            has_tool_message_content = true;
-                        }
-                        session.tape.push(message);
+                    let Some(message) = msg.message else {
+                        anyhow::bail!(
+                            "rollout contains a message without the current rich message record"
+                        );
+                    };
+                    if message.is_context() {
                         continue;
                     }
-
-                    let role = match msg.role.as_str() {
-                        "user" => MessageRole::User,
-                        "assistant" => MessageRole::Assistant,
-                        "tool" => MessageRole::Tool,
-                        "system" => MessageRole::System,
-                        "context" => MessageRole::Context,
-                        _ => MessageRole::User,
-                    };
-
-                    let content = msg.content.unwrap_or_default();
-                    let normalized_control_payload = if matches!(role, MessageRole::User) {
-                        Self::normalize_runtime_confirmation_control_content_for_restore(
-                            &content,
-                            &known_runtime_confirmation_checkpoints,
-                        )
-                    } else {
-                        None
-                    };
-                    if matches!(role, MessageRole::Tool) && !content.trim().is_empty() {
-                        has_tool_message_content = true;
+                    if message.is_user() && !Self::is_runtime_confirmation_control_message(&message)
+                    {
+                        machine.user_turn_ordinal = machine.user_turn_ordinal.saturating_add(1);
                     }
-                    if matches!(role, MessageRole::Context) {
-                        continue;
-                    }
-                    if matches!(role, MessageRole::User) && normalized_control_payload.is_none() {
-                        session.user_turn_ordinal = session.user_turn_ordinal.saturating_add(1);
-                    }
-
-                    let message = match role {
-                        MessageRole::User => match normalized_control_payload {
-                            Some(payload) => {
-                                Message::user_parts(vec![crate::tape::ContentPart::structured(
-                                    payload,
-                                )])
-                            }
-                            None => Message::user(&content),
-                        },
-                        MessageRole::Assistant => Message::assistant(&content),
-                        MessageRole::Tool => {
-                            // Try to parse content as structured JSON, fall back to text
-                            let tool_id = msg.tool_name.unwrap_or_default();
-                            match serde_json::from_str::<serde_json::Value>(content.trim()) {
-                                Ok(payload) => Message::tool_structured(&tool_id, payload),
-                                Err(_) => Message::tool_text(&tool_id, &content),
-                            }
-                        }
-                        MessageRole::System => Message::system(&content),
-                        MessageRole::Context => unreachable!(),
-                    };
-                    session.tape.push(message);
+                    machine.tape.push(message);
                 }
                 RolloutItem::TurnContext(ctx) => {
                     context_items = ctx
@@ -818,7 +487,7 @@ impl Session {
                         .collect();
                 }
                 RolloutItem::Compacted(compacted) => {
-                    session.tape.set_summary(compacted.message.clone());
+                    machine.tape.set_summary(compacted.message.clone());
                     recovered_compaction = Some(compacted);
                 }
                 RolloutItem::CompactionAttempt(attempt) => {
@@ -827,49 +496,31 @@ impl Session {
                 RolloutItem::MemoryFlushAttempt(attempt) => {
                     memory_flush_attempt_records.push(attempt);
                 }
-                RolloutItem::ToolCall(tool_call) => fallback_tool_calls.push(tool_call),
+                RolloutItem::ToolCall(_) => {}
                 RolloutItem::Effect(effect) => effect_records.push(effect),
-                RolloutItem::Event(event) => {
-                    if let Some(attempt) =
-                        Self::legacy_compaction_attempt_from_event(&event, item_index)
-                    {
-                        compaction_attempt_records.push(attempt);
-                    } else {
-                        event_records.push(event);
-                    }
-                }
+                RolloutItem::Event(event) => event_records.push(event),
                 _ => {} // Skip other item types during loading
             }
         }
 
-        // Backward compatibility: older rollouts recorded tool messages with null content.
-        // In that case, recover tool payloads from tool_call records.
-        if !has_tool_message_content {
-            for tool_call in fallback_tool_calls {
-                session
-                    .tape
-                    .push(Message::tool_structured(&tool_call.name, tool_call.result));
-            }
-        }
-
-        if !session.tape.is_empty() {
-            session.has_active_task = true;
+        if !machine.tape.is_empty() {
+            machine.has_active_task = true;
         }
 
         if !context_items.is_empty() {
-            let _ = session.tape.apply_context_items(context_items);
+            let _ = machine.tape.apply_context_items(context_items);
         }
         recovered_compaction = Self::stabilize_recovered_compacted_item_link(
             recovered_compaction,
             recovered_latest_compaction_attempt.as_ref(),
         );
-        session.latest_compaction_attempt = recovered_latest_compaction_attempt;
-        session.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
-        session.responses_continuation =
+        machine.latest_compaction_attempt = recovered_latest_compaction_attempt;
+        machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
+        machine.responses_continuation =
             Self::responses_continuation_from_event_records(&event_records);
 
         for effect in &effect_records {
-            session
+            machine
                 .effect_index
                 .insert(effect.idempotency_key.clone(), effect.clone());
         }
@@ -880,17 +531,17 @@ impl Session {
             })
             .max()
         {
-            session.user_turn_ordinal = session.user_turn_ordinal.max(max_effect_turn);
+            machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
-        let recovered_messages = session.tape.messages().to_vec();
+        let recovered_messages = machine.tape.messages().to_vec();
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
             || !compaction_attempt_records.is_empty()
             || !memory_flush_attempt_records.is_empty()
             || !effect_records.is_empty()
             || !event_records.is_empty())
-            && let Some(recorder) = session.recorder.as_ref()
+            && let Some(recorder) = machine.recorder.as_ref()
         {
             for message in recovered_messages {
                 if let Err(err) = recorder.record_tape_message_nowait(&message) {
@@ -927,10 +578,10 @@ impl Session {
             }
         }
 
-        Ok(session)
+        Ok(machine)
     }
 
-    /// Add a user message to the session
+    /// Add a user message to the machine
     pub fn add_user_message(&mut self, content: &str) {
         self.add_user_message_parts(vec![crate::tape::ContentPart::text(content)]);
     }
@@ -954,7 +605,7 @@ impl Session {
         }
     }
 
-    /// Add a user message with rich content parts to the session
+    /// Add a user message with rich content parts to the machine
     pub fn add_user_message_parts(&mut self, parts: Vec<crate::tape::ContentPart>) {
         self.add_user_message_parts_internal(parts, true);
     }
@@ -964,12 +615,12 @@ impl Session {
         self.add_user_message_parts_internal(parts, false);
     }
 
-    /// Add an assistant message to the session
+    /// Add an assistant message to the machine
     pub fn add_assistant_message(&mut self, content: &str, thinking: Option<&str>) {
         self.add_assistant_message_with_reasoning(content, thinking, None, &[]);
     }
 
-    /// Add an assistant message to the session with full reasoning metadata.
+    /// Add an assistant message to the machine with full reasoning metadata.
     pub fn add_assistant_message_with_reasoning(
         &mut self,
         content: &str,
@@ -1009,7 +660,7 @@ impl Session {
         }
     }
 
-    /// Add an assistant message with tool calls to the session
+    /// Add an assistant message with tool calls to the machine
     pub fn add_assistant_message_with_tool_calls(
         &mut self,
         content: &str,
@@ -1068,7 +719,7 @@ impl Session {
         }
     }
 
-    /// Add a tool message to the session.
+    /// Add a tool message to the machine.
     /// Keeps full payload on tape; truncation is handled at LLM projection boundaries.
     ///
     /// # Arguments
@@ -1231,18 +882,18 @@ impl Session {
         );
     }
 
-    /// Clear the session state (but keep the recorder)
+    /// Clear the machine state (but keep the recorder)
     pub fn clear(&mut self) {
         self.tape.clear();
         self.has_active_task = false;
         self.last_turn_context_snapshot_fingerprint = None;
-        self.clear_responses_continuation("session_cleared");
+        self.clear_responses_continuation("machine_cleared");
     }
 
     /// Roll back the last `num_turns` user turns from in-memory context.
     ///
     /// This mutation is intentionally non-durable: recovery from persisted rollout
-    /// history does not re-apply rollback markers to session state.
+    /// history does not re-apply rollback markers to machine state.
     ///
     /// A "turn" is approximated as one user message plus any following assistant/tool
     /// messages until the next user message.
@@ -1294,7 +945,7 @@ impl Session {
         }
 
         self.record_event(
-            "session_rollback",
+            "machine_rollback",
             serde_json::json!({
                 "requested_turns": requested_turns,
                 "removed_turns": user_turns_seen,
@@ -1465,7 +1116,7 @@ impl Session {
     /// Record a compaction outcome to persistence (enqueue only; background writer performs IO)
     ///
     /// This low-level API persists only the compacted summary item. For tape-mutating compaction
-    /// results, prefer [`Session::persist_compaction_observation`] so related rollout items are
+    /// results, prefer [`AgentMachine::persist_compaction_observation`] so related rollout items are
     /// flushed together.
     pub(crate) fn record_compaction(&self, compacted: CompactedItem) {
         if let Some(recorder) = self.recorder.as_ref()
@@ -1774,32 +1425,32 @@ fn fingerprint_turn_context_observation(
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
-impl Default for Session {
+impl Default for AgentMachine {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Recover the latest compaction attempt from rollout items, including legacy event records.
+/// Recover the latest compaction attempt from current rollout records.
 pub fn latest_compaction_attempt_from_rollout_items(
     items: &[RolloutItem],
 ) -> Option<CompactionAttemptSnapshot> {
-    Session::latest_compaction_attempt_from_rollout_items_internal(items)
+    AgentMachine::latest_compaction_attempt_from_rollout_items_internal(items)
 }
 
 /// Recover the latest memory-flush attempt from rollout items.
 pub fn latest_memory_flush_attempt_from_rollout_items(
     items: &[RolloutItem],
 ) -> Option<MemoryFlushAttemptSnapshot> {
-    Session::latest_memory_flush_attempt_from_rollout_items_internal(items)
+    AgentMachine::latest_memory_flush_attempt_from_rollout_items_internal(items)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rollout::{
-        CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, EventRecord, MessageRecord,
-        RolloutItem, RolloutRecorder, SessionMeta,
+        AgentMachineMeta, CheckpointRecord, CompactedItem, EffectRecord, EffectStatus, EventRecord,
+        MessageRecord, RolloutItem, RolloutRecorder,
     };
     use crate::tape::{ContentPart, ToolResponse};
     use alan_agent_protocol::{
@@ -1810,70 +1461,68 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_session_new() {
-        let session = Session::new();
-        assert!(!session.id.is_empty());
-        assert!(session.tape.messages().is_empty());
-        assert!(session.recorder.is_none());
+    fn test_agent_machine_new() {
+        let machine = AgentMachine::new();
+        assert!(machine.tape.messages().is_empty());
+        assert!(machine.recorder.is_none());
     }
 
     #[test]
-    fn test_session_default() {
-        let session = Session::default();
-        assert!(!session.id.is_empty());
-        assert!(session.tape.messages().is_empty());
+    fn test_agent_machine_default() {
+        let machine = AgentMachine::default();
+        assert!(machine.tape.messages().is_empty());
     }
 
     #[test]
     fn test_add_user_message() {
-        let mut session = Session::new();
-        session.add_user_message("Hello, agent!");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Hello, agent!");
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), MessageRole::User);
         assert_eq!(messages[0].text_content(), "Hello, agent!");
-        assert_eq!(session.user_turn_ordinal(), 1);
+        assert_eq!(machine.user_turn_ordinal(), 1);
     }
 
     #[test]
     fn test_user_turn_ordinal_is_monotonic_across_rollback() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_user_message("u2");
-        assert_eq!(session.user_turn_ordinal(), 2);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_user_message("u2");
+        assert_eq!(machine.user_turn_ordinal(), 2);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
         assert!(removed.removed_messages > 0);
         assert_eq!(removed.removed_turns, 1);
-        assert_eq!(session.user_turn_count(), 1);
-        assert_eq!(session.user_turn_ordinal(), 2);
+        assert_eq!(machine.user_turn_count(), 1);
+        assert_eq!(machine.user_turn_ordinal(), 2);
 
-        session.add_user_message("u3");
-        assert_eq!(session.user_turn_count(), 2);
-        assert_eq!(session.user_turn_ordinal(), 3);
+        machine.add_user_message("u3");
+        assert_eq!(machine.user_turn_count(), 2);
+        assert_eq!(machine.user_turn_ordinal(), 3);
     }
 
     #[test]
     fn test_user_control_message_does_not_increment_turn_ordinal() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        assert_eq!(session.user_turn_ordinal(), 1);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        assert_eq!(machine.user_turn_ordinal(), 1);
 
-        session.add_user_control_message_parts(vec![ContentPart::structured(
+        machine.add_user_control_message_parts(vec![ContentPart::structured(
             serde_json::json!({"choice":"approve"}),
         )]);
 
-        assert_eq!(session.user_turn_count(), 2);
-        assert_eq!(session.user_turn_ordinal(), 1);
+        assert_eq!(machine.user_turn_count(), 2);
+        assert_eq!(machine.user_turn_ordinal(), 1);
     }
 
     #[test]
     fn test_add_assistant_message() {
-        let mut session = Session::new();
-        session.add_assistant_message("I can help you!", None);
+        let mut machine = AgentMachine::new();
+        machine.add_assistant_message("I can help you!", None);
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), MessageRole::Assistant);
         assert_eq!(messages[0].text_content(), "I can help you!");
@@ -1881,11 +1530,11 @@ mod tests {
 
     #[test]
     fn test_add_tool_message() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let payload = serde_json::json!({"result": "success"});
-        session.add_tool_message("call_123", "search_tool", payload.clone());
+        machine.add_tool_message("call_123", "search_tool", payload.clone());
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), MessageRole::Tool);
         let responses = messages[0].tool_responses();
@@ -1895,16 +1544,16 @@ mod tests {
 
     #[test]
     fn test_add_tool_message_accepts_content_parts_payload() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let payload = serde_json::json!({
             "content_parts": [
                 {"type": "text", "text": "hello"},
                 {"type": "attachment", "hash": "abc123", "mime_type": "image/png", "metadata": {"w": 10, "h": 10}}
             ]
         });
-        session.add_tool_message("call_123", "capture", payload);
+        machine.add_tool_message("call_123", "capture", payload);
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         let responses = messages[0].tool_responses();
         assert_eq!(responses.len(), 1);
@@ -1922,14 +1571,14 @@ mod tests {
 
     #[test]
     fn test_add_tool_message_accepts_content_parts_array_payload() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let payload = serde_json::json!([
             {"type": "text", "text": "part-a"},
             {"type": "structured", "data": {"k": "v"}}
         ]);
-        session.add_tool_message("call_124", "custom", payload);
+        machine.add_tool_message("call_124", "custom", payload);
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         let responses = messages[0].tool_responses();
         assert_eq!(responses.len(), 1);
@@ -1946,27 +1595,27 @@ mod tests {
 
     #[test]
     fn test_responses_continuation_can_be_marked_and_cleared() {
-        let mut session = Session::new();
-        session.mark_responses_continuation("openai_responses", "resp_123", 2, 7);
+        let mut machine = AgentMachine::new();
+        machine.mark_responses_continuation("openai_responses", "resp_123", 2, 7);
 
-        let continuation = session.responses_continuation().expect("continuation");
+        let continuation = machine.responses_continuation().expect("continuation");
         assert_eq!(continuation.provider, "openai_responses");
         assert_eq!(continuation.last_response_id, "resp_123");
         assert_eq!(continuation.boundary_message_count, 2);
         assert_eq!(continuation.reference_context_revision, 7);
 
-        session.clear_responses_continuation("test");
-        assert!(session.responses_continuation().is_none());
+        machine.clear_responses_continuation("test");
+        assert!(machine.responses_continuation().is_none());
     }
 
     #[test]
     fn test_multiple_messages() {
-        let mut session = Session::new();
-        session.add_user_message("First");
-        session.add_assistant_message("Second", None);
-        session.add_user_message("Third");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("First");
+        machine.add_assistant_message("Second", None);
+        machine.add_user_message("Third");
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role(), MessageRole::User);
         assert_eq!(messages[1].role(), MessageRole::Assistant);
@@ -1974,13 +1623,13 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_session() {
-        let mut session = Session::new();
-        session.add_user_message("Test");
+    fn test_clear_machine() {
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Test");
 
-        session.clear();
+        machine.clear();
 
-        assert!(session.tape.messages().is_empty());
+        assert!(machine.tape.messages().is_empty());
     }
 
     #[test]
@@ -2034,219 +1683,23 @@ mod tests {
     }
 
     #[test]
-    fn test_session_rollout_path_without_recorder() {
-        let session = Session::new();
-        assert!(session.rollout_path().is_none());
+    fn test_machine_rollout_path_without_recorder() {
+        let machine = AgentMachine::new();
+        assert!(machine.rollout_path().is_none());
     }
 
     #[test]
-    fn test_session_has_active_task_defaults_false() {
-        let session = Session::new();
-        assert!(!session.has_active_task);
+    fn test_machine_has_active_task_defaults_false() {
+        let machine = AgentMachine::new();
+        assert!(!machine.has_active_task);
     }
 
     #[test]
-    fn test_session_clear_resets_active_task() {
-        let mut session = Session::new();
-        session.has_active_task = true;
-        session.clear();
-        assert!(!session.has_active_task);
-    }
-
-    #[test]
-    fn test_load_from_rollout_sets_active_task() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-123","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-            assert!(session.has_active_task);
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_in_dir_with_id_overrides_persisted_session_id() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-legacy.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir_with_id(
-                &rollout_path,
-                "daemon-session-id",
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await
-            .unwrap();
-
-            let storage_key = crate::rollout::session_storage_key("daemon-session-id");
-            assert_eq!(session.id, storage_key);
-            let persisted_path = session
-                .rollout_path()
-                .expect("session should create a new recorder path");
-            let filename = persisted_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .expect("rollout path should have a file name");
-            assert!(filename.ends_with(&format!("-{storage_key}.jsonl")));
-            let persisted_items = RolloutRecorder::load_history(persisted_path).await.unwrap();
-            let persisted_session_id = persisted_items.into_iter().find_map(|item| match item {
-                RolloutItem::SessionMeta(meta) => Some(meta.session_id),
-                _ => None,
-            });
-            assert_eq!(persisted_session_id.as_deref(), Some(storage_key.as_str()));
-            assert_eq!(session.tape.messages().len(), 1);
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_with_recorder_cwd_persists_runtime_tool_cwd() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-cwd.jsonl");
-            let resumed_cwd = temp_dir.path().join("workspace/src");
-            tokio::fs::create_dir_all(&resumed_cwd).await.unwrap();
-
-            let content = r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp/original","model":"gemini-2.0-flash"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_with_recorder_cwd(
-                &rollout_path,
-                Some("daemon-session-id"),
-                "gemini-2.0-flash",
-                Some(temp_dir.path()),
-                Some(resumed_cwd.as_path()),
-                Some(alan_agent_protocol::ReasoningEffort::High),
-            )
-            .await
-            .unwrap();
-
-            let persisted_items = RolloutRecorder::load_history(
-                session
-                    .rollout_path()
-                    .expect("session should create a new recorder path"),
-            )
-            .await
-            .unwrap();
-            let persisted_meta = persisted_items.into_iter().find_map(|item| match item {
-                RolloutItem::SessionMeta(meta) => Some(meta),
-                _ => None,
-            });
-
-            assert_eq!(
-                persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
-                Some(resumed_cwd.to_string_lossy().as_ref())
-            );
-            assert_eq!(
-                persisted_meta.as_ref().and_then(|meta| meta.reasoning_effort),
-                Some(alan_agent_protocol::ReasoningEffort::High)
-            );
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_restores_summary_and_tool_message() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-summary.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-456","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"compacted","message":"Prior summary","timestamp":"2026-01-29T14:30:53Z"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-{"type":"tool_call","name":"memory_search","arguments":{"query":"alpha"},"result":{"ok":true},"success":true,"timestamp":"2026-01-29T14:30:57Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            let messages = session.tape.messages_for_prompt();
-            assert!(messages[0].text_content().contains("Prior summary"));
-
-            let tool_message = messages
-                .iter()
-                .find(|m| m.is_tool())
-                .expect("tool message missing");
-            let responses = tool_message.tool_responses();
-            assert_eq!(responses.len(), 1);
-            assert_eq!(responses[0].id, "memory_search");
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_parses_tool_message_json_payload() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-tool-message.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-tool-msg","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"message","role":"tool","content":"{\"ok\":true}","tool_name":"call_abc","timestamp":"2026-01-29T14:30:56Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            let tool_messages: Vec<&Message> = session
-                .tape
-                .messages()
-                .iter()
-                .filter(|m| m.is_tool())
-                .collect();
-            assert_eq!(tool_messages.len(), 1);
-            let responses = tool_messages[0].tool_responses();
-            assert_eq!(responses[0].id, "call_abc");
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_does_not_duplicate_when_tool_message_has_payload() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-tool-no-dup.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-tool-no-dup","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"message","role":"tool","content":"{\"ok\":true}","tool_name":"call_abc","timestamp":"2026-01-29T14:30:56Z"}
-{"type":"tool_call","name":"web_search","arguments":{"query":"test"},"result":{"ok":true},"success":true,"timestamp":"2026-01-29T14:30:57Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            let tool_messages: Vec<&Message> = session
-                .tape
-                .messages()
-                .iter()
-                .filter(|m| m.is_tool())
-                .collect();
-            assert_eq!(tool_messages.len(), 1);
-            let responses = tool_messages[0].tool_responses();
-            assert_eq!(responses[0].id, "call_abc");
-        });
+    fn test_machine_clear_resets_active_task() {
+        let mut machine = AgentMachine::new();
+        machine.has_active_task = true;
+        machine.clear();
+        assert!(!machine.has_active_task);
     }
 
     #[test]
@@ -2257,8 +1710,9 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-rich-message.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-rich-rollout".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-rich-rollout".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2291,16 +1745,17 @@ mod tests {
                 .join("\n")
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
 
-            assert_eq!(session.tape.messages().len(), 1);
-            let message = &session.tape.messages()[0];
+            assert_eq!(machine.tape.messages().len(), 1);
+            let message = &machine.tape.messages()[0];
             assert_eq!(
                 message.thinking_content().as_deref(),
                 Some("internal reasoning")
@@ -2319,8 +1774,9 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-control-turn-ordinal.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-control-turn-ordinal".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-control-turn-ordinal".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2348,7 +1804,8 @@ mod tests {
                             "choice": "approve",
                             "__alan_internal_control": {
                                 "kind": "tool_escalation_confirmation",
-                                "version": 1
+                                "version": 1,
+                                "source": "runtime/submission_handlers"
                             }
                         }))],
                     }),
@@ -2366,7 +1823,7 @@ mod tests {
                     role: "user".to_string(),
                     content: Some("next task".to_string()),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user("next task")),
                     timestamp: "2026-01-29T14:30:55Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
@@ -2376,7 +1833,18 @@ mod tests {
                             .to_string(),
                     ),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user_parts(vec![ContentPart::structured(
+                        serde_json::json!({
+                            "checkpoint_id": "effect_replay_call-2",
+                            "checkpoint_type": "effect_replay_confirmation",
+                            "choice": "reject",
+                            "__alan_internal_control": {
+                                "kind": "effect_replay_confirmation",
+                                "version": 1,
+                                "source": "runtime/submission_handlers"
+                            }
+                        }),
+                    )])),
                     timestamp: "2026-01-29T14:30:56Z".to_string(),
                 }),
                 RolloutItem::Checkpoint(CheckpointRecord {
@@ -2398,8 +1866,9 @@ mod tests {
                 + "\n";
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-            let mut session = Session::load_from_rollout_in_dir(
+            let mut machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -2407,87 +1876,22 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                session.user_turn_ordinal(),
+                machine.user_turn_ordinal(),
                 2,
                 "only non-control user messages should increment turn ordinal during recovery"
             );
-            assert_eq!(session.user_turn_count(), 4);
-            let removed = session.rollback_last_turns(2);
+            assert_eq!(machine.user_turn_count(), 4);
+            let removed = machine.rollback_last_turns(2);
             assert_eq!(
                 removed.removed_messages, 4,
-                "legacy control messages should be normalized during recovery so rollback ignores them"
+                "runtime control messages should remain outside logical user-turn rollback"
             );
             assert_eq!(removed.removed_turns, 2);
         });
     }
 
     #[test]
-    fn test_load_from_rollout_counts_legacy_shaped_payload_without_checkpoint_match() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir
-                .path()
-                .join("rollout-legacy-control-without-checkpoint.jsonl");
-
-            let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-legacy-control-without-checkpoint".to_string(),
-                    started_at: "2026-01-29T14:30:52Z".to_string(),
-                    cwd: "/tmp".to_string(),
-                    model: "gemini-2.0-flash".to_string(),
-                reasoning_effort: None,
-                }),
-                RolloutItem::Message(MessageRecord {
-                    role: "user".to_string(),
-                    content: Some(
-                        "{\"checkpoint_id\":\"tool_escalation_call-9\",\"checkpoint_type\":\"tool_escalation\",\"choice\":\"approve\",\"__alan_internal_control\":{\"kind\":\"tool_escalation_confirmation\",\"version\":1}}"
-                            .to_string(),
-                    ),
-                    tool_name: None,
-                    message: Some(Message::User {
-                        parts: vec![ContentPart::structured(serde_json::json!({
-                            "checkpoint_id": "tool_escalation_call-9",
-                            "checkpoint_type": "tool_escalation",
-                            "choice": "approve",
-                            "__alan_internal_control": {
-                                "kind": "tool_escalation_confirmation",
-                                "version": 1
-                            }
-                        }))],
-                    }),
-                    timestamp: "2026-01-29T14:30:53Z".to_string(),
-                }),
-            ];
-
-            let content = items
-                .iter()
-                .map(serde_json::to_string)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-                .join("\n")
-                + "\n";
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(
-                &rollout_path,
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await
-            .unwrap();
-
-            assert_eq!(
-                session.user_turn_ordinal(),
-                1,
-                "legacy-shaped payloads without a matching checkpoint should count as normal user turns"
-            );
-            assert_eq!(session.user_turn_count(), 1);
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_counts_strict_control_payload_without_checkpoint_match() {
+    fn test_load_from_rollout_excludes_current_runtime_control_from_turn_ordinal() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
@@ -2496,12 +1900,13 @@ mod tests {
                 .join("rollout-strict-control-without-checkpoint.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-strict-control-without-checkpoint".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-strict-control-without-checkpoint".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
-                reasoning_effort: None,
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2535,20 +1940,17 @@ mod tests {
                 + "\n";
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
 
-            assert_eq!(
-                session.user_turn_ordinal(),
-                1,
-                "strict control payloads without a matching checkpoint should count as normal user turns"
-            );
-            assert_eq!(session.user_turn_count(), 1);
+            assert_eq!(machine.user_turn_ordinal(), 0);
+            assert_eq!(machine.user_turn_count(), 1);
         });
     }
 
@@ -2560,12 +1962,13 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-user-payload-turn-ordinal.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-user-payload-turn-ordinal".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-user-payload-turn-ordinal".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
-                reasoning_effort: None,
+                    reasoning_effort: None,
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
@@ -2590,7 +1993,13 @@ mod tests {
                             .to_string(),
                     ),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user_parts(vec![ContentPart::structured(
+                        serde_json::json!({
+                            "checkpoint_id": "manual-id",
+                            "checkpoint_type": "tool_escalation",
+                            "choice": "reject"
+                        }),
+                    )])),
                     timestamp: "2026-01-29T14:30:54Z".to_string(),
                 }),
             ];
@@ -2604,8 +2013,9 @@ mod tests {
                 + "\n";
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -2613,11 +2023,11 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                session.user_turn_ordinal(),
+                machine.user_turn_ordinal(),
                 2,
                 "user payloads without internal control markers should count as turns"
             );
-            assert_eq!(session.user_turn_count(), 2);
+            assert_eq!(machine.user_turn_count(), 2);
         });
     }
 
@@ -2629,8 +2039,9 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-turn-ordinal-recovery.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "test-turn-ordinal-recovery".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-turn-ordinal-recovery".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2640,21 +2051,21 @@ mod tests {
                     role: "user".to_string(),
                     content: Some("task one".to_string()),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user("task one")),
                     timestamp: "2026-01-29T14:30:53Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "assistant".to_string(),
                     content: Some("ack".to_string()),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::assistant("ack")),
                     timestamp: "2026-01-29T14:30:54Z".to_string(),
                 }),
                 RolloutItem::Message(MessageRecord {
                     role: "user".to_string(),
                     content: Some("task two".to_string()),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user("task two")),
                     timestamp: "2026-01-29T14:30:55Z".to_string(),
                 }),
             ];
@@ -2669,8 +2080,9 @@ mod tests {
 
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let first = Session::load_from_rollout_in_dir(
+            let first = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -2679,8 +2091,9 @@ mod tests {
             assert_eq!(first.user_turn_ordinal(), 2);
             drop(first);
 
-            let second = Session::load_from_rollout_in_dir(
+            let second = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -2702,8 +2115,9 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-compaction-turn-floor.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-compaction-floor".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "sess-compaction-floor".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2729,14 +2143,14 @@ mod tests {
                     role: "user".to_string(),
                     content: Some("latest visible turn".to_string()),
                     tool_name: None,
-                    message: None,
+                    message: Some(Message::user("latest visible turn")),
                     timestamp: "2026-01-29T14:31:01Z".to_string(),
                 }),
                 RolloutItem::Effect(EffectRecord {
                     effect_id: "ef-compaction".to_string(),
-                    run_id: "sess-compaction-floor".to_string(),
+                    process_path: "sess-compaction-floor".to_string(),
                     tool_call_id: "call-1".to_string(),
-                    idempotency_key: "run:sess-compaction-floor:turn:7:fp-1".to_string(),
+                    idempotency_key: "process:sess-compaction-floor:turn:7:fp-1".to_string(),
                     effect_type: "file".to_string(),
                     request_fingerprint: "fp-1".to_string(),
                     result_digest: Some("digest-1".to_string()),
@@ -2758,8 +2172,9 @@ mod tests {
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -2767,11 +2182,11 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                session.user_turn_ordinal(),
+                machine.user_turn_ordinal(),
                 7,
                 "effect idempotency keys should preserve turn ordinal floor after compaction"
             );
-            assert_eq!(session.user_turn_count(), 1);
+            assert_eq!(machine.user_turn_count(), 1);
         });
     }
 
@@ -2783,8 +2198,9 @@ mod tests {
             let rollout_path = temp_dir.path().join("rollout-events.jsonl");
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-events".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "sess-events".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2809,18 +2225,19 @@ mod tests {
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
-            session.flush().await;
+            machine.flush().await;
 
-            let recovered_path = session
+            let recovered_path = machine
                 .rollout_path()
-                .expect("recovered session should have rollout path")
+                .expect("recovered machine should have rollout path")
                 .clone();
             let recovered_items = RolloutRecorder::load_history(&recovered_path)
                 .await
@@ -2835,96 +2252,6 @@ mod tests {
             assert_eq!(event.payload["phase"], "testing");
             assert_eq!(event.payload["value"], 5);
             assert_eq!(event.timestamp, "2026-01-29T14:31:00Z");
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_migrates_legacy_compaction_attempt_events() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir
-                .path()
-                .join("rollout-legacy-compaction-event.jsonl");
-
-            let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-legacy-compaction-event".to_string(),
-                    started_at: "2026-01-29T14:30:52Z".to_string(),
-                    cwd: "/tmp".to_string(),
-                    model: "gemini-2.0-flash".to_string(),
-                    reasoning_effort: None,
-                }),
-                RolloutItem::Event(EventRecord {
-                    event_type: "compaction_attempt".to_string(),
-                    payload: serde_json::json!({
-                        "mode": "manual",
-                        "trigger": "manual",
-                        "reason": "explicit_request",
-                        "focus": "preserve todos",
-                        "retry_count": 2,
-                        "result": "failure",
-                        "error": "context window exceeded",
-                        "failure_streak": 3,
-                        "reference_context_revision": 7
-                    }),
-                    timestamp: "2026-01-29T14:31:00Z".to_string(),
-                }),
-            ];
-
-            let content = items
-                .iter()
-                .map(serde_json::to_string)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-                .join("\n")
-                + "\n";
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            let session = Session::load_from_rollout_in_dir(
-                &rollout_path,
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await
-            .unwrap();
-
-            let latest = session
-                .latest_compaction_attempt()
-                .expect("expected latest compaction attempt to be recovered");
-            let latest_attempt_id = latest.attempt_id.clone();
-            assert_eq!(latest.request.mode, CompactionMode::Manual);
-            assert_eq!(latest.request.trigger, CompactionTrigger::Manual);
-            assert_eq!(latest.request.reason, CompactionReason::ExplicitRequest);
-            assert_eq!(latest.request.focus.as_deref(), Some("preserve todos"));
-            assert_eq!(latest.result, CompactionResult::Failure);
-            assert_eq!(latest.retry_count, 2);
-            assert_eq!(
-                latest.error_message.as_deref(),
-                Some("context window exceeded")
-            );
-            assert_eq!(latest.failure_streak, Some(3));
-            assert_eq!(latest.reference_context_revision_before, Some(7));
-
-            session.flush().await;
-            let recovered_path = session
-                .rollout_path()
-                .expect("recovered session should have rollout path")
-                .clone();
-            let recovered_items = RolloutRecorder::load_history(&recovered_path)
-                .await
-                .unwrap();
-
-            let attempt = recovered_items.into_iter().find_map(|item| match item {
-                RolloutItem::CompactionAttempt(attempt) => Some(attempt),
-                _ => None,
-            });
-
-            let attempt = attempt.expect("expected recovered compaction attempt item");
-            assert_eq!(attempt.attempt_id, latest_attempt_id);
-            assert_eq!(attempt.result, CompactionResult::Failure);
-            assert_eq!(attempt.retry_count, 2);
-            assert_eq!(attempt.request.focus.as_deref(), Some("preserve todos"));
         });
     }
 
@@ -2949,8 +2276,9 @@ mod tests {
             };
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-memory-flush-attempt".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "sess-memory-flush-attempt".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-03-03T09:59:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -2968,20 +2296,21 @@ mod tests {
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
 
-            assert_eq!(session.latest_memory_flush_attempt(), Some(&attempt));
+            assert_eq!(machine.latest_memory_flush_attempt(), Some(&attempt));
 
-            session.flush().await;
-            let recovered_path = session
+            machine.flush().await;
+            let recovered_path = machine
                 .rollout_path()
-                .expect("recovered session should have rollout path")
+                .expect("recovered machine should have rollout path")
                 .clone();
             let recovered_items = RolloutRecorder::load_history(&recovered_path)
                 .await
@@ -2994,43 +2323,6 @@ mod tests {
 
             assert_eq!(persisted, Some(attempt));
         });
-    }
-
-    #[test]
-    fn test_latest_compaction_attempt_from_legacy_rollout_is_stable_across_reads() {
-        let items = vec![
-            RolloutItem::SessionMeta(SessionMeta {
-                session_id: "sess-legacy-compaction-event".to_string(),
-                started_at: "2026-01-29T14:30:52Z".to_string(),
-                cwd: "/tmp".to_string(),
-                model: "gemini-2.0-flash".to_string(),
-                reasoning_effort: None,
-            }),
-            RolloutItem::Event(EventRecord {
-                event_type: "compaction_attempt".to_string(),
-                payload: serde_json::json!({
-                    "mode": "manual",
-                    "trigger": "manual",
-                    "reason": "explicit_request",
-                    "focus": "preserve todos",
-                    "retry_count": 2,
-                    "result": "failure",
-                    "error": "context window exceeded",
-                    "failure_streak": 3,
-                    "reference_context_revision": 7
-                }),
-                timestamp: "2026-01-29T14:31:00Z".to_string(),
-            }),
-        ];
-
-        let first = latest_compaction_attempt_from_rollout_items(&items)
-            .expect("expected first legacy compaction attempt");
-        let second = latest_compaction_attempt_from_rollout_items(&items)
-            .expect("expected second legacy compaction attempt");
-
-        assert_eq!(first.attempt_id, second.attempt_id);
-        assert_eq!(first.result, CompactionResult::Failure);
-        assert_eq!(first.retry_count, 2);
     }
 
     #[test]
@@ -3067,8 +2359,9 @@ mod tests {
             };
 
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-compaction-attempt".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "sess-compaction-attempt".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -3102,15 +2395,16 @@ mod tests {
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
 
-            assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
+            assert_eq!(machine.latest_compaction_attempt(), Some(&attempt));
         });
     }
 
@@ -3190,86 +2484,6 @@ mod tests {
         assert_eq!(
             latest_compaction_attempt_from_rollout_items(&items),
             Some(completed_attempt)
-        );
-    }
-
-    #[test]
-    fn test_latest_compaction_attempt_from_rollout_does_not_let_legacy_summary_override_newer_attempt()
-     {
-        let completed_attempt = CompactionAttemptSnapshot {
-            attempt_id: "attempt-complete".to_string(),
-            submission_id: None,
-            request: CompactionRequestMetadata {
-                mode: CompactionMode::Manual,
-                trigger: CompactionTrigger::Manual,
-                reason: CompactionReason::ExplicitRequest,
-                focus: Some("preserve tasks".to_string()),
-            },
-            result: CompactionResult::Success,
-            pressure_level: None,
-            memory_flush_attempt_id: None,
-            input_messages: Some(18),
-            output_messages: Some(5),
-            input_prompt_tokens: Some(1500),
-            output_prompt_tokens: Some(480),
-            retry_count: 0,
-            tape_mutated: true,
-            warning_message: None,
-            error_message: None,
-            failure_streak: None,
-            reference_context_revision_before: Some(4),
-            reference_context_revision_after: Some(5),
-            timestamp: "2026-01-29T14:31:00Z".to_string(),
-        };
-        let failure = CompactionAttemptSnapshot {
-            attempt_id: "attempt-failure".to_string(),
-            submission_id: None,
-            request: CompactionRequestMetadata {
-                mode: CompactionMode::Manual,
-                trigger: CompactionTrigger::Manual,
-                reason: CompactionReason::ExplicitRequest,
-                focus: None,
-            },
-            result: CompactionResult::Failure,
-            pressure_level: None,
-            memory_flush_attempt_id: None,
-            input_messages: Some(18),
-            output_messages: None,
-            input_prompt_tokens: Some(1400),
-            output_prompt_tokens: None,
-            retry_count: 1,
-            tape_mutated: false,
-            warning_message: Some("Preserving existing context".to_string()),
-            error_message: Some("synthetic failure".to_string()),
-            failure_streak: Some(1),
-            reference_context_revision_before: Some(5),
-            reference_context_revision_after: None,
-            timestamp: "2026-01-29T14:32:00Z".to_string(),
-        };
-        let items = [
-            RolloutItem::CompactionAttempt(completed_attempt),
-            RolloutItem::CompactionAttempt(failure.clone()),
-            RolloutItem::Compacted(CompactedItem {
-                message: "Legacy summary".to_string(),
-                attempt_id: None,
-                trigger: Some(CompactionTrigger::Manual),
-                reason: Some(CompactionReason::ExplicitRequest),
-                focus: Some("preserve tasks".to_string()),
-                input_messages: Some(18),
-                output_messages: Some(5),
-                input_tokens: Some(1500),
-                output_tokens: Some(480),
-                duration_ms: Some(42),
-                retry_count: Some(0),
-                result: Some(CompactionResult::Success),
-                reference_context_revision: Some(4),
-                timestamp: "2026-01-29T14:31:01Z".to_string(),
-            }),
-        ];
-
-        assert_eq!(
-            latest_compaction_attempt_from_rollout_items(&items),
-            Some(failure)
         );
     }
 
@@ -3417,145 +2631,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_rollout_repersists_legacy_summary_with_stable_attempt_link() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-legacy-summary.jsonl");
-
-            let completed_attempt = CompactionAttemptSnapshot {
-                attempt_id: "attempt-complete".to_string(),
-                submission_id: None,
-                request: CompactionRequestMetadata {
-                    mode: CompactionMode::Manual,
-                    trigger: CompactionTrigger::Manual,
-                    reason: CompactionReason::ExplicitRequest,
-                    focus: Some("preserve tasks".to_string()),
-                },
-                result: CompactionResult::Success,
-                pressure_level: None,
-                memory_flush_attempt_id: None,
-                input_messages: Some(18),
-                output_messages: Some(5),
-                input_prompt_tokens: Some(1500),
-                output_prompt_tokens: Some(480),
-                retry_count: 0,
-                tape_mutated: true,
-                warning_message: None,
-                error_message: None,
-                failure_streak: None,
-                reference_context_revision_before: Some(4),
-                reference_context_revision_after: Some(5),
-                timestamp: "2026-01-29T14:31:00Z".to_string(),
-            };
-            let incomplete_retry = CompactionAttemptSnapshot {
-                attempt_id: "attempt-retry".to_string(),
-                submission_id: None,
-                request: CompactionRequestMetadata {
-                    mode: CompactionMode::AutoPreTurn,
-                    trigger: CompactionTrigger::Auto,
-                    reason: CompactionReason::WindowPressure,
-                    focus: None,
-                },
-                result: CompactionResult::Retry,
-                pressure_level: None,
-                memory_flush_attempt_id: None,
-                input_messages: Some(24),
-                output_messages: Some(8),
-                input_prompt_tokens: Some(1800),
-                output_prompt_tokens: Some(500),
-                retry_count: 1,
-                tape_mutated: true,
-                warning_message: None,
-                error_message: None,
-                failure_streak: None,
-                reference_context_revision_before: Some(5),
-                reference_context_revision_after: Some(5),
-                timestamp: "2026-01-29T14:32:00Z".to_string(),
-            };
-            let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-legacy-summary".to_string(),
-                    started_at: "2026-01-29T14:30:52Z".to_string(),
-                    cwd: "/tmp".to_string(),
-                    model: "gemini-2.0-flash".to_string(),
-                    reasoning_effort: None,
-                }),
-                RolloutItem::CompactionAttempt(completed_attempt.clone()),
-                RolloutItem::Compacted(CompactedItem {
-                    message: "Legacy summary".to_string(),
-                    attempt_id: None,
-                    trigger: Some(CompactionTrigger::Manual),
-                    reason: Some(CompactionReason::ExplicitRequest),
-                    focus: Some("preserve tasks".to_string()),
-                    input_messages: Some(18),
-                    output_messages: Some(5),
-                    input_tokens: Some(1500),
-                    output_tokens: Some(480),
-                    duration_ms: Some(42),
-                    retry_count: Some(0),
-                    result: Some(CompactionResult::Success),
-                    reference_context_revision: Some(4),
-                    timestamp: "2026-01-29T14:31:01Z".to_string(),
-                }),
-                RolloutItem::CompactionAttempt(incomplete_retry),
-            ];
-
-            let content = items
-                .iter()
-                .map(serde_json::to_string)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
-                .join("\n")
-                + "\n";
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-
-            let session = Session::load_from_rollout_in_dir(
-                &rollout_path,
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await
-            .unwrap();
-
-            assert_eq!(
-                session.latest_compaction_attempt(),
-                Some(&completed_attempt)
-            );
-
-            session.flush().await;
-            let recovered_path = session
-                .rollout_path()
-                .expect("recovered session should have rollout path")
-                .clone();
-            let recovered_items = RolloutRecorder::load_history(&recovered_path)
-                .await
-                .unwrap();
-            let persisted_compacted = recovered_items.iter().find_map(|item| match item {
-                RolloutItem::Compacted(compacted) => Some(compacted),
-                _ => None,
-            });
-
-            assert_eq!(
-                persisted_compacted.and_then(|item| item.attempt_id.as_deref()),
-                Some("attempt-complete")
-            );
-
-            let reloaded = Session::load_from_rollout_in_dir(
-                &recovered_path,
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                reloaded.latest_compaction_attempt(),
-                Some(&completed_attempt)
-            );
-        });
-    }
-
-    #[test]
     fn test_load_from_rollout_does_not_let_repersisted_linked_summary_override_newer_failure() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -3613,8 +2688,9 @@ mod tests {
                 timestamp: "2026-01-29T14:32:00Z".to_string(),
             };
             let items = [
-                RolloutItem::SessionMeta(SessionMeta {
-                    session_id: "sess-linked-summary".to_string(),
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "sess-linked-summary".to_string(),
+                    process_path: "/proc/test".to_string(),
                     started_at: "2026-01-29T14:30:52Z".to_string(),
                     cwd: "/tmp".to_string(),
                     model: "gemini-2.0-flash".to_string(),
@@ -3649,23 +2725,25 @@ mod tests {
                 + "\n";
             tokio::fs::write(&rollout_path, content).await.unwrap();
 
-            let session = Session::load_from_rollout_in_dir(
+            let machine = AgentMachine::load_from_rollout_in_dir(
                 &rollout_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
             .await
             .unwrap();
 
-            assert_eq!(session.latest_compaction_attempt(), Some(&failure));
+            assert_eq!(machine.latest_compaction_attempt(), Some(&failure));
 
-            session.flush().await;
-            let recovered_path = session
+            machine.flush().await;
+            let recovered_path = machine
                 .rollout_path()
-                .expect("recovered session should have rollout path")
+                .expect("recovered machine should have rollout path")
                 .clone();
-            let reloaded = Session::load_from_rollout_in_dir(
+            let reloaded = AgentMachine::load_from_rollout_in_dir(
                 &recovered_path,
+                "/proc/test",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -3678,38 +2756,38 @@ mod tests {
 
     #[test]
     fn test_empty_message_content() {
-        let mut session = Session::new();
-        session.add_user_message("");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("");
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages[0].text_content(), "");
     }
 
     #[test]
     fn test_unicode_message_content() {
-        let mut session = Session::new();
-        session.add_user_message("你好，世界！🌍");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("你好，世界！🌍");
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages[0].text_content(), "你好，世界！🌍");
     }
 
     #[test]
     fn test_record_tool_call() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let args = serde_json::json!({"query": "test"});
         let result = serde_json::json!({"status": "ok"});
 
         // Should not panic without recorder
-        session.record_tool_call("search_tool", args.clone(), result.clone(), true);
+        machine.record_tool_call("search_tool", args.clone(), result.clone(), true);
     }
 
     #[test]
     fn test_record_effect_updates_lookup_index() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let effect = EffectRecord {
             effect_id: "ef-1".to_string(),
-            run_id: session.id.clone(),
+            process_path: "/proc/test".to_string(),
             tool_call_id: "call-1".to_string(),
             idempotency_key: "idem-1".to_string(),
             effect_type: "file".to_string(),
@@ -3723,61 +2801,19 @@ mod tests {
             timestamp: "2026-03-03T10:00:00Z".to_string(),
         };
 
-        session.record_effect(effect);
+        machine.record_effect(effect);
 
-        let restored = session.effect_by_idempotency_key("idem-1").unwrap();
+        let restored = machine.effect_by_idempotency_key("idem-1").unwrap();
         assert_eq!(restored.effect_id, "ef-1");
         assert_eq!(restored.status, EffectStatus::Unknown);
     }
 
     #[test]
-    fn test_load_from_rollout_restores_latest_effect_record() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-effect-index.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"sess-effect","started_at":"2026-03-03T10:00:00Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","status":"unknown","dedupe_hit":false,"timestamp":"2026-03-03T10:00:01Z"}
-{"type":"effect","effect_id":"ef-1","run_id":"sess-effect","tool_call_id":"call-1","idempotency_key":"idem-1","effect_type":"file","request_fingerprint":"fp-1","result_digest":"digest-1","status":"applied","applied_at":"2026-03-03T10:00:02Z","dedupe_hit":false,"timestamp":"2026-03-03T10:00:02Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session =
-                Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                    .await
-                    .unwrap();
-
-            let effect = session.effect_by_idempotency_key("idem-1").unwrap();
-            assert_eq!(effect.status, EffectStatus::Applied);
-            assert_eq!(effect.result_digest.as_deref(), Some("digest-1"));
-
-            let persisted_items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-            let persisted_effects: Vec<_> = persisted_items
-                .into_iter()
-                .filter_map(|item| match item {
-                    RolloutItem::Effect(effect) => Some(effect),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(
-                persisted_effects.len(),
-                2,
-                "recovered effects should be re-persisted to protect future recoveries"
-            );
-            assert!(matches!(
-                persisted_effects.last(),
-                Some(effect) if effect.status == EffectStatus::Applied
-            ));
-        });
-    }
-
-    #[test]
     fn test_record_checkpoint() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
 
         // Should not panic without recorder
-        session.record_checkpoint(
+        machine.record_checkpoint(
             "cp-123",
             "supplier_list",
             "Test checkpoint",
@@ -3787,31 +2823,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
         // Should not panic without recorder
-        session.flush().await;
+        machine.flush().await;
     }
 
     #[test]
     fn test_add_user_message_with_tool_name() {
-        let mut session = Session::new();
-        session.add_user_message("Hello");
-        let messages = session.tape.messages();
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Hello");
+        let messages = machine.tape.messages();
         assert!(messages[0].is_user());
     }
 
     #[test]
     fn test_record_event() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
         // Should not panic without recorder
-        session.record_event("test_event", serde_json::json!({"key": "value"}));
+        machine.record_event("test_event", serde_json::json!({"key": "value"}));
     }
 
     #[test]
     fn test_record_summary() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
         // Should not panic without recorder
-        session.record_summary("Test summary");
+        machine.record_summary("Test summary");
     }
 
     #[test]
@@ -3854,9 +2890,13 @@ mod tests {
     #[tokio::test]
     async fn test_persist_compaction_attempt_updates_latest_and_rollout() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         let attempt = CompactionAttemptSnapshot {
             attempt_id: "attempt-123".to_string(),
             submission_id: Some("sub-456".to_string()),
@@ -3883,13 +2923,13 @@ mod tests {
             timestamp: "2026-03-03T10:00:00Z".to_string(),
         };
 
-        session
+        machine
             .persist_compaction_observation(attempt.clone(), None)
             .await
             .unwrap();
-        assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
+        assert_eq!(machine.latest_compaction_attempt(), Some(&attempt));
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let persisted = items.into_iter().find_map(|item| match item {
             RolloutItem::CompactionAttempt(snapshot) => Some(snapshot),
@@ -3902,9 +2942,13 @@ mod tests {
     #[tokio::test]
     async fn test_persist_memory_flush_attempt_updates_latest_and_rollout() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         let attempt = MemoryFlushAttemptSnapshot {
             attempt_id: "flush-123".to_string(),
             compaction_mode: CompactionMode::AutoPreTurn,
@@ -3918,13 +2962,13 @@ mod tests {
             timestamp: "2026-03-03T10:00:00Z".to_string(),
         };
 
-        session
+        machine
             .persist_memory_flush_attempt(attempt.clone())
             .await
             .unwrap();
-        assert_eq!(session.latest_memory_flush_attempt(), Some(&attempt));
+        assert_eq!(machine.latest_memory_flush_attempt(), Some(&attempt));
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let persisted = items.into_iter().find_map(|item| match item {
             RolloutItem::MemoryFlushAttempt(snapshot) => Some(snapshot),
@@ -3937,9 +2981,13 @@ mod tests {
     #[tokio::test]
     async fn test_persist_compaction_observation_batches_attempt_and_summary() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
         let attempt = CompactionAttemptSnapshot {
             attempt_id: "attempt-batched".to_string(),
             submission_id: Some("sub-batched".to_string()),
@@ -3982,12 +3030,12 @@ mod tests {
             timestamp: "2026-03-03T10:00:01Z".to_string(),
         };
 
-        session
+        machine
             .persist_compaction_observation(attempt.clone(), Some(compacted.clone()))
             .await
             .unwrap();
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let persisted_attempt = items.iter().find_map(|item| match item {
             RolloutItem::CompactionAttempt(snapshot) => Some(snapshot),
@@ -3998,7 +3046,7 @@ mod tests {
             _ => None,
         });
 
-        assert_eq!(session.latest_compaction_attempt(), Some(&attempt));
+        assert_eq!(machine.latest_compaction_attempt(), Some(&attempt));
         assert_eq!(persisted_attempt, Some(&attempt));
         assert_eq!(
             persisted_compacted.map(|item| item.attempt_id.as_deref()),
@@ -4012,7 +3060,7 @@ mod tests {
 
     #[test]
     fn test_record_turn_context() {
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let context_items = vec![ContextItem {
             id: "ctx-1".to_string(),
             kind: "customer".to_string(),
@@ -4021,7 +3069,7 @@ mod tests {
             fingerprint: "abc123".to_string(),
         }];
         // Should not panic without recorder
-        session.record_turn_context(
+        machine.record_turn_context(
             "gemini-2.0-flash",
             Some(alan_agent_protocol::ReasoningEffort::Low),
             "System prompt",
@@ -4037,10 +3085,13 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let mut session =
-                Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-                    .await
-                    .unwrap();
+            let mut machine = AgentMachine::new_with_recorder_in_dir(
+                "/proc/test",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
 
             let context_items = vec![ContextItem {
                 id: "ctx-1".to_string(),
@@ -4051,7 +3102,7 @@ mod tests {
             }];
 
             let unchanged = ContextItemsDelta::default();
-            assert!(session.record_turn_context_if_changed(
+            assert!(machine.record_turn_context_if_changed(
                 "gemini-2.0-flash",
                 None,
                 "System prompt",
@@ -4062,7 +3113,7 @@ mod tests {
                 &unchanged,
             ));
 
-            assert!(!session.record_turn_context_if_changed(
+            assert!(!machine.record_turn_context_if_changed(
                 "gemini-2.0-flash",
                 None,
                 "System prompt",
@@ -4074,7 +3125,7 @@ mod tests {
             ));
 
             // A tool list change should still record even when reference context is unchanged.
-            assert!(session.record_turn_context_if_changed(
+            assert!(machine.record_turn_context_if_changed(
                 "gemini-2.0-flash",
                 None,
                 "System prompt",
@@ -4085,9 +3136,9 @@ mod tests {
                 &unchanged,
             ));
 
-            session.flush().await;
+            machine.flush().await;
 
-            let rollout_path = session.rollout_path().unwrap().clone();
+            let rollout_path = machine.rollout_path().unwrap().clone();
             let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
             let turn_context_count = items
                 .into_iter()
@@ -4102,10 +3153,13 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let mut session =
-                Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-                    .await
-                    .unwrap();
+            let mut machine = AgentMachine::new_with_recorder_in_dir(
+                "/proc/test",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
 
             let context_items = vec![ContextItem {
                 id: "ctx-1".to_string(),
@@ -4116,7 +3170,7 @@ mod tests {
             }];
             let unchanged = ContextItemsDelta::default();
 
-            assert!(session.record_turn_context_if_changed(
+            assert!(machine.record_turn_context_if_changed(
                 "gemini-2.0-flash",
                 Some(alan_agent_protocol::ReasoningEffort::Low),
                 "System prompt",
@@ -4126,7 +3180,7 @@ mod tests {
                 &["skill1".to_string()],
                 &unchanged,
             ));
-            assert!(session.record_turn_context_if_changed(
+            assert!(machine.record_turn_context_if_changed(
                 "gemini-2.0-flash",
                 Some(alan_agent_protocol::ReasoningEffort::High),
                 "System prompt",
@@ -4137,9 +3191,9 @@ mod tests {
                 &unchanged,
             ));
 
-            session.flush().await;
+            machine.flush().await;
 
-            let rollout_path = session.rollout_path().unwrap().clone();
+            let rollout_path = machine.rollout_path().unwrap().clone();
             let efforts = RolloutRecorder::load_history(&rollout_path)
                 .await
                 .unwrap()
@@ -4166,24 +3220,27 @@ mod tests {
             use tokio::time::{Duration, Instant, sleep};
 
             let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let mut session =
-                Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-                    .await
-                    .unwrap();
+            let mut machine = AgentMachine::new_with_recorder_in_dir(
+                "/proc/test",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
 
-            session.add_tool_message(
+            machine.add_tool_message(
                 "call_789",
                 "web_search",
                 serde_json::json!({
                     "ok": true,
                     "headers": {
-                        "set-cookie": "session=secret-cookie",
+                        "set-cookie": "machine=secret-cookie",
                         "content-type": "application/json"
                     }
                 }),
             );
 
-            let rollout_path = session.rollout_path().unwrap().clone();
+            let rollout_path = machine.rollout_path().unwrap().clone();
             let start = Instant::now();
             let mut found = false;
             while start.elapsed() < Duration::from_secs(1) {
@@ -4209,15 +3266,19 @@ mod tests {
     async fn test_flush_waits_for_queued_rollout_writes() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
 
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.record_event("evt", serde_json::json!({"ok": true}));
-        session.flush().await;
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.record_event("evt", serde_json::json!({"ok": true}));
+        machine.flush().await;
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let content = tokio::fs::read_to_string(&rollout_path).await.unwrap();
         let user_pos = content.find("\"content\":\"u1\"").unwrap();
         let assistant_pos = content.find("\"content\":\"a1\"").unwrap();
@@ -4230,27 +3291,31 @@ mod tests {
     async fn test_rollback_records_non_durable_audit_marker() {
         let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
 
-        let mut session = Session::new_with_recorder_in_dir("gemini-2.0-flash", temp_dir.path())
-            .await
-            .unwrap();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.add_user_message("u2");
-        session.add_assistant_message("a2", None);
+        let mut machine = AgentMachine::new_with_recorder_in_dir(
+            "/proc/test",
+            "gemini-2.0-flash",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.add_user_message("u2");
+        machine.add_assistant_message("a2", None);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
         assert_eq!(removed.removed_turns, 1);
         assert_eq!(removed.removed_messages, 2);
-        session.flush().await;
+        machine.flush().await;
 
-        let rollout_path = session.rollout_path().unwrap().clone();
+        let rollout_path = machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let rollback_event = items.into_iter().find_map(|item| match item {
-            RolloutItem::Event(event) if event.event_type == "session_rollback" => Some(event),
+            RolloutItem::Event(event) if event.event_type == "machine_rollback" => Some(event),
             _ => None,
         });
 
-        let event = rollback_event.expect("expected session_rollback event");
+        let event = rollback_event.expect("expected machine_rollback event");
         assert_eq!(event.payload["requested_turns"], serde_json::json!(1));
         assert_eq!(event.payload["removed_turns"], serde_json::json!(1));
         assert_eq!(event.payload["removed_messages"], serde_json::json!(2));
@@ -4324,16 +3389,16 @@ mod tests {
 
     #[test]
     fn test_add_tool_message_preserves_large_payload_on_tape() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let large_content = "x".repeat(50000);
         let payload = serde_json::json!({
             "success": true,
             "content": large_content
         });
 
-        session.add_tool_message("call_456", "test_tool", payload);
+        machine.add_tool_message("call_456", "test_tool", payload);
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
         let responses = messages[0].tool_responses();
         assert_eq!(responses.len(), 1);
@@ -4462,97 +3527,19 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_rollout_with_turn_context() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-context.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-789","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"turn_context","model":"gemini-2.0-flash","system_prompt":"You are a helpful assistant","context_items":[{"id":"ctx-1","kind":"customer","title":"Profile","content":"Test content","fingerprint":"fp123"}],"tools":["search","analyze"],"memory_enabled":true,"active_skills":["onboarding"],"timestamp":"2026-01-29T14:30:54Z"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            assert!(session.has_active_task);
-            // Context items should be restored
-            let ctx_items = session.tape.context_items();
-            assert!(!ctx_items.is_empty());
-            assert_eq!(ctx_items[0].id, "ctx-1");
-            assert_eq!(ctx_items[0].kind, "customer");
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_system_and_context_roles() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-roles.jsonl");
-
-            let content = r#"{"type":"session_meta","session_id":"test-roles","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp","model":"gemini-2.0-flash"}
-{"type":"message","role":"system","content":"System prompt","tool_name":null,"timestamp":"2026-01-29T14:30:53Z"}
-{"type":"message","role":"context","content":"Context info","tool_name":null,"timestamp":"2026-01-29T14:30:54Z"}
-{"type":"message","role":"assistant","content":"Assistant reply","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-{"type":"message","role":"unknown_role","content":"Fallback test","tool_name":null,"timestamp":"2026-01-29T14:30:56Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            let messages = session.tape.messages();
-            // Context messages should be skipped
-            assert_eq!(messages.len(), 3); // system, assistant, unknown (falls back to user)
-            assert_eq!(messages[0].role(), MessageRole::System);
-            assert_eq!(messages[1].role(), MessageRole::Assistant);
-            // Unknown role falls back to User
-            assert_eq!(messages[2].role(), MessageRole::User);
-            assert_eq!(messages[2].text_content(), "Fallback test");
-        });
-    }
-
-    #[test]
-    fn test_load_from_rollout_without_session_meta() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
-            let rollout_path = temp_dir.path().join("rollout-no-meta.jsonl");
-
-            // No session_meta, should generate new UUID
-            let content = r#"{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#;
-
-            tokio::fs::write(&rollout_path, content).await.unwrap();
-            let session = Session::load_from_rollout_in_dir(&rollout_path, "gemini-2.0-flash", temp_dir.path())
-                .await
-                .unwrap();
-
-            // Should have generated a new UUID
-            assert!(!session.id.is_empty());
-            assert!(session.has_active_task);
-        });
-    }
-
-    #[test]
     fn test_rollback_last_turns_removes_latest_turn_messages() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.add_tool_message("call1", "web_search", serde_json::json!({"ok": true}));
-        session.add_user_message("u2");
-        session.add_assistant_message("a2", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.add_tool_message("call1", "web_search", serde_json::json!({"ok": true}));
+        machine.add_user_message("u2");
+        machine.add_assistant_message("a2", None);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
 
         assert_eq!(removed.removed_turns, 1);
         assert_eq!(removed.removed_messages, 2);
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].text_content(), "u1");
         assert_eq!(messages[1].text_content(), "a1");
@@ -4561,25 +3548,25 @@ mod tests {
 
     #[test]
     fn test_rollback_last_turns_clears_all_when_request_exceeds_history() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.has_active_task = true;
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.has_active_task = true;
 
-        let removed = session.rollback_last_turns(10);
+        let removed = machine.rollback_last_turns(10);
 
         assert_eq!(removed.removed_turns, 1);
         assert_eq!(removed.removed_messages, 2);
-        assert!(session.tape.messages().is_empty());
-        assert!(!session.has_active_task);
+        assert!(machine.tape.messages().is_empty());
+        assert!(!machine.has_active_task);
     }
 
     #[test]
     fn test_rollback_last_turns_ignores_control_user_messages_for_turn_boundaries() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
             "checkpoint_id": "tool_escalation_call-1",
             "checkpoint_type": "tool_escalation",
             "choice": "approve",
@@ -4589,24 +3576,24 @@ mod tests {
                 "source": "runtime/submission_handlers"
             }
         }))]);
-        session.add_assistant_message("a2", None);
+        machine.add_assistant_message("a2", None);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
 
         assert_eq!(
             removed.removed_messages, 4,
             "rollback should anchor on the real user turn, not synthetic control messages"
         );
         assert_eq!(removed.removed_turns, 1);
-        assert!(session.tape.messages().is_empty());
+        assert!(machine.tape.messages().is_empty());
     }
 
     #[test]
     fn test_rollback_last_turns_ignores_effect_replay_control_messages_for_turn_boundaries() {
-        let mut session = Session::new();
-        session.add_user_message("u1");
-        session.add_assistant_message("a1", None);
-        session.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("u1");
+        machine.add_assistant_message("a1", None);
+        machine.add_user_control_message_parts(vec![ContentPart::structured(serde_json::json!({
             "checkpoint_id": "effect_replay_call-1",
             "checkpoint_type": "effect_replay_confirmation",
             "choice": "approve",
@@ -4616,15 +3603,15 @@ mod tests {
                 "source": "runtime/submission_handlers"
             }
         }))]);
-        session.add_assistant_message("a2", None);
+        machine.add_assistant_message("a2", None);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
 
         assert_eq!(
             removed.removed_messages, 4,
             "rollback should ignore effect replay control messages the same way as policy controls"
         );
         assert_eq!(removed.removed_turns, 1);
-        assert!(session.tape.messages().is_empty());
+        assert!(machine.tape.messages().is_empty());
     }
 }

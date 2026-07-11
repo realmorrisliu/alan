@@ -550,7 +550,7 @@ fn compaction_warning_message(
 
     if failure_streak >= 2 {
         message.push_str(
-            " Repeated compaction degradation/failure detected; consider starting a new session.",
+            " Repeated compaction degradation/failure detected; consider starting a new machine.",
         );
     }
 
@@ -705,7 +705,7 @@ async fn record_and_emit_compaction_attempt<E, F>(
     F: std::future::Future<Output = ()>,
 {
     if let Err(err) = state
-        .session
+        .machine
         .persist_compaction_observation(attempt.clone(), compacted)
         .await
     {
@@ -725,7 +725,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     if let Err(err) = state
-        .session
+        .machine
         .persist_memory_flush_attempt(attempt.clone())
         .await
     {
@@ -755,7 +755,7 @@ where
         return None;
     }
 
-    if state.session.auto_memory_flush_attempted_in_cycle() {
+    if state.machine.auto_memory_flush_attempted_in_cycle() {
         let attempt = memory_flush::skipped_memory_flush_attempt(
             request.mode(),
             pressure.level,
@@ -781,7 +781,7 @@ where
             Some(alan_agent_protocol::MemoryFlushSkipReason::Cancelled)
         )
     ) {
-        state.session.note_auto_memory_flush_attempt();
+        state.machine.note_auto_memory_flush_attempt();
     }
 
     if let Some(message) = attempt.warning_message.clone() {
@@ -811,13 +811,13 @@ where
         error_message,
         started_at,
     } = failure;
-    let reference_context_revision = state.session.tape.context_revision();
+    let reference_context_revision = state.machine.tape.context_revision();
 
     if let Some(summary) =
-        build_degraded_compaction_summary(sanitized_to_summarize, state.session.tape.summary())
+        build_degraded_compaction_summary(sanitized_to_summarize, state.machine.tape.summary())
     {
         let attempt_id = uuid::Uuid::new_v4().to_string();
-        let failure_streak = state.session.note_compaction_failure();
+        let failure_streak = state.machine.note_compaction_failure();
         let warning_message = compaction_warning_message(
             CompactionResult::Degraded,
             &error_message,
@@ -829,11 +829,11 @@ where
         })
         .await;
 
-        let retention_start = state.session.tape.compaction_retention_start(keep_last);
+        let retention_start = state.machine.tape.compaction_retention_start(keep_last);
         apply_tape_compaction(state, &summary, keep_last, retention_start);
-        state.session.clear_responses_continuation("compaction");
-        let output_prompt_tokens = state.session.tape.estimated_prompt_tokens();
-        let output_messages = state.session.tape.len();
+        state.machine.clear_responses_continuation("compaction");
+        let output_prompt_tokens = state.machine.tape.estimated_prompt_tokens();
+        let output_messages = state.machine.tape.len();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let duration_ms = duration_ms_since(started_at);
         let attempt = build_compaction_attempt_snapshot(
@@ -854,7 +854,7 @@ where
                 error_message: Some(error_message),
                 failure_streak: Some(failure_streak),
                 reference_context_revision_before: Some(reference_context_revision),
-                reference_context_revision_after: Some(state.session.tape.context_revision()),
+                reference_context_revision_after: Some(state.machine.tape.context_revision()),
                 timestamp: timestamp.clone(),
             },
         );
@@ -885,7 +885,7 @@ where
         ));
     }
 
-    let failure_streak = state.session.note_compaction_failure();
+    let failure_streak = state.machine.note_compaction_failure();
     let warning_message = compaction_warning_message(
         CompactionResult::Failure,
         &error_message,
@@ -929,7 +929,7 @@ fn apply_tape_compaction(
     keep_last: usize,
     retention_start: usize,
 ) {
-    state.session.tape.compact(summary.to_string(), keep_last);
+    state.machine.tape.compact(summary.to_string(), keep_last);
     state.turn_state.note_tape_compaction(retention_start);
 }
 
@@ -957,9 +957,9 @@ where
     F: std::future::Future<Output = ()>,
 {
     let keep_last = state.runtime_config.compaction_keep_last;
-    let message_count = state.session.tape.len();
+    let message_count = state.machine.tape.len();
     let estimated_prompt_tokens = state
-        .session
+        .machine
         .tape
         .estimated_prompt_tokens()
         .saturating_add(request.additional_prompt_tokens());
@@ -975,7 +975,7 @@ where
     if matches!(request.mode(), CompactionMode::AutoPreTurn)
         && matches!(pressure.level, CompactionPressureLevel::BelowSoft)
     {
-        state.session.reset_auto_memory_flush_cycle();
+        state.machine.reset_auto_memory_flush_cycle();
     }
 
     if !matches!(request.mode(), CompactionMode::Manual)
@@ -988,8 +988,8 @@ where
         ));
     }
 
-    let messages = state.session.tape.messages().to_vec();
-    let retention_start = state.session.tape.compaction_retention_start(keep_last);
+    let messages = state.machine.tape.messages().to_vec();
+    let retention_start = state.machine.tape.compaction_retention_start(keep_last);
     let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
@@ -1000,7 +1000,7 @@ where
         ));
     }
 
-    let compaction_count = state.session.tape.compaction_count();
+    let compaction_count = state.machine.tape.compaction_count();
     let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
     let memory_flush_attempt_id = maybe_flush_memory_before_compaction(
         state,
@@ -1043,7 +1043,7 @@ where
     let started_at = std::time::Instant::now();
     let mut llm_messages = Vec::new();
 
-    if let Some(existing_summary) = state.session.tape.summary() {
+    if let Some(existing_summary) = state.machine.tape.summary() {
         llm_messages.push(crate::llm::Message {
             role: crate::llm::MessageRole::Context,
             content: format!(
@@ -1170,19 +1170,19 @@ where
 
     let input_prompt_tokens = estimated_prompt_tokens;
     let success_result = compaction_success_result(trimmed_count);
-    let reference_context_revision = state.session.tape.context_revision();
+    let reference_context_revision = state.machine.tape.context_revision();
     let attempt_id = uuid::Uuid::new_v4().to_string();
     apply_tape_compaction(state, &summary, keep_last, retention_start);
-    state.session.clear_responses_continuation("compaction");
+    state.machine.clear_responses_continuation("compaction");
     let output_prompt_tokens = state
-        .session
+        .machine
         .tape
         .estimated_prompt_tokens()
         .saturating_add(request.additional_prompt_tokens());
-    let output_messages = state.session.tape.len();
+    let output_messages = state.machine.tape.len();
     let timestamp = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration_ms_since(started_at);
-    state.session.reset_compaction_failure_streak();
+    state.machine.reset_compaction_failure_streak();
     let attempt = build_compaction_attempt_snapshot(
         attempt_id.clone(),
         compaction_submission_id(state, request),
@@ -1201,7 +1201,7 @@ where
             error_message: None,
             failure_streak: None,
             reference_context_revision_before: Some(reference_context_revision),
-            reference_context_revision_after: Some(state.session.tape.context_revision()),
+            reference_context_revision_after: Some(state.machine.tape.context_revision()),
             timestamp: timestamp.clone(),
         },
     );
@@ -1245,12 +1245,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::{
+        agent_machine::AgentMachine,
         config::Config,
         runtime::{
             NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
             TurnState, prompt_cache::PromptAssemblyCache,
         },
-        session::Session,
     };
 
     struct RecordingProvider {
@@ -1315,7 +1315,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session: Session::new(),
+            machine: AgentMachine::new(),
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
                 root, "/agent/1", "default",
@@ -1341,10 +1341,10 @@ mod tests {
             response: "namespace compaction summary".to_string(),
         });
         state.core_config.memory.enabled = false;
-        state.session.add_user_message("first detail to compact");
-        state.session.add_assistant_message("first answer", None);
-        state.session.add_user_message("second detail to compact");
-        state.session.add_assistant_message("second answer", None);
+        state.machine.add_user_message("first detail to compact");
+        state.machine.add_assistant_message("first answer", None);
+        state.machine.add_user_message("second detail to compact");
+        state.machine.add_assistant_message("second answer", None);
 
         let mut events = Vec::new();
         let mut emit = |event: Event| {
@@ -1363,7 +1363,7 @@ mod tests {
 
         assert!(matches!(outcome, CompactionOutcome::Applied { .. }));
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("namespace compaction summary")
         );
         let recorded = requests.lock().unwrap();

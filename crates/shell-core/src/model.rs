@@ -32,8 +32,8 @@ pub enum ShellTabActiveTaskState {
     AlanRunning,
     /// Alan is waiting for user input or approval.
     AlanPendingYield,
-    /// Alan has an attached session.
-    AlanSession,
+    /// An Alan Process is visible in the terminal pane.
+    AlanProcess,
     /// Unknown task state that should be retained conservatively.
     Unknown,
 }

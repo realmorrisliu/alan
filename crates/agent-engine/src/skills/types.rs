@@ -1216,7 +1216,7 @@ pub struct DelegatedSkillOutputRef {
 /// Optional host-debug metadata that is never used to resolve delegated output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegatedSkillOutputDebugMetadata {
-    pub session_id: String,
+    pub process_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_path: Option<String>,
     pub field: String,

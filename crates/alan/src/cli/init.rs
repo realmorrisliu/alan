@@ -66,9 +66,9 @@ fn create_alan_directory_for_channel(
     )?;
     let _agent_dir = ensure_workspace_layout_dir(workspace_root, &default_root.root_dir)?;
     let _skills_dir = ensure_workspace_layout_dir(workspace_root, &default_root.skills_dir)?;
-    let _sessions_dir = ensure_workspace_layout_dir(
+    let _rollouts_dir = ensure_workspace_layout_dir(
         workspace_root,
-        &alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(&alan_dir, channel),
+        &alan_agent_engine::workspace_rollouts_dir_for_channel_from_alan_dir(&alan_dir, channel),
     )?;
     let memory_dir = ensure_workspace_layout_dir(
         workspace_root,
@@ -238,11 +238,10 @@ mod tests {
                 .exists()
         );
         assert!(!alan_dir.join("agent").exists());
-        let runtime_sessions_dir = alan_dir.join("runtime/stable/sessions");
+        let runtime_rollouts_dir = alan_dir.join("runtime/stable/rollouts");
         let runtime_memory_dir = alan_dir.join("runtime/stable/memory");
-        assert!(runtime_sessions_dir.exists());
+        assert!(runtime_rollouts_dir.exists());
         assert!(runtime_memory_dir.exists());
-        assert!(!alan_dir.join("sessions").exists());
         assert!(!alan_dir.join("memory").exists());
         assert!(runtime_memory_dir.join("USER.md").exists());
         assert!(
@@ -255,7 +254,7 @@ mod tests {
         assert!(runtime_memory_dir.join("MEMORY.md").exists());
         assert!(runtime_memory_dir.join("handoffs/LATEST.md").exists());
         assert!(runtime_memory_dir.join("daily").exists());
-        assert!(runtime_memory_dir.join("sessions").exists());
+        assert!(runtime_memory_dir.join("episodic").exists());
         assert!(runtime_memory_dir.join("working").exists());
         assert!(runtime_memory_dir.join("topics").exists());
         assert!(runtime_memory_dir.join("inbox").exists());
@@ -289,8 +288,7 @@ mod tests {
         );
         assert!(!alan_dir.join("agent").exists());
         let runtime_memory_dir = alan_dir.join("runtime/stable/memory");
-        assert!(alan_dir.join("runtime/stable/sessions").exists());
-        assert!(!alan_dir.join("sessions").exists());
+        assert!(alan_dir.join("runtime/stable/rollouts").exists());
         assert!(runtime_memory_dir.join("MEMORY.md").exists());
         assert!(runtime_memory_dir.join("USER.md").exists());
         assert!(runtime_memory_dir.join("handoffs/LATEST.md").exists());
@@ -385,7 +383,7 @@ mod tests {
                 .join(".alan")
                 .join("runtime")
                 .join("stable")
-                .join("sessions")
+                .join("rollouts")
                 .exists()
         );
         assert!(
@@ -397,7 +395,6 @@ mod tests {
                 .join("MEMORY.md")
                 .exists()
         );
-        assert!(!workspace_root.join(".alan").join("sessions").exists());
         assert!(!workspace_root.join(".alan").join("memory").exists());
         assert!(!workspace_root.join(".alan").join(".alan").exists());
         let registry = WorkspaceRegistry::load_from_path(&registry_path).unwrap();
@@ -413,14 +410,13 @@ mod tests {
         create_alan_directory_for_channel(&alan_dir, alan_agent_engine::InstallChannel::Dev)
             .unwrap();
 
-        assert!(alan_dir.join("runtime/dev/sessions").exists());
+        assert!(alan_dir.join("runtime/dev/rollouts").exists());
         assert!(alan_dir.join("runtime/dev/memory/MEMORY.md").exists());
-        assert!(!alan_dir.join("sessions").exists());
         assert!(!alan_dir.join("memory").exists());
     }
 
     #[test]
-    fn test_create_alan_directory_stable_preserves_existing_legacy_memory() {
+    fn test_create_alan_directory_ignores_unscoped_memory_directory() {
         let tmp = TempDir::new().unwrap();
         let alan_dir = tmp.path().join(".alan");
         std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
@@ -428,7 +424,7 @@ mod tests {
         create_alan_directory_for_channel(&alan_dir, alan_agent_engine::InstallChannel::Stable)
             .unwrap();
 
-        assert!(alan_dir.join("memory/MEMORY.md").exists());
-        assert!(!alan_dir.join("runtime/stable/memory/MEMORY.md").exists());
+        assert!(!alan_dir.join("memory/MEMORY.md").exists());
+        assert!(alan_dir.join("runtime/stable/memory/MEMORY.md").exists());
     }
 }

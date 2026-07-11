@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
+    agent_machine::AgentMachine,
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
         ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
-        RuntimeEnvironment, TurnState, global_child_run_registry, turn_state::TurnActivityState,
+        RuntimeEnvironment, TurnState, turn_state::TurnActivityState,
     },
-    session::Session,
     skills::{
         ActiveSkillEnvelope, ResolvedCapabilityView, ResolvedSkillExecution, ScopedPackageDir,
         SkillActivationReason, SkillExecutionResolutionSource, SkillHostCapabilities,
@@ -39,7 +39,7 @@ fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
 
 fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
     let config = Config::default();
-    let session = Session::new();
+    let machine = AgentMachine::new();
     let mut tools = ToolRegistry::new();
     tools.set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent"));
     let runtime_config = RuntimeConfig::default();
@@ -53,7 +53,7 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
     super::super::agent_loop::RuntimeLoopState {
         workspace_id: "test-workspace".to_string(),
         workspace_root_dir: None,
-        session,
+        machine,
         current_submission_id: None,
         environment: namespace_environment_for_virtual_tool_test(),
         tool_catalog: tools,
@@ -135,11 +135,11 @@ fn capability_view_for_workspace_skill(workspace_root: &std::path::Path) -> Reso
     }])
 }
 
-fn test_child_run_record(child_run_id: &str, parent_session_id: &str) -> ChildRunRecord {
+fn test_child_run_record(child_run_id: &str, parent_agent_path: &str) -> ChildRunRecord {
     ChildRunRecord::new(
         child_run_id.to_string(),
-        parent_session_id.to_string(),
-        format!("child-session-{child_run_id}"),
+        parent_agent_path.to_string(),
+        format!("child-machine-{child_run_id}"),
         Some("/tmp/alan-delegated-parent".to_string()),
         Some("/proc/42".to_string()),
         Some("repo-coding".to_string()),
@@ -151,7 +151,7 @@ fn tool_result_text_for_call(
     call_id: &str,
 ) -> String {
     state
-        .session
+        .machine
         .tape
         .prompt_view()
         .messages
@@ -1016,9 +1016,8 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
     );
 
     let child_run = Some(DelegatedChildRunReference {
-        session_id: "child-session".to_string(),
+        process_path: "/proc/42".to_string(),
         child_run_id: None,
-        process_path: Some("/proc/42".to_string()),
         state_ref: None,
         rollout_debug_path: None,
         terminal_status: "completed".to_string(),
@@ -1051,8 +1050,8 @@ fn test_build_bounded_delegated_invocation_persistence_truncates_fields() {
     assert!(record.result.summary.chars().count() <= MAX_DELEGATED_RESULT_SUMMARY_CHARS);
     assert!(record.result.summary.ends_with("..."));
     assert_eq!(
-        rollout_record.child_run.as_ref().unwrap().session_id,
-        "child-session"
+        rollout_record.child_run.as_ref().unwrap().process_path,
+        "/proc/42"
     );
 }
 
@@ -1068,9 +1067,8 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
     };
     let result = DelegatedSkillResult::completed("Delegated review completed.", None);
     let child_run = Some(DelegatedChildRunReference {
-        session_id: "child-session".to_string(),
+        process_path: "/proc/42".to_string(),
         child_run_id: None,
-        process_path: Some("/proc/42".to_string()),
         state_ref: None,
         rollout_debug_path: Some("/tmp/inline-child.jsonl".to_string()),
         terminal_status: "completed".to_string(),
@@ -1082,10 +1080,6 @@ fn test_build_bounded_delegated_invocation_persistence_keeps_child_run_out_of_ta
     let rollout_payload = serde_json::to_value(&rollout_record).unwrap();
 
     assert!(tape_payload.get("child_run").is_none());
-    assert_eq!(
-        rollout_payload["child_run"]["session_id"],
-        json!("child-session")
-    );
     assert_eq!(
         rollout_payload["child_run"]["process_path"],
         json!("/proc/42")
@@ -1166,7 +1160,7 @@ fn test_build_bounded_delegated_invocation_persistence_bounds_result_sidecars() 
 fn test_delegated_result_from_completed_child_prefers_structured_output_summary() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: None,
         rollout_path: None,
         output_text: "{\"status\":\"completed\",\"summary\":\"Structured delivery\"}".to_string(),
@@ -1196,7 +1190,7 @@ fn test_delegated_result_from_completed_child_prefers_structured_output_summary(
 fn test_delegated_result_from_completed_child_prefers_output_text_over_turn_summary() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: None,
         rollout_path: None,
         output_text: "Verification was environment_blocked: pytest was not installed.".to_string(),
@@ -1220,7 +1214,7 @@ fn test_delegated_result_from_completed_child_prefers_output_text_over_turn_summ
 fn test_delegated_result_from_completed_child_inlines_short_output() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "Short delegated delivery.".to_string(),
@@ -1252,7 +1246,7 @@ fn test_delegated_result_from_completed_child_inlines_short_output() {
 fn test_delegated_result_from_completed_child_redacts_short_output() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "api_key=child-secret\nAuthorization: Bearer child-token".to_string(),
@@ -1278,7 +1272,7 @@ fn test_delegated_result_from_completed_child_redacts_short_output() {
 fn test_delegated_result_redacts_structured_summary() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: None,
         rollout_path: None,
         output_text: String::new(),
@@ -1314,7 +1308,7 @@ async fn redaction_expansion_preserves_delegated_output_reference() {
     };
     let result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "Bearer x ".repeat(400),
@@ -1342,7 +1336,7 @@ async fn redaction_expansion_preserves_delegated_output_reference() {
 fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "x".repeat(MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 1),
@@ -1359,7 +1353,7 @@ fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
         offset: Some(0),
         length: Some((MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS + 1) as u64),
         debug: Some(DelegatedSkillOutputDebugMetadata {
-            session_id: "child-session".to_string(),
+            process_path: "child-machine".to_string(),
             rollout_path: None,
             field: "output_text".to_string(),
         }),
@@ -1398,7 +1392,7 @@ fn test_delegated_result_from_completed_child_uses_ref_for_long_output() {
 fn test_delegated_result_from_timed_out_child_includes_metadata() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::TimedOut,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "partial output before timeout".to_string(),
@@ -1407,7 +1401,7 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
         warnings: vec!["child was idle".to_string()],
         error_message: Some("idle timeout exceeded".to_string()),
         pause: None,
-        child_run: Some(test_child_run_record("child-run-1", "parent-session")),
+        child_run: Some(test_child_run_record("child-run-1", "parent-machine")),
     };
 
     let output_ref = DelegatedSkillOutputRef {
@@ -1415,7 +1409,7 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
         offset: Some(0),
         length: Some(child_result.output_text.len() as u64),
         debug: Some(DelegatedSkillOutputDebugMetadata {
-            session_id: "child-session".to_string(),
+            process_path: "child-machine".to_string(),
             rollout_path: None,
             field: "output_text".to_string(),
         }),
@@ -1471,7 +1465,7 @@ fn test_delegated_result_from_timed_out_child_includes_metadata() {
 fn test_delegated_result_from_paused_child_preserves_output_reference() {
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Paused,
-        session_id: "paused-session".to_string(),
+        process_path: "paused-machine".to_string(),
         child_run_id: Some("paused-run".to_string()),
         rollout_path: None,
         output_text: "partial output before pause".to_string(),
@@ -1512,14 +1506,14 @@ fn test_delegated_result_from_terminated_child_uses_namespace_state_reference() 
         offset: Some(0),
         length: Some(18),
         debug: Some(DelegatedSkillOutputDebugMetadata {
-            session_id: "child-session".to_string(),
+            process_path: "child-machine".to_string(),
             rollout_path: None,
             field: "output_text".to_string(),
         }),
     };
     let child_result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Terminated,
-        session_id: "child-session".to_string(),
+        process_path: "child-machine".to_string(),
         child_run_id: Some("child-run-2".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/terminated-child-rollout.jsonl")),
         output_text: "partial termination".to_string(),
@@ -1529,7 +1523,7 @@ fn test_delegated_result_from_terminated_child_uses_namespace_state_reference() 
         error_message: Some("operator requested stop".to_string()),
         pause: None,
         child_run: Some(
-            test_child_run_record("child-run-2", "parent-session")
+            test_child_run_record("child-run-2", "parent-machine")
                 .with_state_ref(state_ref.clone()),
         ),
     };
@@ -1590,7 +1584,7 @@ fn test_delegated_rollout_record_flattens_invocation_result() {
         offset: Some(0),
         length: Some(42),
         debug: Some(DelegatedSkillOutputDebugMetadata {
-            session_id: "child-session".to_string(),
+            process_path: "child-machine".to_string(),
             rollout_path: Some("/tmp/child.jsonl".to_string()),
             field: "output_text".to_string(),
         }),
@@ -2266,7 +2260,7 @@ async fn test_try_handle_virtual_tool_call_update_plan() {
             if explanation.as_deref() == Some("Test plan") && items == &expected_items
     )));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -2315,7 +2309,9 @@ async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
 async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
     let mut state = create_test_agent_loop_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-    global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
+    state
+        .child_run_registry()
+        .register(test_child_run_record(&child_run_id, &state.process_path()));
 
     let tool_call = NormalizedToolCall {
         id: "call_terminate".to_string(),
@@ -2342,7 +2338,8 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
         }
     ));
 
-    let record = global_child_run_registry()
+    let record = state
+        .child_run_registry()
         .get(tool_call.arguments["child_run_id"].as_str().unwrap())
         .unwrap();
     assert_eq!(record.status, ChildRunStatus::Terminating);
@@ -2412,8 +2409,12 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
 async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal() {
     let mut state = create_test_agent_loop_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-    global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
-    global_child_run_registry().mark_terminal(&child_run_id, ChildRunStatus::Completed, None);
+    state
+        .child_run_registry()
+        .register(test_child_run_record(&child_run_id, &state.process_path()));
+    state
+        .child_run_registry()
+        .mark_terminal(&child_run_id, ChildRunStatus::Completed, None);
 
     let tool_call = NormalizedToolCall {
         id: "call_terminate".to_string(),
@@ -2445,7 +2446,8 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal(
             if audit.action == "allow" && audit.capability == "write"
     )));
 
-    let record = global_child_run_registry()
+    let record = state
+        .child_run_registry()
         .get(tool_call.arguments["child_run_id"].as_str().unwrap())
         .unwrap();
     assert_eq!(record.status, ChildRunStatus::Completed);
@@ -2465,7 +2467,9 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
     };
     state.runtime_config.policy_engine = crate::policy::PolicyEngine::escalate_all();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-    global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
+    state
+        .child_run_registry()
+        .register(test_child_run_record(&child_run_id, &state.process_path()));
 
     let tool_call = NormalizedToolCall {
         id: "call_terminate".to_string(),
@@ -2493,7 +2497,8 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
             if payload["details"]["replay_tool_call"]["tool_name"] == json!("terminate_child_run")
     )));
 
-    let record = global_child_run_registry()
+    let record = state
+        .child_run_registry()
         .get(tool_call.arguments["child_run_id"].as_str().unwrap())
         .unwrap();
     assert_eq!(record.status, ChildRunStatus::Starting);
@@ -2524,7 +2529,9 @@ default_action: allow
     state.runtime_config.policy_engine =
         crate::policy::PolicyEngine::load_or_default(Some(temp.path()));
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
-    global_child_run_registry().register(test_child_run_record(&child_run_id, &state.session.id));
+    state
+        .child_run_registry()
+        .register(test_child_run_record(&child_run_id, &state.process_path()));
 
     let tool_call = NormalizedToolCall {
         id: "call_terminate".to_string(),
@@ -2556,7 +2563,8 @@ default_action: allow
             if audit.action == "deny" && audit.rule_id.as_deref() == Some("deny-child-termination")
     )));
 
-    let record = global_child_run_registry()
+    let record = state
+        .child_run_registry()
         .get(tool_call.arguments["child_run_id"].as_str().unwrap())
         .unwrap();
     assert_eq!(record.status, ChildRunStatus::Starting);
@@ -2605,7 +2613,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                     output_text: String::new(),
@@ -2669,7 +2677,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
         requirements.contains(&alan_agent_protocol::DelegatedCapabilityRequirement::LlmConnection)
     );
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -2685,7 +2693,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
     assert!(tool_result.contains("\"status\":\"completed\""));
     assert!(tool_result.contains("Delegated review completed."));
     assert!(tool_result.contains("child_run"));
-    assert!(tool_result.contains("child-session"));
+    assert!(tool_result.contains("child-machine"));
 }
 
 #[tokio::test]
@@ -2799,7 +2807,7 @@ Use this skill when asked.
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -2887,7 +2895,7 @@ Use this skill when asked.
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: String::new(),
+                    process_path: String::new(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -2911,7 +2919,7 @@ Use this skill when asked.
         }
     ));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -2963,7 +2971,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_keeps_workspac
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3033,7 +3041,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_explici
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3113,7 +3121,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_does_not_promo
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3182,7 +3190,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_wor
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3251,7 +3259,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_rel
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3315,7 +3323,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unreso
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: String::new(),
+                    process_path: String::new(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3339,7 +3347,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unreso
         }
     ));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -3389,7 +3397,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspa
                 *captured_spec.lock().unwrap() = Some(spec);
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3422,7 +3430,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspa
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call() {
     let temp = TempDir::new().unwrap();
     let mut state = create_test_agent_loop_state();
-    state.session = Session::new_with_recorder_in_dir("gpt-5-mini", temp.path())
+    state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
         .await
         .unwrap();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
@@ -3449,7 +3457,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_succes
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                     output_text: String::new(),
@@ -3466,7 +3474,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_succes
     .await;
     assert!(result.is_ok());
 
-    let rollout_path = state.session.rollout_path().unwrap().clone();
+    let rollout_path = state.machine.rollout_path().unwrap().clone();
     let mut tool_call = None;
     for _ in 0..20 {
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
@@ -3490,7 +3498,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normal
 {
     let temp = TempDir::new().unwrap();
     let mut state = create_test_agent_loop_state();
-    state.session = Session::new_with_recorder_in_dir("gpt-5-mini", temp.path())
+    state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
         .await
         .unwrap();
     state
@@ -3522,7 +3530,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normal
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -3539,7 +3547,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normal
     .await;
     assert!(result.is_ok());
 
-    let rollout_path = state.session.rollout_path().unwrap().clone();
+    let rollout_path = state.machine.rollout_path().unwrap().clone();
     let mut recorded_tool_call = None;
     for _ in 0..20 {
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
@@ -3599,7 +3607,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                     output_text: String::new(),
@@ -3636,7 +3644,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
     assert!(preview.chars().count() <= 163);
     assert!(preview.ends_with("..."));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -3689,7 +3697,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: Some("child-run".to_string()),
                     rollout_path: Some(PathBuf::from("/tmp/debug-child.jsonl")),
                     output_text: "x".repeat(output_len),
@@ -3751,7 +3759,7 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
         let child_run_id = format!("failed-child-{index}");
         let result = ChildRuntimeResult {
             status,
-            session_id: format!("failed-session-{index}"),
+            process_path: format!("failed-machine-{index}"),
             child_run_id: Some(child_run_id.clone()),
             rollout_path: Some(PathBuf::from(format!("/tmp/private-child-{index}.jsonl"))),
             output_text: output_text.clone(),
@@ -3760,7 +3768,7 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
             warnings: Vec::new(),
             error_message: Some("delegated child did not complete".to_string()),
             pause: None,
-            child_run: Some(test_child_run_record(&child_run_id, "parent-session")),
+            child_run: Some(test_child_run_record(&child_run_id, "parent-machine")),
         };
 
         let output_ref = persist_delegated_child_evidence(&state, &request, &result)
@@ -3906,7 +3914,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
                 cancel_for_task.cancelled().await;
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Cancelled,
-                    session_id: "child-session".to_string(),
+                    process_path: "child-machine".to_string(),
                     child_run_id: None,
                     rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
                     output_text: String::new(),
@@ -3931,7 +3939,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
         Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
     )));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     assert!(!prompt_view.messages.iter().any(|message| matches!(
         message,
         crate::tape::Message::Tool { responses }
@@ -3991,7 +3999,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
         Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
     )));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     assert!(!prompt_view.messages.iter().any(|message| matches!(
         message,
         crate::tape::Message::Tool { responses }
@@ -4071,7 +4079,7 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
-                    session_id: String::new(),
+                    process_path: String::new(),
                     child_run_id: None,
                     rollout_path: None,
                     output_text: String::new(),
@@ -4094,7 +4102,7 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
         }
     ));
 
-    let prompt_view = state.session.tape.prompt_view();
+    let prompt_view = state.machine.tape.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -4113,41 +4121,6 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
         event,
         Event::ToolCallCompleted { id, .. } if id == "call_1"
     )));
-}
-
-#[tokio::test]
-async fn test_try_handle_virtual_tool_call_deferred_to_dynamic_delegated_tool() {
-    let mut state = create_test_agent_loop_state();
-    state.session.dynamic_tools.insert(
-        "invoke_delegated_skill".to_string(),
-        alan_agent_protocol::DynamicToolSpec {
-            name: "invoke_delegated_skill".to_string(),
-            description: "Delegated execution bridge".to_string(),
-            parameters: json!({"type": "object", "properties": {}}),
-            capability: Some(alan_agent_protocol::ToolCapability::Read),
-        },
-    );
-
-    let tool_call = NormalizedToolCall {
-        id: "call_1".to_string(),
-        name: "invoke_delegated_skill".to_string(),
-        arguments: json!({
-            "skill_id": "repo-review",
-            "target": "reviewer",
-            "task": "Review the current diff and summarize risks."
-        }),
-    };
-
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
-    assert!(events.is_empty());
 }
 
 #[tokio::test]

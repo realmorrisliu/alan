@@ -161,14 +161,12 @@ assert_bundle_metadata() {
 assert_no_stable_workspace_runtime_state() {
     local workspace="$1"
 
-    [[ -d "$workspace/.alan/runtime/dev/sessions" ]] ||
-        fail "dev sessions directory was not created"
+    [[ -d "$workspace/.alan/runtime/dev/rollouts" ]] ||
+        fail "dev rollout directory was not created"
     [[ -d "$workspace/.alan/runtime/dev/memory" ]] ||
         fail "dev memory directory was not created"
-    [[ ! -e "$workspace/.alan/sessions" ]] ||
-        fail "legacy stable sessions path was created by dev smoke"
-    [[ ! -e "$workspace/.alan/memory" ]] ||
-        fail "legacy stable memory path was created by dev smoke"
+    [[ ! -e "$workspace/.alan/rollouts" ]] ||
+        fail "unscoped rollout path was created by dev smoke"
     [[ ! -e "$workspace/.alan/runtime/stable" ]] ||
         fail "stable runtime namespace was created by dev smoke"
 }

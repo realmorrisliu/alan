@@ -582,9 +582,9 @@ final class AlanShellEventStore {
                 tabID: currentPane.tabID,
                 paneID: currentPane.paneID,
                 payload: [
-                    "session_id": .string(currentPane.alanBinding?.sessionID ?? ""),
-                    "run_status": .string(currentPane.alanBinding?.runStatus ?? ""),
-                    "pending_yield": .bool(currentPane.alanBinding?.pendingYield ?? false)
+                    "process_path": .string(currentPane.alanBinding?.processPath ?? ""),
+                    "machine_state": .string(currentPane.alanBinding?.machineState ?? ""),
+                    "pending_request": .bool(currentPane.alanBinding?.pendingRequest ?? false)
                 ]
             )
         }

@@ -1,6 +1,6 @@
 # Alan for macOS
 
-`clients/apple` is alan's native Apple client project, supporting macOS and iOS.
+`clients/apple` is Alan for macOS, the native Apple host for Alan.
 
 The macOS path is Alan for macOS: a real terminal workspace whose terminal
 state is readable and operable by both humans and agents.
@@ -9,7 +9,6 @@ state is readable and operable by both humans and agents.
 
 - Xcode 26+
 - macOS 26+ for development
-- iOS 26+ simulator/device for iOS target
 
 ## Directory Structure
 
@@ -25,13 +24,9 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `MacShellRootView.swift`: thin primary macOS shell composition root
 - `Views/Shell/`: shell sidebar, workspace composition, command palette, and
   other primary macOS shell SwiftUI components
-- `Views/Console/`: legacy/mobile remote-control console surface
-- `Models/API/`: daemon API response, operation, and JSON value models
-- `Models/Console/`: legacy/mobile console value types
 - `Models/Shell/`: shell command enums, launch targets, snapshots, and shell mutation helpers
 - `Controllers/`: target owner for observable app and shell controllers; current
   migration debt is tracked in `ARCHITECTURE.md`
-- `Services/Daemon/`: daemon HTTP client, event page reader, and console event reducer ownership
 - `Services/Shell/`: shell projection, persistence, control-plane transport,
   file polling, event store, diagnostics, and command-execution services that
   keep runtime metadata and IO out of the observable host
@@ -52,10 +47,8 @@ bash clients/apple/scripts/check-architecture-maintainability.sh
 
 1. Open `clients/apple/alan-macos.xcodeproj` with Xcode
 2. Select the `alan-macos` scheme
-3. Select a run target: `My Mac` or an iOS simulator/device
+3. Select the `My Mac` run target
 4. Run the app
-
-Default endpoint is `http://127.0.0.1:8090`; you can change it in the UI.
 
 ### Local Ghostty Prep
 
@@ -229,35 +222,17 @@ terminal content.
 - Live Ghostty-backed host path with runtime diagnostics, fallback config, and
   command-resolution inspection
 - Bounded terminal transcript snapshots can seed restarted terminal panes with
-  prior readable history, while true PTY/process survival and daemon-backed
-  terminal attach remain future work
+  prior readable history; true PTY/process survival remains future work
 - External Ghostty artifact cache plus ignored local links and app-bundled
   resources/terminfo
 - Window-scoped file/socket shell control plane with pane lifecycle events,
   bounded socket requests, diagnostic surfacing, and truthful `terminal.send_text`
   delivery results
 
-### Mobile (iOS)
-
-- Remote-control-first layout (Chat / Timeline dual panels)
-- Same core controls as desktop:
-  - connect to remote daemon
-  - session switching and message submission
-  - yield approval/input resume
-
-## Protocol and Endpoints
-
-The client uses the existing `/api/v1/sessions/*` compatibility layer:
-
-- `POST /sessions`: create session
-- `GET /sessions`: list sessions
-- `POST /sessions/{id}/submit`: submit `Op`
-- `GET /sessions/{id}/events/read`: incremental event polling
-- `GET /sessions/{id}/read`: load session metadata + history
-- `POST /sessions/{id}/fork`: fork session
-- `POST /sessions/{id}/rollback`: rollback turns (in-memory only; non-durable)
-- `POST /sessions/{id}/compact`: trigger compaction
-- `DELETE /sessions/{id}`: delete session
+Alan for macOS currently owns renderer, input, windowing, terminal runtime, and
+local shell-control integration. Attachment to Alan OS Agent Processes is a
+separate design change and is intentionally not represented by a compatibility
+network client in this target.
 
 ## Command-Line Build
 
@@ -297,10 +272,4 @@ just apple-shell-ui-smoke
 
 # Apple source architecture maintainability report
 bash clients/apple/scripts/check-architecture-maintainability.sh
-
-# iOS
-xcodebuild \
-  -project clients/apple/alan-macos.xcodeproj \
-  -scheme alan-macos \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```

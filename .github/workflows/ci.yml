@@ -83,6 +83,9 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
 
+      - name: Guard retired host-service surfaces
+        run: ./scripts/check-daemon-era-absence.sh target/debug/alan
+
       - name: Run tests
         run: cargo test --workspace --all-targets
 

@@ -15,11 +15,11 @@ where
     F: std::future::Future<Output = ()>,
 {
     warn!("Cancelling current task");
-    // Clear turn-scoped pending state, but preserve session history so the user can
+    // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
     state.turn_state.clear();
     state.turn_state.clear_plan_snapshot();
-    state.session.has_active_task = false;
+    state.machine.has_active_task = false;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -75,7 +75,7 @@ fn non_empty_trimmed(value: &str) -> Option<String> {
 }
 
 pub(super) fn project_messages_for_namespace(
-    messages: &[crate::session::Message],
+    messages: &[crate::agent_machine::Message],
 ) -> Vec<crate::llm::Message> {
     use crate::tape;
 

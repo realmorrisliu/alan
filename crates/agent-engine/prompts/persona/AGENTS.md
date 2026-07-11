@@ -2,7 +2,7 @@
 
 This workspace defines how alan should operate for this user and project.
 
-## Session Start
+## Process Start
 
 These persona files are already injected into the prompt context when available.
 Do not spend tool calls re-reading them by default.

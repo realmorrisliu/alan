@@ -8,7 +8,7 @@ description: |
   - alan needs to decide which pane or surface should receive an action
   - alan needs to create a space, split a pane, focus a pane, or send text
   - The task depends on understanding the outer terminal app rather than only
-    understanding alan session state
+    understanding Alan Process state
 
   This skill assumes the local `alan shell` CLI namespace backed by the shell's
   IPC/socket API. If that CLI is unavailable, report that clearly and fall back
@@ -34,10 +34,10 @@ Window -> Space -> Surface -> PaneTree -> Pane
 alan model:
 
 ```text
-Session -> Turn/Run -> Yield/Checkpoint -> Event history
+Process -> Agent Machine -> Turn -> Yield/Checkpoint -> AgentFS files
 ```
 
-A pane may optionally expose alan metadata, but a pane is not an alan session.
+A pane may optionally expose Alan Process metadata, but a pane is not a Process.
 
 ## Commands
 
@@ -97,6 +97,6 @@ entire scrollback by default.
 
 1. Query before mutate.
 2. Never assume the focused pane is correct without checking.
-3. Do not treat shell structure as equivalent to alan session structure.
+3. Do not treat shell structure as equivalent to Alan Process structure.
 4. If `alan shell` is unavailable, say so explicitly.
 5. If the shell reports stale or missing state, re-query before acting.
