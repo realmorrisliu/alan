@@ -30,5 +30,5 @@
 
 - [x] 5.1 Run the focused current-surface guard, `openspec validate --all --strict`, `git diff --check`, and any repository documentation validation affected by the edits.
 - [x] 5.2 Review the final diff to confirm `openspec/changes/archive/` is byte-for-byte untouched and no production runtime code changed.
-- [ ] 5.3 Open a narrowly scoped PR and keep the current HEAD under Codex review until all review threads are resolved, required CI is green, and a delayed refresh shows no new findings before merge.
-- [ ] 5.4 After merge, sync these delta requirements into canonical specs, verify the two middle cleanup changes can start from main, and mark this change archive-ready only when the merged state and canonical specs agree.
+- [x] 5.3 Open a narrowly scoped PR and keep the current HEAD under Codex review until all review threads are resolved, required CI is green, and a delayed refresh shows no new findings before merge.
+- [x] 5.4 After merge, sync these delta requirements into canonical specs, verify the two middle cleanup changes can start from main, and mark this change archive-ready only when the merged state and canonical specs agree.

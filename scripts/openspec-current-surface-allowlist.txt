@@ -1,18 +1,6 @@
 # rule|repo-relative file|literal substring|reason
-deleted-source-reference|openspec/changes/clean-canonical-spec-debt/design.md|`Views/Console/` remote-control surface|This change records the exact deleted path it removes from active work.
-deleted-source-reference|openspec/changes/clean-canonical-spec-debt/tasks.md|Remove deleted `Views/Console/`|This completed cleanup task is evidence, not current implementation scope.
-bridge-identifier|openspec/changes/clean-canonical-spec-debt/design.md|`ShellContentInstance` or host-action translation layers|This change names the retired bridge class only to prohibit it.
-bridge-identifier|openspec/changes/clean-canonical-spec-debt/tasks.md|`UPDFPreviewHostCompatibilityBridge` remains|This completed cleanup task records removal of the named bridge.
-bridge-identifier|openspec/changes/clean-canonical-spec-debt/tasks.md|`AlanVoiceHostCompatibilityBridge` remains|This completed cleanup task records removal of the named bridge.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/proposal.md|namespace-bootstrap compatibility bridges in active Alan work|The proposal explicitly prohibits this bridge class.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/proposal.md|authorize temporary compatibility bridges|The problem statement identifies the active planning debt being removed.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/proposal.md|authorize a new compatibility bridge|The proposal states the review rejection condition.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/proposal.md|against newly authorized compatibility bridges|The proposal requires regression review against newly introduced bridge debt.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/design.md|authorize named compatibility bridges|The context identifies the debt this change removes.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/specs/documentation-governance/spec.md|Alan SHALL reject active OpenSpec work that authorizes|The normative rule rejects bridge authorization.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/specs/documentation-governance/spec.md|permits a named compatibility|The scenario defines a failing validation case.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/specs/alan-app-service-integration/spec.md|namespace-bootstrap compatibility|The scenario prohibits this alternate package path.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/specs/alan-app-service-integration/spec.md|does not introduce a callback, DTO, ContentInstance, or host-action bridge|The scenario prohibits interim client authority.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/tasks.md|namespace-bootstrap compatibility projection remains|This completed cleanup task records removal of the projection.
-bridge-authorization|openspec/changes/clean-canonical-spec-debt/tasks.md|no host/ContentInstance compatibility bridge remains|This completed cleanup task records removal of the bridge.
+bridge-authorization|openspec/specs/alan-app-service-integration/spec.md|does not introduce a callback, DTO, ContentInstance, or host-action bridge|The canonical scenario prohibits interim client authority.
+bridge-authorization|openspec/specs/alan-app-service-integration/spec.md|does not synthesize a namespace-bootstrap compatibility projection|The canonical scenario prohibits an alternate package path.
+bridge-authorization|openspec/specs/documentation-governance/spec.md|Alan SHALL reject active OpenSpec work that authorizes|The canonical requirement rejects bridge authorization.
+bridge-authorization|openspec/specs/documentation-governance/spec.md|permits a named compatibility bridge|The canonical scenario defines a failing validation case.
 bridge-authorization|openspec/changes/finish-namespace-native-engine-boundary/design.md|Add a registry-backed or event-broadcast compatibility bridge|This line is in Non-Goals and rejects the listed fallback.
