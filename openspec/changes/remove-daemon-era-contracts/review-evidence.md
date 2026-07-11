@@ -124,3 +124,6 @@ decision for that boundary.
   and AgentFS execution alphabet and names no server, route, or daemon client.
 - `docs/live_runtime_smoke.md` describes an Agent Execution Engine turn and
   Process-to-Process continuity, not Session event streaming.
+- The sandbox carve-out contract names only
+  `.alan/runtime/{stable,dev}/memory/`; unscoped `.alan/memory/`, unknown
+  channels, and other protected runtime state remain denied.
