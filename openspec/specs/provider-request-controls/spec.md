@@ -4,8 +4,8 @@
 Define alan's canonical provider request-control contract. This capability owns
 reasoning effort, legacy thinking-budget compatibility, request-control
 resolution, validation, provider projection, metadata mirroring, and guardrails
-that prevent request-control truth from spreading across runtime, daemon,
-clients, and provider adapters.
+that prevent request-control truth from spreading across configuration, Agent
+Process state, rollout evidence, and provider adapters.
 ## Requirements
 ### Requirement: Canonical reasoning effort type
 alan SHALL define a shared typed reasoning effort model with lowercase
@@ -40,59 +40,9 @@ model catalog.
 - **WHEN** an existing catalog entry only declares `supports_reasoning = true`
 - **THEN** alan derives a conservative supported/default effort set or requires the entry to be migrated before validation passes
 
-#### Scenario: Client-visible model metadata
-- **WHEN** daemon or client-facing model metadata is exposed
+#### Scenario: Owner-visible model metadata
+- **WHEN** the model catalog exposes model metadata to an authorized consumer
 - **THEN** it includes supported reasoning efforts and the default reasoning effort for each listed model
-
-### Requirement: Request control intent is separate from resolved controls
-alan SHALL represent user, session, and turn request-control intent separately
-from resolved request controls. `Config` and transport DTOs MAY contain
-canonical reasoning-effort intent, but they MUST NOT expose legacy
-thinking-budget intent and MUST NOT be the authority for final effective
-request-control values.
-
-#### Scenario: Agent config sets effort
-- **WHEN** `agent.toml` sets `model_reasoning_effort = "high"`
-- **THEN** the resolved runtime config carries reasoning-effort intent for `high`
-
-#### Scenario: Legacy budget config is rejected
-- **WHEN** `agent.toml` sets `thinking_budget_tokens`
-- **THEN** alan rejects the configuration with a breaking-change error that names `model_reasoning_effort` as the replacement
-- **AND** alan does not preserve the budget as request-control intent
-
-#### Scenario: RuntimeConfig does not duplicate independent effective truth
-- **WHEN** a workspace overlay changes model metadata or a runtime launch applies a session override
-- **THEN** alan resolves request controls through the resolver
-- **AND** `RuntimeConfig` does not require a separate effective reasoning field that can drift from `Config`
-
-### Requirement: Runtime-owned request control resolution
-alan SHALL resolve effective provider request controls through a runtime-owned
-resolver before dispatching a model request. The resolver SHALL combine turn
-override, session/runtime override, agent config intent, model catalog default,
-provider capabilities, and provider default in a single typed result.
-
-#### Scenario: Turn override has highest precedence
-- **WHEN** a session has `model_reasoning_effort = "high"` and a turn requests `reasoning_effort = "low"`
-- **THEN** the resolved request controls use `low` for that turn
-- **AND** the session-level resolved controls remain unchanged for later turns
-
-#### Scenario: Session override wins over agent config
-- **WHEN** a session is created with a reasoning effort override and the resolved agent config has a different effort
-- **THEN** alan uses the session override for that runtime
-
-#### Scenario: Child agent override
-- **WHEN** a child-agent spawn spec includes a reasoning effort runtime override
-- **THEN** alan applies that effort to the child runtime after validating it against the child model
-
-#### Scenario: Model default is applied once by the resolver
-- **WHEN** no explicit reasoning effort is configured and the resolved model catalog entry declares default effort `medium`
-- **THEN** the resolver returns reasoning effort `medium` with source `model_default`
-- **AND** no other runtime, daemon, or provider-adapter layer recomputes that default independently
-
-#### Scenario: Unknown model metadata uses provider default
-- **WHEN** the selected provider/model has no model catalog metadata and no explicit request control is configured
-- **THEN** the resolver returns no explicit reasoning effort
-- **AND** the source records that provider defaults will apply
 
 ### Requirement: Explicit request controls are validated before dispatch
 alan SHALL validate explicit request controls against provider capability and
@@ -106,7 +56,7 @@ controls SHALL fail before dispatch instead of being silently dropped.
 
 #### Scenario: Model rejects unsupported effort
 - **WHEN** the resolved model catalog entry supports only `low` and `high`
-- **AND** a session or turn explicitly requests `xhigh`
+- **AND** an Agent Process or turn explicitly requests `xhigh`
 - **THEN** alan rejects the request before provider dispatch
 - **AND** the error lists the supported efforts from the model metadata
 
@@ -218,71 +168,31 @@ providers when the provider/model explicitly declares support.
 - **WHEN** the SDK-backed `openrouter` provider receives effective effort
 - **THEN** alan maps the effort to the OpenRouter SDK/provider-native reasoning field supported by the selected endpoint and model
 
-### Requirement: Daemon and clients mirror resolver metadata
-Daemon session metadata, fork metadata, read responses, and client DTOs SHALL
-report request-control metadata produced by the runtime resolver. They SHALL
-NOT reconstruct reasoning-effort precedence independently.
+### Requirement: Request control intent separates Process and turn ownership
+Alan SHALL represent Agent Process request-control intent separately from per-turn intent and from
+the normalized controls passed to a provider. Process intent SHALL be resolved from the AgentRoot,
+workspace overlays, connection/model catalog, and spawn inputs; turn intent MAY override only the
+current transition.
 
-#### Scenario: Create session response uses resolver output
-- **WHEN** a session is created without explicit reasoning effort and the selected model default resolves to `medium`
-- **THEN** the create-session response reports `reasoning_effort = "medium"`
-- **AND** the value comes from runtime startup metadata
+#### Scenario: A turn overrides Process reasoning effort
+- **WHEN** an Agent Process resolves medium reasoning effort and one turn explicitly requests low
+- **THEN** that generation uses low
+- **AND** later turns retain the Process-level medium intent
 
-#### Scenario: Fork override uses resolver output
-- **WHEN** a fork request explicitly overrides source-session reasoning effort
-- **THEN** the forked session metadata reports the newly resolved effort
-- **AND** daemon code does not recompute model defaults independently
+### Requirement: Effective request controls are file and rollout observable
+Agent Runtime Service SHALL project effective Process and current-turn request controls through
+Agent Machine state and rollout/checkpoint evidence.
 
-#### Scenario: Fork without override preserves source intent
-- **WHEN** a fork request omits `reasoning_effort` and the source session has an effective reasoning effort
-- **THEN** alan preserves that source setting as the fork session intent before runtime resolution
+#### Scenario: Renderer or auditor inspects effective controls
+- **WHEN** effective reasoning controls are needed for inspection
+- **THEN** the client reads the owning Agent Machine or durable evidence surface
+- **AND** the projected values come from the canonical runtime resolver
 
-### Requirement: Reasoning effort observability
-alan SHALL expose effective reasoning effort in runtime/session metadata and
-testable request traces.
+### Requirement: Request control tests guard durable owners
+Tests SHALL cover Agent Process intent, per-turn override, AgentRoot configuration, model catalog
+default, provider projection, and Agent Machine/rollout observability. They SHALL fail if a renderer,
+transport adapter, or provider adapter independently recomputes resolver-owned defaults.
 
-#### Scenario: Session metadata includes effort
-- **WHEN** a session is created or listed through the daemon API
-- **THEN** the response includes the effective reasoning effort when one is resolved
-
-#### Scenario: Request log includes effort
-- **WHEN** runtime logs or records provider request metadata
-- **THEN** it includes the effective reasoning effort without exposing hidden reasoning content
-
-#### Scenario: Rollout persistence
-- **WHEN** a turn is persisted to rollout metadata
-- **THEN** alan records the effective reasoning effort used for that turn when available
-
-### Requirement: Documentation and migration
-alan SHALL document effort-first reasoning controls and the breaking removal of
-legacy `thinking_budget_tokens` public configuration.
-
-#### Scenario: Agent config example
-- **WHEN** documentation shows reasoning configuration
-- **THEN** it uses `model_reasoning_effort = "medium"` as the primary example
-
-#### Scenario: Budget documentation
-- **WHEN** documentation mentions `thinking_budget_tokens`
-- **THEN** it describes the field as removed legacy configuration and directs users to `model_reasoning_effort`
-
-#### Scenario: Migration from budget to effort
-- **WHEN** users have existing `thinking_budget_tokens` config
-- **THEN** documentation explains that the field is rejected and must be replaced with a named reasoning effort when the selected provider/model supports effort
-
-### Requirement: Request control tests guard layer boundaries
-alan SHALL include tests that cover resolver precedence, validation, provider
-projection, and daemon metadata mirroring. Tests SHALL make it hard to re-add
-effective request-control logic in clients, daemon routes, provider adapters, or
-runtime execution call sites.
-
-#### Scenario: Resolver precedence matrix is tested
-- **WHEN** resolver tests run
-- **THEN** they cover turn override, session override, agent config, model default, and provider default cases
-
-#### Scenario: Legacy budget rejection is tested
-- **WHEN** config, protocol, API, client DTO, or generation-request construction paths are tested
-- **THEN** they reject or do not expose `thinking_budget_tokens` as a supported public request-control input
-
-#### Scenario: Layering contract rejects duplicate resolution
-- **WHEN** contract tests inspect request-control plumbing
-- **THEN** they fail if `turn_executor` or daemon routes directly recompute effective reasoning effort instead of consuming resolver output
+#### Scenario: Resolver ownership drifts
+- **WHEN** request-control resolution is duplicated outside the canonical runtime resolver
+- **THEN** focused boundary tests fail

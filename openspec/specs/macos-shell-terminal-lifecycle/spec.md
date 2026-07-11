@@ -479,7 +479,7 @@ requests before mutating authoritative shell state or releasing terminal
 ContentInstance runtimes.
 
 #### Scenario: Closing a pane with active work
-- **WHEN** the user requests close for a PaneSlot that mounts terminal content with a foreground command, running alan session, pending yield, or unknown live active-task state
+- **WHEN** the user requests close for a PaneSlot that mounts terminal content with a foreground command, running Alan CLI task, pending yield, or unknown live active-task state
 - **THEN** Alan asks for confirmation before removing the PaneSlot or finalizing the terminal ContentInstance runtime
 - **AND** cancelling the confirmation leaves shell state, workspace manifest state, and terminal runtime state unchanged
 
@@ -561,18 +561,20 @@ ContentInstance state.
 - **AND** the final shell state reports interrupted or forced shutdown metadata without exposing raw process handles
 
 ### Requirement: Runtime replacement does not claim cross-app continuity
-Alan-owned PTY runtime ownership SHALL improve in-process terminal control, but
-MUST NOT claim terminal process continuity across Alan app termination unless a
-separate daemon-owned runtime capability is implemented.
+
+Alan-owned PTY runtime ownership SHALL improve in-process terminal control, but MUST NOT claim terminal process continuity across Alan app termination.
 
 #### Scenario: App restarts after Alan-owned PTY runtime
-- **WHEN** alan restores a terminal ContentInstance after app restart
-- **THEN** alan creates a new runtime from persisted snapshot data
-- **AND** alan does not claim that the prior PTY, process group, foreground application, or file descriptors are still live
 
-#### Scenario: Daemon ownership is added later
-- **WHEN** a future change introduces daemon-owned PTY runtime survival across app quit
-- **THEN** that change updates lifecycle and persistence specs before exposing cross-app terminal continuity
+- **WHEN** Alan restores a terminal ContentInstance after app restart
+- **THEN** Alan creates a new runtime from persisted snapshot data
+- **AND** Alan does not claim that the prior PTY, process group, foreground application, or file descriptors are still live
+
+#### Scenario: Cross-app continuity is proposed later
+
+- **WHEN** a future change proposes PTY survival across app termination
+- **THEN** that change defines the lifecycle owner, persistence semantics, security boundary, and failure behavior in OpenSpec before exposing continuity
+- **AND** this cleanup does not preselect the owning service or attachment mechanism
 
 ### Requirement: Terminal delivery follows PTY readiness
 For Alan-owned PTY runtimes, terminal text delivery SHALL be acknowledged only

@@ -59,8 +59,6 @@ exclude_globs=(
     'clients/apple/build/**'
     'clients/apple/.build/**'
     'openspec/changes/archive/**'
-    'openspec/changes/remove-daemon-era-contracts/**'
-    'openspec/changes/remove-daemon-era-implementation/**'
     'docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md'
     'scripts/check-daemon-era-absence.sh'
 )
@@ -83,27 +81,10 @@ search_repo() {
     fi
 }
 
-# While the two removal changes are active, their deltas are the effective
-# authority for affected capabilities. Skip only those matching canonical
-# directories. Once the changes are archived, this exception disappears and
-# the synchronized canonical specs are scanned directly.
-for delta_root in \
-    openspec/changes/remove-daemon-era-contracts/specs \
-    openspec/changes/remove-daemon-era-implementation/specs
-do
-    [[ -d "$delta_root" ]] || continue
-    while IFS= read -r delta_spec; do
-        relative="${delta_spec#"$delta_root/"}"
-        capability="${relative%%/*}"
-        rg_args+=(--glob "!openspec/specs/$capability/**")
-        git_exclude_args+=(":(exclude)openspec/specs/$capability/**")
-    done < <(find "$delta_root" -type f -name 'spec.md' | sort)
-done
-
 matches_file="$(mktemp /tmp/alan-daemon-era-absence.XXXXXX)"
 trap 'rm -f "$matches_file"' EXIT
 
-retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect_snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta'
+retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect[ _-]snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta|(^|[^[:alnum:]_])relay([^[:alnum:]_]|$)'
 
 if search_repo "$retired_exact_pattern" "${scan_roots[@]}" >"$matches_file"; then
     cat "$matches_file" >&2

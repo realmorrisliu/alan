@@ -36,8 +36,8 @@ None.
 
 ## Dependencies
 
-- `remote-access-service`, owned by `remove-daemon-era-contracts`, defines the
-  OS entry Process, handoff, lease, revocation, and remote context semantics.
+- The canonical `remote-access-service` capability defines the OS entry
+  Process, handoff, lease, revocation, and remote context semantics.
 - Alan for macOS integration with local Alan OS remains a separate design; this
   change assumes only the accepted Remote Access Service host boundary.
 

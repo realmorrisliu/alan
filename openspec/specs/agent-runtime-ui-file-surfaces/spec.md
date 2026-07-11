@@ -6,17 +6,16 @@ renderer-visible agent activity, plan state, thinking, and notices for local
 renderer hosts.
 ## Requirements
 ### Requirement: Agent runtime projects renderer-visible UI state under `machine/ui`
-Alan SHALL expose renderer-visible runtime UI state through a runtime-owned
-`machine/ui/` subtree in the agent overlay. The subtree SHALL provide readable
-snapshot files for the current activity, plan, thinking, and latest notice
-state, plus a watchable `machine/ui/events` stream for ordered live updates.
+Alan SHALL expose renderer-visible runtime UI state through a runtime-owned `machine/ui/` subtree
+in the Agent Process overlay. The subtree SHALL provide readable snapshot files for current
+activity, plan, thinking, and latest notice state plus a watchable `machine/ui/events` Stream for
+ordered live updates.
 
-#### Scenario: A local renderer host hydrates current UI state
-- **WHEN** a local renderer host attaches to `/agent/<pid>`
-- **THEN** it can read `machine/ui/` snapshot files to learn the current turn
-  activity, current plan snapshot, latest renderer-visible thinking state, and
-  latest notice state
-- **AND** it does not need daemon session hydration APIs to recover that state
+#### Scenario: A renderer host hydrates current UI state
+- **WHEN** a renderer host attaches to `/agent/<pid>`
+- **THEN** it reads `machine/ui/` snapshot files for current activity, plan, renderer-visible
+  thinking, and notice state
+- **AND** hydration requires no second runtime state object or transport-owned history
 
 ### Requirement: Renderer-visible runtime updates are watchable by blocking read
 Alan SHALL append renderer-visible runtime updates to `machine/ui/events` as a

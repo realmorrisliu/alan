@@ -80,9 +80,9 @@
 
 ## 11. Review, Merge, And Archive Readiness
 
-- [ ] 11.1 Open the implementation PR stacked on the contracts PR and include the removal inventory, one-time cleanup evidence, built-binary evidence, Apple verification, and explicit no-replacement statement.
-- [ ] 11.2 Keep watching CI, head SHA, all review threads, and Codex review until every finding is addressed or explicitly resolved and a delayed refresh produces no new findings; do not rely on the user to report status.
-- [ ] 11.3 Confirm the implementation PR is complete and review-green before permitting the prerequisite contracts PR to merge.
-- [ ] 11.4 After contracts merges, immediately rebase the implementation branch, rerun the full product, source-absence, local-state non-recreation, and OpenSpec validation matrix, and restart the delayed review gate for the new head SHA.
-- [ ] 11.5 Merge the implementation PR only after the rebased head remains CI-green with zero unresolved threads and no new Codex review findings.
-- [ ] 11.6 Confirm both changes' deltas are synchronized into canonical specs, the three obsolete capabilities are removed, and both changes are ready to archive in contracts-then-implementation order.
+- [x] 11.1 Open the implementation PR stacked on the contracts PR and include the removal inventory, one-time cleanup evidence, built-binary evidence, Apple verification, and explicit no-replacement statement.
+- [x] 11.2 Keep watching CI, head SHA, all review threads, and Codex review until every finding is addressed or explicitly resolved and a delayed refresh produces no new findings; do not rely on the user to report status.
+- [x] 11.3 Confirm the implementation PR is complete and review-green before permitting the prerequisite contracts PR to merge.
+- [x] 11.4 After contracts merges, immediately bring the implementation branch onto the merged contracts commit, rerun the full product, source-absence, local-state non-recreation, and OpenSpec validation matrix, and restart the delayed review gate for the new head SHA.
+- [x] 11.5 Merge the implementation PR only after the rebased head remains CI-green with zero unresolved threads and no new Codex review findings.
+- [x] 11.6 Confirm both changes' deltas are synchronized into canonical specs, the three obsolete capabilities are removed, and both changes are ready to archive in contracts-then-implementation order.

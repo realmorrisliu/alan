@@ -6,11 +6,11 @@ upload audio, and Cloud Mode is explicit. The old fixed-command controller is
 too limited for free-form recognition and intent proposals.
 
 The architectural correction is at the execution boundary. Alan Voice is a
-host-backed capability under `alan-app-service-integration`, now owned by
-`remove-daemon-era-contracts`: platform
-audio and speech APIs may stay inside Alan for macOS, but Alan OS clients operate
-capture and results through an aP tree. Typed `VoiceIntent` remains a Voice
-Service domain document, not a Kernel primitive or global command bus.
+host-backed capability under the canonical `alan-app-service-integration`
+contract: platform audio and speech APIs may stay inside Alan for macOS, but
+Alan OS clients operate capture and results through an aP tree. Typed
+`VoiceIntent` remains a Voice Service domain document, not a Kernel primitive
+or global command bus.
 
 ## Goals / Non-Goals
 

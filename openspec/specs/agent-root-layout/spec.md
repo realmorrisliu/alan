@@ -6,7 +6,6 @@ named root paths, default agent semantics, overlay order, asset loading and
 writing, singular `.alan/agent/` removal, and repository hygiene. This
 capability owns user-visible layout behavior; implementation guardrails for how
 code constructs these paths live in `agent-root-layout-contract`.
-
 ## Requirements
 ### Requirement: Canonical agent root directories
 alan SHALL store every default and named agent definition root under an `agents`
@@ -22,42 +21,6 @@ directory. The default agent root SHALL be named `default`.
 - **WHEN** alan resolves a named agent root for `reviewer` in the active alan home
 - **THEN** the global named root is `<alan-home>/agents/reviewer/`
 - **AND** the workspace named root is `<workspace>/.alan/agents/reviewer/`
-
-### Requirement: Default agent name semantics
-alan SHALL treat the agent name `default` as the reserved default agent identifier.
-Omitting `agent_name` SHALL select the same agent definition as explicitly providing
-`agent_name = "default"`.
-
-#### Scenario: Omitted agent name selects default
-- **WHEN** a session, CLI command, or daemon request omits `agent_name`
-- **THEN** alan resolves only the default agent root chain
-- **AND** the root chain is `<alan-home>/agents/default/ -> <workspace>/.alan/agents/default/` when both scopes exist
-
-#### Scenario: Explicit default selects default
-- **WHEN** a session, CLI command, or daemon request sets `agent_name` to `default`
-- **THEN** alan resolves the same root chain as omitted `agent_name`
-- **AND** alan does not add a separate named overlay for `default`
-
-#### Scenario: Default cannot be used as an ordinary named specialization
-- **WHEN** a user creates files under `.alan/agents/default/`
-- **THEN** alan treats those files as the default agent definition
-- **AND** alan does not treat `default` as a named specialization layered on top of another default root
-
-### Requirement: Named agent overlay order
-alan SHALL resolve named agents by layering default roots first and the selected named
-roots after them, preserving the existing precedence model with updated paths.
-
-#### Scenario: Named workspace session resolves default then named roots
-- **WHEN** alan resolves `agent_name = "reviewer"` for a workspace session
-- **THEN** the root order is `<alan-home>/agents/default/`
-- **AND** then `<workspace>/.alan/agents/default/`
-- **AND** then `<alan-home>/agents/reviewer/`
-- **AND** then `<workspace>/.alan/agents/reviewer/`
-
-#### Scenario: Missing scopes are skipped without changing relative precedence
-- **WHEN** alan resolves a named agent without an alan home or without a workspace
-- **THEN** alan skips roots from the missing scope
-- **AND** remaining default roots still appear before remaining named roots
 
 ### Requirement: Agent definition assets load from canonical roots
 alan SHALL load agent-root `agent.toml`, `persona/`, `skills/`, and `policy.yaml`
@@ -116,20 +79,6 @@ not be a compatibility alias, fallback, or lower-precedence root.
 - **THEN** the report is diagnostic only
 - **AND** alan still does not read, write, merge, or migrate files from `.alan/agent/`
 
-### Requirement: Repository hygiene reflects canonical roots
-Repository ignore rules and documentation SHALL distinguish generated `.alan` runtime
-state from authored agent definitions using the canonical `.alan/agents/` layout.
-
-#### Scenario: Source-controlled agent roots remain trackable
-- **WHEN** a workspace contains authored files under `.alan/agents/default/` or `.alan/agents/<name>/`
-- **THEN** repository ignore rules allow those files to be tracked
-- **AND** generated `.alan/sessions/` and `.alan/memory/` files remain ignored
-
-#### Scenario: Old singular root is not allowlisted
-- **WHEN** a workspace contains files under `.alan/agent/`
-- **THEN** repository ignore rules do not allowlist that path as an authored agent root
-- **AND** documentation instructs users to move authored files to `.alan/agents/default/`
-
 ### Requirement: Global agent roots are channel-scoped
 Alan SHALL resolve global agent roots from the active install channel's alan
 home. Existing `~/.alan/...` global agent-root paths remain the stable-channel
@@ -169,3 +118,40 @@ write global agent-root files under the active channel's alan home.
 - **THEN** the workspace default root remains `<workspace>/.alan/agents/default/`
 - **AND** the workspace named root remains `<workspace>/.alan/agents/<name>/`
 - **AND** channel isolation applies to global roots and generated runtime state, not to authored workspace roots
+
+### Requirement: Process launch uses default agent-name semantics
+
+Alan SHALL treat `default` as the reserved default agent-definition identifier when launching an Agent Process. Omitting the agent name and explicitly selecting `default` SHALL resolve the same canonical default root chain.
+
+#### Scenario: Agent Process launch omits agent name
+
+- **WHEN** an Agent Process is launched without an agent name
+- **THEN** Alan resolves `<alan-home>/agents/default/ -> <workspace>/.alan/agents/default/` for the scopes that exist
+- **AND** Alan does not add a named overlay
+
+#### Scenario: Agent Process launch selects default explicitly
+
+- **WHEN** an Agent Process is launched with agent name `default`
+- **THEN** Alan resolves the same root chain as an omitted name
+- **AND** `default` is not treated as an ordinary named specialization
+
+### Requirement: Named Agent Processes resolve default roots before named roots
+
+Alan SHALL resolve a named Agent Process by layering canonical default roots before the selected named roots while preserving scope precedence.
+
+#### Scenario: Reviewer Agent Process is launched in a workspace
+
+- **WHEN** Alan resolves agent name `reviewer` for an Agent Process with global and workspace scopes
+- **THEN** the root order is `<alan-home>/agents/default/`, `<workspace>/.alan/agents/default/`, `<alan-home>/agents/reviewer/`, then `<workspace>/.alan/agents/reviewer/`
+- **AND** missing scopes are skipped without changing the relative default-before-named order
+
+### Requirement: Repository hygiene distinguishes authored definitions from generated Process state
+
+Repository ignore rules and current documentation SHALL keep authored files under `.alan/agents/` trackable while excluding generated Process, Agent Machine, rollout, checkpoint, and Memory Store state.
+
+#### Scenario: Workspace contains authored and generated Alan state
+
+- **WHEN** a repository contains authored agent definitions and generated execution state
+- **THEN** files under `.alan/agents/default/` and `.alan/agents/<name>/` remain trackable
+- **AND** generated Process, machine, rollout, checkpoint, and Memory Store paths are ignored through their canonical owners
+- **AND** current documentation names each generated path by its owning component

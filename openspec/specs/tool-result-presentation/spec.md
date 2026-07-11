@@ -20,16 +20,19 @@ The protocol SHALL represent rich tool results using a closed set of presentatio
 - **THEN** it uses exactly one of the defined primitives and no tool-identity-specific protocol variant is required
 
 ### Requirement: Tool calls carry a human title at start
-A tool-call-started event SHALL carry an optional human-readable title formatted by the runtime/daemon, and the TUI SHALL render that title without interpreting tool arguments.
+
+A Tool-call-started record SHALL carry an optional human-readable title formatted by the Agent Execution Engine, and renderer hosts SHALL display that title without interpreting Tool arguments.
 
 #### Scenario: Title is shown verbatim
-- **WHEN** a tool call starts with a title such as `Read src/foo.rs` or `Bash cargo test`
-- **THEN** the TUI displays that title as the tool header
-- **AND** the TUI does not parse the tool's argument schema to build the header
 
-#### Scenario: Missing title degrades to tool name
-- **WHEN** a tool call starts without a title
-- **THEN** the TUI displays the tool name
+- **WHEN** a Tool call starts with a title such as `Read src/foo.rs` or `Bash cargo test`
+- **THEN** the renderer displays that title as the Tool header
+- **AND** it does not parse the Tool's argument schema to build the header
+
+#### Scenario: Missing title degrades to Tool name
+
+- **WHEN** a Tool call starts without a title
+- **THEN** the renderer displays the Tool name
 
 ### Requirement: Structured completion payload is additive and backward-compatible
 A tool-call-completed event SHALL carry an optional structured presentation payload while retaining the flat preview string as a fallback.
@@ -64,4 +67,3 @@ The TUI SHALL render each presentation primitive with a form appropriate to its 
 #### Scenario: Large output collapses
 - **WHEN** a rendered payload exceeds the display threshold
 - **THEN** the TUI shows a truncated view with a total count and an expand affordance
-
