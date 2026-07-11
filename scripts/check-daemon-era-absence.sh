@@ -50,18 +50,36 @@ scan_roots=(
     scripts
 )
 
-rg_args=(
-    --glob '!.git/**'
-    --glob '!target/**'
-    --glob '!third_party/**'
-    --glob '!clients/apple/build/**'
-    --glob '!clients/apple/.build/**'
-    --glob '!openspec/changes/archive/**'
-    --glob '!openspec/changes/remove-daemon-era-contracts/**'
-    --glob '!openspec/changes/remove-daemon-era-implementation/**'
-    --glob '!docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md'
-    --glob '!scripts/check-daemon-era-absence.sh'
+exclude_globs=(
+    '.git/**'
+    'target/**'
+    'third_party/**'
+    'clients/apple/build/**'
+    'clients/apple/.build/**'
+    'openspec/changes/archive/**'
+    'openspec/changes/remove-daemon-era-contracts/**'
+    'openspec/changes/remove-daemon-era-implementation/**'
+    'docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md'
+    'scripts/check-daemon-era-absence.sh'
 )
+
+rg_args=()
+git_exclude_args=()
+for exclude_glob in "${exclude_globs[@]}"; do
+    rg_args+=(--glob "!$exclude_glob")
+    git_exclude_args+=(":(exclude)$exclude_glob")
+done
+
+search_repo() {
+    local pattern="$1"
+    shift
+
+    if command -v rg >/dev/null 2>&1; then
+        rg -n -i "$pattern" "${rg_args[@]}" "$@"
+    else
+        git grep -n -I -i -E -- "$pattern" -- "$@" "${git_exclude_args[@]}"
+    fi
+}
 
 # While the two removal changes are active, their deltas are the effective
 # authority for affected capabilities. Skip only those matching canonical
@@ -76,7 +94,8 @@ do
         relative="${delta_spec#"$delta_root/"}"
         capability="${relative%%/*}"
         rg_args+=(--glob "!openspec/specs/$capability/**")
-    done < <(rg --files "$delta_root" -g 'spec.md' | sort)
+        git_exclude_args+=(":(exclude)openspec/specs/$capability/**")
+    done < <(find "$delta_root" -type f -name 'spec.md' | sort)
 done
 
 matches_file="$(mktemp /tmp/alan-daemon-era-absence.XXXXXX)"
@@ -84,7 +103,7 @@ trap 'rm -f "$matches_file"' EXIT
 
 retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect_snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta'
 
-if rg -n -i "$retired_exact_pattern" "${rg_args[@]}" "${scan_roots[@]}" >"$matches_file"; then
+if search_repo "$retired_exact_pattern" "${scan_roots[@]}" >"$matches_file"; then
     cat "$matches_file" >&2
     fail "unambiguously retired daemon-era surface found"
 fi
@@ -125,7 +144,8 @@ is_allowed_daemon_match() {
 }
 
 violations=()
-if rg -n -i '\bdaemon\b|daemon_' "${rg_args[@]}" "${scan_roots[@]}" >"$matches_file"; then
+daemon_pattern='(^|[^[:alnum:]_])daemon([^[:alnum:]_]|$)|daemon_'
+if search_repo "$daemon_pattern" "${scan_roots[@]}" >"$matches_file"; then
     while IFS=: read -r file line text; do
         if ! is_allowed_daemon_match "$file" "$text"; then
             violations+=("$file:$line:$text")
@@ -166,7 +186,7 @@ is_allowed_session_match() {
 
 violations=()
 session_pattern='Agent Session|AgentSession|agent-session|session[-_ ]scoped|session identity|session lifecycle|session_id'
-if rg -n -i "$session_pattern" "${rg_args[@]}" "${scan_roots[@]}" >"$matches_file"; then
+if search_repo "$session_pattern" "${scan_roots[@]}" >"$matches_file"; then
     while IFS=: read -r file line text; do
         if ! is_allowed_session_match "$file" "$text"; then
             violations+=("$file:$line:$text")
@@ -183,7 +203,7 @@ fi
 [[ -x "$alan_binary" ]] || fail "alan binary is not executable: $alan_binary"
 
 "$alan_binary" --help >"$matches_file"
-if rg -n -i '\bdaemon\b|Agent Session|HTTP|WebSocket|relay|reconnect|scheduler' "$matches_file"; then
+if grep -n -i -E '(^|[^[:alnum:]_])daemon([^[:alnum:]_]|$)|Agent Session|HTTP|WebSocket|relay|reconnect|scheduler' "$matches_file"; then
     fail "retired daemon-era surface is present in alan --help"
 fi
 
@@ -191,7 +211,7 @@ if "$alan_binary" daemon --help >"$matches_file" 2>&1; then
     cat "$matches_file" >&2
     fail "retired alan daemon command remains callable"
 fi
-if ! rg -i "unrecognized subcommand.*daemon" "$matches_file" >/dev/null; then
+if ! grep -i -E "unrecognized subcommand.*daemon" "$matches_file" >/dev/null; then
     cat "$matches_file" >&2
     fail "alan daemon failed for an unexpected reason instead of being absent from Clap"
 fi
