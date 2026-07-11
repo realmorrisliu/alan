@@ -35,6 +35,7 @@ pub enum ShellTabActiveTaskState {
     /// An Alan Process is visible in the terminal pane.
     AlanProcess,
     /// Unknown task state that should be retained conservatively.
+    #[serde(other)]
     Unknown,
 }
 
