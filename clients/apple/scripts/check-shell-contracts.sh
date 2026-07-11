@@ -3016,7 +3016,7 @@ require_pattern \
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
     "case agent" \
-    "Settings navigation model must not restore the retired daemon-backed Agent group"
+    "Settings navigation model must not restore the retired Agent integration group"
 
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
