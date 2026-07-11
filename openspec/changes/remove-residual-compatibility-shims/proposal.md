@@ -1,6 +1,6 @@
 ## Why
 
-The daemon-era clean break left a smaller set of unrelated compatibility readers,
+The retired host-service clean break left a smaller set of unrelated compatibility readers,
 aliases, deprecated fields, and manifest declarations that still accept or carry
 retired shapes. Alan is early enough to remove them now; retaining them would make
 old inputs part of the supported surface and obscure the one canonical form.

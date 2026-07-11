@@ -1,6 +1,6 @@
 ## Context
 
-After the daemon-era removal, current code still accepts several retired input
+After the retired host-service removal, current code still accepts several retired input
 shapes: an unversioned LLMFS request, single-threshold compaction configuration,
 old governance names, and an input operation with an alias or implicit routing
 mode. The Apple client also retains three deprecated palette aliases, and the

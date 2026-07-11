@@ -47,7 +47,7 @@ before `finish-namespace-native-engine-boundary` begins.
   Profiles.
 - Delete Unix accounts or home directories as part of ordinary cleanup.
 - Preserve an upgrade path for machines that skip the one-time cleanup.
-- Add a permanent `alan cleanup-legacy` command or maintenance daemon.
+- Add a permanent `alan cleanup-legacy` command or background maintenance service.
 
 ## Decisions
 

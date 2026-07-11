@@ -5,7 +5,7 @@ capabilities still have generated `TBD` Purpose text. `openspec/config.yaml`
 also declares an `archive` artifact rule that the installed `spec-driven`
 schema does not recognize, so every instruction lookup emits a warning.
 
-Several active changes were written before the daemon-era removal and the
+Several active changes were written before the retired host-service removal and the
 accepted direct-file architecture. They still cite deleted Console sources or
 authorize named compatibility bridges for host attachment and package
 projection. Those active documents are executable planning inputs, not inert

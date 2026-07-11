@@ -5,7 +5,7 @@ unsupported `archive` rule that warns on every artifact-instruction lookup, and
 active changes that cite deleted macOS Console paths or authorize temporary
 compatibility bridges. Leaving those planning surfaces active would let retired
 architecture and new bridge debt re-enter the implementation immediately after
-the daemon-era clean break.
+the retired host-service clean break.
 
 ## What Changes
 
