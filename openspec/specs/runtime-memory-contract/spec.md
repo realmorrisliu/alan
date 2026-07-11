@@ -18,12 +18,6 @@ write, compaction coordination, and memory-surface requirements in OpenSpec.
   this capability, or another named OpenSpec owner
 - **AND** it does not create a new long-form memory contract in `docs/spec/`
 
-#### Scenario: Legacy memory docs remain linked
-- **WHEN** `docs/spec/memory_architecture.md` or
-  `docs/spec/pure_text_memory_contract.md` is reached during migration
-- **THEN** the file points to OpenSpec memory owners as a non-authoritative
-  bridge
-
 ### Requirement: Memory surfaces remain human-readable and provenance-aware
 alan SHALL keep memory and handoff surfaces readable, workspace-scoped, and
 explicit about truncation or provenance when they summarize larger runtime

@@ -112,3 +112,15 @@ The canonical capability directory is deleted when this change is synchronized.
 Alan for macOS attachment transport, Process topology, lifecycle ownership, and
 client API remain deliberately unspecified. ADR-0029 is the only current
 decision for that boundary.
+
+## Current guide and legacy-path audit
+
+- Every tracked file under `docs/spec/` is deleted; immutable OpenSpec archives
+  remain unchanged.
+- Canonical capabilities no longer contain scenarios that require opening or
+  preserving a named `docs/spec/` bridge. Remaining generic mentions only ban
+  new parallel contracts or define documentation-governance checks.
+- `docs/testing_strategy.md` treats Event/Op only as the Agent Execution Engine
+  and AgentFS execution alphabet and names no server, route, or daemon client.
+- `docs/live_runtime_smoke.md` describes an Agent Execution Engine turn and
+  Process-to-Process continuity, not Session event streaming.

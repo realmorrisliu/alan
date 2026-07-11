@@ -17,11 +17,6 @@ policy, and relationship to integration tests in OpenSpec.
 - **AND** new placement guidance is not authored as a long-form `docs/spec/`
   contract
 
-#### Scenario: Legacy Rust test placement doc is opened
-- **WHEN** `docs/spec/rust_test_placement_contract.md` is reached during
-  migration
-- **THEN** the file points to this OpenSpec capability as a bridge
-
 ### Requirement: Test location matches behavior boundary
 alan SHALL place tests near the behavior boundary they verify, with larger or
 cross-module behavior using extracted white-box or integration suites rather

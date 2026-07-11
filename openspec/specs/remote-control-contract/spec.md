@@ -20,11 +20,6 @@ signals, and non-bypass governance rules in OpenSpec.
 - **AND** remote control docs under `docs/maintainer/` remain planning/runbook
   surfaces rather than the contract source
 
-#### Scenario: Legacy remote doc is referenced
-- **WHEN** `docs/spec/remote_control_architecture.md` or
-  `docs/spec/remote_control_security.md` is opened
-- **THEN** the file is a bridge to the relevant OpenSpec owner
-
 ### Requirement: Remote governance cannot bypass local policy
 alan SHALL preserve local governance and workspace authorization boundaries
 when sessions are controlled through direct remote clients, relay transports, or
