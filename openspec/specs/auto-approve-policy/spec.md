@@ -1,12 +1,22 @@
 # auto-approve-policy Specification
 
 ## Purpose
-Defines Alan's single Autonomous approval posture, deterministic escalation
-boundaries, non-persistent permissions, keyboard-driven approval and structured
-input surfaces, decision context, and interrupt behavior.
+Defines Alan's single canonically serialized Autonomous approval posture,
+deterministic escalation boundaries, strict profile parsing, non-persistent
+permissions, keyboard-driven approval and structured input surfaces, decision
+context, and interrupt behavior.
 ## Requirements
 ### Requirement: Single human-in-the-end auto-approve mode
-The agent SHALL operate in a single posture named `Autonomous` in which routine operations proceed without prompting and operations needing judgment are escalated. The system SHALL NOT expose multiple selectable approval modes. Escalations SHALL be routed to the reviewer (see the `autonomous-review-mode` capability) rather than always pausing for a human, except for red-line operations which bypass the reviewer (deny outright, or go straight to the human). A human remains the final fallback when the reviewer denies past the circuit breaker, when an operation is on the always-human red line, or when the reviewer is unavailable.
+The agent SHALL operate in a single posture named `Autonomous` with the
+serialized value `autonomous`, in which routine operations proceed without
+prompting and operations needing judgment are escalated. The system SHALL NOT
+expose multiple selectable approval modes or accept retired profile aliases.
+Escalations SHALL be routed to the reviewer (see the
+`autonomous-review-mode` capability) rather than always pausing for a human,
+except for red-line operations which bypass the reviewer (deny outright, or go
+straight to the human). A human remains the final fallback when the reviewer
+denies past the circuit breaker, when an operation is on the always-human red
+line, or when the reviewer is unavailable.
 
 #### Scenario: Routine operation proceeds automatically
 - **WHEN** the policy classifies an operation as a read or an in-workspace write
@@ -24,9 +34,14 @@ The agent SHALL operate in a single posture named `Autonomous` in which routine 
 - **WHEN** an operation is catastrophic (deny) or dangerous-but-uncontainable (always-human)
 - **THEN** it is denied outright or surfaced to the human, and the reviewer never decides it
 
-#### Scenario: Legacy profile names resolve to Autonomous
-- **WHEN** a configuration specifies a legacy profile value (such as `auto_approve`, `conservative`, or `autonomous`)
-- **THEN** it resolves to the single `Autonomous` posture without error
+#### Scenario: Canonical profile name resolves to Autonomous
+- **WHEN** a configuration specifies the profile value `autonomous`
+- **THEN** it resolves to the single `Autonomous` posture
+
+#### Scenario: Retired profile alias is rejected
+- **WHEN** a configuration or API request specifies `auto_approve`,
+  `auto-approve`, `autoapprove`, or `conservative`
+- **THEN** deserialization fails instead of resolving the alias to `Autonomous`
 
 #### Scenario: Malformed profile values are rejected
 - **WHEN** a configuration or API request specifies an unrecognized profile string (e.g. `"conservativ"`) or a wrong-typed value (a boolean, number, or object)

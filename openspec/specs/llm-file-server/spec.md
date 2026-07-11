@@ -2,8 +2,9 @@
 
 ## Purpose
 Defines `alan-llmfs` provider, Connection, and Generation file trees, including
-clone-via-open lifecycle, clunk-committed versioned requests, typed event
-streams, metering, and phase-specific errors.
+clone-via-open lifecycle, clunk-committed current-version requests, rejection of
+unversioned or unsupported request documents, typed event streams, metering,
+and phase-specific errors.
 ## Requirements
 ### Requirement: llmfs posts a handle in `/srv` and serves its tree under `/mnt/llm`
 Alan OS SHALL provide `alan-llmfs`, a file server that speaks aP (the `alan-ap`
@@ -101,7 +102,9 @@ running Generation. The request document SHALL NOT carry credentials.
 ### Requirement: The request and events use an independent versioned wire DTO
 `alan-llmfs` SHALL define its own versioned wire DTO for the request document and
 for the stream-event records, decoupled from `alan-llm` internal types. It SHALL
-map the DTO to and from `alan-llm` (`GenerationRequest` / `StreamChunk`)
+accept only the current explicitly versioned request document and SHALL reject
+unversioned or unknown-version request shapes without migration or fallback. It
+SHALL map the DTO to and from `alan-llm` (`GenerationRequest` / `StreamChunk`)
 internally. The events stream SHALL be a byte-stream record convention (for
 example one JSON record per line) per the aP stream model.
 
@@ -111,6 +114,23 @@ example one JSON record per line) per the aP stream model.
   `alan-llm` internal structs
 - **AND** an `alan-llm` internal refactor does not change the wire format unless
   the DTO version changes
+
+#### Scenario: Current request document is committed
+- **WHEN** a caller commits a valid current-version request document to a
+  Generation
+- **THEN** `alan-llmfs` maps the full document to `GenerationRequest`
+- **AND** generation starts only after normal commit validation succeeds
+
+#### Scenario: Unversioned request document is committed
+- **WHEN** a caller commits the retired unversioned `{system,user}` request
+  shape or a document without the required version discriminator
+- **THEN** the Generation commit is rejected before provider dispatch
+- **AND** no legacy DTO fallback or migration is attempted
+
+#### Scenario: Unknown request version is committed
+- **WHEN** a caller commits a request document with an unsupported version
+- **THEN** the Generation commit is rejected with an unsupported-version error
+- **AND** no provider request starts
 
 ### Requirement: Metering lives in llmfs; errors split by phase
 `alan-llmfs` SHALL enforce cost, metering, and rate-limiting itself, reached only
