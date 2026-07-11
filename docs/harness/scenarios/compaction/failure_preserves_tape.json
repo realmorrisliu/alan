@@ -3,11 +3,11 @@
   "category": "compaction",
   "description": "Validate compaction failure keeps tape state intact while still surfacing the failed attempt durably and externally.",
   "blocking": true,
-  "command": "cargo test -p alan --test compaction_integration_test compaction_failure_preserves_tape_and_recovery_state -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_compaction_failure_without_fallback_escalates_warning_and_preserves_tape -- --exact",
   "assertions": [
     "failed compaction emits CompactionResult::Failure",
     "failure path does not mutate tape or durable compacted summary state",
-    "failed attempt remains available in event, read, reconnect, rollout, and recovery views"
+    "failed attempt remains available in Agent Machine and rollout evidence"
   ],
   "kpi_tags": [
     "failure_path",

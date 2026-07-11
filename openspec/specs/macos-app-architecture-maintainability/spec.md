@@ -5,32 +5,6 @@ Define maintainable native Apple client source organization, SwiftUI/AppKit
 boundaries, service/model ownership, and validation expectations for macOS app
 architecture changes.
 ## Requirements
-### Requirement: Apple client source layout mirrors architecture ownership
-The native Apple client SHALL organize source files by durable responsibility so
-developers can distinguish app startup, SwiftUI views, models, controllers,
-services, and support code without reading every file in a flat directory. The
-active macOS source root SHALL use the lowercase `clients/apple/alan-macos`
-identity rather than the historical `clients/apple/AlanNative` identity.
-
-#### Scenario: Source tree is inspected
-- **WHEN** a developer inspects `clients/apple/alan-macos`
-- **THEN** app entry code, shell views, console views, protocol models,
-  observable controllers, service/IO code, and support utilities are grouped by
-  responsibility or explicitly documented as migration debt rather than silently
-  mixed in one flat source directory
-
-#### Scenario: README documents source layout
-- **WHEN** the Apple client README describes the directory structure
-- **THEN** the documented folders match the source tree and Xcode project
-  organization used by the current code
-
-#### Scenario: Historical source root is referenced
-- **WHEN** active docs, scripts, specs, or Xcode project groups refer to the
-  Apple client source root
-- **THEN** they use `clients/apple/alan-macos`
-- **AND** they do not use `clients/apple/AlanNative` except in explicitly
-  marked historical migration notes
-
 ### Requirement: SwiftUI scene roots compose focused feature views
 SwiftUI scene and root view files SHALL primarily compose stable layout,
 selection, and feature views. They MUST NOT accumulate unrelated design tokens,
@@ -111,38 +85,6 @@ diagnostics in reviewable ownership units.
 - **THEN** the persistence/event owner can be reviewed independently from IPC
   request parsing
 
-### Requirement: API clients and event reducers are not embedded in views
-The Apple client SHALL keep daemon API clients, event polling or streaming
-loops, protocol event reduction, and view model state projection outside
-complete SwiftUI view files so each can be tested or reviewed without editing a
-complete SwiftUI screen.
-
-#### Scenario: Session event mapping changes
-- **WHEN** daemon session events are mapped into chat messages, timeline rows,
-  pending-yield state, or connection state
-- **THEN** the reducer behavior is owned outside the SwiftUI view body and can
-  be tested without rendering the full console UI
-
-#### Scenario: API endpoint support changes
-- **WHEN** daemon API request or response DTOs change
-- **THEN** the API client and protocol models own that change separately from
-  shell or console layout files
-
-### Requirement: Mobile and legacy console surfaces are isolated from the primary macOS shell
-The Apple client SHALL keep mobile or legacy remote-control console surfaces
-separate from the primary macOS shell path so contributors can identify which UI
-is active for macOS shell development.
-
-#### Scenario: macOS shell contributor opens the project
-- **WHEN** a developer needs to change the default macOS shell experience
-- **THEN** primary shell files are distinguishable from iOS/mobile console files
-  by folder, naming, or project grouping
-
-#### Scenario: iOS console behavior changes
-- **WHEN** a developer changes the mobile console layout or event handling
-- **THEN** the change does not require editing primary macOS shell root files
-  unless a shared model or service contract is intentionally changed
-
 ### Requirement: Large files have planned ownership boundaries
 The Apple client SHALL avoid large multi-responsibility Swift files as the
 stable end state. When a file remains large or in a transitional owner during
@@ -182,34 +124,6 @@ whether the current architecture gate treats it as non-blocking.
 - **WHEN** a focused refactor slice resolves a tracked warning
 - **THEN** the architecture debt record and validation expectations are updated
   in the same PR so the warning cannot silently reappear
-
-### Requirement: Architecture warning debt is reduced by focused slices
-The Apple client SHALL reduce tracked architecture-maintainability warnings
-through focused, behavior-preserving refactor slices. Each slice MUST identify
-the warning class it resolves, the owner boundary it clarifies, and the
-verification commands that protect the moved behavior.
-
-#### Scenario: Focused slice resolves a warning
-- **WHEN** a refactor slice removes one or more warnings from
-  `check-architecture-maintainability.sh`
-- **THEN** the slice updates `clients/apple/ARCHITECTURE.md` with the new
-  warning count and removes or narrows the corresponding debt entry
-
-#### Scenario: Slice changes a terminal owner
-- **WHEN** a slice moves code from a terminal runtime, host, or surface owner
-- **THEN** focused terminal runtime or terminal surface scripts are run in
-  addition to the architecture report
-
-#### Scenario: Slice changes a shell controller owner
-- **WHEN** a slice moves controller, store, projection, or command-routing code
-  out of `ShellHostController.swift`
-- **THEN** shell contract validation is run and the shared
-  `ShellWorkspaceCommand` vocabulary remains the command boundary
-
-#### Scenario: Slice changes console or mobile owners
-- **WHEN** a slice moves code from `Views/Console/ContentView.swift`
-- **THEN** the primary macOS shell path remains distinguishable from
-  console/mobile surfaces by folder, naming, or project grouping
 
 ### Requirement: Architecture validation expectations track reduced debt
 The architecture-maintainability gate SHALL keep current warning expectations
@@ -455,3 +369,39 @@ authority guards.
 - **WHEN** a cleanup or split removes or narrows a warning from the architecture report
 - **THEN** `clients/apple/ARCHITECTURE.md` is updated in the same PR with the
   new warning count, remaining owners, and next follow-up boundary
+
+### Requirement: Active Apple source layout mirrors macOS shell ownership
+
+The native Apple client SHALL organize the active macOS product by app startup, shell views, terminal hosts, models, controllers, services, adapters, and support code under `clients/apple/alan-macos`.
+
+#### Scenario: Source tree is inspected
+
+- **WHEN** a developer inspects the active Apple source root and Xcode target membership
+- **THEN** every product source belongs to an active macOS owner
+- **AND** no source group exists without an active product owner and focused validation boundary
+
+#### Scenario: Architecture docs describe the tree
+
+- **WHEN** Apple architecture documentation lists source owners
+- **THEN** the list matches the active Xcode project and filesystem layout
+- **AND** it does not preserve a future attachment owner that has not been designed
+
+### Requirement: Deleted Apple compatibility consumers have no replacement stub
+
+The active macOS target SHALL NOT contain an unavailable placeholder, mock service, disabled control, or alternate data source for a deleted compatibility consumer.
+
+#### Scenario: Obsolete consumer removal is reviewed
+
+- **WHEN** the cleanup removes a source group with no active macOS product owner
+- **THEN** their source files and project references are deleted
+- **AND** unrelated terminal, workspace, update, helper, and shell-control features continue through their existing owners
+
+### Requirement: Architecture warning debt is reduced through active-owner slices
+
+The Apple client SHALL reduce maintainability warnings through focused, behavior-preserving slices that name an active owner and its verification commands.
+
+#### Scenario: Focused slice resolves a warning
+
+- **WHEN** a refactor removes warnings from `check-architecture-maintainability.sh`
+- **THEN** the architecture debt ledger and expected warning count are updated in the same change
+- **AND** focused checks protect any active terminal, shell-controller, service, or adapter behavior moved by the slice

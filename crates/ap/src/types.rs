@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// A fid is a handle to one interaction with a file server (§5.2). `walk`/`open`
 /// allocate it, `clunk` releases it. Fids are scoped to one client/server
-/// session and are not global capabilities (the namespace is — D6).
+/// connection and are not global capabilities (the namespace is — D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Fid(pub u64);
 

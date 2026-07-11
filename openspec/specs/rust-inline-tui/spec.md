@@ -4,26 +4,6 @@
 Define Alan's Rust terminal UI as a terminal-first renderer host whose local
 contract reads mounted agent files directly.
 ## Requirements
-### Requirement: Bare alan launches the Rust terminal UI
-The `alan` binary SHALL launch the Rust terminal UI when invoked without an
-explicit subcommand, and this terminal UI SHALL be linked into the `alan` binary
-rather than shipped as a separate executable.
-
-#### Scenario: Bare command enters TUI
-- **WHEN** a user runs `alan` in an interactive terminal
-- **THEN** alan starts the Rust terminal UI
-- **AND** no `alan-tui` executable is required on `PATH`
-
-#### Scenario: Explicit subcommands remain available
-- **WHEN** a user runs an explicit supported management subcommand such as
-  `alan connection list` or `alan daemon status`
-- **THEN** alan runs that subcommand instead of starting the TUI
-
-#### Scenario: Noninteractive terminal is rejected truthfully
-- **WHEN** a user runs bare `alan` without an interactive terminal
-- **THEN** alan exits with a clear terminal capability error
-- **AND** it does not attempt to launch a TypeScript or `alan-tui` fallback
-
 ### Requirement: Legacy TUI entrypoints are removed
 alan SHALL remove the TypeScript/Bun/Ink TUI, the `alan-tui` shipped executable,
 the `ALAN_TUI_PATH` override, and the public `alan chat` and `alan ask`
@@ -43,47 +23,6 @@ commands.
 - **WHEN** release artifacts are assembled
 - **THEN** they include the `alan` executable for terminal use
 - **AND** they do not include, sign, link, or install an `alan-tui` executable
-
-### Requirement: Local TUI reads full renderer state from mounted agent files
-The Rust terminal UI SHALL treat mounted agent files as the full local terminal
-contract, not only for `io/output`, `io/input`, `requests/`, `actions/`, and
-`ctl`, but also for renderer-visible runtime state such as activity, thinking,
-plan snapshots, and notices.
-
-#### Scenario: Local file-backed mode starts without daemon session APIs
-- **WHEN** the user launches local `alan-terminal-ui` against a namespace-native
-  runtime
-- **THEN** it hydrates and tails the required state directly from mounted agent
-  files, including renderer-visible runtime UI state
-- **AND** it does not create or attach to a daemon session before rendering
-
-#### Scenario: No daemon-backed TUI mode remains
-- **WHEN** the user launches the Rust terminal UI locally after the migration
-  cleanup
-- **THEN** it uses mounted agent files as its only runtime contract
-- **AND** no daemon-backed compatibility or remote TUI mode is available
-
-### Requirement: File-backed local mode preserves local interaction parity
-The Rust terminal UI SHALL preserve the current local interaction baseline when
-running file-backed: pending input surfaces, command and reference completion,
-live activity, collapsed thinking, plan visibility, and renderer-visible
-warnings or compaction notices SHALL all work without daemon session event
-streams.
-
-#### Scenario: Activity and notices stay in the live region
-- **WHEN** a local file-backed turn is active or the runtime emits a recoverable
-  warning, compaction notice, or memory-flush notice
-- **THEN** the TUI renders that state in the bottom live region from mounted
-  agent files
-- **AND** it does not require daemon event classification to decide what stays
-  ephemeral
-
-#### Scenario: Thinking and plan state render from file surfaces
-- **WHEN** the runtime exposes renderer-visible thinking or plan updates through
-  agent files
-- **THEN** the local file-backed TUI renders collapsed thinking and human-readable
-  plan state from those files
-- **AND** the user can interact with that state without a daemon-backed session
 
 ### Requirement: Codex-like terminal interaction baseline
 The first Rust TUI SHALL provide a Codex-like terminal interaction baseline:
@@ -109,30 +48,6 @@ typed transcript cells, resize reflow, and frame coalescing.
 - **THEN** transcript cells, the active viewport, and the bottom composer reflow
   without corrupting input or losing streamed content
 
-### Requirement: Pending input surfaces are first-class
-The Rust TUI SHALL render runtime yields such as confirmation requests,
-structured user input, and recoverable interruptions as first-class terminal UI
-states rather than raw JSON or debug text.
-
-#### Scenario: Confirmation yield is shown
-- **WHEN** the runtime emits a confirmation yield
-- **THEN** the TUI presents a focused approval surface with the relevant action,
-  choices, and default keyboard behavior
-- **AND** the response is submitted as a protocol resume operation
-
-#### Scenario: Structured input yield is shown
-- **WHEN** the runtime emits a structured input yield
-- **THEN** the TUI presents fields or choices that match the yielded schema
-- **AND** it validates the response before submitting it through the active
-  control plane
-
-#### Scenario: Recoverable runtime error is shown
-- **WHEN** the runtime or renderer host reports a recoverable session, stream,
-  or file-surface error
-- **THEN** the TUI renders a concise user-facing state with available recovery
-  actions
-- **AND** raw diagnostic details remain behind an explicit debug surface
-
 ### Requirement: Terminal behavior has focused verification
 The Rust TUI SHALL include focused automated verification for terminal behavior,
 including snapshots or vt100-style tests for transcript rendering, scrollback,
@@ -153,31 +68,6 @@ noninteractive startup failures.
 - **WHEN** a production fallback path to `clients/tui`, Bun, Ink, or `alan-tui`
   is reintroduced
 - **THEN** focused TUI or packaging contract checks fail
-
-### Requirement: Renderer updates are classified into display tiers
-The TUI SHALL classify each renderer-visible update into exactly one of three
-display tiers — permanent transcript content, ephemeral live-region status, or
-suppressed — and SHALL render each update only according to its tier.
-
-#### Scenario: Conversational substance is permanent
-- **WHEN** the active control plane surfaces a user message, assistant text, a
-  completed tool call, a plan snapshot, or a fatal error
-- **THEN** the TUI renders it as permanent transcript content eligible for terminal scrollback
-
-#### Scenario: Internal lifecycle events are suppressed from the transcript
-- **WHEN** the active control plane surfaces a turn-started, turn-completed,
-  terminal-resize, event-sequence-gap, or session-hydration update
-- **THEN** the TUI does not render it as transcript content
-- **AND** it MAY record the event to the tracing log only
-
-#### Scenario: Internal identifiers never appear on screen
-- **WHEN** any event carrying an internal identifier (such as a yield `request_id` or a tool-call id) is rendered
-- **THEN** the visible output contains no internal identifier
-
-#### Scenario: Plan snapshots render as a checklist
-- **WHEN** a plan snapshot is rendered
-- **THEN** items appear as a human-readable checklist reflecting each item's status
-- **AND** no Rust debug formatting of the status enum is shown
 
 ### Requirement: Live region shows agent activity and interrupt affordance
 The TUI SHALL maintain a persistent bottom live region, redrawn independently of committed scrollback, that surfaces in-progress activity and the interrupt affordance while a turn is running.
@@ -212,22 +102,6 @@ The TUI SHALL render assistant thinking collapsed by default and SHALL provide a
 - **THEN** the TUI shows the full thinking content
 - **AND** activating the keybinding again collapses it
 
-### Requirement: Composer provides readline editing and persisted history
-The TUI composer SHALL support standard readline/emacs editing operations and SHALL recall prior submissions from history persisted across sessions.
-
-#### Scenario: Standard editing keys work
-- **WHEN** the user uses line-start/line-end, delete-word, delete-to-line-start, and word-wise cursor movement keys
-- **THEN** the composer performs the corresponding grapheme-aware edit
-
-#### Scenario: History recalls prior submissions
-- **WHEN** the user presses the history-previous key in an empty or partially edited composer
-- **THEN** the composer loads the previous submission, and the history-next key moves forward
-
-#### Scenario: History persists across sessions
-- **WHEN** the user submits a message in one session and starts a new TUI session
-- **THEN** the earlier submission is available via history recall
-- **AND** the history is stored under the user's `~/.alan` state directory
-
 ### Requirement: Command and reference completion surface
 The TUI SHALL provide a completion popup driven by trigger characters that distinguishes client commands from agent-bound references.
 
@@ -258,3 +132,80 @@ The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to
 - **WHEN** the TUI is running
 - **THEN** the terminal's native mouse selection and copy behavior is available
 - **AND** the TUI does not enable mouse capture
+
+### Requirement: Bare alan launches the file-backed Rust terminal UI
+
+The `alan` binary SHALL launch its linked Rust terminal UI when invoked without an explicit subcommand. Surviving direct management subcommands SHALL run instead of starting the TUI.
+
+#### Scenario: Bare command enters the TUI
+
+- **WHEN** a user runs `alan` in an interactive terminal
+- **THEN** Alan starts the linked Rust terminal UI
+- **AND** no separate terminal-UI executable is required on `PATH`
+
+#### Scenario: Direct management command is selected
+
+- **WHEN** a user runs a supported command such as `alan connection list`
+- **THEN** Alan executes that command directly
+- **AND** it does not start the TUI
+
+### Requirement: Mounted AgentFS files are the complete local TUI contract
+
+The Rust terminal UI SHALL hydrate and update renderer state from mounted `/agent` and `/proc` files, including IO, requests, actions, Agent Machine state, activity, plans, and notices.
+
+#### Scenario: Local renderer starts from a mounted Agent Process
+
+- **WHEN** the TUI receives a mounted namespace and concrete Agent Process path
+- **THEN** it reads initial renderer state and tails offset-readable files from that surface
+- **AND** user input and control actions are file writes to the mounted Process surfaces
+
+### Requirement: File-backed interaction preserves the terminal baseline
+
+The Rust terminal UI SHALL provide pending input, completion, live activity, collapsed thinking, plan visibility, warnings, and compaction notices from AgentFS snapshots and streams.
+
+#### Scenario: Live state is projected from files
+
+- **WHEN** an Agent Process changes activity, thinking, plan, warning, or compaction state
+- **THEN** the TUI updates the appropriate transcript or live region from mounted files
+- **AND** display classification does not depend on a client transport event taxonomy
+
+### Requirement: AgentFS yields and recovery states are first-class
+
+The Rust terminal UI SHALL render confirmation requests, structured input, recoverable Process errors, and recoverable file-surface gaps as focused user-facing states.
+
+#### Scenario: Confirmation request is rendered
+
+- **WHEN** AgentFS exposes a pending confirmation request
+- **THEN** the TUI presents the action, choices, and default keyboard behavior
+- **AND** the answer is written through the request's file control surface
+
+#### Scenario: File stream cannot resume completely
+
+- **WHEN** an offset-readable renderer stream reports that retained data cannot satisfy the last cursor
+- **THEN** the TUI shows a concise recoverable state and available recovery actions
+- **AND** diagnostic details remain behind an explicit debug surface
+
+### Requirement: Renderer file updates are classified into display tiers
+
+The TUI SHALL classify each renderer-visible file update as permanent transcript content, ephemeral live-region status, or suppressed lifecycle detail.
+
+#### Scenario: Machine hydration is suppressed
+
+- **WHEN** the renderer hydrates Agent Machine state or observes Process attachment lifecycle metadata
+- **THEN** it does not print that lifecycle detail into the transcript
+- **AND** it MAY retain the detail in tracing output
+
+#### Scenario: Conversational substance is permanent
+
+- **WHEN** AgentFS surfaces user input, assistant output, a completed Tool result, a plan snapshot, or a fatal error
+- **THEN** the TUI renders it as permanent transcript content
+
+### Requirement: Composer history persists across launches
+
+The TUI composer SHALL support standard readline editing and SHALL persist prior submissions in channel-scoped user state for recall across launches.
+
+#### Scenario: A later launch recalls history
+
+- **WHEN** a user submits text, exits the TUI, and launches it again in the same channel
+- **THEN** history-previous recalls the earlier submission
+- **AND** stable and dev installations do not share the history file implicitly

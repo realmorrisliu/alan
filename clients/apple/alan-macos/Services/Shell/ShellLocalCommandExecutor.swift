@@ -685,7 +685,7 @@ private func attentionInboxItems(from state: ShellStateSnapshot) -> [AlanShellAt
                 paneID: pane.paneID,
                 attention: item.attention,
                 summary: pane.viewport?.summary
-                    ?? pane.alanBinding.map { $0.pendingYield ? "alan is waiting for user input" : "alan run status: \($0.runStatus)" }
+                    ?? pane.alanBinding.map { $0.pendingRequest ? "Alan is waiting for user input" : "Alan Machine state: \($0.machineState)" }
                     ?? pane.process?.program
                     ?? "Activity detected"
             )
@@ -720,12 +720,12 @@ private func routingCandidates(
             score += 0.12
             reasons.append("attention:notable")
         }
-        if pane.alanBinding?.pendingYield == true {
+        if pane.alanBinding?.pendingRequest == true {
             score += 0.2
             reasons.append("alan_binding:yielded")
-        } else if let runStatus = pane.alanBinding?.runStatus {
+        } else if let machineState = pane.alanBinding?.machineState {
             score += 0.08
-            reasons.append("alan_binding:\(runStatus)")
+            reasons.append("alan_binding:\(machineState)")
         }
         if let preferredPane, pane.tabID == preferredPane.tabID {
             score += 0.1

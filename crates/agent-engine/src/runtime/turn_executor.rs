@@ -104,25 +104,10 @@ async fn finalize_turn_memory_best_effort(
 }
 
 fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefinition> {
-    let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation()
-        && !state
-            .session
-            .dynamic_tools
-            .contains_key("invoke_delegated_skill");
+    let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
 
     let mut tools = state.static_tool_definitions();
     tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
-    tools.extend(
-        state
-            .session
-            .dynamic_tools
-            .values()
-            .map(|tool| crate::llm::ToolDefinition {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.parameters.clone(),
-            }),
-    );
     tools
 }
 
@@ -304,17 +289,17 @@ fn resolve_responses_continuation(
     provider: &str,
     reference_context_revision: u64,
     raw_message_count: usize,
-) -> Option<crate::session::ResponsesContinuationState> {
-    match state.session.responses_continuation().cloned() {
+) -> Option<crate::agent_machine::ResponsesContinuationState> {
+    match state.machine.responses_continuation().cloned() {
         Some(continuation) if continuation.provider != provider => {
             state
-                .session
+                .machine
                 .clear_responses_continuation("provider_changed");
             None
         }
         Some(continuation) if continuation.boundary_message_count > raw_message_count => {
             state
-                .session
+                .machine
                 .clear_responses_continuation("history_changed");
             None
         }
@@ -322,7 +307,7 @@ fn resolve_responses_continuation(
             if continuation.reference_context_revision != reference_context_revision =>
         {
             state
-                .session
+                .machine
                 .clear_responses_continuation("reference_context_changed");
             None
         }
@@ -635,13 +620,13 @@ fn anthropic_message_content(parts: &[crate::tape::ContentPart]) -> Vec<serde_js
 }
 
 fn build_responses_input_items_from_tape(
-    messages: &[crate::session::Message],
+    messages: &[crate::agent_machine::Message],
 ) -> Vec<serde_json::Value> {
     let mut input = Vec::new();
 
     for message in messages {
         match message {
-            crate::session::Message::Tool { responses } => {
+            crate::agent_machine::Message::Tool { responses } => {
                 for response in responses {
                     let projected_output = project_tool_response_for_prompt(&response.content);
                     input.push(serde_json::json!({
@@ -651,7 +636,7 @@ fn build_responses_input_items_from_tape(
                     }));
                 }
             }
-            crate::session::Message::Assistant {
+            crate::agent_machine::Message::Assistant {
                 parts,
                 tool_requests,
             } => {
@@ -678,12 +663,12 @@ fn build_responses_input_items_from_tape(
                     }));
                 }
             }
-            crate::session::Message::User { parts }
-            | crate::session::Message::System { parts }
-            | crate::session::Message::Context { parts } => {
+            crate::agent_machine::Message::User { parts }
+            | crate::agent_machine::Message::System { parts }
+            | crate::agent_machine::Message::Context { parts } => {
                 if let Some(content) = responses_message_content(parts) {
                     let role = match message.role() {
-                        crate::session::MessageRole::User => "user",
+                        crate::agent_machine::MessageRole::User => "user",
                         _ => "developer",
                     };
                     input.push(serde_json::json!({
@@ -699,13 +684,13 @@ fn build_responses_input_items_from_tape(
 }
 
 fn build_chat_completions_messages_from_tape(
-    messages: &[crate::session::Message],
+    messages: &[crate::agent_machine::Message],
 ) -> Vec<serde_json::Value> {
     let mut projected = Vec::new();
 
     for message in messages {
         match message {
-            crate::session::Message::Tool { responses } => {
+            crate::agent_machine::Message::Tool { responses } => {
                 for response in responses {
                     let projected_content = project_tool_response_for_prompt(&response.content);
                     projected.push(serde_json::json!({
@@ -715,7 +700,7 @@ fn build_chat_completions_messages_from_tape(
                     }));
                 }
             }
-            crate::session::Message::Assistant {
+            crate::agent_machine::Message::Assistant {
                 parts,
                 tool_requests,
             } => {
@@ -754,7 +739,7 @@ fn build_chat_completions_messages_from_tape(
 
                 projected.push(message_value);
             }
-            crate::session::Message::User { parts } => {
+            crate::agent_machine::Message::User { parts } => {
                 if let Some(content) = chat_completions_message_content(parts) {
                     projected.push(serde_json::json!({
                         "role": "user",
@@ -762,8 +747,8 @@ fn build_chat_completions_messages_from_tape(
                     }));
                 }
             }
-            crate::session::Message::System { parts }
-            | crate::session::Message::Context { parts } => {
+            crate::agent_machine::Message::System { parts }
+            | crate::agent_machine::Message::Context { parts } => {
                 if let Some(content) = chat_completions_message_content(parts) {
                     projected.push(serde_json::json!({
                         "role": "developer",
@@ -778,14 +763,14 @@ fn build_chat_completions_messages_from_tape(
 }
 
 fn build_anthropic_messages_from_tape(
-    messages: &[crate::session::Message],
+    messages: &[crate::agent_machine::Message],
 ) -> Vec<serde_json::Value> {
     let mut projected = Vec::new();
     let mut known_tool_use_ids = std::collections::HashSet::new();
 
     for message in messages {
         match message {
-            crate::session::Message::Tool { responses } => {
+            crate::agent_machine::Message::Tool { responses } => {
                 for response in responses {
                     let projected_content = project_tool_response_for_prompt(&response.content);
                     let mut blocks = Vec::new();
@@ -809,7 +794,7 @@ fn build_anthropic_messages_from_tape(
                     }
                 }
             }
-            crate::session::Message::Assistant {
+            crate::agent_machine::Message::Assistant {
                 parts,
                 tool_requests,
             } => {
@@ -830,7 +815,7 @@ fn build_anthropic_messages_from_tape(
                     }));
                 }
             }
-            crate::session::Message::User { parts } => {
+            crate::agent_machine::Message::User { parts } => {
                 let blocks = anthropic_message_content(parts);
                 if !blocks.is_empty() {
                     projected.push(serde_json::json!({
@@ -839,7 +824,8 @@ fn build_anthropic_messages_from_tape(
                     }));
                 }
             }
-            crate::session::Message::System { .. } | crate::session::Message::Context { .. } => {}
+            crate::agent_machine::Message::System { .. }
+            | crate::agent_machine::Message::Context { .. } => {}
         }
     }
 
@@ -949,12 +935,12 @@ where
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state
             .turn_state
-            .begin_turn(state.session.tape.messages().len());
+            .begin_turn(state.machine.tape.messages().len());
     } else if user_input.is_some() {
         state.turn_state.note_resumed_user_input();
     }
     if let Some(user_input) = user_input {
-        state.session.add_user_message_parts(user_input);
+        state.machine.add_user_message_parts(user_input);
     }
 
     // Resume turns keep the same active skill envelopes for the logical turn.
@@ -1002,9 +988,9 @@ where
     )?;
     let model = state.core_config.effective_model().to_string();
     let memory_enabled = state.core_config.memory.enabled;
-    let context_items = state.session.tape.context_items().to_vec();
-    let context_delta = state.session.tape.last_context_delta().clone();
-    state.session.record_turn_context_if_changed(
+    let context_items = state.machine.tape.context_items().to_vec();
+    let context_delta = state.machine.tape.last_context_delta().clone();
+    state.machine.record_turn_context_if_changed(
         &model,
         turn_request_controls.reasoning_effort(),
         &system_prompt,
@@ -1036,16 +1022,16 @@ where
         let supports_provider_compaction = provider_capabilities.supports_provider_compaction;
         if !supports_server_managed_continuation
             && state
-                .session
+                .machine
                 .responses_continuation()
                 .is_some_and(|continuation| continuation.provider == provider)
         {
             state
-                .session
+                .machine
                 .clear_responses_continuation("provider_capability_unavailable");
         }
 
-        let prompt_view = state.session.tape.prompt_view();
+        let prompt_view = state.machine.tape.prompt_view();
         let estimated_prompt_tokens =
             prompt_view
                 .estimated_tokens
@@ -1055,7 +1041,7 @@ where
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let raw_tape_messages = state.session.tape.messages().to_vec();
+        let raw_tape_messages = state.machine.tape.messages().to_vec();
         let mut previous_response_id: Option<String> = None;
         let mut responses_input_items: Option<Vec<serde_json::Value>> = None;
         let llm_messages = if responses_input_projection {
@@ -1279,7 +1265,7 @@ where
         }
 
         let assistant_message_persisted = if !tool_calls.is_empty() {
-            let session_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
+            let machine_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
                 .iter()
                 .map(|tc| crate::tape::ToolRequest {
                     id: tc.id.clone(),
@@ -1288,17 +1274,17 @@ where
                 })
                 .collect();
             state
-                .session
+                .machine
                 .add_assistant_message_with_tool_calls_and_reasoning(
                     &response.content,
-                    session_tool_calls,
+                    machine_tool_calls,
                     response.thinking.as_deref(),
                     response.thinking_signature.as_deref(),
                     &response.redacted_thinking,
                 );
             true
         } else if !response.content.is_empty() {
-            state.session.add_assistant_message_with_reasoning(
+            state.machine.add_assistant_message_with_reasoning(
                 &response.content,
                 response.thinking.as_deref(),
                 response.thinking_signature.as_deref(),
@@ -1327,15 +1313,15 @@ where
                     response.provider_response_status.as_deref(),
                 )
             {
-                state.session.mark_responses_continuation(
+                state.machine.mark_responses_continuation(
                     provider,
                     response_id,
-                    state.session.tape.messages().len(),
+                    state.machine.tape.messages().len(),
                     context_revision,
                 );
             } else {
                 state
-                    .session
+                    .machine
                     .clear_responses_continuation("continuation_unavailable");
             }
         }
@@ -1389,7 +1375,7 @@ where
             let fallback_text = "I apologize, but I couldn't generate a response.";
             // Persist fallback output (and any reasoning metadata) to tape so
             // subsequent turns can reference what the assistant actually emitted.
-            state.session.add_assistant_message_with_reasoning(
+            state.machine.add_assistant_message_with_reasoning(
                 fallback_text,
                 response.thinking.as_deref(),
                 response.thinking_signature.as_deref(),
@@ -1410,15 +1396,15 @@ where
                         response.provider_response_status.as_deref(),
                     )
                 {
-                    state.session.mark_responses_continuation(
+                    state.machine.mark_responses_continuation(
                         provider,
                         response_id,
-                        state.session.tape.messages().len(),
+                        state.machine.tape.messages().len(),
                         context_revision,
                     );
                 } else {
                     state
-                        .session
+                        .machine
                         .clear_responses_continuation("continuation_unavailable");
                 }
             }
@@ -1463,7 +1449,7 @@ where
     }
 
     let estimated_prompt_tokens = state
-        .session
+        .machine
         .tape
         .estimated_prompt_tokens()
         .saturating_add(additional_prompt_tokens);
@@ -1512,10 +1498,10 @@ mod tests {
     use super::*;
     use crate::runtime::turn_state::TurnActivityState;
     use crate::{
+        agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
         runtime::{RuntimeConfig, RuntimeEnvironment, TurnState},
-        session::Session,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
         tape::{ContentPart, Message, ToolRequest, ToolResponse},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
@@ -2389,7 +2375,7 @@ mod tests {
             openai_responses_model: "mock-model".to_string(),
             ..Default::default()
         };
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let llmfs = std::sync::Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection("default", Box::new(provider));
 
@@ -2439,7 +2425,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(
                 crate::runtime::NamespaceRuntimeEnvironment::new(
@@ -2531,38 +2517,6 @@ description: {description}
                 .iter()
                 .any(|tool| tool.name == "invoke_delegated_skill")
         );
-    }
-
-    #[test]
-    fn test_turn_tool_definitions_prefer_dynamic_delegated_bridge_schema() {
-        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.prompt_cache.set_host_capabilities(
-            crate::skills::SkillHostCapabilities::default()
-                .with_runtime_defaults()
-                .with_delegated_skill_invocation(),
-        );
-        state.session.dynamic_tools.insert(
-            "invoke_delegated_skill".to_string(),
-            alan_agent_protocol::DynamicToolSpec {
-                name: "invoke_delegated_skill".to_string(),
-                description: "Delegated bridge".to_string(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "task": {"type": "string"}
-                    }
-                }),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-        );
-
-        let tools = turn_tool_definitions(&state);
-        let delegated_tools: Vec<_> = tools
-            .iter()
-            .filter(|tool| tool.name == "invoke_delegated_skill")
-            .collect();
-        assert_eq!(delegated_tools.len(), 1);
-        assert_eq!(delegated_tools[0].description, "Delegated bridge");
     }
 
     #[test]
@@ -3081,11 +3035,11 @@ description: {description}
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
         state.runtime_config.context_window_tokens = 1000;
         state.runtime_config.compaction_soft_trigger_ratio = 0.5;
-        state.session.add_user_message("Earlier input");
-        state.session.add_assistant_message("Earlier output", None);
-        let boundary_message_count = state.session.tape.messages().len();
-        let reference_context_revision = state.session.tape.context_revision();
-        state.session.mark_responses_continuation(
+        state.machine.add_user_message("Earlier input");
+        state.machine.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.machine.tape.messages().len();
+        let reference_context_revision = state.machine.tape.context_revision();
+        state.machine.mark_responses_continuation(
             "openai_responses",
             "resp_prev",
             boundary_message_count,
@@ -3123,7 +3077,7 @@ description: {description}
         drop(requests);
 
         assert!(
-            state.session.responses_continuation().is_none(),
+            state.machine.responses_continuation().is_none(),
             "namespace generation must not maintain provider-managed continuation state"
         );
     }
@@ -3175,7 +3129,7 @@ description: {description}
     }
 
     #[tokio::test]
-    async fn test_run_turn_uses_turn_reasoning_effort_before_session_effort() {
+    async fn test_run_turn_uses_turn_reasoning_effort_before_runtime_effort() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let provider = CapturingResponsesProvider {
             requests: Arc::clone(&requests),
@@ -3195,9 +3149,10 @@ description: {description}
         };
         let mut state = create_test_state_with_provider(provider);
         let temp_dir = TempDir::new().unwrap();
-        state.session = Session::new_with_recorder_in_dir("gpt-5.4", temp_dir.path())
-            .await
-            .unwrap();
+        state.machine =
+            AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5.4", temp_dir.path())
+                .await
+                .unwrap();
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
         state.runtime_config.request_control_intent = crate::RequestControlIntent::reasoning_effort(
             Some(alan_agent_protocol::ReasoningEffort::High),
@@ -3230,8 +3185,8 @@ description: {description}
             );
         }
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().expect("rollout path");
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().expect("rollout path");
         let persisted_effort = RolloutRecorder::load_history(rollout_path)
             .await
             .unwrap()
@@ -3247,7 +3202,7 @@ description: {description}
     }
 
     #[tokio::test]
-    async fn test_run_turn_uses_session_reasoning_effort_without_budget_fallback() {
+    async fn test_run_turn_uses_runtime_reasoning_effort_without_budget_fallback() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let provider = CapturingResponsesProvider {
             requests: Arc::clone(&requests),
@@ -3353,18 +3308,18 @@ description: {description}
             provider_name: "openai_responses",
         };
         let mut state = create_test_state_with_provider(provider);
-        state.session.add_user_message("Earlier input");
-        state.session.add_assistant_message("Earlier output", None);
-        let boundary_message_count = state.session.tape.messages().len();
-        let reference_context_revision = state.session.tape.context_revision();
-        state.session.mark_responses_continuation(
+        state.machine.add_user_message("Earlier input");
+        state.machine.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.machine.tape.messages().len();
+        let reference_context_revision = state.machine.tape.context_revision();
+        state.machine.mark_responses_continuation(
             "openai_responses",
             "resp_prev",
             boundary_message_count,
             reference_context_revision,
         );
         state
-            .session
+            .machine
             .tape
             .apply_context_items(vec![crate::tape::ContextItem::new(
                 "ctx_1",
@@ -3409,10 +3364,10 @@ description: {description}
     #[test]
     fn test_build_responses_input_items_from_tape_projects_developer_role_and_attachments() {
         let messages = vec![
-            crate::session::Message::Context {
+            crate::agent_machine::Message::Context {
                 parts: vec![ContentPart::text("Workspace context")],
             },
-            crate::session::Message::User {
+            crate::agent_machine::Message::User {
                 parts: vec![
                     ContentPart::text("What is in this image?"),
                     ContentPart::Attachment {
@@ -3454,10 +3409,10 @@ description: {description}
     #[test]
     fn test_build_chat_completions_messages_from_tape_projects_developer_role_and_attachments() {
         let messages = vec![
-            crate::session::Message::Context {
+            crate::agent_machine::Message::Context {
                 parts: vec![ContentPart::text("Workspace context")],
             },
-            crate::session::Message::User {
+            crate::agent_machine::Message::User {
                 parts: vec![
                     ContentPart::text("What is in this image?"),
                     ContentPart::Attachment {
@@ -3500,7 +3455,7 @@ description: {description}
 
     #[test]
     fn test_build_chat_completions_messages_from_tape_projects_file_url_image_attachments() {
-        let messages = vec![crate::session::Message::User {
+        let messages = vec![crate::agent_machine::Message::User {
             parts: vec![
                 ContentPart::text("What is in this image?"),
                 ContentPart::Attachment {
@@ -3536,7 +3491,7 @@ description: {description}
 
     #[test]
     fn test_build_anthropic_messages_from_tape_projects_file_attachments() {
-        let messages = vec![crate::session::Message::User {
+        let messages = vec![crate::agent_machine::Message::User {
             parts: vec![
                 ContentPart::text("Read this document"),
                 ContentPart::Attachment {
@@ -3576,7 +3531,7 @@ description: {description}
     #[test]
     fn test_build_responses_input_items_from_tape_caps_tool_payloads() {
         let large_output = "x".repeat(40_000);
-        let messages = vec![crate::session::Message::Tool {
+        let messages = vec![crate::agent_machine::Message::Tool {
             responses: vec![ToolResponse {
                 id: "call-1".to_string(),
                 content: vec![ContentPart::text(large_output.clone())],
@@ -3599,7 +3554,7 @@ description: {description}
     #[test]
     fn test_build_chat_completions_messages_from_tape_caps_tool_payloads() {
         let large_output = "x".repeat(40_000);
-        let messages = vec![crate::session::Message::Tool {
+        let messages = vec![crate::agent_machine::Message::Tool {
             responses: vec![ToolResponse {
                 id: "call-1".to_string(),
                 content: vec![ContentPart::text(large_output.clone())],
@@ -3623,7 +3578,7 @@ description: {description}
     fn test_build_anthropic_messages_from_tape_caps_tool_payloads() {
         let large_output = "x".repeat(40_000);
         let messages = vec![
-            crate::session::Message::Assistant {
+            crate::agent_machine::Message::Assistant {
                 parts: Vec::new(),
                 tool_requests: vec![ToolRequest {
                     id: "call-1".to_string(),
@@ -3631,7 +3586,7 @@ description: {description}
                     arguments: json!({}),
                 }],
             },
-            crate::session::Message::Tool {
+            crate::agent_machine::Message::Tool {
                 responses: vec![ToolResponse {
                     id: "call-1".to_string(),
                     content: vec![ContentPart::text(large_output.clone())],
@@ -3678,11 +3633,11 @@ description: {description}
         state.runtime_config.compaction_soft_trigger_ratio = 0.0;
         state.runtime_config.compaction_hard_trigger_ratio = 0.0;
         state.runtime_config.compaction_trigger_ratio = 0.0;
-        state.session.add_user_message("Earlier input");
-        state.session.add_assistant_message("Earlier output", None);
-        let boundary_message_count = state.session.tape.messages().len();
-        let reference_context_revision = state.session.tape.context_revision();
-        state.session.mark_responses_continuation(
+        state.machine.add_user_message("Earlier input");
+        state.machine.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.machine.tape.messages().len();
+        let reference_context_revision = state.machine.tape.context_revision();
+        state.machine.mark_responses_continuation(
             "openai_responses",
             "resp_prev",
             boundary_message_count,
@@ -3731,9 +3686,9 @@ description: {description}
         state.runtime_config.compaction_hard_trigger_ratio = 0.0;
         state.runtime_config.compaction_trigger_ratio = 0.0;
         state.runtime_config.compaction_keep_last = 1;
-        state.session.add_user_message("Earlier input");
+        state.machine.add_user_message("Earlier input");
         let earlier_output = "Earlier output".repeat(20);
-        state.session.add_assistant_message(&earlier_output, None);
+        state.machine.add_assistant_message(&earlier_output, None);
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -3783,11 +3738,11 @@ description: {description}
         state.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
         state.runtime_config.context_window_tokens = 1000;
         state.runtime_config.compaction_soft_trigger_ratio = 0.5;
-        state.session.add_user_message("Earlier input");
-        state.session.add_assistant_message("Earlier output", None);
-        let boundary_message_count = state.session.tape.messages().len();
-        let reference_context_revision = state.session.tape.context_revision();
-        state.session.mark_responses_continuation(
+        state.machine.add_user_message("Earlier input");
+        state.machine.add_assistant_message("Earlier output", None);
+        let boundary_message_count = state.machine.tape.messages().len();
+        let reference_context_revision = state.machine.tape.context_revision();
+        state.machine.mark_responses_continuation(
             "chatgpt",
             "resp_prev",
             boundary_message_count,
@@ -3831,7 +3786,7 @@ description: {description}
             message_texts,
             vec!["Earlier input", "Earlier output", "New input"]
         );
-        assert!(state.session.responses_continuation().is_none());
+        assert!(state.machine.responses_continuation().is_none());
     }
 
     #[tokio::test]
@@ -3942,10 +3897,10 @@ description: {description}
             .tool_catalog_mut_for_test()
             .register(NetworkCapabilityTool);
         state
-            .session
+            .machine
             .tape
             .push(Message::user("how's the weather today?"));
-        state.session.tape.push(Message::Assistant {
+        state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),
             tool_requests: vec![ToolRequest {
                 id: "call_network".to_string(),
@@ -3953,7 +3908,7 @@ description: {description}
                 arguments: json!({}),
             }],
         });
-        state.session.add_tool_message(
+        state.machine.add_tool_message(
             "call_network",
             "network_probe",
             json!({
@@ -4006,7 +3961,7 @@ description: {description}
         );
 
         let assistant_messages: Vec<_> = state
-            .session
+            .machine
             .tape
             .messages()
             .iter()
@@ -4061,10 +4016,10 @@ description: {description}
             .tool_catalog_mut_for_test()
             .register(ReadCapabilityTool);
         state
-            .session
+            .machine
             .tape
             .push(Message::user("how's the weather today?"));
-        state.session.tape.push(Message::Assistant {
+        state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),
             tool_requests: vec![ToolRequest {
                 id: "call_local".to_string(),
@@ -4072,7 +4027,7 @@ description: {description}
                 arguments: json!({}),
             }],
         });
-        state.session.add_tool_message(
+        state.machine.add_tool_message(
             "call_local",
             "local_probe",
             json!({
@@ -4151,16 +4106,16 @@ description: {description}
         state
             .tool_catalog_mut_for_test()
             .register(NetworkCapabilityTool);
-        state.session.tape.push(Message::user("earlier turn"));
+        state.machine.tape.push(Message::user("earlier turn"));
         state
-            .session
+            .machine
             .tape
             .push(Message::assistant("earlier turn completed"));
         state
-            .session
+            .machine
             .tape
             .push(Message::user("how's the weather today?"));
-        state.session.tape.push(Message::Assistant {
+        state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),
             tool_requests: vec![ToolRequest {
                 id: "call_network".to_string(),
@@ -4168,7 +4123,7 @@ description: {description}
                 arguments: json!({}),
             }],
         });
-        state.session.add_tool_message(
+        state.machine.add_tool_message(
             "call_network",
             "network_probe",
             json!({
@@ -4259,8 +4214,8 @@ description: {description}
         state
             .tool_catalog_mut_for_test()
             .register(NetworkCapabilityTool);
-        state.session.tape.push(Message::user("earlier turn"));
-        state.session.tape.push(Message::Assistant {
+        state.machine.tape.push(Message::user("earlier turn"));
+        state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),
             tool_requests: vec![ToolRequest {
                 id: "call_network".to_string(),
@@ -4268,7 +4223,7 @@ description: {description}
                 arguments: json!({}),
             }],
         });
-        state.session.add_tool_message(
+        state.machine.add_tool_message(
             "call_network",
             "network_probe",
             json!({
@@ -4354,11 +4309,11 @@ description: {description}
         assert!(has_fallback, "Expected empty response fallback");
 
         let assistant_messages: Vec<_> = state
-            .session
+            .machine
             .tape
             .messages()
             .iter()
-            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .filter(|m| matches!(m, crate::agent_machine::Message::Assistant { .. }))
             .collect();
         assert_eq!(
             assistant_messages.len(),
@@ -4398,11 +4353,11 @@ description: {description}
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
 
         let assistant_messages: Vec<_> = state
-            .session
+            .machine
             .tape
             .messages()
             .iter()
-            .filter(|m| matches!(m, crate::session::Message::Assistant { .. }))
+            .filter(|m| matches!(m, crate::agent_machine::Message::Assistant { .. }))
             .collect();
         assert_eq!(
             assistant_messages.len(),
@@ -4497,13 +4452,13 @@ description: {description}
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
         assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("Mid-turn compaction summary")
         );
         assert_eq!(state.turn_state.compactions_this_turn(), 1);
         assert!(
             state
-                .session
+                .machine
                 .tape
                 .messages()
                 .iter()
@@ -4594,7 +4549,7 @@ description: {description}
         assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
         assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("Mid-turn compaction summary")
         );
         assert_eq!(state.turn_state.compactions_this_turn(), 1);
@@ -4808,7 +4763,7 @@ description: {description}
             Event::Error { message, .. } if message == "Invalid confirmation request."
         )));
         assert!(memory_dir.join("handoffs").join("LATEST.md").exists());
-        assert!(memory_dir.join("sessions").exists());
+        assert!(memory_dir.join("episodic").exists());
         assert!(
             std::fs::read_dir(memory_dir.join("daily"))
                 .unwrap()
@@ -4982,7 +4937,7 @@ description: {description}
                 if summary == "Task cancelled by user"
         )));
         assert!(!memory_dir.join("handoffs").join("LATEST.md").exists());
-        assert!(!memory_dir.join("sessions").exists());
+        assert!(!memory_dir.join("episodic").exists());
         assert!(!memory_dir.join("daily").exists());
     }
 
@@ -5298,10 +5253,10 @@ runtime:
             "# Latest Handoff\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
         )
         .unwrap();
-        std::fs::create_dir_all(memory_dir.join("sessions/2026/04/15")).unwrap();
+        std::fs::create_dir_all(memory_dir.join("episodic/2026/04/15")).unwrap();
         std::fs::write(
-            memory_dir.join("sessions/2026/04/15/session-1.md"),
-            "# Session Summary\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
+            memory_dir.join("episodic/2026/04/15/process-1.md"),
+            "# Agent Process Activity\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
         )
         .unwrap();
 
@@ -5320,7 +5275,7 @@ runtime:
             &mut state,
             TurnRunKind::NewTurn,
             Some(vec![ContentPart::text(
-                "What were we doing in the previous session?",
+                "What was the previous Agent Process doing?",
             )]),
             &mut emit,
             &cancel,
@@ -5337,7 +5292,7 @@ runtime:
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains(".alan/memory/handoffs/LATEST.md"));
-        assert!(request_prompt.contains(".alan/memory/sessions/2026/04/15/session-1.md"));
+        assert!(request_prompt.contains(".alan/memory/episodic/2026/04/15/process-1.md"));
         assert!(request_prompt.contains("ALAN_CONTINUITY_RECALL"));
     }
 
@@ -5347,7 +5302,7 @@ runtime:
         let workspace_root = temp.path().join("repo");
         let memory_dir = workspace_root.join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        std::fs::create_dir_all(memory_dir.join("sessions/2026/04/16")).unwrap();
+        std::fs::create_dir_all(memory_dir.join("episodic/2026/04/16")).unwrap();
         for index in 1..=4 {
             std::fs::write(
                 memory_dir.join(format!("topics/recent-match-{index}.md")),
@@ -5362,8 +5317,8 @@ runtime:
         .unwrap();
         for index in 1..=4 {
             std::fs::write(
-                memory_dir.join(format!("sessions/2026/04/16/session-{index}.md")),
-                format!("# Session Summary\nALAN_RECENT_RECALL_{index}\n"),
+                memory_dir.join(format!("episodic/2026/04/16/process-{index}.md")),
+                format!("# Agent Process Activity\nALAN_RECENT_RECALL_{index}\n"),
             )
             .unwrap();
         }
@@ -5398,7 +5353,7 @@ runtime:
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
         assert!(request_prompt.contains(".alan/memory/daily/2026-04-16.md"));
-        assert!(request_prompt.contains(".alan/memory/sessions/2026/04/16/session-4.md"));
+        assert!(request_prompt.contains(".alan/memory/episodic/2026/04/16/process-4.md"));
         assert!(request_prompt.contains("ALAN_RECENT_RECALL_4"));
         assert!(!request_prompt.contains(".alan/memory/topics/recent-match-4.md"));
     }
@@ -5433,9 +5388,9 @@ runtime:
         state.runtime_config.compaction_trigger_ratio = 1.0;
         for idx in 0..3 {
             state
-                .session
+                .machine
                 .add_user_message(&format!("Earlier user context {idx} {}", "u".repeat(220)));
-            state.session.add_assistant_message(
+            state.machine.add_assistant_message(
                 &format!("Earlier assistant context {idx} {}", "a".repeat(220)),
                 None,
             );
@@ -5450,7 +5405,7 @@ runtime:
             estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref());
         assert!(pending_prompt_tokens > 0);
 
-        let base_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        let base_prompt_tokens = state.machine.tape.estimated_prompt_tokens();
         state.runtime_config.context_window_tokens =
             (base_prompt_tokens + pending_prompt_tokens - 1) as u32;
 
@@ -5467,7 +5422,7 @@ runtime:
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(state.session.tape.summary(), Some("COMPACTED_FOR_RECALL"));
+        assert_eq!(state.machine.tape.summary(), Some("COMPACTED_FOR_RECALL"));
 
         let system_prompts = seen_system_prompts.lock().unwrap();
         assert_eq!(system_prompts.len(), 2);
@@ -5536,9 +5491,9 @@ runtime:
         state.runtime_config.compaction_trigger_ratio = 1.0;
         for idx in 0..3 {
             state
-                .session
+                .machine
                 .add_user_message(&format!("Mid-turn user context {idx} {}", "u".repeat(220)));
-            state.session.add_assistant_message(
+            state.machine.add_assistant_message(
                 &format!("Mid-turn assistant context {idx} {}", "a".repeat(220)),
                 None,
             );
@@ -5554,7 +5509,7 @@ runtime:
         );
         assert!(additional_prompt_tokens > 0);
 
-        let base_prompt_tokens = state.session.tape.estimated_prompt_tokens();
+        let base_prompt_tokens = state.machine.tape.estimated_prompt_tokens();
         state.runtime_config.context_window_tokens =
             (base_prompt_tokens + additional_prompt_tokens - 1) as u32;
 
@@ -5570,7 +5525,7 @@ runtime:
 
         assert!(result.is_ok());
         assert_eq!(
-            state.session.tape.summary(),
+            state.machine.tape.summary(),
             Some("MID_TURN_COMPACTION_SUMMARY")
         );
         assert_eq!(state.turn_state.compactions_this_turn(), 1);
@@ -5626,7 +5581,7 @@ runtime:
             .turn_state
             .set_active_skills(prior_prompt.active_skills);
         state
-            .session
+            .machine
             .add_user_message("continue the prior approval flow");
 
         let cancel = CancellationToken::new();

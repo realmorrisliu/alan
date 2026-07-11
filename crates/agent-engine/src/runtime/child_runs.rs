@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_TERMINAL_CHILD_RUN_RECORDS: usize = 256;
@@ -56,12 +56,12 @@ pub struct ChildRunTerminationRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChildRunRecord {
     pub id: String,
-    pub parent_session_id: String,
-    pub child_session_id: String,
+    pub parent_process_path: String,
+    pub child_process_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_path: Option<String>,
+    pub agent_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_ref: Option<crate::skills::DelegatedSkillOutputRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,19 +90,19 @@ pub struct ChildRunRecord {
 impl ChildRunRecord {
     pub fn new(
         id: String,
-        parent_session_id: String,
-        child_session_id: String,
+        parent_process_path: String,
+        child_process_path: String,
         workspace_root: Option<String>,
-        process_path: Option<String>,
+        agent_path: Option<String>,
         launch_target: Option<String>,
     ) -> Self {
         let now = now_ms();
         Self {
             id,
-            parent_session_id,
-            child_session_id,
+            parent_process_path,
+            child_process_path,
             workspace_root,
-            process_path,
+            agent_path,
             state_ref: None,
             launch_target,
             status: ChildRunStatus::Starting,
@@ -147,32 +147,6 @@ impl ChildRunRegistry {
         records.insert(record.id.clone(), record);
     }
 
-    pub fn list_for_parent(&self, parent_session_id: &str) -> Vec<ChildRunRecord> {
-        let mut records = self
-            .inner
-            .read()
-            .expect("child run registry poisoned")
-            .values()
-            .filter(|record| record.parent_session_id == parent_session_id)
-            .cloned()
-            .collect::<Vec<_>>();
-        records.sort_by_key(|record| record.created_at_ms);
-        records
-    }
-
-    pub fn get_for_parent(
-        &self,
-        parent_session_id: &str,
-        child_run_id: &str,
-    ) -> Option<ChildRunRecord> {
-        self.inner
-            .read()
-            .expect("child run registry poisoned")
-            .get(child_run_id)
-            .filter(|record| record.parent_session_id == parent_session_id)
-            .cloned()
-    }
-
     pub fn get(&self, child_run_id: &str) -> Option<ChildRunRecord> {
         self.inner
             .read()
@@ -210,7 +184,7 @@ impl ChildRunRegistry {
         record.latest_event_kind = Some("proc_exited".to_string());
         record.latest_status_summary = Some(format!(
             "authoritative process {} exited with code {exit_code}",
-            record.process_path.as_deref().unwrap_or("/proc/<unknown>")
+            record.child_process_path
         ));
         record.updated_at_ms = now_ms();
     }
@@ -292,7 +266,7 @@ impl ChildRunRegistry {
 
     pub fn request_termination(
         &self,
-        parent_session_id: &str,
+        parent_process_path: &str,
         child_run_id: &str,
         actor: impl Into<String>,
         mode: ChildRunTerminationMode,
@@ -302,7 +276,7 @@ impl ChildRunRegistry {
         let Some(record) = records.get_mut(child_run_id) else {
             return Err(ChildRunRegistryError::NotFound);
         };
-        if record.parent_session_id != parent_session_id {
+        if record.parent_process_path != parent_process_path {
             return Err(ChildRunRegistryError::NotFound);
         }
         if record.status.is_terminal() {
@@ -335,14 +309,6 @@ impl ChildRunRegistry {
             .expect("child run registry poisoned")
             .get(child_run_id)
             .and_then(|record| record.termination.clone())
-    }
-
-    #[cfg(test)]
-    pub fn clear(&self) {
-        self.inner
-            .write()
-            .expect("child run registry poisoned")
-            .clear();
     }
 
     fn update(&self, child_run_id: &str, update: impl FnOnce(&mut ChildRunRecord, u64)) {
@@ -421,12 +387,6 @@ pub enum ChildRunRegistryError {
     AlreadyTerminal(Box<ChildRunRecord>),
 }
 
-static GLOBAL_CHILD_RUN_REGISTRY: OnceLock<ChildRunRegistry> = OnceLock::new();
-
-pub fn global_child_run_registry() -> &'static ChildRunRegistry {
-    GLOBAL_CHILD_RUN_REGISTRY.get_or_init(ChildRunRegistry::default)
-}
-
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -438,13 +398,13 @@ pub fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
-    fn test_record(child_run_id: &str, parent_session_id: &str) -> ChildRunRecord {
+    fn test_record(child_run_id: &str, parent_process_path: &str) -> ChildRunRecord {
         ChildRunRecord::new(
             child_run_id.to_string(),
-            parent_session_id.to_string(),
-            format!("child-session-{child_run_id}"),
+            parent_process_path.to_string(),
+            "/proc/42".to_string(),
             Some("/tmp/workspace".to_string()),
-            Some("/proc/42".to_string()),
+            Some("/agent/42".to_string()),
             Some("repo-coding".to_string()),
         )
     }
@@ -491,11 +451,8 @@ mod tests {
         );
         registry.observe_warning("run-1", "first warning".to_string());
 
-        let parent_runs = registry.list_for_parent("parent-1");
-        assert_eq!(parent_runs.len(), 1);
-        assert_eq!(parent_runs[0].id, "run-1");
-
-        let running = registry.get_for_parent("parent-1", "run-1").unwrap();
+        let running = registry.get("run-1").unwrap();
+        assert_eq!(running.parent_process_path, "parent-1");
         assert_eq!(running.status, ChildRunStatus::Running);
         assert_eq!(
             running.latest_event_kind.as_deref(),
@@ -689,13 +646,11 @@ mod tests {
         let record = registry.get("run-1").unwrap();
         assert_eq!(record.status, ChildRunStatus::Failed);
         assert_eq!(record.latest_event_kind.as_deref(), Some("proc_exited"));
-        assert_eq!(record.process_path.as_deref(), Some("/proc/42"));
-        assert!(
-            record
-                .latest_status_summary
-                .as_deref()
-                .unwrap()
-                .contains("exited with code 17")
+        assert_eq!(record.child_process_path, "/proc/42");
+        assert_eq!(record.agent_path.as_deref(), Some("/agent/42"));
+        assert_eq!(
+            record.latest_status_summary.as_deref(),
+            Some("authoritative process /proc/42 exited with code 17")
         );
     }
 
@@ -734,20 +689,27 @@ mod tests {
     #[test]
     fn registry_prunes_old_terminal_runs_without_removing_active_runs() {
         let registry = ChildRunRegistry::default();
-        let parent_session_id = "parent-1";
+        let parent_process_path = "parent-1";
         for index in 0..(MAX_TERMINAL_CHILD_RUN_RECORDS + 2) {
             let id = format!("terminal-{index:03}");
-            let mut record = test_record(&id, parent_session_id);
+            let mut record = test_record(&id, parent_process_path);
             record.created_at_ms = index as u64;
             record.updated_at_ms = index as u64;
             registry.register(record);
             registry.mark_terminal(&id, ChildRunStatus::Completed, None);
         }
 
-        registry.register(test_record("active-run", parent_session_id));
+        registry.register(test_record("active-run", parent_process_path));
         registry.mark_running("active-run");
 
-        let runs = registry.list_for_parent(parent_session_id);
+        let runs = registry
+            .inner
+            .read()
+            .unwrap()
+            .values()
+            .filter(|record| record.parent_process_path == parent_process_path)
+            .cloned()
+            .collect::<Vec<_>>();
         let terminal_count = runs
             .iter()
             .filter(|record| record.status.is_terminal())

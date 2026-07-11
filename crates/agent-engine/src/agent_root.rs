@@ -12,7 +12,7 @@ const PERSONA_DIRNAME: &str = "persona";
 const SKILLS_DIRNAME: &str = "skills";
 const POLICY_FILENAME: &str = "policy.yaml";
 const RUNTIME_DIRNAME: &str = "runtime";
-const SESSIONS_DIRNAME: &str = "sessions";
+const ROLLOUTS_DIRNAME: &str = "rollouts";
 const MEMORY_DIRNAME: &str = "memory";
 
 /// Canonical path contract for alan agent roots.
@@ -316,12 +316,12 @@ pub fn workspace_alan_dir(workspace_root: &Path) -> PathBuf {
     workspace_root.join(ALAN_DIRNAME)
 }
 
-pub fn workspace_sessions_dir(workspace_root: &Path) -> PathBuf {
-    workspace_sessions_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
+pub fn workspace_rollouts_dir(workspace_root: &Path) -> PathBuf {
+    workspace_rollouts_dir_from_alan_dir(&workspace_alan_dir(workspace_root))
 }
 
-pub fn workspace_sessions_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_alan_dir.join(SESSIONS_DIRNAME)
+pub fn workspace_rollouts_dir_from_alan_dir(workspace_alan_dir: &Path) -> PathBuf {
+    workspace_alan_dir.join(ROLLOUTS_DIRNAME)
 }
 
 pub fn workspace_memory_dir(workspace_root: &Path) -> PathBuf {
@@ -345,15 +345,15 @@ pub fn workspace_runtime_dir_from_alan_dir(
         .join(channel.descriptor().id)
 }
 
-pub fn workspace_runtime_sessions_dir(workspace_root: &Path, channel: InstallChannel) -> PathBuf {
-    workspace_runtime_sessions_dir_from_alan_dir(&workspace_alan_dir(workspace_root), channel)
+pub fn workspace_runtime_rollouts_dir(workspace_root: &Path, channel: InstallChannel) -> PathBuf {
+    workspace_runtime_rollouts_dir_from_alan_dir(&workspace_alan_dir(workspace_root), channel)
 }
 
-pub fn workspace_runtime_sessions_dir_from_alan_dir(
+pub fn workspace_runtime_rollouts_dir_from_alan_dir(
     workspace_alan_dir: &Path,
     channel: InstallChannel,
 ) -> PathBuf {
-    workspace_runtime_dir_from_alan_dir(workspace_alan_dir, channel).join(SESSIONS_DIRNAME)
+    workspace_runtime_dir_from_alan_dir(workspace_alan_dir, channel).join(ROLLOUTS_DIRNAME)
 }
 
 pub fn workspace_runtime_memory_dir(workspace_root: &Path, channel: InstallChannel) -> PathBuf {
@@ -395,40 +395,18 @@ pub fn workspace_runtime_tmp_dir_from_alan_dir(
     workspace_runtime_dir_from_alan_dir(workspace_alan_dir, channel).join("tmp")
 }
 
-pub fn workspace_sessions_dir_for_channel_from_alan_dir(
+pub fn workspace_rollouts_dir_for_channel_from_alan_dir(
     workspace_alan_dir: &Path,
     channel: InstallChannel,
 ) -> PathBuf {
-    workspace_runtime_sessions_dir_from_alan_dir(workspace_alan_dir, channel)
+    workspace_runtime_rollouts_dir_from_alan_dir(workspace_alan_dir, channel)
 }
 
 pub fn workspace_memory_dir_for_channel_from_alan_dir(
     workspace_alan_dir: &Path,
     channel: InstallChannel,
 ) -> PathBuf {
-    let runtime_memory_dir =
-        workspace_runtime_memory_dir_from_alan_dir(workspace_alan_dir, channel);
-    if channel == InstallChannel::Stable && !runtime_memory_dir.exists() {
-        let legacy_memory_dir = workspace_memory_dir_from_alan_dir(workspace_alan_dir);
-        if legacy_memory_dir.exists() {
-            return legacy_memory_dir;
-        }
-    }
-    runtime_memory_dir
-}
-
-pub fn workspace_session_read_dirs_for_channel_from_alan_dir(
-    workspace_alan_dir: &Path,
-    channel: InstallChannel,
-) -> Vec<PathBuf> {
-    let mut dirs = vec![workspace_runtime_sessions_dir_from_alan_dir(
-        workspace_alan_dir,
-        channel,
-    )];
-    if channel == InstallChannel::Stable {
-        dirs.push(workspace_sessions_dir_from_alan_dir(workspace_alan_dir));
-    }
-    dirs
+    workspace_runtime_memory_dir_from_alan_dir(workspace_alan_dir, channel)
 }
 
 pub fn workspace_agent_root_dir(workspace_root: &Path) -> PathBuf {
@@ -671,12 +649,12 @@ mod tests {
         let default_root = layout.workspace_default_root(workspace_root);
 
         assert_eq!(
-            workspace_sessions_dir(workspace_root),
-            alan_dir.join("sessions")
+            workspace_rollouts_dir(workspace_root),
+            alan_dir.join("rollouts")
         );
         assert_eq!(
-            workspace_sessions_dir_from_alan_dir(&alan_dir),
-            alan_dir.join("sessions")
+            workspace_rollouts_dir_from_alan_dir(&alan_dir),
+            alan_dir.join("rollouts")
         );
         assert_eq!(
             workspace_memory_dir(workspace_root),
@@ -691,8 +669,8 @@ mod tests {
             alan_dir.join("runtime").join("dev")
         );
         assert_eq!(
-            workspace_runtime_sessions_dir(workspace_root, InstallChannel::Stable),
-            alan_dir.join("runtime").join("stable").join("sessions")
+            workspace_runtime_rollouts_dir(workspace_root, InstallChannel::Stable),
+            alan_dir.join("runtime").join("stable").join("rollouts")
         );
         assert_eq!(
             workspace_runtime_memory_dir_from_alan_dir(&alan_dir, InstallChannel::Dev),
@@ -745,48 +723,16 @@ mod tests {
     }
 
     #[test]
-    fn stable_memory_helper_reads_existing_legacy_memory_only_for_stable() {
+    fn memory_helper_is_always_channel_scoped() {
         let temp = tempfile::TempDir::new().unwrap();
         let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-
-        assert_eq!(
-            workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, InstallChannel::Stable),
-            alan_dir.join("memory")
-        );
-        assert_eq!(
-            workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, InstallChannel::Dev),
-            alan_dir.join("runtime").join("dev").join("memory")
-        );
-    }
-
-    #[test]
-    fn stable_memory_helper_prefers_channel_runtime_memory_when_present() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(alan_dir.join("memory")).unwrap();
-        std::fs::create_dir_all(alan_dir.join("runtime/stable/memory")).unwrap();
-
         assert_eq!(
             workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, InstallChannel::Stable),
             alan_dir.join("runtime").join("stable").join("memory")
         );
-    }
-
-    #[test]
-    fn session_read_dirs_include_legacy_only_for_stable() {
-        let alan_dir = Path::new("/tmp/demo-workspace/.alan");
-
         assert_eq!(
-            workspace_session_read_dirs_for_channel_from_alan_dir(alan_dir, InstallChannel::Stable),
-            vec![
-                alan_dir.join("runtime").join("stable").join("sessions"),
-                alan_dir.join("sessions"),
-            ]
-        );
-        assert_eq!(
-            workspace_session_read_dirs_for_channel_from_alan_dir(alan_dir, InstallChannel::Dev),
-            vec![alan_dir.join("runtime").join("dev").join("sessions")]
+            workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, InstallChannel::Dev),
+            alan_dir.join("runtime").join("dev").join("memory")
         );
     }
 

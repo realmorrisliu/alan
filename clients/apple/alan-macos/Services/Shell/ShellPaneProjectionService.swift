@@ -22,7 +22,7 @@ struct ShellPaneProjectionService {
         binding: ShellAlanBinding?,
         surfaceState: AlanTerminalSurfaceStateSnapshot? = nil
     ) -> ShellAttentionState {
-        if binding?.pendingYield == true || processExited || surfaceState?.childExited == true {
+        if binding?.pendingRequest == true || processExited || surfaceState?.childExited == true {
             return .awaitingUser
         }
 

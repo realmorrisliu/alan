@@ -20,7 +20,7 @@ loop between them:
   current TUI completion model still receives renderer-assembled command,
   Skill, and host-file candidate lists.
 
-The design was sharpened through a domain-modeling/grilling session. The
+The design was sharpened through a domain-modeling workshop. The
 resolved terms live in `CONTEXT.md`: Programmable Client Surface belongs to
 Alan Shell; an Alan Shell Evaluator Process is an ordinary Process created by
 the `run` Tool; a WASM Component is a future portable Tool or File-Server
@@ -167,8 +167,8 @@ not an unbounded result store.
 For `tail`, the evaluator Process remains running and holds the source Stream
 Descriptor. Bytes flow incrementally to its own `io/output` and are rendered as
 a transient projection; they are not continually copied into `body`. Interrupt
-or cancel uses `/proc/<pid>/ctl`. Reconnect reads the Process output stream from
-a saved offset. A client that wants editable text stops or snapshots the live
+or cancel uses `/proc/<pid>/ctl`. A later attachment reads the Process output
+stream from a saved offset. A client that wants editable text stops or snapshots the live
 operation and explicitly runs `cat /proc/<pid>/io/output`; that finite command
 uses the normal materialization path.
 

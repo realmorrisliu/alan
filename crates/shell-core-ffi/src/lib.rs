@@ -10,12 +10,12 @@ use alan_shell_core::{
     ManagedTerminalAccountState, ReducerError, ReducerOperation, ShellActionId,
     ShellActionRegistry, ShellActionShortcut, ShellActionTarget, ShellContentWorkspaceManifest,
     ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
-    ShellCoreResponseEnvelope, ShellSettingsCapabilitiesSummary, ShellSettingsDiagnosticsSummary,
-    ShellSettingsLocalSummary, ShellSettingsSummaryRows, ShellWorkspaceManifest,
-    TerminalExecutableAvailability, TerminalLaunchEnvironment, TerminalLaunchIntent,
-    TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileEditor,
-    TerminalProfileEditorDraft, TerminalProfileSettingsSummary, TerminalProfileValidator,
-    WorkspaceState, should_capture_global_default_terminal_profile,
+    ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary,
+    ShellSettingsSummaryRows, ShellWorkspaceManifest, TerminalExecutableAvailability,
+    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalProfileDefinition,
+    TerminalProfileDocument, TerminalProfileEditor, TerminalProfileEditorDraft,
+    TerminalProfileSettingsSummary, TerminalProfileValidator, WorkspaceState,
+    should_capture_global_default_terminal_profile,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -180,7 +180,6 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
         "managed_terminal_account.plan" => managed_terminal_account_plan(request.payload),
         "settings.terminal_profile_rows" => terminal_profile_rows(request.payload),
         "settings.managed_terminal_account_rows" => managed_terminal_account_rows(request.payload),
-        "settings.capability_rows" => capability_rows(request.payload),
         "settings.local_rows" => local_rows(request.payload),
         operation => Err(ShellCoreErrorCode::UnknownOperation
             .envelope("unknown shell-core facade operation")
@@ -215,7 +214,6 @@ fn supported_operations() -> &'static [&'static str] {
         "managed_terminal_account.plan",
         "settings.terminal_profile_rows",
         "settings.managed_terminal_account_rows",
-        "settings.capability_rows",
         "settings.local_rows",
     ]
 }
@@ -390,14 +388,6 @@ fn managed_terminal_account_rows(payload: Value) -> Result<Value, ShellCoreError
         decode_payload(payload, "settings.managed_terminal_account_rows")?;
     Ok(json!({
         "rows": ShellSettingsSummaryRows::managed_terminal_account_rows(&summary),
-    }))
-}
-
-fn capability_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
-    let summary: ShellSettingsCapabilitiesSummary =
-        decode_payload(payload, "settings.capability_rows")?;
-    Ok(json!({
-        "rows": ShellSettingsSummaryRows::capability_rows(&summary),
     }))
 }
 

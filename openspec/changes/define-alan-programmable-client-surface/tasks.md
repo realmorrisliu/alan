@@ -89,11 +89,11 @@
   command, spawn `run`, observe `/proc/<pid>`, validate through editfs, stream
   output, materialize a finite result, and inspect Process-linked buffer events.
 - [ ] 5.3 Run the same harness operations through human-shaped and agent-shaped
-  aP clients and prove neither path needs renderer-specific domain code,
-  daemon/session transport, or editfs-owned authority.
+  aP clients and prove neither path needs renderer-specific domain code or
+  editfs-owned authority.
 - [ ] 5.4 Add concurrency and recovery coverage for stale selections, concurrent
   edits, safe materialization retry, live output offsets, renderer/client
-  detach, reconnect from offsets, cancel, and explicit capture.
+  detach, reattach from offsets, cancel, and explicit capture.
 
 ## 6. Documentation And Boundary Review
 

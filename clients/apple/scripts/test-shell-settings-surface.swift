@@ -25,7 +25,7 @@ struct ShellSettingsSurfaceTestRunner {
     static func main() {
         do {
             try testDefaultSectionOrderAndInterfaceMutability()
-            try testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted()
+            try testLocalRowsStayBounded()
             try testDevChannelLocalRowsUseDevIdentity()
             try testPrivilegedHelperIdentityIsChannelScoped()
             try testPrivilegedHelperCurrentIdentityUsesLaunchdServiceName()
@@ -37,12 +37,8 @@ struct ShellSettingsSurfaceTestRunner {
             try testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes()
             try testPrivilegedHelperRequestValidationIsNarrowAndSanitized()
             try testManagedUserHelperBackedPathForbidsLegacyExecutorFallback()
-            try testLocalSummaryReadsHostConfigForDaemonEndpoint()
             try testLocalFolderOpenerRequiresExistingDirectory()
-            try testWorkspaceContextUsesRegistryForWorkspaceScopedRequests()
-            try testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot()
-            try testUnavailableRemoteSummariesStayCompact()
-            try testTerminalProfilesAndAccountsStayLocalAndRedacted()
+            try testTerminalProfilesAndManagedUsersStayLocalAndRedacted()
             try testManagedUserTerminalProfilesUseHelperLaunchIdentity()
             try testManagedUserRowsExposeStateAppropriateActions()
             try testManagedUserRowsExposeHelperBackedStates()
@@ -59,8 +55,7 @@ struct ShellSettingsSurfaceTestRunner {
             try testManagedProfileReadinessFiltersSpaceIdentityChoices()
             try testPerformanceDiagnosticsRowsAreCompactAndLocal()
             try testNavigationGroupsMapTaskOrientedRows()
-            try testNavigationGroupsKeepTerminalIdentityOutOfAgent()
-            try testNavigationGroupsPlaceAgentAndSystemRows()
+            try testNavigationGroupsPlaceSystemRows()
             print("Shell settings surface tests passed.")
         } catch {
             fputs("Shell settings surface tests failed: \(error)\n", stderr)
@@ -71,14 +66,13 @@ struct ShellSettingsSurfaceTestRunner {
 
 private func testDefaultSectionOrderAndInterfaceMutability() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles()
     )
 
     try expect(
         snapshot.sections.map(\.id) == ShellSettingsSectionID.defaultOrder,
-        "settings sections must render local Terminal Profiles before provider Accounts"
+        "settings sections must render local shell surfaces in canonical order"
     )
 
     let interface = try requireSection(.interface, in: snapshot)
@@ -101,92 +95,18 @@ private func testDefaultSectionOrderAndInterfaceMutability() throws {
     )
 }
 
-private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throws {
-    let account = ShellSettingsConnectionProfile(
-        profileID: "openai-main",
-        label: "Work account",
-        provider: "openai_responses",
-        credentialStatus: "available",
-        settings: [
-            "model": "gpt-5.3",
-            "api_key": "sk-test-should-not-render",
-            "refresh_token": "refresh-token-should-not-render",
-        ],
-        isDefault: true
-    )
-    let provider = ShellSettingsConnectionProvider(
-        providerID: "openai_responses",
-        displayName: "OpenAI Responses",
-        supportsBrowserLogin: false,
-        supportsDeviceLogin: false,
-        supportsSecretEntry: true,
-        supportsLogout: true,
-        supportsTest: true
-    )
-    let accounts = ShellSettingsAccountsSummary(
-        current: ShellSettingsConnectionSelection(
-            defaultProfile: "openai-main",
-            effectiveProfile: "openai-main",
-            effectiveSource: "default_profile"
-        ),
-        profiles: [account],
-        providers: [provider],
-        unavailableReason: nil
-    )
-    let capabilities = ShellSettingsCapabilitiesSummary(
-        skills: [
-            ShellSettingsSkillSummary(
-                id: "memory",
-                name: "Memory",
-                enabled: true,
-                allowImplicitInvocation: false,
-                available: true
-            ),
-            ShellSettingsSkillSummary(
-                id: "plan",
-                name: "Plan",
-                enabled: false,
-                allowImplicitInvocation: false,
-                available: true
-            ),
-        ],
-        unavailableReason: nil
-    )
+private func testLocalRowsStayBounded() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: ShellSettingsRemoteSnapshot(accounts: accounts, capabilities: capabilities),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles()
     )
     let visibleText = snapshot.visibleText.joined(separator: "\n")
 
     try expect(
-        !visibleText.contains("sk-test-should-not-render"),
-        "settings must not render API key values"
+        !visibleText.localizedCaseInsensitiveContains("daemon")
+            && !visibleText.localizedCaseInsensitiveContains("http"),
+        "local Settings must not expose retired host-service contracts"
     )
-    try expect(
-        !visibleText.contains("refresh-token-should-not-render"),
-        "settings must not render refresh token values"
-    )
-    try expect(
-        !visibleText.contains("api_key") && !visibleText.contains("refresh_token"),
-        "settings must not render raw secret setting names"
-    )
-    try expect(
-        !visibleText.localizedCaseInsensitiveContains("mount"),
-        "capabilities must use enabled and implicit-invocation terminology instead of mount labels"
-    )
-
-    for sectionID in [ShellSettingsSectionID.accounts, .capabilities] {
-        let section = try requireSection(sectionID, in: snapshot)
-        try expect(
-            section.rows.allSatisfy { $0.mutability != .editable },
-            "\(sectionID.rawValue) rows must not be directly editable in the first settings phase"
-        )
-        try expect(
-            section.rows.allSatisfy { !$0.offersFreeformEditing },
-            "\(sectionID.rawValue) rows must not expose freeform file or credential editing"
-        )
-    }
 
     let localSection = try requireSection(.local, in: snapshot)
     try expect(
@@ -201,7 +121,6 @@ private func testAccountsCapabilitiesAndLocalRowsStayReadOnlyAndRedacted() throw
 
 private func testDevChannelLocalRowsUseDevIdentity() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: devLocalSummary(),
         terminalProfiles: testTerminalProfiles()
     )
@@ -213,14 +132,6 @@ private func testDevChannelLocalRowsUseDevIdentity() throws {
     )
     try expect(localText.contains("alan-dev"), "dev settings must show the alan-dev CLI tool")
     try expect(localText.contains("~/.alan-dev"), "dev settings must show the dev alan home")
-    try expect(
-        localText.contains("~/.agents-dev/skills"),
-        "dev settings must show the dev public skill root"
-    )
-    try expect(
-        localText.contains("127.0.0.1:8091"),
-        "dev settings must show the dev daemon bind or endpoint"
-    )
     try expect(
         localText.contains("alan-dev-shell-control"),
         "dev settings must show the dev shell-control namespace"
@@ -358,7 +269,6 @@ private func testPrivilegedHelperSettingsRowsExposeLifecycleStates() throws {
 
     for (state, value, actions) in expectations {
         let snapshot = ShellSettingsSurfaceSnapshot.make(
-            remote: .unavailable(reason: "Daemon unavailable"),
             local: stableLocalSummary(),
             terminalProfiles: testTerminalProfiles(),
             privilegedHelper: PrivilegedHelperSettingsSummary(
@@ -718,34 +628,6 @@ private func testManagedUserHelperBackedPathForbidsLegacyExecutorFallback() thro
     }
 }
 
-private func testLocalSummaryReadsHostConfigForDaemonEndpoint() throws {
-    let homeDirectory = try makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: homeDirectory) }
-
-    let alanHome = homeDirectory.appendingPathComponent(".alan-dev", isDirectory: true)
-    try FileManager.default.createDirectory(at: alanHome, withIntermediateDirectories: true)
-    try """
-    bind_address = "127.0.0.1:9123"
-    """
-    .write(to: alanHome.appendingPathComponent("host.toml"), atomically: true, encoding: .utf8)
-
-    let summary = ShellSettingsLocalSummary.current(
-        channel: .dev,
-        environment: [:],
-        updateDecision: unsupportedDevUpdateDecision(),
-        homeDirectory: homeDirectory
-    )
-
-    try expect(
-        summary.daemonBindAddress == "127.0.0.1:9123",
-        "settings must display the bind address from the channel host.toml"
-    )
-    try expect(
-        summary.daemonURL == "http://127.0.0.1:9123",
-        "settings must query the daemon URL derived from host.toml"
-    )
-}
-
 private func testLocalFolderOpenerRequiresExistingDirectory() throws {
     let homeDirectory = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: homeDirectory) }
@@ -778,95 +660,7 @@ private func testLocalFolderOpenerRequiresExistingDirectory() throws {
     )
 }
 
-private func testWorkspaceContextUsesRegistryForWorkspaceScopedRequests() throws {
-    let homeDirectory = try makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: homeDirectory) }
-
-    let workspace = homeDirectory.appendingPathComponent("repo", isDirectory: true)
-    let nestedDirectory = workspace.appendingPathComponent("Sources", isDirectory: true)
-    try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
-
-    let alanHome = homeDirectory.appendingPathComponent(".alan-dev", isDirectory: true)
-    try FileManager.default.createDirectory(at: alanHome, withIntermediateDirectories: true)
-    let registry: [String: Any] = [
-        "version": 1,
-        "workspaces": [
-            [
-                "id": "abc123",
-                "path": workspace.standardizedFileURL.path,
-                "alias": "repo",
-                "created_at": "2026-05-27T00:00:00Z",
-            ],
-        ],
-    ]
-    let registryData = try JSONSerialization.data(withJSONObject: registry, options: [.prettyPrinted])
-    try registryData.write(to: alanHome.appendingPathComponent("registry.json"))
-
-    let context = ShellSettingsWorkspaceContext.resolve(
-        activeWorkingDirectory: nestedDirectory.path,
-        channel: .dev,
-        homeDirectory: homeDirectory
-    )
-
-    try expect(
-        context.connectionWorkspaceDir == workspace.standardizedFileURL.path,
-        "connection state must use the registered workspace root, not a nested terminal cwd"
-    )
-    try expect(
-        context.skillCatalogWorkspaceDir == "repo",
-        "skill catalog requests must use a registered workspace alias or short id"
-    )
-}
-
-private func testWorkspaceContextFallsBackToDiscoveredWorkspaceRoot() throws {
-    let homeDirectory = try makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: homeDirectory) }
-
-    let workspace = homeDirectory.appendingPathComponent("unregistered", isDirectory: true)
-    let nestedDirectory = workspace.appendingPathComponent("Sources", isDirectory: true)
-    try FileManager.default.createDirectory(
-        at: workspace.appendingPathComponent(".alan", isDirectory: true),
-        withIntermediateDirectories: true
-    )
-    try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
-
-    let context = ShellSettingsWorkspaceContext.resolve(
-        activeWorkingDirectory: nestedDirectory.path,
-        channel: .dev,
-        homeDirectory: homeDirectory
-    )
-
-    try expect(
-        context.connectionWorkspaceDir == workspace.standardizedFileURL.path,
-        "connection state must fall back to the discovered workspace root"
-    )
-    try expect(
-        context.skillCatalogWorkspaceDir == nil,
-        "unregistered workspaces must not be sent to the skill catalog alias-only endpoint"
-    )
-    try expect(
-        context.skillCatalogUnavailableReason == "Register this workspace to show workspace skills.",
-        "unregistered workspaces with .alan state must not fall back to the default skill catalog"
-    )
-}
-
-private func testUnavailableRemoteSummariesStayCompact() throws {
-    let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Connection refused"),
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles()
-    )
-    let text = snapshot.visibleText.joined(separator: "\n")
-
-    try expect(text.contains("Unavailable"), "unavailable remote sources must render a compact state")
-    try expect(!text.contains("Error("), "unavailable state must not render raw debug payloads")
-    try expect(
-        !text.contains("thinking_budget_tokens"),
-        "sessions summary must not expose deprecated thinking budget controls"
-    )
-}
-
-private func testTerminalProfilesAndAccountsStayLocalAndRedacted() throws {
+private func testTerminalProfilesAndManagedUsersStayLocalAndRedacted() throws {
     let accountPlans = [
         ManagedTerminalAccountPlanner.plan(
             request: ManagedTerminalAccountRequest(
@@ -898,14 +692,12 @@ private func testTerminalProfilesAndAccountsStayLocalAndRedacted() throws {
         ),
     ]
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: accountPlans)
     )
     let profileSection = try requireSection(.terminalProfiles, in: snapshot)
     let accountSection = try requireSection(.terminalAccounts, in: snapshot)
-    let providerSection = try requireSection(.accounts, in: snapshot)
     let visibleText = snapshot.visibleText.joined(separator: "\n")
 
     try expect(
@@ -931,10 +723,6 @@ private func testTerminalProfilesAndAccountsStayLocalAndRedacted() throws {
     try expect(
         accountSection.rows.contains { $0.title == "Lab User" && $0.value == "Conflict" },
         "Managed Users must show independent conflict state for each user"
-    )
-    try expect(
-        !providerSection.visibleText.contains("Alan"),
-        "Terminal Profiles must stay out of provider Accounts"
     )
     try expect(
         !visibleText.contains("echo hidden-secret"),
@@ -993,7 +781,6 @@ private func testManagedUserTerminalProfilesUseHelperLaunchIdentity() throws {
     let managedProfileRows = try requireSection(
         .terminalProfiles,
         in: ShellSettingsSurfaceSnapshot.make(
-            remote: .unavailable(reason: "Daemon unavailable"),
             local: stableLocalSummary(),
             terminalProfiles: TerminalProfileSettingsSummary(
                 profiles: managedDocument.profiles,
@@ -1146,7 +933,6 @@ private func testManagedUserRowsExposeStateAppropriateActions() throws {
         )
     )
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(
@@ -1229,7 +1015,6 @@ private func testManagedUserRowsExposeHelperBackedStates() throws {
         plan("delete", status: .requiresDestructiveConfirmation),
     ]
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: plans)
@@ -1427,7 +1212,6 @@ private func testManagedUserExistingOrdinaryAccountReportsNotAlanManaged() throw
         throw TestFailure.message("ordinary requested account must remain visible as not Alan managed")
     }
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         managedTerminalAccounts: summary
@@ -2302,7 +2086,6 @@ private func testManagedProfileReadinessFiltersSpaceIdentityChoices() throws {
 
 private func testPerformanceDiagnosticsRowsAreCompactAndLocal() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         diagnostics: ShellSettingsDiagnosticsSummary(
@@ -2345,15 +2128,14 @@ private func testPerformanceDiagnosticsRowsAreCompactAndLocal() throws {
 
 private func testNavigationGroupsMapTaskOrientedRows() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles()
     )
     let groups = snapshot.navigationGroups
 
     try expect(
-        groups.map(\.id) == [.general, .terminal, .agent, .system],
-        "settings navigation groups must use General, Terminal, Agent, and System"
+        groups.map(\.id) == [.general, .terminal, .system],
+        "settings navigation groups must use General, Terminal, and System"
     )
 
     let general = try requireNavigationGroup(.general, in: snapshot)
@@ -2393,46 +2175,8 @@ private func testNavigationGroupsMapTaskOrientedRows() throws {
     )
 }
 
-private func testNavigationGroupsKeepTerminalIdentityOutOfAgent() throws {
-    let accountPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris"),
-        state: ManagedTerminalAccountState(
-            account: .missing,
-            sudoers: .missing,
-            terminalProfile: .missing,
-            verification: .notRun
-        )
-    )
+private func testNavigationGroupsPlaceSystemRows() throws {
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles(),
-        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: [accountPlan])
-    )
-    let terminal = try requireNavigationGroup(.terminal, in: snapshot)
-    let agent = try requireNavigationGroup(.agent, in: snapshot)
-
-    try expect(
-        terminal.rows.map(\.id).contains("terminalProfilesDefault"),
-        "Terminal must contain the Default Terminal Profile row"
-    )
-    try expect(
-        terminal.rows.contains { $0.id.hasPrefix("terminalAccount.") },
-        "Terminal must contain Managed Terminal Account rows"
-    )
-    try expect(
-        terminal.rows.map(\.id).contains("terminalProfilesSudoGuidance"),
-        "Terminal must contain sudo behavior guidance"
-    )
-    try expect(
-        !agent.rows.contains { $0.id.hasPrefix("terminalProfile") || $0.id.hasPrefix("terminalAccount") },
-        "Agent must not contain local terminal identity rows"
-    )
-}
-
-private func testNavigationGroupsPlaceAgentAndSystemRows() throws {
-    let snapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: .unavailable(reason: "Daemon unavailable"),
         local: stableLocalSummary(),
         terminalProfiles: testTerminalProfiles(),
         diagnostics: ShellSettingsDiagnosticsSummary(
@@ -2442,105 +2186,12 @@ private func testNavigationGroupsPlaceAgentAndSystemRows() throws {
             lastExportURL: nil
         )
     )
-    let agent = try requireNavigationGroup(.agent, in: snapshot)
     let system = try requireNavigationGroup(.system, in: snapshot)
 
     try expect(
-        agent.rows.map(\.id).contains("agentSelector"),
-        "Agent must expose the currently configurable Alan agent"
-    )
-    try expect(
-        agent.rows.map(\.id).contains("accountsUnavailable"),
-        "Agent must contain compact provider connection unavailable state"
-    )
-    try expect(
-        ["governance", "reasoningEffort", "streamingMode", "recoveryMode"]
-            .allSatisfy(agent.rows.map(\.id).contains),
-        "Agent must contain runtime default rows"
-    )
-    try expect(
-        agent.rows.map(\.id).contains("capabilitiesUnavailable"),
-        "Agent must contain compact skill catalog unavailable state"
-    )
-    try expect(
-        agent.rows.contains { $0.id == "publicSkills" && $0.title == "Skill packages" },
-        "Agent must contain the renamed skill package path row"
-    )
-    try expect(
-        agent.sections.map(\.id) == [.agent, .runtimeDefaults, .skills, .entryPoints],
-        "Agent must merge connection and skill source details into task-oriented sections"
-    )
-    try expect(
-        agent.rows.map(\.id).contains("cliTool"),
-        "Agent must contain the command line tool entry point"
-    )
-
-    let connectedSnapshot = ShellSettingsSurfaceSnapshot.make(
-        remote: ShellSettingsRemoteSnapshot(
-            accounts: ShellSettingsAccountsSummary(
-                current: ShellSettingsConnectionSelection(
-                    defaultProfile: "chatgpt-main",
-                    effectiveProfile: "chatgpt-main",
-                    effectiveSource: "global"
-                ),
-                profiles: [
-                    ShellSettingsConnectionProfile(
-                        profileID: "chatgpt-main",
-                        label: "ChatGPT",
-                        provider: "chatgpt",
-                        credentialStatus: "available",
-                        settings: [:],
-                        isDefault: true
-                    )
-                ],
-                providers: [],
-                unavailableReason: nil
-            ),
-            capabilities: ShellSettingsCapabilitiesSummary(
-                skills: [
-                    ShellSettingsSkillSummary(
-                        id: "memory",
-                        name: "Memory",
-                        enabled: true,
-                        allowImplicitInvocation: false,
-                        available: true
-                    ),
-                    ShellSettingsSkillSummary(
-                        id: "plan",
-                        name: "Plan",
-                        enabled: false,
-                        allowImplicitInvocation: false,
-                        available: true
-                    ),
-                ],
-                unavailableReason: nil
-            )
-        ),
-        local: devLocalSummary()
-    )
-    let connectedAgent = try requireNavigationGroup(.agent, in: connectedSnapshot)
-    let connectedRowIDs = connectedAgent.rows.map { $0.id }
-    let connectionRow = connectedAgent.rows.first { $0.id == "selectedProfile" }
-    let skillCatalogRow = connectedAgent.rows.first { $0.id == "capabilitiesAvailable" }
-    try expect(
-        connectionRow?.title == "Connection profile" && connectionRow?.detail == nil,
-        "Agent connection row must stay compact when profile metadata is available"
-    )
-    try expect(
-        skillCatalogRow?.title == "Skill catalog" && skillCatalogRow?.detail == nil,
-        "Agent skill catalog row must stay compact when capability metadata is available"
-    )
-    try expect(
-        !connectedRowIDs.contains("enabledSkills")
-            && !connectedRowIDs.contains("implicitInvocation")
-            && !connectedRowIDs.contains("unavailableSkills"),
-        "Agent must not expand skill catalog into debug-count rows"
-    )
-
-    try expect(
-        ["appIdentity", "installChannel", "updates", "daemonEndpoint", "dataRoot",
+        ["appIdentity", "installChannel", "updates", "cliTool", "dataRoot",
          "applicationSupport", "shellControl"].allSatisfy(system.rows.map(\.id).contains),
-        "System must contain app, runtime, storage, and shell control rows"
+        "System must contain local app, storage, and shell control rows"
     )
     let rowsByID = Dictionary(uniqueKeysWithValues: system.rows.map { ($0.id, $0) })
     try expect(
@@ -2548,15 +2199,14 @@ private func testNavigationGroupsPlaceAgentAndSystemRows() throws {
         "System Updates must not show dev/update explanation as always-visible copy"
     )
     try expect(
-        rowsByID["daemonEndpoint"]?.detail == nil,
-        "System Daemon Endpoint must render as a compact inspector value row"
-    )
-    try expect(
-        rowsByID["daemonEndpoint"]?.title == "Daemon endpoint"
-            && rowsByID["dataRoot"]?.title == "Alan home"
+        rowsByID["dataRoot"]?.title == "Alan home"
             && rowsByID["applicationSupport"]?.title == "Shell state"
             && rowsByID["shellControl"]?.title == "Control namespace",
         "System path rows must use control-panel labels"
+    )
+    try expect(
+        !system.visibleText.joined(separator: " ").localizedCaseInsensitiveContains("daemon"),
+        "System Settings must not retain daemon-era labels"
     )
     try expect(
         system.rows.filter { $0.id.hasPrefix("performanceDiagnostics") }.map(\.id)
@@ -2601,7 +2251,6 @@ private func helperStatus(
 private func stableLocalSummary() -> ShellSettingsLocalSummary {
     ShellSettingsLocalSummary.current(
         channel: .stable,
-        environment: [:],
         updateDecision: AlanMacUpdateDecision(
             installation: .direct,
             allowsSparkleUpdates: true,
@@ -2639,7 +2288,6 @@ private func testTerminalProfiles() -> TerminalProfileSettingsSummary {
 private func devLocalSummary() -> ShellSettingsLocalSummary {
     ShellSettingsLocalSummary.current(
         channel: .dev,
-        environment: [:],
         updateDecision: unsupportedDevUpdateDecision(),
         homeDirectory: URL(fileURLWithPath: "/Users/test", isDirectory: true)
     )
@@ -2723,25 +2371,6 @@ private enum ShellSettingsFixtureExporter {
             )
         )
         let managedAccounts = ManagedTerminalAccountSettingsSummary(plans: [accountPlan])
-        let capabilities = ShellSettingsCapabilitiesSummary(
-            skills: [
-                ShellSettingsSkillSummary(
-                    id: "memory",
-                    name: "Memory",
-                    enabled: true,
-                    allowImplicitInvocation: false,
-                    available: true
-                ),
-                ShellSettingsSkillSummary(
-                    id: "plan",
-                    name: "Plan",
-                    enabled: false,
-                    allowImplicitInvocation: false,
-                    available: true
-                ),
-            ],
-            unavailableReason: nil
-        )
         let local = devLocalSummary()
         let diagnostics = ShellSettingsDiagnosticsSummary(
             isEnabled: true,
@@ -2778,16 +2407,6 @@ private enum ShellSettingsFixtureExporter {
                 )
             ),
             ShellCoreFixtureCase(
-                id: "settings-summary/capability-rows",
-                kind: "settings_summary",
-                description: "Capability settings rows use compact enabled skill counts.",
-                input: PortableCapabilitiesSummary(capabilities),
-                operation: SettingsOperation(type: "capability_rows"),
-                expected: SettingsRowsExpectation(
-                    rows: try sectionRows(.capabilities, capabilities: capabilities)
-                )
-            ),
-            ShellCoreFixtureCase(
                 id: "settings-summary/local-diagnostics-rows",
                 kind: "settings_summary",
                 description: "Local settings rows combine host identity with compact diagnostics metadata.",
@@ -2804,15 +2423,10 @@ private enum ShellSettingsFixtureExporter {
         _ sectionID: ShellSettingsSectionID,
         terminalProfiles: TerminalProfileSettingsSummary = testTerminalProfiles(),
         managedTerminalAccounts: ManagedTerminalAccountSettingsSummary = .empty,
-        capabilities: ShellSettingsCapabilitiesSummary = .unavailable(reason: "Daemon unavailable"),
         local: ShellSettingsLocalSummary = stableLocalSummary(),
         diagnostics: ShellSettingsDiagnosticsSummary = .disabled
     ) throws -> [ShellSettingsRowModel] {
         let snapshot = ShellSettingsSurfaceSnapshot.make(
-            remote: ShellSettingsRemoteSnapshot(
-                accounts: .unavailable(reason: "Daemon unavailable"),
-                capabilities: capabilities
-            ),
             local: local,
             terminalProfiles: terminalProfiles,
             managedTerminalAccounts: managedTerminalAccounts,
@@ -3067,51 +2681,6 @@ private struct PortableManagedTerminalAccountPlanStep: Encodable {
     }
 }
 
-private struct PortableCapabilitiesSummary: Encodable {
-    let skills: [PortableSkillSummary]
-    let unavailableReason: String?
-
-    init(_ summary: ShellSettingsCapabilitiesSummary) {
-        skills = summary.skills.map(PortableSkillSummary.init)
-        unavailableReason = summary.unavailableReason
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case skills
-        case unavailableReason = "unavailable_reason"
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(skills, forKey: .skills)
-        try container.encodeIfPresent(unavailableReason, forKey: .unavailableReason)
-    }
-}
-
-private struct PortableSkillSummary: Encodable {
-    let id: String
-    let name: String
-    let enabled: Bool
-    let allowImplicitInvocation: Bool
-    let available: Bool
-
-    init(_ skill: ShellSettingsSkillSummary) {
-        id = skill.id
-        name = skill.name
-        enabled = skill.enabled
-        allowImplicitInvocation = skill.allowImplicitInvocation
-        available = skill.available
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case name
-        case enabled
-        case allowImplicitInvocation = "allow_implicit_invocation"
-        case available
-    }
-}
-
 private struct PortableLocalDiagnosticsInput: Encodable {
     let local: PortableLocalSummary
     let diagnostics: PortableDiagnosticsSummary
@@ -3126,26 +2695,20 @@ private struct PortableLocalSummary: Encodable {
     let bundleIdentifier: String
     let channelLabel: String
     let cliToolName: String
-    let daemonURL: String
-    let daemonBindAddress: String
     let updateSummary: String
     let updateDetail: String
     let alanHomeDisplayPath: String
     let applicationSupportDisplayPath: String
-    let globalSkillsDisplayPath: String
     let shellControlNamespace: String
 
     init(_ local: ShellSettingsLocalSummary) {
         bundleIdentifier = local.bundleIdentifier
         channelLabel = local.channelLabel
         cliToolName = local.cliToolName
-        daemonURL = local.daemonURL
-        daemonBindAddress = local.daemonBindAddress
         updateSummary = local.updateSummary
         updateDetail = local.updateDetail
         alanHomeDisplayPath = local.alanHomeDisplayPath
         applicationSupportDisplayPath = local.applicationSupportDisplayPath
-        globalSkillsDisplayPath = local.globalSkillsDisplayPath
         shellControlNamespace = local.shellControlNamespace
     }
 
@@ -3153,13 +2716,10 @@ private struct PortableLocalSummary: Encodable {
         case bundleIdentifier = "bundle_identifier"
         case channelLabel = "channel_label"
         case cliToolName = "cli_tool_name"
-        case daemonURL = "daemon_url"
-        case daemonBindAddress = "daemon_bind_address"
         case updateSummary = "update_summary"
         case updateDetail = "update_detail"
         case alanHomeDisplayPath = "alan_home_display_path"
         case applicationSupportDisplayPath = "application_support_display_path"
-        case globalSkillsDisplayPath = "global_skills_display_path"
         case shellControlNamespace = "shell_control_namespace"
     }
 }

@@ -79,7 +79,6 @@ current_root_swift_allowlist=(
 target_dirs=(
     "App"
     "Views/Shell"
-    "Views/Console"
     "Models"
     "Controllers"
     "Services"
@@ -479,7 +478,7 @@ while IFS= read -r file; do
         case "$rel" in
             App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
                 ;;
-            MacShellRootView.swift|Views/Console/*|ShellHostController.swift|TerminalRuntimeRegistry.swift)
+            MacShellRootView.swift|ShellHostController.swift|TerminalRuntimeRegistry.swift)
                 warn "$rel imports AppKit or Darwin while it remains outside a narrow bridge owner"
                 ;;
             *)

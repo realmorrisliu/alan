@@ -162,6 +162,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSmokeEnvironmentPathOverrides()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
+        verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript()
         verifiesRestoredTranscriptPanelPresentationMatchesTerminalLayout()
@@ -184,7 +185,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalProfileInheritanceForSpacesTabsAndSplits()
         verifiesLegacyDefaultTerminalProfileDoesNotCaptureUnboundStartup()
         verifiesTerminalProfileControlPlaneOverrides()
-        verifiesTerminalProfileSettingsRowsStaySeparateFromProviderAccounts()
+        verifiesTerminalProfileSettingsRowsStayLocal()
         verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff()
         verifiesManagedTerminalAccountDiscoveryVerificationAndAuthorizedExecutor()
         verifiesManagedTerminalAccountExecutorAndRollbackSafety()
@@ -632,9 +633,9 @@ private enum ShellRuntimeMetadataTests {
         )
 
         let binding = ShellAlanBinding(
-            sessionID: "session_1",
-            runStatus: "waiting",
-            pendingYield: true,
+            processPath: "/proc/1",
+            machineState: "waiting",
+            pendingRequest: true,
             source: "test",
             lastProjectedAt: "2026-05-22T00:00:00Z"
         )
@@ -3476,12 +3477,12 @@ private enum ShellRuntimeMetadataTests {
         )
         let authoritative = stateWithAlanBinding(
             windowID: "window_activity_merge",
-            pendingYield: false,
+            pendingRequest: false,
             activity: progress
         )
         let incoming = stateWithAlanBinding(
             windowID: "window_activity_merge",
-            pendingYield: false,
+            pendingRequest: false,
             activity: nil
         )
 
@@ -4379,9 +4380,9 @@ private enum ShellRuntimeMetadataTests {
             viewport: nil,
             activity: progress,
             alanBinding: ShellAlanBinding(
-                sessionID: "session_1",
-                runStatus: "running",
-                pendingYield: true,
+                processPath: "/proc/1",
+                machineState: "running",
+                pendingRequest: true,
                 source: "test",
                 lastProjectedAt: nil
             )
@@ -4472,9 +4473,9 @@ private enum ShellRuntimeMetadataTests {
             viewport: nil,
             activity: alanActivity,
             alanBinding: ShellAlanBinding(
-                sessionID: "session_1",
-                runStatus: "running",
-                pendingYield: false,
+                processPath: "/proc/1",
+                machineState: "running",
+                pendingRequest: false,
                 source: "test",
                 lastProjectedAt: nil
             )
@@ -6634,6 +6635,59 @@ private enum ShellRuntimeMetadataTests {
         expect(restored?.panes.first?.paneID == "pane_1", "legacy v0.1 shell-state decode must preserve panes")
     }
 
+    private static func verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata() {
+        let windowID = "unsupported_binding_\(UUID().uuidString)"
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let workingDirectory = "/tmp/unsupported-binding-project"
+        let state = ShellStateSnapshot.bootstrapDefault(
+            windowID: windowID,
+            workingDirectory: workingDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: persistenceURL) }
+
+        guard let encoded = try? JSONEncoder().encode(state),
+              var document = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any],
+              var panes = document["panes"] as? [[String: Any]],
+              !panes.isEmpty
+        else {
+            fail("unsupported binding setup must encode a legacy shell state")
+        }
+        panes[0]["alan_binding"] = ["unsupported_binding_contract": 1]
+        document["panes"] = panes
+
+        guard let unsupportedBindingState = try? JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        ) else {
+            fail("unsupported binding setup must encode JSON")
+        }
+        do {
+            try unsupportedBindingState.write(to: persistenceURL, options: .atomic)
+        } catch {
+            fail("unsupported binding setup must write shell state: \(error)")
+        }
+
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        expect(restored?.windowID == windowID, "unsupported binding metadata must not discard workspace state")
+        expect(restored?.panes.first?.paneID == "pane_1", "unsupported binding metadata must preserve panes")
+        expect(
+            restored?.panes.first?.cwd == workingDirectory,
+            "unsupported binding metadata must preserve terminal working directory"
+        )
+        expect(restored?.panes.first?.alanBinding == nil, "unsupported binding metadata must be dropped")
+
+        let rewritten = restored.flatMap { try? JSONEncoder().encode($0) }
+        let rewrittenText = rewritten.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        expect(
+            !rewrittenText.contains("\"alan_binding\""),
+            "rewritten shell state must not retain unsupported binding metadata"
+        )
+    }
+
     private static func verifiesWorkspaceManifestStartupRestoresPinnedSnapshot() {
         let windowID = "manifest_startup_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
@@ -7638,7 +7692,7 @@ private enum ShellRuntimeMetadataTests {
         let alanPendingWindowID = "active_alan_pending_\(UUID().uuidString)"
         let alanPendingController = makeController(
             windowID: alanPendingWindowID,
-            shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingYield: true),
+            shellState: stateWithAlanBinding(windowID: alanPendingWindowID, pendingRequest: true),
             workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: alanPendingURL),
             workspaceManifest: defaultManifestWithShellCore(
                 windowID: alanPendingWindowID,
@@ -8717,7 +8771,7 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesTerminalProfileSettingsRowsStaySeparateFromProviderAccounts() {
+    private static func verifiesTerminalProfileSettingsRowsStayLocal() {
         let terminalProfiles = TerminalProfileSettingsSummary(
             profiles: [
                 TerminalProfileDefinition(
@@ -8752,7 +8806,6 @@ private enum ShellRuntimeMetadataTests {
             ]
         )
         let snapshot = ShellSettingsSurfaceSnapshot.make(
-            remote: .unavailable(reason: "Daemon unavailable"),
             local: .current(),
             terminalProfiles: terminalProfiles,
             managedTerminalAccounts: terminalAccounts
@@ -8760,10 +8813,6 @@ private enum ShellRuntimeMetadataTests {
         let sectionTitles = snapshot.sections.map(\.title)
         expect(sectionTitles.contains("Terminal Profiles"), "Settings must include Terminal Profiles as local startup configuration")
         expect(sectionTitles.contains("Managed Users"), "Settings must include Managed User provisioning")
-        expect(
-            snapshot.sections.first(where: { $0.id == .accounts })?.visibleText.contains("Alan") == false,
-            "Terminal Profiles must not be listed under provider Accounts"
-        )
         let visibleText = snapshot.visibleText.joined(separator: " ")
         expect(!visibleText.contains("echo hidden-secret"), "normal Settings rows must redact full custom commands")
         expect(!visibleText.lowercased().contains("autologin"), "Settings copy must avoid GUI autologin wording")
@@ -8834,6 +8883,7 @@ private enum ShellRuntimeMetadataTests {
             ownershipState: .missing,
             readinessState: .accountMissing,
             accountExists: false,
+            isAdmin: false,
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
@@ -9256,6 +9306,7 @@ private enum ShellRuntimeMetadataTests {
                 ownershipState: .alanManaged,
                 readinessState: .legacySudoersPresent,
                 accountExists: true,
+                isAdmin: false,
                 homeDirectoryExists: true,
                 shellMatches: true,
                 hiddenFromLoginWindow: true,
@@ -9318,6 +9369,7 @@ private enum ShellRuntimeMetadataTests {
                 ownershipState: .missing,
                 readinessState: .accountMissing,
                 accountExists: false,
+                isAdmin: false,
                 homeDirectoryExists: false,
                 shellMatches: false,
                 hiddenFromLoginWindow: false,
@@ -9446,6 +9498,7 @@ private enum ShellRuntimeMetadataTests {
                 ownershipState: .alanManaged,
                 readinessState: .legacySudoersPresent,
                 accountExists: true,
+                isAdmin: false,
                 homeDirectoryExists: true,
                 shellMatches: true,
                 hiddenFromLoginWindow: true,
@@ -10642,7 +10695,7 @@ private enum ShellRuntimeMetadataTests {
 
     private static func stateWithAlanBinding(
         windowID: String,
-        pendingYield: Bool,
+        pendingRequest: Bool,
         activity: TerminalActivitySnapshot? = nil
     ) -> ShellStateSnapshot {
         let pane = ShellPane(
@@ -10652,7 +10705,7 @@ private enum ShellRuntimeMetadataTests {
             launchTarget: .shell,
             cwd: "/tmp",
             process: ShellProcessBinding(program: "alan", argvPreview: ["alan", "chat"]),
-            attention: pendingYield ? .awaitingUser : .active,
+            attention: pendingRequest ? .awaitingUser : .active,
             context: ShellContextSnapshot(
                 workingDirectoryName: "tmp",
                 repositoryRoot: nil,
@@ -10668,9 +10721,9 @@ private enum ShellRuntimeMetadataTests {
             viewport: nil,
             activity: activity,
             alanBinding: ShellAlanBinding(
-                sessionID: "session_1",
-                runStatus: pendingYield ? "yielded" : "running",
-                pendingYield: pendingYield,
+                processPath: "/proc/1",
+                machineState: pendingRequest ? "waiting" : "running",
+                pendingRequest: pendingRequest,
                 source: "test",
                 lastProjectedAt: nil
             )

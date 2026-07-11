@@ -760,6 +760,7 @@ impl PromptAssemblyCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn set_host_capabilities(&mut self, host_capabilities: SkillHostCapabilities) {
         if self.host_capabilities != host_capabilities {
             self.host_capabilities = host_capabilities;
@@ -1571,33 +1572,6 @@ Do not use stale instructions.
         assert!(after.system_prompt.contains("### Delegated Capability"));
         assert!(after.system_prompt.contains("invoke_delegated_skill"));
         assert!(!after.system_prompt.contains("SECRET INLINE REVIEW BODY"));
-    }
-
-    #[test]
-    fn prompt_cache_keeps_inline_fallback_when_dynamic_tools_only_match_delegated_tool_name() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
-            "repo-review",
-            "Repo Review",
-            "Review repository changes",
-            "SECRET INLINE REVIEW BODY",
-        );
-        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
-
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("please use $repo-review for this task")];
-
-        let mut dynamic_tool_runtime = SkillHostCapabilities::default().with_runtime_defaults();
-        dynamic_tool_runtime.extend_tools(["invoke_delegated_skill"]);
-        cache.set_host_capabilities(dynamic_tool_runtime);
-
-        let prompt = cache.build(Some(&user_input));
-        assert!(prompt.system_prompt.contains("### Runtime Fallback"));
-        assert!(prompt.system_prompt.contains("SECRET INLINE REVIEW BODY"));
-        assert!(!prompt.system_prompt.contains("### Delegated Capability"));
     }
 
     #[test]

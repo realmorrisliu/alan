@@ -66,12 +66,12 @@ extension ShellHostController {
                 score += 0.12
                 reasons.append("attention:notable")
             }
-            if candidate.alanBinding?.pendingYield == true {
+            if candidate.alanBinding?.pendingRequest == true {
                 score += 0.2
                 reasons.append("alan_binding:yielded")
-            } else if let runStatus = candidate.alanBinding?.runStatus {
+            } else if let machineState = candidate.alanBinding?.machineState {
                 score += 0.08
-                reasons.append("alan_binding:\(runStatus)")
+                reasons.append("alan_binding:\(machineState)")
             }
             if let preferredPane, candidate.tabID == preferredPane.tabID {
                 score += 0.1

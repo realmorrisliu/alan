@@ -4,7 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::adaptive::ClientCapabilities;
 use crate::{ContentPart, ReasoningEffort};
 
 /// Coarse capability class for tool policy decisions.
@@ -57,7 +56,7 @@ impl<'de> Deserialize<'de> for GovernanceProfile {
     }
 }
 
-/// Session/runtime governance configuration.
+/// Agent Process governance configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct GovernanceConfig {
     /// Builtin profile baseline.
@@ -96,16 +95,6 @@ pub struct PlanItem {
     pub id: String,
     pub content: String,
     pub status: PlanItemStatus,
-}
-
-/// Session-scoped dynamic tool definition provided by the client/frontend.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DynamicToolSpec {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capability: Option<ToolCapability>,
 }
 
 /// User-submitted operations
@@ -148,26 +137,14 @@ pub enum Op {
     /// Interrupt current execution.
     Interrupt,
 
-    /// Register or replace client-provided dynamic tools for this session.
-    RegisterDynamicTools {
-        /// Tool definitions exposed to the LLM for this session.
-        tools: Vec<DynamicToolSpec>,
-    },
-
-    /// Update frontend capability negotiation for adaptive yields.
-    SetClientCapabilities {
-        /// Rich adaptive UI features supported by the connected client.
-        capabilities: ClientCapabilities,
-    },
-
-    /// Compact the current session context with optional guidance.
+    /// Compact the current Agent Machine context with optional guidance.
     CompactWithOptions {
         /// Optional focus for the summary handoff, for example "preserve todos".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         focus: Option<String>,
     },
 
-    /// Roll back the last N user turns from in-memory session context
+    /// Roll back the last N user turns from in-memory Agent Machine context.
     Rollback {
         /// Number of user turns to remove (must be >= 1)
         turns: u32,
@@ -313,28 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn test_set_client_capabilities_op_roundtrip() {
-        let op = Op::SetClientCapabilities {
-            capabilities: ClientCapabilities::default(),
-        };
-
-        let value = serde_json::to_value(&op).unwrap();
-        assert_eq!(value["type"], "set_client_capabilities");
-        assert_eq!(
-            value["capabilities"]["adaptive_yields"]["schema_driven_forms"],
-            false
-        );
-
-        let parsed: Op = serde_json::from_value(value).unwrap();
-        match parsed {
-            Op::SetClientCapabilities { capabilities } => {
-                assert!(capabilities.adaptive_yields.structured_input);
-            }
-            other => panic!("Expected SetClientCapabilities, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_governance_profile_serialization() {
         let json = serde_json::to_string(&GovernanceProfile::Autonomous).unwrap();
         assert_eq!(json, "\"autonomous\"");
@@ -379,74 +334,6 @@ mod tests {
         let deserialized: Submission = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "test-id-123");
         assert!(matches!(deserialized.op, Op::Interrupt));
-    }
-
-    #[test]
-    fn test_op_serialization_register_dynamic_tools() {
-        let op = Op::RegisterDynamicTools {
-            tools: vec![DynamicToolSpec {
-                name: "lookup_ticket".to_string(),
-                description: "Lookup ticket".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": { "id": { "type": "string" } },
-                    "required": ["id"]
-                }),
-                capability: None,
-            }],
-        };
-        let json = serde_json::to_string(&op).unwrap();
-        assert!(json.contains("register_dynamic_tools"));
-        let parsed: Op = serde_json::from_str(&json).unwrap();
-        match parsed {
-            Op::RegisterDynamicTools { tools } => {
-                assert_eq!(tools.len(), 1);
-                assert_eq!(tools[0].name, "lookup_ticket");
-            }
-            _ => panic!("Expected RegisterDynamicTools"),
-        }
-    }
-
-    #[test]
-    fn test_register_dynamic_tools_legacy_payload_without_capability_is_compatible() {
-        let json = r#"{"type":"register_dynamic_tools","tools":[{"name":"lookup_ticket","description":"Lookup ticket","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]}"#;
-
-        let parsed: Op = serde_json::from_str(json).unwrap();
-        match parsed {
-            Op::RegisterDynamicTools { tools } => {
-                assert_eq!(tools.len(), 1);
-                assert_eq!(tools[0].capability, None);
-            }
-            _ => panic!("Expected RegisterDynamicTools"),
-        }
-    }
-
-    #[test]
-    fn test_register_dynamic_tools_round_trips_explicit_unknown_capability() {
-        let op = Op::RegisterDynamicTools {
-            tools: vec![DynamicToolSpec {
-                name: "lookup_ticket".to_string(),
-                description: "Lookup ticket".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": { "id": { "type": "string" } },
-                    "required": ["id"]
-                }),
-                capability: Some(ToolCapability::Unknown),
-            }],
-        };
-
-        let json = serde_json::to_string(&op).unwrap();
-        assert!(json.contains("\"unknown\""));
-
-        let parsed: Op = serde_json::from_str(&json).unwrap();
-        match parsed {
-            Op::RegisterDynamicTools { tools } => {
-                assert_eq!(tools.len(), 1);
-                assert_eq!(tools[0].capability, Some(ToolCapability::Unknown));
-            }
-            _ => panic!("Expected RegisterDynamicTools"),
-        }
     }
 
     // ========================================================================

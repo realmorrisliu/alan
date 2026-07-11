@@ -18,33 +18,7 @@ use super::agent_loop::{
 use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::turn_executor::TurnRunKind;
 use super::turn_state::PendingYield;
-use super::turn_support::{cancel_current_task, tool_result_preview};
-
-fn refresh_prompt_cache_host_capabilities(state: &mut RuntimeLoopState) {
-    let path_dirs = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default();
-    refresh_prompt_cache_host_capabilities_with_path_dirs(state, path_dirs);
-}
-
-fn refresh_prompt_cache_host_capabilities_with_path_dirs<I, P>(
-    state: &mut RuntimeLoopState,
-    path_dirs: I,
-) where
-    I: IntoIterator<Item = P>,
-    P: AsRef<std::path::Path>,
-{
-    let delegated_supported = state.prompt_cache.supports_delegated_skill_invocation();
-    let host_capabilities = crate::skills::build_skill_host_capabilities_with_path_dirs(
-        state
-            .static_tool_names()
-            .into_iter()
-            .chain(state.session.dynamic_tools.keys().cloned()),
-        path_dirs,
-        delegated_supported,
-    );
-    state.prompt_cache.set_host_capabilities(host_capabilities);
-}
+use super::turn_support::cancel_current_task;
 
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
@@ -77,25 +51,6 @@ where
     F: std::future::Future<Output = ()>,
 {
     match op {
-        Op::RegisterDynamicTools { tools } => {
-            state.session.dynamic_tools = tools
-                .iter()
-                .cloned()
-                .map(|tool| (tool.name.clone(), tool))
-                .collect();
-            refresh_prompt_cache_host_capabilities(state);
-            emit(Event::TextDelta {
-                chunk: format!(
-                    "Registered {} dynamic tool(s).",
-                    state.session.dynamic_tools.len()
-                ),
-                is_final: true,
-            })
-            .await;
-        }
-        Op::SetClientCapabilities { capabilities } => {
-            state.session.client_capabilities = capabilities;
-        }
         Op::CompactWithOptions { focus } => {
             maybe_compact_context_for_request(state, emit, CompactionRequest::manual(focus))
                 .await?;
@@ -109,9 +64,9 @@ where
                 .await;
                 return Ok(RuntimeOpAction::NoTurn);
             }
-            let rollback = state.session.rollback_last_turns(turns);
+            let rollback = state.machine.rollback_last_turns(turns);
             state.turn_state.clear_plan_snapshot();
-            emit(Event::SessionRolledBack {
+            emit(Event::MachineRolledBack {
                 turns: rollback.removed_turns,
                 removed_messages: rollback.removed_messages,
             })
@@ -292,43 +247,11 @@ where
                     .await;
                 }
                 Some(PendingYield::StructuredInput(pending)) => {
-                    state.session.add_tool_message(
+                    state.machine.add_tool_message(
                         &pending.request_id,
                         "request_user_input",
                         result,
                     );
-                    return Ok(RuntimeOpAction::RunTurn {
-                        turn_kind: TurnRunKind::ResumeTurn,
-                        user_input: None,
-                        activate_task: false,
-                    });
-                }
-                Some(PendingYield::DynamicToolCall(pending)) => {
-                    let success = result
-                        .get("success")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or_else(|| result.get("error").is_none());
-                    emit(Event::ToolCallCompleted {
-                        presentation: None,
-                        id: pending.call_id.clone(),
-                        name: Some(pending.tool_name.clone()),
-                        success: Some(success),
-                        result_preview: if success {
-                            tool_result_preview(&result)
-                        } else {
-                            tool_result_preview(&serde_json::json!({
-                                "error": result
-                                    .get("error")
-                                    .and_then(|value| value.as_str())
-                                    .unwrap_or("dynamic tool failed")
-                            }))
-                        },
-                        audit: None,
-                    })
-                    .await;
-                    state
-                        .session
-                        .add_tool_message(&pending.call_id, &pending.tool_name, result);
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::ResumeTurn,
                         user_input: None,
@@ -432,7 +355,7 @@ async fn persist_runtime_confirmation_checkpoint(
         }
     };
     state
-        .session
+        .machine
         .record_checkpoint_with_optional_knowledge_root(
             &pending.checkpoint_id,
             &pending.checkpoint_type,
@@ -479,12 +402,12 @@ async fn handle_confirmation_resolution(
             "source": RUNTIME_CONFIRMATION_CONTROL_SOURCE
         });
         state
-            .session
+            .machine
             .add_user_control_message_parts(vec![ContentPart::structured(payload)]);
         persist_runtime_confirmation_checkpoint(state, &pending, choice_str).await;
     } else {
         state
-            .session
+            .machine
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
 
@@ -552,7 +475,7 @@ fn handle_mount_escalation_resolution(
             "error": "Invalid mount escalation checkpoint.",
         });
         state
-            .session
+            .machine
             .add_tool_message(&pending.checkpoint_id, "request_mount", result);
         return RuntimeOpAction::RunTurn {
             turn_kind: TurnRunKind::ResumeTurn,
@@ -617,13 +540,13 @@ fn handle_mount_escalation_resolution(
     });
 
     if approved {
-        state.session.record_event(
+        state.machine.record_event(
             "host_mount_grant",
             host_mount_grant_event_payload(&pending.details, &result),
         );
     }
     state
-        .session
+        .machine
         .add_tool_message(&tool_call_id, "request_mount", result);
 
     RuntimeOpAction::RunTurn {
@@ -765,13 +688,13 @@ mod tests {
 
     use super::*;
     use crate::{
+        agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
         runtime::{
             MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment,
             TurnState,
         },
-        session::Session,
         tape::ContentPart,
         tools::ToolRegistry,
     };
@@ -865,13 +788,13 @@ mod tests {
 
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let runtime_config = RuntimeConfig::default();
 
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             tool_catalog: ToolRegistry::new(),
@@ -910,7 +833,7 @@ mod tests {
 
     fn tool_result_text_for_call(state: &RuntimeLoopState, call_id: &str) -> String {
         state
-            .session
+            .machine
             .tape
             .messages()
             .iter()
@@ -966,7 +889,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_start_task_correct_agent() {
         let mut state = create_test_state();
-        state.session.add_user_message("existing message");
+        state.machine.add_user_message("existing message");
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -997,9 +920,9 @@ mod tests {
                 let text = alan_agent_protocol::parts_to_text(&user_input.unwrap());
                 assert!(text.contains("test input"));
                 // Turn should preserve existing conversation history.
-                assert_eq!(state.session.tape.messages().len(), 1);
+                assert_eq!(state.machine.tape.messages().len(), 1);
                 assert_eq!(
-                    state.session.tape.messages()[0].text_content(),
+                    state.machine.tape.messages()[0].text_content(),
                     "existing message"
                 );
                 assert_eq!(
@@ -1161,7 +1084,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Tool message should be recorded
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("approve"));
     }
@@ -1198,7 +1121,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Tool message should contain modifications
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("modify"));
     }
@@ -1207,7 +1130,7 @@ mod tests {
     async fn test_runtime_confirmation_resume_persists_checkpoint_with_knowledge_root() {
         let temp = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session = Session::new_with_id_and_recorder_in_dir(
+        state.machine = AgentMachine::new_with_recorder_in_dir(
             "runtime-confirmation-checkpoint-with-root",
             "test-model",
             temp.path(),
@@ -1253,8 +1176,8 @@ mod tests {
             }
         ));
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let checkpoint = items
             .iter()
@@ -1283,7 +1206,7 @@ mod tests {
      {
         let temp = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session = Session::new_with_id_and_recorder_in_dir(
+        state.machine = AgentMachine::new_with_recorder_in_dir(
             "runtime-confirmation-checkpoint-no-root",
             "test-model",
             temp.path(),
@@ -1321,8 +1244,8 @@ mod tests {
             }
         ));
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let checkpoint = items
             .iter()
@@ -1345,8 +1268,8 @@ mod tests {
         let workspace = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session =
-            Session::new_with_id_and_recorder_in_dir("mount-approve", "test-model", temp.path())
+        state.machine =
+            AgentMachine::new_with_recorder_in_dir("mount-approve", "test-model", temp.path())
                 .await
                 .unwrap();
         state
@@ -1396,8 +1319,8 @@ mod tests {
         assert_eq!(roots[0], workspace.path());
         assert_eq!(roots[1], dunce::canonicalize(approved_host.path()).unwrap());
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         let grant = items
             .iter()
@@ -1651,8 +1574,8 @@ mod tests {
         let workspace = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session =
-            Session::new_with_id_and_recorder_in_dir("mount-reject", "test-model", temp.path())
+        state.machine =
+            AgentMachine::new_with_recorder_in_dir("mount-reject", "test-model", temp.path())
                 .await
                 .unwrap();
         state
@@ -1694,8 +1617,8 @@ mod tests {
             vec![workspace.path().to_path_buf()]
         );
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         assert!(!items.iter().any(|item| matches!(
             item,
@@ -1707,7 +1630,7 @@ mod tests {
     async fn test_handle_mount_escalation_resume_missing_choice_defaults_to_reject() {
         let temp = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session = Session::new_with_id_and_recorder_in_dir(
+        state.machine = AgentMachine::new_with_recorder_in_dir(
             "mount-default-reject",
             "test-model",
             temp.path(),
@@ -1746,8 +1669,8 @@ mod tests {
         assert!(tool_result.contains("\"choice\":\"reject\""));
         assert!(tool_result.contains("\"approved\":false"));
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         assert!(!items.iter().any(|item| matches!(
             item,
@@ -1759,8 +1682,8 @@ mod tests {
     async fn test_handle_mount_escalation_resume_rejects_forged_checkpoint() {
         let temp = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state.session =
-            Session::new_with_id_and_recorder_in_dir("mount-forged", "test-model", temp.path())
+        state.machine =
+            AgentMachine::new_with_recorder_in_dir("mount-forged", "test-model", temp.path())
                 .await
                 .unwrap();
         state
@@ -1805,8 +1728,8 @@ mod tests {
         assert!(tool_result.contains("\"status\":\"invalid_mount_escalation_checkpoint\""));
         assert!(tool_result.contains("\"approved\":false"));
 
-        state.session.flush().await;
-        let rollout_path = state.session.rollout_path().unwrap().clone();
+        state.machine.flush().await;
+        let rollout_path = state.machine.rollout_path().unwrap().clone();
         let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
         assert!(!items.iter().any(|item| matches!(
             item,
@@ -1958,327 +1881,7 @@ mod tests {
         }
 
         // Verify tool message was recorded
-        assert!(!state.session.tape.messages().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_handle_register_dynamic_tools() {
-        let mut state = create_test_state();
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let tools = vec![
-            alan_agent_protocol::DynamicToolSpec {
-                name: "custom_tool1".to_string(),
-                description: "Tool 1".to_string(),
-                parameters: json!({}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-            alan_agent_protocol::DynamicToolSpec {
-                name: "custom_tool2".to_string(),
-                description: "Tool 2".to_string(),
-                parameters: json!({}),
-                capability: None,
-            },
-        ];
-
-        let op = Op::RegisterDynamicTools { tools };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-
-        match result.unwrap() {
-            RuntimeOpAction::NoTurn => {
-                // Verify event was emitted
-                let has_event = events.iter().any(|e| {
-                    matches!(
-                        e,
-                        Event::TextDelta { chunk, is_final }
-                            if *is_final && chunk.contains("Registered 2 dynamic tool(s).")
-                    )
-                });
-                assert!(has_event);
-
-                // Verify tools were registered
-                assert!(state.session.dynamic_tools.contains_key("custom_tool1"));
-                assert!(state.session.dynamic_tools.contains_key("custom_tool2"));
-            }
-            _ => panic!("Expected NoTurn"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_handle_register_dynamic_tools_refreshes_prompt_cache_capabilities() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/dynamic-helper");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            r#"---
-name: Dynamic Helper
-description: Needs a dynamic tool
-capabilities:
-  required_tools: ["custom_tool1"]
----
-
-# Instructions
-Use this skill when asked.
-"#,
-        )
-        .unwrap();
-
-        let mut state = create_test_state();
-        state.prompt_cache =
-            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
-                crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
-                    crate::skills::ScopedPackageDir {
-                        path: workspace_root.join(".alan/agents/default/skills"),
-                        scope: crate::skills::SkillScope::Repo,
-                    },
-                ]),
-                Vec::new(),
-                crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
-            );
-
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        let before = state
-            .prompt_cache
-            .build(Some(&[ContentPart::text("please use $dynamic-helper")]));
-        assert!(
-            before
-                .system_prompt
-                .contains("Skill '$dynamic-helper' is unavailable")
-        );
-
-        let op = Op::RegisterDynamicTools {
-            tools: vec![alan_agent_protocol::DynamicToolSpec {
-                name: "custom_tool1".to_string(),
-                description: "Tool 1".to_string(),
-                parameters: json!({}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            }],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-
-        let after = state
-            .prompt_cache
-            .build(Some(&[ContentPart::text("please use $dynamic-helper")]));
-        assert!(after.system_prompt.contains("## Skill: Dynamic Helper"));
-        assert!(
-            !after
-                .system_prompt
-                .contains("Skill '$dynamic-helper' is unavailable")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_handle_register_dynamic_tools_preserves_runtime_delegated_support() {
-        let mut state = create_test_state();
-        state.prompt_cache.set_host_capabilities(
-            crate::skills::SkillHostCapabilities::default()
-                .with_runtime_defaults()
-                .with_delegated_skill_invocation(),
-        );
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        let op = Op::RegisterDynamicTools {
-            tools: vec![alan_agent_protocol::DynamicToolSpec {
-                name: "custom_tool1".to_string(),
-                description: "Tool 1".to_string(),
-                parameters: json!({}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            }],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-        assert!(state.prompt_cache.supports_delegated_skill_invocation());
-    }
-
-    #[test]
-    fn test_refresh_prompt_cache_host_capabilities_with_path_dirs_refreshes_host_path_executables()
-    {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/jq-helper");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            r#"---
-name: JQ Helper
-description: Needs jq
-capabilities:
-  required_tools: ["jq"]
----
-
-# Instructions
-Use this skill when asked.
-"#,
-        )
-        .unwrap();
-
-        let executable_path = {
-            #[cfg(windows)]
-            {
-                temp.path().join("jq.cmd")
-            }
-
-            #[cfg(not(windows))]
-            {
-                temp.path().join("jq")
-            }
-        };
-        std::fs::write(&executable_path, "echo jq\n").unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&executable_path, permissions).unwrap();
-        }
-
-        let mut state = create_test_state();
-        state.prompt_cache =
-            crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
-                crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
-                    crate::skills::ScopedPackageDir {
-                        path: workspace_root.join(".alan/agents/default/skills"),
-                        scope: crate::skills::SkillScope::Repo,
-                    },
-                ]),
-                Vec::new(),
-                crate::skills::SkillHostCapabilities::default().with_runtime_defaults(),
-            );
-
-        let before = state
-            .prompt_cache
-            .build(Some(&[ContentPart::text("please use $jq-helper")]));
-        assert!(
-            before
-                .system_prompt
-                .contains("Skill '$jq-helper' is unavailable")
-        );
-
-        refresh_prompt_cache_host_capabilities_with_path_dirs(&mut state, [temp.path()]);
-
-        let prompt = state
-            .prompt_cache
-            .build(Some(&[ContentPart::text("please use $jq-helper")]));
-        assert!(prompt.system_prompt.contains("## Skill: JQ Helper"));
-        assert!(
-            !prompt
-                .system_prompt
-                .contains("Skill '$jq-helper' is unavailable")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_handle_dynamic_tool_result_no_pending() {
-        let mut state = create_test_state();
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let op = Op::Resume {
-            request_id: "call_123".to_string(),
-            content: vec![ContentPart::structured(json!({
-                "success": true,
-                "result": {"data": "value"}
-            }))],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-
-        match result.unwrap() {
-            RuntimeOpAction::NoTurn => {
-                let has_error = events.iter().any(
-                    |e| matches!(e, Event::Error { message, .. } if message.contains("does not match")),
-                );
-                assert!(has_error);
-            }
-            _ => panic!("Expected NoTurn"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_handle_dynamic_tool_result_success() {
-        let mut state = create_test_state();
-        state
-            .turn_state
-            .set_dynamic_tool_call(crate::approval::PendingDynamicToolCall {
-                call_id: "call_123".to_string(),
-                tool_name: "custom_tool".to_string(),
-                arguments: json!({"arg": "value"}),
-            });
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let op = Op::Resume {
-            request_id: "call_123".to_string(),
-            content: vec![ContentPart::structured(json!({
-                "success": true,
-                "result": {"data": "result"}
-            }))],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-
-        match result.unwrap() {
-            RuntimeOpAction::RunTurn {
-                user_input,
-                activate_task,
-                turn_kind,
-            } => {
-                assert!(!activate_task);
-                assert!(user_input.is_none());
-                assert!(matches!(turn_kind, TurnRunKind::ResumeTurn));
-            }
-            _ => panic!("Expected RunTurn"),
-        }
-
-        let has_completed = events.iter().any(|event| {
-            matches!(
-                event,
-                Event::ToolCallCompleted {
-                    id,
-                    result_preview: Some(_),
-                    ..
-                } if id == "call_123"
-            )
-        });
-        assert!(
-            has_completed,
-            "Expected ToolCallCompleted after dynamic tool resume"
-        );
-
-        // Verify tool message was recorded
-        assert!(!state.session.tape.messages().is_empty());
+        assert!(!state.machine.tape.messages().is_empty());
     }
 
     #[tokio::test]
@@ -2286,7 +1889,7 @@ Use this skill when asked.
         let mut state = create_test_state();
         // Add some messages to make compaction meaningful
         for i in 0..10 {
-            state.session.add_user_message(&format!("Message {}", i));
+            state.machine.add_user_message(&format!("Message {}", i));
         }
         let cancel = CancellationToken::new();
 
@@ -2313,7 +1916,7 @@ Use this skill when asked.
     async fn test_handle_compact_with_options() {
         let mut state = create_test_state();
         for i in 0..10 {
-            state.session.add_user_message(&format!("Message {}", i));
+            state.machine.add_user_message(&format!("Message {}", i));
         }
         let cancel = CancellationToken::new();
 
@@ -2362,10 +1965,10 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_rollback_success() {
         let mut state = create_test_state();
-        state.session.add_user_message("u1");
-        state.session.add_assistant_message("a1", None);
-        state.session.add_user_message("u2");
-        state.session.add_assistant_message("a2", None);
+        state.machine.add_user_message("u1");
+        state.machine.add_assistant_message("a1", None);
+        state.machine.add_user_message("u2");
+        state.machine.add_assistant_message("a2", None);
 
         let cancel = CancellationToken::new();
 
@@ -2382,16 +1985,16 @@ Use this skill when asked.
 
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
-                let has_session_rolled_back = events.iter().any(|e| {
+                let has_machine_rolled_back = events.iter().any(|e| {
                     matches!(
                         e,
-                        Event::SessionRolledBack {
+                        Event::MachineRolledBack {
                             turns: 1,
                             removed_messages: 2,
                         }
                     )
                 });
-                assert!(has_session_rolled_back);
+                assert!(has_machine_rolled_back);
                 let has_confirmation = events.iter().any(
                     |e| matches!(
                         e,
@@ -2416,8 +2019,8 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_rollback_reports_actual_removed_turns_when_history_is_shorter() {
         let mut state = create_test_state();
-        state.session.add_user_message("u1");
-        state.session.add_assistant_message("a1", None);
+        state.machine.add_user_message("u1");
+        state.machine.add_assistant_message("a1", None);
 
         let cancel = CancellationToken::new();
 
@@ -2437,7 +2040,7 @@ Use this skill when asked.
                 assert!(events.iter().any(|e| {
                     matches!(
                         e,
-                        Event::SessionRolledBack {
+                        Event::MachineRolledBack {
                             turns: 1,
                             removed_messages: 2,
                         }
@@ -2457,8 +2060,8 @@ Use this skill when asked.
     #[tokio::test]
     async fn test_handle_rollback_clears_plan_snapshot() {
         let mut state = create_test_state();
-        state.session.add_user_message("u1");
-        state.session.add_assistant_message("a1", None);
+        state.machine.add_user_message("u1");
+        state.machine.add_assistant_message("a1", None);
         state.turn_state.set_plan_snapshot(
             Some("Stale plan".to_string()),
             vec![alan_agent_protocol::PlanItem {
@@ -2485,7 +2088,7 @@ Use this skill when asked.
         let mut state = create_test_state();
         let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
         state.environment = environment;
-        state.session.has_active_task = true;
+        state.machine.has_active_task = true;
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -2502,7 +2105,7 @@ Use this skill when asked.
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Task should be cancelled
-                assert!(!state.session.has_active_task);
+                assert!(!state.machine.has_active_task);
             }
             _ => panic!("Expected NoTurn"),
         }
@@ -2785,7 +2388,7 @@ Use this skill when asked.
         state
             .turn_state
             .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
-        state.session.has_active_task = true;
+        state.machine.has_active_task = true;
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -2823,7 +2426,7 @@ Use this skill when asked.
         let mut state = create_test_state();
         let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
         state.environment = environment;
-        state.session.has_active_task = true;
+        state.machine.has_active_task = true;
         state
             .turn_state
             .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
@@ -2838,7 +2441,7 @@ Use this skill when asked.
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        assert!(!state.session.has_active_task);
+        assert!(!state.machine.has_active_task);
     }
 
     #[tokio::test]
@@ -2846,7 +2449,7 @@ Use this skill when asked.
         let (environment, shell) = namespace_environment_with_live_process_for_test().await;
         let mut state = create_test_state();
         state.environment = environment;
-        state.session.has_active_task = true;
+        state.machine.has_active_task = true;
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -2858,7 +2461,7 @@ Use this skill when asked.
             handle_runtime_op_with_cancel(&mut state, Op::Interrupt, &mut emit, &cancel).await;
 
         assert!(result.is_ok());
-        assert!(!state.session.has_active_task);
+        assert!(!state.machine.has_active_task);
         assert_eq!(
             String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
             "running\n"
@@ -2964,7 +2567,7 @@ Use this skill when asked.
             }
         ));
 
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
         match messages[0].parts().first() {
@@ -3010,7 +2613,7 @@ Use this skill when asked.
             }
         ));
 
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
         match messages[0].parts().first() {
@@ -3056,7 +2659,7 @@ Use this skill when asked.
             }
         ));
 
-        let messages = state.session.tape.messages();
+        let messages = state.machine.tape.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_tool());
         assert_eq!(messages[0].tool_responses()[0].id, "cp-1");

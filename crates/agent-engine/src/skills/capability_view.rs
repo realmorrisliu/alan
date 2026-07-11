@@ -343,12 +343,12 @@ mod tests {
         );
         assert!(
             root_dir
-                .join("scripts/run_swebench_full_steward_case.sh")
+                .join("scripts/check_swebench_harness_env.sh")
                 .is_file()
         );
         assert!(
             root_dir
-                .join("scripts/run_swebench_full_steward_subset.sh")
+                .join("scripts/setup_swebench_harness_env.sh")
                 .is_file()
         );
         assert!(

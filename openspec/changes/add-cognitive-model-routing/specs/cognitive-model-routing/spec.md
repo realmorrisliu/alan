@@ -83,7 +83,7 @@ example `route next system-2`, `route auto`). `machine/routing/` SHALL carry no
 surfaces are the kernel `/proc/<pid>/ctl` and the runtime `machine/ctl`, and new
 control actions are added as new commands on the owning `ctl`, not as new files.
 A next-attempt intent SHALL be consumed by one logical input and SHALL NOT
-create an independent session or daemon override authority.
+create an independent routing authority.
 
 #### Scenario: User requests the deep route
 - **WHEN** an authorized client writes `route next system-2` to `machine/ctl`

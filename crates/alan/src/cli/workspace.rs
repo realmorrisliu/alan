@@ -35,13 +35,13 @@ fn current_install_channel() -> alan_agent_engine::InstallChannel {
     alan_agent_engine::InstallChannel::detect_current()
 }
 
-fn count_rollout_jsonl_files(sessions_dir: &Path) -> usize {
-    if !sessions_dir.exists() {
+fn count_rollout_jsonl_files(rollouts_dir: &Path) -> usize {
+    if !rollouts_dir.exists() {
         return 0;
     }
 
     let mut count = 0usize;
-    let mut dirs = vec![sessions_dir.to_path_buf()];
+    let mut dirs = vec![rollouts_dir.to_path_buf()];
     while let Some(dir) = dirs.pop() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -164,14 +164,13 @@ pub fn workspace_info(workspace: &str) -> Result<()> {
     if alan_dir.exists() {
         println!("  Status:     ✅ initialized");
 
-        // Check for sessions
-        let sessions_dir = alan_agent_engine::workspace_sessions_dir_for_channel_from_alan_dir(
+        let rollouts_dir = alan_agent_engine::workspace_rollouts_dir_for_channel_from_alan_dir(
             &alan_dir,
             current_install_channel(),
         );
-        if sessions_dir.exists() {
-            let count = count_rollout_jsonl_files(&sessions_dir);
-            println!("  Sessions:   {}", count);
+        if rollouts_dir.exists() {
+            let count = count_rollout_jsonl_files(&rollouts_dir);
+            println!("  Rollouts:   {}", count);
         }
     } else {
         println!("  Status:     ⚠️  .alan/ directory missing");
@@ -264,16 +263,16 @@ mod tests {
     }
 
     #[test]
-    fn test_count_rollout_jsonl_files_includes_nested_sessions() {
+    fn test_count_rollout_jsonl_files_includes_nested_rollouts() {
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join("sessions");
-        let nested = sessions_dir.join("2026").join("02").join("28");
+        let rollouts_dir = temp.path().join("rollouts");
+        let nested = rollouts_dir.join("2026").join("02").join("28");
         std::fs::create_dir_all(&nested).unwrap();
 
-        std::fs::write(sessions_dir.join("top.jsonl"), "{}\n").unwrap();
+        std::fs::write(rollouts_dir.join("top.jsonl"), "{}\n").unwrap();
         std::fs::write(nested.join("nested.jsonl"), "{}\n").unwrap();
         std::fs::write(nested.join("ignore.txt"), "x").unwrap();
 
-        assert_eq!(count_rollout_jsonl_files(&sessions_dir), 2);
+        assert_eq!(count_rollout_jsonl_files(&rollouts_dir), 2);
     }
 }

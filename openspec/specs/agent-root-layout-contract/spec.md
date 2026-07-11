@@ -22,50 +22,6 @@ default roots, named roots, and standard agent-root asset paths.
 - **THEN** the caller can request the asset path through the runtime layout API
 - **AND** the returned path uses the canonical agent-root layout
 
-### Requirement: Centralized agent-name semantics
-alan SHALL centralize agent-name normalization, validation, and `default` reservation
-semantics in the runtime layout contract.
-
-#### Scenario: Explicit default name is normalized once
-- **WHEN** a CLI, daemon, or runtime caller receives `agent_name = "default"`
-- **THEN** the caller uses the runtime normalization API
-- **AND** the result selects the default root chain rather than a named overlay
-
-#### Scenario: Named agent validation is shared
-- **WHEN** a caller receives a named agent value
-- **THEN** the runtime layout contract validates that it is a safe single path component
-- **AND** callers do not duplicate path traversal checks for agent-root layout decisions
-
-### Requirement: Writers and readers use the same layout contract
-alan SHALL use the same runtime layout contract for agent-root reads and writes. Setup
-and mutation flows MUST NOT construct default agent-root paths independently from the
-runtime resolver.
-
-#### Scenario: Setup writes a loadable default config
-- **WHEN** `alan init`, connection pinning, or a setup flow writes a default `agent.toml`
-- **THEN** it writes to the path returned by the runtime layout contract
-- **AND** the runtime default config loader can read that same path without extra mapping
-
-#### Scenario: Workspace APIs write loadable assets
-- **WHEN** daemon workspace APIs write persona, policy, skill packages, or skill overrides
-- **THEN** they write to paths returned by the runtime layout contract
-- **AND** runtime discovery can load those assets from the same roots
-
-### Requirement: Client path mirrors are constrained
-alan SHALL keep non-Rust mirrors of canonical setup paths isolated and explicitly
-tested. Daemon responses that already include canonical paths SHALL be preferred over
-client-side recomputation for online flows.
-
-#### Scenario: TUI setup needs an offline default config path
-- **WHEN** the TUI runs setup before a daemon is available
-- **THEN** any local default config path construction is isolated in a small helper
-- **AND** tests assert that helper matches the canonical user-facing path
-
-#### Scenario: TUI displays daemon-provided paths
-- **WHEN** a daemon API response includes a canonical config or agent-root path
-- **THEN** the TUI displays that returned path
-- **AND** the TUI does not recompute an equivalent path from duplicated layout rules
-
 ### Requirement: Raw layout-string guardrail
 alan SHALL provide a mechanical guardrail that detects new raw canonical agent-root
 layout strings in Rust production code outside approved layout-owner locations.
@@ -79,3 +35,35 @@ layout strings in Rust production code outside approved layout-owner locations.
 - **WHEN** tests, documentation, or OpenSpec artifacts use literal canonical paths to describe the external contract
 - **THEN** the guardrail allows those paths through an explicit scope or allowlist
 - **AND** the allowed usage does not become a production-code layout owner
+
+### Requirement: Agent-name semantics are shared by direct launch callers
+
+Alan SHALL centralize agent-name normalization, validation, and `default` reservation semantics for CLI commands and Agent Process launch paths.
+
+#### Scenario: Explicit default is normalized
+
+- **WHEN** a CLI or Agent Process launch caller supplies agent name `default`
+- **THEN** the runtime layout API selects the default root chain
+- **AND** it does not construct a named overlay for `default`
+
+#### Scenario: Named agent is validated
+
+- **WHEN** a direct caller supplies a named agent value
+- **THEN** the runtime layout owner validates it as a safe single path component
+- **AND** the caller does not duplicate traversal or normalization rules
+
+### Requirement: Direct readers and writers share the runtime layout owner
+
+Alan SHALL use the runtime-owned layout contract for agent-root reads and for direct CLI or authoring writes. Production consumers MUST NOT construct canonical agent-root paths independently.
+
+#### Scenario: Setup writes a loadable default config
+
+- **WHEN** `alan init`, connection pinning, or another direct authoring flow writes a default `agent.toml`
+- **THEN** it writes the path returned by the runtime layout owner
+- **AND** Agent Process definition resolution reads the same path without a transport-specific mapping
+
+#### Scenario: Renderer receives an explicit mounted root
+
+- **WHEN** a renderer or host needs to inspect an Agent Process definition or file surface
+- **THEN** it receives a typed path or mounted root from the owning boundary
+- **AND** it does not recompute canonical paths from a duplicated client mirror

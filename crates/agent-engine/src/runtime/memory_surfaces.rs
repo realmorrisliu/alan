@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, Utc};
 use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
-use crate::session::Session;
+use crate::agent_machine::AgentMachine;
 use crate::tape::Message;
 
 use super::agent_loop::RuntimeLoopState;
@@ -24,7 +24,7 @@ const CODE_FENCE_CLOSE: &str = "\n```";
 struct RenderedMemorySurfaces {
     working_memory: String,
     handoff: String,
-    session_summary: String,
+    episodic_record: String,
     daily_entry: String,
 }
 
@@ -41,17 +41,25 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
         .with_context(|| format!("failed to ensure memory layout at {}", memory_dir.display()))?;
 
     let now = Utc::now();
-    let rendered = render_memory_surfaces(&state.session, &state.turn_state, now);
+    let process_path = state.process_path();
+    let memory_record_id = state.machine.memory_record_id();
+    let rendered = render_memory_surfaces(
+        &state.machine,
+        &state.turn_state,
+        &process_path,
+        memory_record_id,
+        now,
+    );
 
     write_text_file(
-        &working_memory_path(memory_dir, &state.session.id),
+        &working_memory_path(memory_dir, memory_record_id),
         &rendered.working_memory,
     )
     .await?;
     write_text_file(&latest_handoff_path(memory_dir), &rendered.handoff).await?;
     write_text_file(
-        &session_summary_path(memory_dir, &state.session.id, now),
-        &rendered.session_summary,
+        &episodic_record_path(memory_dir, memory_record_id, now),
+        &rendered.episodic_record,
     )
     .await?;
     append_text_file(&daily_note_path(memory_dir, now), &rendered.daily_entry).await?;
@@ -80,47 +88,48 @@ pub(crate) async fn refresh_active_turn_memory_surfaces_best_effort(
 }
 
 fn render_memory_surfaces(
-    session: &Session,
+    machine: &AgentMachine,
     turn_state: &TurnState,
+    process_path: &str,
+    memory_record_id: &str,
     now: DateTime<Utc>,
 ) -> RenderedMemorySurfaces {
-    let current_goal = derive_current_goal(session, turn_state);
-    let latest_assistant_state = derive_latest_assistant_state(session, turn_state);
+    let current_goal = derive_current_goal(machine, turn_state);
+    let latest_assistant_state = derive_latest_assistant_state(machine, turn_state);
     let active_plan_items = render_plan_items(turn_state, &["in_progress", "pending"]);
     let completed_plan_items = render_plan_items(turn_state, &["completed"]);
-    let recent_messages = render_recent_messages(session);
-    let compaction_summary = render_compaction_summary(session);
-    let latest_memory_flush = render_latest_memory_flush(session);
-    let session_id = &session.id;
+    let recent_messages = render_recent_messages(machine);
+    let compaction_summary = render_compaction_summary(machine);
+    let latest_memory_flush = render_latest_memory_flush(machine);
     let updated_at = now.to_rfc3339();
 
     let working_memory = format!(
-        "# Working Memory\n\nsession_id: {session_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Active Subgoals\n{active_plan_items}\n\n## Confirmed Constraints\n{compaction_summary}\n\n## Pending Verification\n{active_plan_items}\n\n## Open Loops\n{active_plan_items}\n\n## Recent Findings\n- Latest assistant state: {latest_assistant_state}\n{recent_messages}\n\n## Active Recall\n{latest_memory_flush}\n"
+        "# Working Memory\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Active Subgoals\n{active_plan_items}\n\n## Confirmed Constraints\n{compaction_summary}\n\n## Pending Verification\n{active_plan_items}\n\n## Open Loops\n{active_plan_items}\n\n## Recent Findings\n- Latest assistant state: {latest_assistant_state}\n{recent_messages}\n\n## Active Recall\n{latest_memory_flush}\n"
     );
 
     let handoff = format!(
-        "# Latest Handoff\n\nupdated_at: {updated_at}\nsession_id: {session_id}\n\n## Current Goal\n{current_goal}\n\n## What Just Happened\n- {latest_assistant_state}\n\n## Next Steps\n{active_plan_items}\n\n## Recent Context\n{compaction_summary}\n{recent_messages}\n"
+        "# Latest Handoff\n\nupdated_at: {updated_at}\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\n\n## Current Goal\n{current_goal}\n\n## What Just Happened\n- {latest_assistant_state}\n\n## Next Steps\n{active_plan_items}\n\n## Recent Context\n{compaction_summary}\n{recent_messages}\n"
     );
 
-    let session_summary = format!(
-        "# Session Summary\n\nsession_id: {session_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Latest Assistant State\n- {latest_assistant_state}\n\n## Active Plan\n{active_plan_items}\n\n## Completed Plan Items\n{completed_plan_items}\n\n## Prior Compaction Summary\n{compaction_summary}\n\n## Recent Conversation Highlights\n{recent_messages}\n\n## Latest Memory Flush\n{latest_memory_flush}\n"
+    let episodic_record = format!(
+        "# Agent Process Activity\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Latest Assistant State\n- {latest_assistant_state}\n\n## Active Plan\n{active_plan_items}\n\n## Completed Plan Items\n{completed_plan_items}\n\n## Prior Compaction Summary\n{compaction_summary}\n\n## Recent Activity\n{recent_messages}\n\n## Latest Memory Flush\n{latest_memory_flush}\n"
     );
 
     let daily_entry = format!(
-        "## {updated_at}\n\nsession_id: {session_id}\n\n### Current Goal\n{current_goal}\n\n### Latest Assistant State\n- {latest_assistant_state}\n\n### Next Steps\n{active_plan_items}\n\n### Latest Memory Flush\n{latest_memory_flush}\n\n"
+        "## {updated_at}\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\n\n### Current Goal\n{current_goal}\n\n### Latest Assistant State\n- {latest_assistant_state}\n\n### Next Steps\n{active_plan_items}\n\n### Latest Memory Flush\n{latest_memory_flush}\n\n"
     );
 
     RenderedMemorySurfaces {
         working_memory,
         handoff,
-        session_summary,
+        episodic_record,
         daily_entry,
     }
 }
 
-fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
-    let source_ref = memory_source_ref(session);
-    let user_messages = session
+fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String {
+    let source_ref = memory_source_ref(machine);
+    let user_messages = machine
         .tape
         .messages()
         .iter()
@@ -172,7 +181,7 @@ fn derive_current_goal(session: &Session, turn_state: &TurnState) -> String {
         return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
     }
 
-    if let Some(summary) = session
+    if let Some(summary) = machine
         .tape
         .summary()
         .map(str::trim)
@@ -271,12 +280,12 @@ fn is_acknowledgement_class_fragment(text: &str) -> bool {
         })
 }
 
-fn derive_latest_assistant_state(session: &Session, turn_state: &TurnState) -> String {
-    let source_ref = memory_source_ref(session);
+fn derive_latest_assistant_state(machine: &AgentMachine, turn_state: &TurnState) -> String {
+    let source_ref = memory_source_ref(machine);
     let messages = turn_state
         .active_turn_message_start()
-        .and_then(|start| session.tape.messages().get(start..))
-        .unwrap_or_else(|| session.tape.messages());
+        .and_then(|start| machine.tape.messages().get(start..))
+        .unwrap_or_else(|| machine.tape.messages());
 
     messages
         .iter()
@@ -335,9 +344,9 @@ fn format_plan_status(status: &alan_agent_protocol::PlanItemStatus) -> &'static 
     }
 }
 
-fn render_recent_messages(session: &Session) -> String {
-    let source_ref = memory_source_ref(session);
-    let items: Vec<String> = session
+fn render_recent_messages(machine: &AgentMachine) -> String {
+    let source_ref = memory_source_ref(machine);
+    let items: Vec<String> = machine
         .tape
         .messages()
         .iter()
@@ -371,9 +380,9 @@ fn render_recent_messages(session: &Session) -> String {
     }
 }
 
-fn render_compaction_summary(session: &Session) -> String {
-    let source_ref = memory_source_ref(session);
-    session
+fn render_compaction_summary(machine: &AgentMachine) -> String {
+    let source_ref = memory_source_ref(machine);
+    machine
         .tape
         .summary()
         .map(str::trim)
@@ -382,8 +391,8 @@ fn render_compaction_summary(session: &Session) -> String {
         .unwrap_or_else(|| "No compaction summary recorded.".to_string())
 }
 
-fn render_latest_memory_flush(session: &Session) -> String {
-    session
+fn render_latest_memory_flush(machine: &AgentMachine) -> String {
+    machine
         .latest_memory_flush_attempt()
         .map(|attempt| {
             let output_path = attempt
@@ -400,21 +409,23 @@ fn render_latest_memory_flush(session: &Session) -> String {
         .unwrap_or_else(|| "- No memory flush attempt recorded.\n".to_string())
 }
 
-fn working_memory_path(memory_dir: &Path, session_id: &str) -> PathBuf {
-    memory_dir.join("working").join(format!("{session_id}.md"))
+fn working_memory_path(memory_dir: &Path, memory_record_id: &str) -> PathBuf {
+    let key = crate::process_storage_key(memory_record_id);
+    memory_dir.join("working").join(format!("process-{key}.md"))
 }
 
 fn latest_handoff_path(memory_dir: &Path) -> PathBuf {
     memory_dir.join("handoffs").join("LATEST.md")
 }
 
-fn session_summary_path(memory_dir: &Path, session_id: &str, now: DateTime<Utc>) -> PathBuf {
-    memory_dir.join("sessions").join(format!(
-        "{:04}/{:02}/{:02}/{}.md",
+fn episodic_record_path(memory_dir: &Path, memory_record_id: &str, now: DateTime<Utc>) -> PathBuf {
+    let key = crate::process_storage_key(memory_record_id);
+    memory_dir.join("episodic").join(format!(
+        "{:04}/{:02}/{:02}/process-{}.md",
         now.year(),
         now.month(),
         now.day(),
-        session_id
+        key
     ))
 }
 
@@ -457,11 +468,11 @@ async fn append_text_file(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
-fn memory_source_ref(session: &Session) -> String {
-    session
+fn memory_source_ref(machine: &AgentMachine) -> String {
+    machine
         .rollout_path()
         .map(|path| format!("rollout {}", path.display()))
-        .unwrap_or_else(|| format!("session {}", session.id))
+        .unwrap_or_else(|| "current Agent Machine".to_string())
 }
 
 fn truncate_memory_text(text: &str, max_chars: usize, source_ref: &str) -> String {
@@ -571,9 +582,9 @@ fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_machine::AgentMachine;
     use crate::runtime::RuntimeEnvironment;
     use crate::runtime::turn_state::TurnState;
-    use crate::session::Session;
     use std::sync::Arc;
 
     fn namespace_environment_for_test() -> RuntimeEnvironment {
@@ -587,10 +598,9 @@ mod tests {
 
     #[test]
     fn render_memory_surfaces_follow_pure_text_layout_and_content() {
-        let mut session = Session::new();
-        session.id = "sess-123".to_string();
-        session.add_user_message("Finish the pure-text memory slice.");
-        session.add_assistant_message("Added scaffolding and prompt bootstrap.", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Finish the pure-text memory slice.");
+        machine.add_assistant_message("Added scaffolding and prompt bootstrap.", None);
 
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot(
@@ -612,11 +622,27 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let rendered = render_memory_surfaces(&session, &turn_state, now);
+        let rendered = render_memory_surfaces(
+            &machine,
+            &turn_state,
+            "/proc/1",
+            machine.memory_record_id(),
+            now,
+        );
 
         assert!(rendered.working_memory.contains("# Working Memory"));
         assert!(rendered.handoff.contains("# Latest Handoff"));
-        assert!(rendered.session_summary.contains("# Session Summary"));
+        assert!(
+            rendered
+                .episodic_record
+                .contains("# Agent Process Activity")
+        );
+        assert!(rendered.working_memory.contains("process_path: /proc/1"));
+        assert!(
+            rendered
+                .working_memory
+                .contains(&format!("memory_record_id: {}", machine.memory_record_id()))
+        );
         assert!(
             rendered
                 .daily_entry
@@ -624,36 +650,41 @@ mod tests {
         );
         assert!(
             rendered
-                .session_summary
+                .episodic_record
                 .contains("Finish the pure-text memory slice.")
         );
         assert!(
             rendered
-                .session_summary
+                .episodic_record
                 .contains("[in_progress] Refresh the handoff")
         );
         assert!(
             rendered
-                .session_summary
+                .episodic_record
                 .contains("[completed] Write the scaffolding")
         );
     }
 
     #[test]
     fn render_memory_surfaces_scopes_latest_assistant_state_to_active_turn() {
-        let mut session = Session::new();
-        session.id = "sess-123".to_string();
-        session.add_user_message("Earlier task");
-        session.add_assistant_message("Earlier assistant response.", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Earlier task");
+        machine.add_assistant_message("Earlier assistant response.", None);
 
         let mut turn_state = TurnState::default();
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("Current tool-only turn");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("Current tool-only turn");
 
         let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let rendered = render_memory_surfaces(&session, &turn_state, now);
+        let rendered = render_memory_surfaces(
+            &machine,
+            &turn_state,
+            "/proc/1",
+            machine.memory_record_id(),
+            now,
+        );
 
         assert!(
             rendered
@@ -667,12 +698,12 @@ mod tests {
 
     #[test]
     fn one_letter_follow_up_carries_prior_substantive_goal() {
-        let mut session = Session::new();
-        session.add_user_message("Implement namespace-backed child lifecycle reconciliation.");
-        session.add_assistant_message("Ready for confirmation.", None);
-        session.add_user_message("y");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Implement namespace-backed child lifecycle reconciliation.");
+        machine.add_assistant_message("Ready for confirmation.", None);
+        machine.add_user_message("y");
 
-        let goal = derive_current_goal(&session, &TurnState::default());
+        let goal = derive_current_goal(&machine, &TurnState::default());
 
         assert_eq!(
             goal,
@@ -682,9 +713,9 @@ mod tests {
 
     #[test]
     fn request_response_control_message_does_not_replace_goal() {
-        let mut session = Session::new();
-        session.add_user_message("Remove the obsolete daemon child-run endpoints.");
-        session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Remove the obsolete compatibility endpoints.");
+        machine.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
             serde_json::json!({
                 "checkpoint_id": "tool_escalation_call-1",
                 "checkpoint_type": "tool_escalation",
@@ -698,125 +729,125 @@ mod tests {
         )]);
 
         assert_eq!(
-            derive_current_goal(&session, &TurnState::default()),
-            "Remove the obsolete daemon child-run endpoints."
+            derive_current_goal(&machine, &TurnState::default()),
+            "Remove the obsolete compatibility endpoints."
         );
     }
 
     #[test]
     fn new_substantive_turn_request_replaces_stale_plan_goal() {
-        let mut session = Session::new();
-        session.add_user_message("Finish the old memory task.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Finish the old memory task.");
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot(Some("Finish the old memory task.".to_string()), Vec::new());
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("Rewrite the provider connection documentation.");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("Rewrite the provider connection documentation.");
 
         assert_eq!(
-            derive_current_goal(&session, &turn_state),
+            derive_current_goal(&machine, &turn_state),
             "Rewrite the provider connection documentation."
         );
     }
 
     #[test]
     fn in_turn_plan_update_refines_the_initial_user_goal() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let mut turn_state = TurnState::default();
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("Implement the memory contract changes.");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("Implement the memory contract changes.");
         turn_state.set_plan_snapshot(
             Some("Validate salience and compaction fallback behavior.".to_string()),
             Vec::new(),
         );
 
         assert_eq!(
-            derive_current_goal(&session, &turn_state),
+            derive_current_goal(&machine, &turn_state),
             "Validate salience and compaction fallback behavior."
         );
     }
 
     #[test]
     fn substantive_resume_input_overrides_earlier_active_plan() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let mut turn_state = TurnState::default();
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("Implement the old memory contract.");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("Implement the old memory contract.");
         turn_state.set_plan_snapshot(
             Some("Finish the old memory contract.".to_string()),
             Vec::new(),
         );
         turn_state.note_resumed_user_input();
-        session.add_user_message("Switch to the provider connection contract.");
+        machine.add_user_message("Switch to the provider connection contract.");
 
         assert_eq!(
-            derive_current_goal(&session, &turn_state),
+            derive_current_goal(&machine, &turn_state),
             "Switch to the provider connection contract."
         );
     }
 
     #[test]
     fn terse_imperative_passes_salience_filter() {
-        let mut session = Session::new();
-        session.add_user_message("Prepare the release.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Prepare the release.");
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot(Some("Prepare the release.".to_string()), Vec::new());
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("deploy it");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("deploy it");
 
-        assert_eq!(derive_current_goal(&session, &turn_state), "deploy it");
+        assert_eq!(derive_current_goal(&machine, &turn_state), "deploy it");
     }
 
     #[test]
     fn active_plan_goal_wins_when_latest_message_is_acknowledgement() {
-        let mut session = Session::new();
-        session.add_user_message("Complete the broader migration.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Complete the broader migration.");
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot_at_message_count(
             Some("Validate the namespace-native migration.".to_string()),
             Vec::new(),
-            session.tape.messages().len(),
+            machine.tape.messages().len(),
         );
-        turn_state.begin_turn(session.tape.messages().len());
-        session.add_user_message("ok");
+        turn_state.begin_turn(machine.tape.messages().len());
+        machine.add_user_message("ok");
 
         assert_eq!(
-            derive_current_goal(&session, &turn_state),
+            derive_current_goal(&machine, &turn_state),
             "[carried forward] Validate the namespace-native migration."
         );
     }
 
     #[test]
     fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
-        let mut session = Session::new();
-        session.add_user_message("Finish task A.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Finish task A.");
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot_at_message_count(
             Some("Complete task A plan.".to_string()),
             Vec::new(),
-            session.tape.messages().len(),
+            machine.tape.messages().len(),
         );
-        session.add_assistant_message("Task A paused.", None);
-        session.add_user_message("Switch to substantive task B.");
-        session.add_assistant_message("Task B underway.", None);
-        session.add_user_message("ok");
+        machine.add_assistant_message("Task A paused.", None);
+        machine.add_user_message("Switch to substantive task B.");
+        machine.add_assistant_message("Task B underway.", None);
+        machine.add_user_message("ok");
 
         assert_eq!(
-            derive_current_goal(&session, &turn_state),
+            derive_current_goal(&machine, &turn_state),
             "[carried forward] Switch to substantive task B."
         );
     }
 
     #[test]
     fn compaction_summary_wins_before_acknowledgement_fallback() {
-        let mut session = Session::new();
-        session.tape.set_summary(
+        let mut machine = AgentMachine::new();
+        machine.tape.set_summary(
             "Complete the namespace-native lifecycle migration and verify parent visibility."
                 .to_string(),
         );
-        session.add_user_message("ok");
+        machine.add_user_message("ok");
 
         assert_eq!(
-            derive_current_goal(&session, &TurnState::default()),
+            derive_current_goal(&machine, &TurnState::default()),
             "[carried forward] Complete the namespace-native lifecycle migration and verify parent visibility."
         );
     }
@@ -824,12 +855,12 @@ mod tests {
     #[test]
     fn acknowledgement_token_sequences_and_emoji_modifiers_do_not_replace_goal() {
         for acknowledgement in ["ok thanks", "ok 👍", "👍🏻", "okay, thanks!"] {
-            let mut session = Session::new();
-            session.add_user_message("Archive the completed Alan OS contract changes.");
-            session.add_user_message(acknowledgement);
+            let mut machine = AgentMachine::new();
+            machine.add_user_message("Archive the completed Alan OS contract changes.");
+            machine.add_user_message(acknowledgement);
 
             assert_eq!(
-                derive_current_goal(&session, &TurnState::default()),
+                derive_current_goal(&machine, &TurnState::default()),
                 "[carried forward] Archive the completed Alan OS contract changes.",
                 "acknowledgement {acknowledgement:?} must not become the goal"
             );
@@ -863,10 +894,10 @@ mod tests {
 
     #[test]
     fn acknowledgement_is_used_verbatim_when_no_better_context_exists() {
-        let mut session = Session::new();
-        session.add_user_message("ok");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("ok");
 
-        assert_eq!(derive_current_goal(&session, &TurnState::default()), "ok");
+        assert_eq!(derive_current_goal(&machine, &TurnState::default()), "ok");
     }
 
     #[test]
@@ -886,13 +917,13 @@ mod tests {
     fn truncate_memory_text_closes_code_fence_when_omitting_detail() {
         let text = "```rust\nfn main() {\n    println!(\"important detail\");\n    println!(\"more detail that exceeds the memory surface budget\");\n}\n```\n\n## Follow-up\n- keep going\n";
 
-        let truncated = truncate_memory_text(text, 120, "session sess-code");
+        let truncated = truncate_memory_text(text, 120, "machine sess-code");
 
         assert!(truncated.chars().count() <= 120);
         assert!(truncated.contains("```rust"));
         assert!(truncated.matches("```").count() >= 2);
         assert!(truncated.contains("truncated"));
-        assert!(truncated.contains("session sess-code"));
+        assert!(truncated.contains("machine sess-code"));
     }
 
     #[test]
@@ -923,10 +954,9 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut session = Session::new();
-        session.id = "sess-write".to_string();
-        session.add_user_message("Keep the latest handoff fresh.");
-        session.add_assistant_message("Wrote the memory surfaces.", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Keep the latest handoff fresh.");
+        machine.add_assistant_message("Wrote the memory surfaces.", None);
 
         let mut turn_state = TurnState::default();
         turn_state.set_plan_snapshot(
@@ -941,7 +971,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             tool_catalog: crate::tools::ToolRegistry::new(),
@@ -958,7 +988,7 @@ mod tests {
 
         refresh_turn_memory_surfaces(&state).await.unwrap();
 
-        assert!(working_memory_path(&memory_dir, "sess-write").exists());
+        assert!(working_memory_path(&memory_dir, state.machine.memory_record_id()).exists());
         assert!(latest_handoff_path(&memory_dir).exists());
         assert!(
             std::fs::read_dir(memory_dir.join("daily"))
@@ -966,8 +996,8 @@ mod tests {
                 .next()
                 .is_some()
         );
-        let session_summary_glob = memory_dir.join("sessions");
-        assert!(session_summary_glob.exists());
+        let episodic_record_glob = memory_dir.join("episodic");
+        assert!(episodic_record_glob.exists());
         let handoff = tokio::fs::read_to_string(latest_handoff_path(&memory_dir))
             .await
             .unwrap();
@@ -978,14 +1008,13 @@ mod tests {
     async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
         let temp = tempfile::TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
-        let mut session = Session::new();
-        session.id = "sess-no-model".to_string();
-        session.add_user_message("Refresh local memory surfaces mechanically.");
-        let message_count = session.tape.messages().len();
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("Refresh local memory surfaces mechanically.");
+        let message_count = machine.tape.messages().len();
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             tool_catalog: crate::tools::ToolRegistry::new(),
@@ -1002,10 +1031,40 @@ mod tests {
 
         refresh_turn_memory_surfaces(&state).await.unwrap();
 
-        assert_eq!(state.session.tape.messages().len(), message_count);
-        let working = tokio::fs::read_to_string(working_memory_path(&memory_dir, "sess-no-model"))
+        assert_eq!(state.machine.tape.messages().len(), message_count);
+        let working = tokio::fs::read_to_string(working_memory_path(
+            &memory_dir,
+            state.machine.memory_record_id(),
+        ))
+        .await
+        .unwrap();
+        assert!(working.contains("Refresh local memory surfaces mechanically."));
+    }
+
+    #[tokio::test]
+    async fn reused_process_path_gets_distinct_durable_memory_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let rollouts_dir = temp.path().join("rollouts");
+        let memory_dir = temp.path().join("memory");
+        let first = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", &rollouts_dir)
             .await
             .unwrap();
-        assert!(working.contains("Refresh local memory surfaces mechanically."));
+        let second = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", &rollouts_dir)
+            .await
+            .unwrap();
+
+        assert_ne!(first.memory_record_id(), second.memory_record_id());
+        assert_ne!(
+            working_memory_path(&memory_dir, first.memory_record_id()),
+            working_memory_path(&memory_dir, second.memory_record_id())
+        );
+        assert_eq!(
+            first.memory_record_id(),
+            first.recorder.as_ref().unwrap().rollout_id()
+        );
+        assert_eq!(
+            second.memory_record_id(),
+            second.recorder.as_ref().unwrap().rollout_id()
+        );
     }
 }

@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate a soft-threshold memory flush failure emits warning telemetry without blocking the following compaction attempt or turn completion.",
   "blocking": true,
-  "command": "cargo test -p alan --test compaction_integration_test compaction_auto_pre_turn_soft_flush_failure_surfaces_match -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure -- --exact",
   "assertions": [
     "memory flush failure emits warning telemetry but remains durable and externally visible",
     "compaction still completes successfully after the flush failure",

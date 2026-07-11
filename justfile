@@ -33,9 +33,10 @@ fmt-check:
 guard-agent-root-layout:
     ./scripts/check-agent-root-layout-strings.sh
 
-# Check daemon API route ownership guardrails
-guard-daemon-api-contract:
-    ./scripts/check-daemon-api-route-strings.sh
+# Reject retired host-service architecture from current repository and CLI surfaces
+guard-daemon-era-absence:
+    cargo build -p alan --bin alan
+    ./scripts/check-daemon-era-absence.sh target/debug/alan
 
 # Check macOS Sparkle auto-update project metadata
 guard-macos-auto-update:
@@ -67,10 +68,6 @@ coverage-detail:
 # Generate HTML coverage report (target/coverage/html)
 coverage-html:
     cargo llvm-cov --workspace --html --output-dir target/coverage
-
-# Run the agent daemon
-serve:
-    cargo run -p alan -- daemon start
 
 # Build release
 build:
@@ -145,10 +142,6 @@ clean:
 smoke:
     cargo test -p alan --test smoke_test -- --nocapture
 
-# End-to-end smoke test (needs ~/.alan LLM config)
-smoke-e2e:
-    bash scripts/smoke-e2e.sh
-
 # Live provider protocol harness (ignored tests + explicit opt-in env)
 live-providers:
     bash scripts/live-provider-harness.sh
@@ -201,6 +194,6 @@ harness-compaction-ci:
 verify: fmt lint test smoke
     @echo "✅ Core flows verified"
 
-# Full verification including real LLM
-verify-full: verify smoke-e2e
-    @echo "✅ Full verification passed (including E2E)"
+# Full local verification
+verify-full: verify
+    @echo "✅ Full verification passed"

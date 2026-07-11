@@ -110,32 +110,6 @@ pub struct ManagedTerminalAccountSettingsSummary {
     pub plans: Vec<ManagedTerminalAccountPlan>,
 }
 
-/// Skill summary used by settings capability rows.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellSettingsSkillSummary {
-    /// Skill id.
-    pub id: String,
-    /// Display name.
-    pub name: String,
-    /// Whether the skill is enabled.
-    pub enabled: bool,
-    /// Whether implicit invocation is allowed.
-    pub allow_implicit_invocation: bool,
-    /// Whether the skill is available.
-    pub available: bool,
-}
-
-/// Capability settings summary input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellSettingsCapabilitiesSummary {
-    /// Skill summaries.
-    #[serde(default)]
-    pub skills: Vec<ShellSettingsSkillSummary>,
-    /// Unavailable reason.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<String>,
-}
-
 /// Local host settings summary input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellSettingsLocalSummary {
@@ -145,10 +119,6 @@ pub struct ShellSettingsLocalSummary {
     pub channel_label: String,
     /// CLI tool name.
     pub cli_tool_name: String,
-    /// Daemon URL.
-    pub daemon_url: String,
-    /// Daemon bind address.
-    pub daemon_bind_address: String,
     /// Update summary.
     pub update_summary: String,
     /// Update detail.
@@ -157,8 +127,6 @@ pub struct ShellSettingsLocalSummary {
     pub alan_home_display_path: String,
     /// Application support display path.
     pub application_support_display_path: String,
-    /// Global skills display path.
-    pub global_skills_display_path: String,
     /// Shell control namespace.
     pub shell_control_namespace: String,
 }
@@ -196,92 +164,6 @@ impl ShellSettingsDiagnosticsSummary {
             "{} retained events, {} stutter {}.",
             self.retained_event_count, self.stutter_marker_count, marker_label
         )
-    }
-}
-
-/// Registered workspace summary supplied by the platform.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellSettingsWorkspaceRegistryEntry {
-    /// Workspace root path.
-    pub path: String,
-    /// Optional catalog alias or id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_identifier: Option<String>,
-}
-
-/// Settings workspace context input without filesystem access.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellSettingsWorkspaceContextInput {
-    /// Active working directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_working_directory: Option<String>,
-    /// Registered workspaces supplied by the platform.
-    #[serde(default)]
-    pub registered_workspaces: Vec<ShellSettingsWorkspaceRegistryEntry>,
-    /// Workspace root discovered by the platform from local files.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub discovered_workspace_root: Option<String>,
-    /// Optional agent name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
-}
-
-/// Portable settings workspace context.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellSettingsWorkspaceContext {
-    /// Workspace directory for connection requests.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connection_workspace_dir: Option<String>,
-    /// Workspace id or alias for skill catalog requests.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_catalog_workspace_dir: Option<String>,
-    /// Reason skill catalog is unavailable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_catalog_unavailable_reason: Option<String>,
-    /// Optional agent name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
-}
-
-impl ShellSettingsWorkspaceContext {
-    /// Resolves workspace context from platform-supplied path observations.
-    pub fn resolve(input: &ShellSettingsWorkspaceContextInput) -> Self {
-        let agent_name = normalized_settings_value(input.agent_name.as_deref());
-        let Some(active_directory) =
-            normalized_settings_value(input.active_working_directory.as_deref())
-        else {
-            return Self {
-                connection_workspace_dir: None,
-                skill_catalog_workspace_dir: None,
-                skill_catalog_unavailable_reason: None,
-                agent_name,
-            };
-        };
-
-        if let Some(registered) =
-            most_specific_workspace(&input.registered_workspaces, &active_directory)
-        {
-            return Self {
-                connection_workspace_dir: Some(registered.path.clone()),
-                skill_catalog_workspace_dir: registered.catalog_identifier.clone(),
-                skill_catalog_unavailable_reason: None,
-                agent_name,
-            };
-        }
-
-        let discovered_workspace_root =
-            normalized_settings_value(input.discovered_workspace_root.as_deref());
-        Self {
-            connection_workspace_dir: Some(
-                discovered_workspace_root
-                    .clone()
-                    .unwrap_or(active_directory),
-            ),
-            skill_catalog_workspace_dir: None,
-            skill_catalog_unavailable_reason: discovered_workspace_root
-                .map(|_| "Register this workspace to show workspace skills.".to_string()),
-            agent_name,
-        }
     }
 }
 
@@ -403,34 +285,6 @@ impl ShellSettingsSummaryRows {
             .collect()
     }
 
-    /// Builds capability rows.
-    pub fn capability_rows(
-        summary: &ShellSettingsCapabilitiesSummary,
-    ) -> Vec<ShellSettingsRowSummary> {
-        if summary.unavailable_reason.is_some() {
-            return vec![unavailable_row(
-                "capabilitiesUnavailable",
-                "puzzlepiece.extension",
-                "Skill catalog",
-            )];
-        }
-
-        let total = summary.skills.len();
-        let enabled = summary.skills.iter().filter(|skill| skill.enabled).count();
-        vec![
-            ShellSettingsRowSummary::read_only(
-                "capabilitiesAvailable",
-                "puzzlepiece.extension",
-                "Skill catalog",
-            )
-            .with_value(if total == 0 {
-                "No skills".to_string()
-            } else {
-                format!("{enabled} of {total}")
-            }),
-        ]
-    }
-
     /// Builds local host and diagnostics rows.
     pub fn local_rows(
         local: &ShellSettingsLocalSummary,
@@ -443,18 +297,10 @@ impl ShellSettingsSummaryRows {
                 .with_value(local.channel_label.as_str()),
             ShellSettingsRowSummary::read_only("cliTool", "terminal", "Command line tool")
                 .with_value(local.cli_tool_name.as_str()),
-            ShellSettingsRowSummary::read_only("daemonEndpoint", "server.rack", "Daemon endpoint")
-                .with_value(local.daemon_url.as_str()),
             ShellSettingsRowSummary::read_only("updates", "arrow.down.circle", "Updates")
                 .with_value(local.update_summary.as_str()),
             ShellSettingsRowSummary::read_only("dataRoot", "folder", "Alan home")
                 .with_value(local.alan_home_display_path.as_str()),
-            ShellSettingsRowSummary::read_only(
-                "publicSkills",
-                "folder.badge.gearshape",
-                "Skill packages",
-            )
-            .with_value(local.global_skills_display_path.as_str()),
             ShellSettingsRowSummary::read_only(
                 "applicationSupport",
                 "externaldrive",
@@ -580,14 +426,6 @@ fn terminal_account_detail(plan: &ManagedTerminalAccountPlan) -> String {
     }
 }
 
-fn unavailable_row(
-    id: impl Into<String>,
-    system_name: impl Into<String>,
-    title: impl Into<String>,
-) -> ShellSettingsRowSummary {
-    ShellSettingsRowSummary::read_only(id, system_name, title).with_value("Unavailable")
-}
-
 fn non_repeating_detail(detail: Option<String>, title: &str) -> Option<String> {
     let normalized_title = title.trim();
     let normalized_detail = detail?.trim().to_string();
@@ -605,27 +443,4 @@ fn launch_kind_value(kind: TerminalProfileLaunchKind) -> &'static str {
         TerminalProfileLaunchKind::ManagedUser => "managed_user",
         TerminalProfileLaunchKind::CustomCommand => "custom_command",
     }
-}
-
-fn normalized_settings_value(value: Option<&str>) -> Option<String> {
-    let trimmed = value?.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn most_specific_workspace<'a>(
-    entries: &'a [ShellSettingsWorkspaceRegistryEntry],
-    active_directory: &str,
-) -> Option<&'a ShellSettingsWorkspaceRegistryEntry> {
-    entries
-        .iter()
-        .filter(|entry| contains_path(active_directory, &entry.path))
-        .max_by_key(|entry| entry.path.len())
-}
-
-fn contains_path(path: &str, root: &str) -> bool {
-    let root = root.trim_end_matches('/');
-    path == root
-        || path
-            .strip_prefix(root)
-            .is_some_and(|rest| rest.starts_with('/'))
 }

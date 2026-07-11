@@ -5,11 +5,9 @@ Generation as `clone`, `data`, `events`, `status`, and `ctl`. Agent requests are
 assembled from namespace files; changing model means binding a different
 Connection. AgentFS already exposes machine state and events as files.
 
-The old cognitive-routing design predated those surfaces. It selected providers
-inside one runtime loop, gave System 1 an internal virtual escalation Tool,
-withheld side effects through runtime classification, and spread result metadata
-across session/fork/reconnect DTOs. That made the daemon and in-process engine the
-architectural center.
+Routing is assembled from the current file-native surfaces: the coordinator
+selects mounted Connections, launches bounded attempt Processes, and records
+result provenance in AgentFS and rollout evidence.
 
 ## Goals / Non-Goals
 
@@ -31,8 +29,7 @@ architectural center.
 - Add cognitive roles to Alan Kernel or provider adapters.
 - Run System 1 and System 2 in parallel by default.
 - Expose chain-of-thought or provider-private reasoning.
-- Create daemon routing endpoints, session override DTOs, or a global model
-  router service.
+- Create a global model-router service or second routing authority.
 - Let a System 1 child acquire mounts withheld by its spawner.
 
 ## Decisions
@@ -91,8 +88,8 @@ carries state and events but no `ctl` file, keeping the agent overlay's control
 surfaces to the two defined by `agent-file-layout-contract` (`/proc/<pid>/ctl`
 and `machine/ctl`). `route next` is consumed by the next logical input. A
 deterministic System 2 gate may refuse `route next system-1`; the refusal is
-recorded in routing status/events. Compatibility transports may translate an old
-override into the same `machine/ctl` write but gain no independent semantics.
+recorded in routing status/events. Every caller expresses the intent through the
+same `machine/ctl` write.
 
 ### 4. Escalation is typed stream content, not a Tool
 
@@ -120,7 +117,7 @@ machine/routing/
 ```
 
 Clients hydrate snapshots and block-read events. Rollout/tape records may carry
-the same bounded references, but no daemon DTO is a second source of truth.
+the same bounded references without becoming a second source of truth.
 Routing control remains on `machine/ctl` through the `route auto` and
 `route next <role>` commands defined above; `machine/routing` is read-only.
 
@@ -159,9 +156,8 @@ Generation and reprojects accepted context.
 2. Add restricted System 1 attempt spawn and accepted-result handoff.
 3. Add deterministic gates and explicit `route` intent on `machine/ctl`.
 4. Add typed stream escalation and sequential System 2 attempt spawn.
-5. Remove cognitive session/fork/turn DTO deltas and internal virtual escalation
-   Tool assumptions.
-6. Delete the compatibility mirror after shipped clients read routing files.
+5. Remove internal virtual-escalation Tool assumptions.
+6. Verify every shipped client reads routing files.
 
 ## Open Questions
 

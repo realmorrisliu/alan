@@ -749,12 +749,12 @@ private func shellPaneAlanAccessoryProjection(for pane: ShellPane) -> ShellPaneT
         return nil
     }
 
-    let title = binding.pendingYield ? "Input" : shellVisibleLabel(binding.runStatus)
+    let title = binding.pendingRequest ? "Input" : shellVisibleLabel(binding.machineState)
     guard let title else { return nil }
     return ShellPaneTitleBarDetailProjection(
         id: "alan",
         title: title,
-        help: "alan \(binding.runStatus)"
+        help: "Alan Machine \(binding.machineState)"
     )
 }
 
@@ -852,7 +852,7 @@ func shellEffectiveAttention(for pane: ShellPane, now: Date? = nil) -> ShellAtte
 }
 
 private func shellPersistentAttention(for pane: ShellPane) -> ShellAttentionState {
-    if pane.alanBinding?.pendingYield == true {
+    if pane.alanBinding?.pendingRequest == true {
         return .awaitingUser
     }
 

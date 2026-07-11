@@ -1,7 +1,7 @@
 use super::agent_loop::RuntimeLoopState;
 use super::child_runs::{
-    ChildRunRecord, ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest,
-    global_child_run_registry,
+    ChildRunRecord, ChildRunRegistry, ChildRunStatus, ChildRunTerminationMode,
+    ChildRunTerminationRequest,
 };
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
@@ -146,7 +146,7 @@ pub(crate) struct ChildRuntimePause {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChildRuntimeResult {
     pub status: ChildRuntimeStatus,
-    pub session_id: String,
+    pub process_path: String,
     pub child_run_id: Option<String>,
     pub rollout_path: Option<PathBuf>,
     pub output_text: String,
@@ -223,6 +223,7 @@ pub(crate) struct ChildRuntimeController {
     liveness_rx: tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope>,
     submission_id: String,
     child_run_id: String,
+    child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
     process_registry: Option<alan_kernel::ProcFs>,
     process_environment: Option<super::NamespaceRuntimeEnvironment>,
@@ -320,11 +321,10 @@ where
         // parent's effective config as a terminal env override.
         core_config_source: crate::ConfigSourceKind::Default,
         agent_name: None,
-        session_id: None,
         workspace_id: child_workspace_id,
         workspace_root_dir,
         workspace_alan_dir,
-        resume_rollout_path: None,
+        recovery_rollout_path: None,
         launch_root_dir,
         default_cwd_override,
         agent_home_paths: parent_agent_home_paths(parent),
@@ -439,22 +439,23 @@ where
             return Err(err);
         }
     };
+    let child_run_registry = parent.child_run_registry().clone();
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
-        parent.session.id.clone(),
-        startup_metadata.session_id.clone(),
+        parent.process_path().to_string(),
+        startup_metadata.process_path.clone(),
         resolved_child_definition
             .workspace_root_dir
             .as_ref()
             .map(|path| path.display().to_string()),
-        Some(format!("/proc/{child_process_pid}")),
+        Some(startup_metadata.agent_path.clone()),
         Some(format!("{:?}", spec.target)),
     );
     if let Some(decision) = delegation_capability_decision {
         child_run_record = child_run_record.with_delegation_capability_decision(decision);
     }
-    global_child_run_registry().register(child_run_record);
+    child_run_registry.register(child_run_record);
     let event_rx = runtime.handle.event_sender.subscribe();
     let liveness_rx = runtime.handle.liveness_sender.subscribe();
     let submission = Submission::new(Op::Turn {
@@ -472,15 +473,11 @@ where
                 &err,
             )
             .await;
-            global_child_run_registry().mark_terminal(
-                &child_run_id,
-                status,
-                Some(format!("{err:#}")),
-            );
+            child_run_registry.mark_terminal(&child_run_id, status, Some(format!("{err:#}")));
             return Err(err);
         }
     };
-    global_child_run_registry().mark_running(&child_run_id);
+    child_run_registry.mark_running(&child_run_id);
 
     Ok(ChildRuntimeController {
         runtime: Some(runtime),
@@ -489,6 +486,7 @@ where
         liveness_rx,
         submission_id: submission.id,
         child_run_id,
+        child_run_registry,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
         process_registry: Some(launch_procfs),
         process_environment: Some(child_process_environment),
@@ -771,7 +769,7 @@ impl ChildRuntimeController {
             .structured_output
             .or_else(|| parse_child_structured_output(output_text.as_str()));
         let child_status = child_run_status_for_runtime_status(observed.status.clone());
-        global_child_run_registry().mark_terminal(
+        self.child_run_registry.mark_terminal(
             &self.child_run_id,
             child_status,
             observed.error_message.clone(),
@@ -779,7 +777,7 @@ impl ChildRuntimeController {
 
         Ok(ChildRuntimeResult {
             status: observed.status,
-            session_id: self.startup_metadata.session_id.clone(),
+            process_path: self.startup_metadata.process_path.clone(),
             child_run_id: Some(self.child_run_id.clone()),
             rollout_path: self.startup_metadata.rollout_path.clone(),
             output_text,
@@ -788,7 +786,7 @@ impl ChildRuntimeController {
             warnings,
             error_message: observed.error_message,
             pause: observed.pause,
-            child_run: global_child_run_registry().get(&self.child_run_id),
+            child_run: self.child_run_registry.get(&self.child_run_id),
         })
     }
 
@@ -799,18 +797,15 @@ impl ChildRuntimeController {
     }
 
     fn cancelled_result(&self) -> ChildRuntimeResult {
-        global_child_run_registry().mark_terminal(
-            &self.child_run_id,
-            ChildRunStatus::Cancelled,
-            None,
-        );
+        self.child_run_registry
+            .mark_terminal(&self.child_run_id, ChildRunStatus::Cancelled, None);
         let mut warnings = Vec::new();
         for warning in self.startup_metadata.warnings.iter().cloned() {
             push_bounded_child_warning(&mut warnings, warning);
         }
         ChildRuntimeResult {
             status: ChildRuntimeStatus::Cancelled,
-            session_id: self.startup_metadata.session_id.clone(),
+            process_path: self.startup_metadata.process_path.clone(),
             child_run_id: Some(self.child_run_id.clone()),
             rollout_path: self.startup_metadata.rollout_path.clone(),
             output_text: String::new(),
@@ -819,7 +814,7 @@ impl ChildRuntimeController {
             warnings,
             error_message: None,
             pause: None,
-            child_run: global_child_run_registry().get(&self.child_run_id),
+            child_run: self.child_run_registry.get(&self.child_run_id),
         }
     }
 
@@ -858,8 +853,9 @@ impl ChildRuntimeController {
                 return Ok(ChildRuntimeWaitOutcome::Observed(observed));
             }
 
-            if let Some(request) =
-                global_child_run_registry().termination_request(&self.child_run_id)
+            if let Some(request) = self
+                .child_run_registry
+                .termination_request(&self.child_run_id)
             {
                 if let Some(observed) = self.observe_buffered_child_events(
                     &mut output_text,
@@ -1056,9 +1052,9 @@ impl ChildRuntimeController {
                 if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
                     return ChildLivenessObservation::Ignored;
                 }
-                global_child_run_registry()
+                self.child_run_registry
                     .observe_heartbeat(&self.child_run_id, envelope.status.clone());
-                global_child_run_registry().observe_progress(
+                self.child_run_registry.observe_progress(
                     &self.child_run_id,
                     "runtime_heartbeat",
                     envelope.status,
@@ -1067,8 +1063,9 @@ impl ChildRuntimeController {
             }
             Err(RecvError::Lagged(_)) => {
                 let status = Some("active_submission".to_string());
-                global_child_run_registry().observe_heartbeat(&self.child_run_id, status.clone());
-                global_child_run_registry().observe_progress(
+                self.child_run_registry
+                    .observe_heartbeat(&self.child_run_id, status.clone());
+                self.child_run_registry.observe_progress(
                     &self.child_run_id,
                     "runtime_heartbeat",
                     status,
@@ -1095,7 +1092,7 @@ impl ChildRuntimeController {
                     alan_agent_protocol::Event::TextDelta { chunk, .. } => {
                         if !chunk.is_empty() {
                             output_text.push_str(&chunk);
-                            global_child_run_registry().observe_progress(
+                            self.child_run_registry.observe_progress(
                                 &self.child_run_id,
                                 "text_delta",
                                 Some("child emitted text".to_string()),
@@ -1104,9 +1101,9 @@ impl ChildRuntimeController {
                         ChildEventObservation::Progress
                     }
                     alan_agent_protocol::Event::Warning { message } => {
-                        global_child_run_registry()
+                        self.child_run_registry
                             .observe_warning(&self.child_run_id, message.clone());
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "warning",
                             Some(message.clone()),
@@ -1115,7 +1112,7 @@ impl ChildRuntimeController {
                         ChildEventObservation::Progress
                     }
                     alan_agent_protocol::Event::TurnCompleted { summary } => {
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "turn_completed",
                             summary.clone(),
@@ -1134,7 +1131,7 @@ impl ChildRuntimeController {
                     alan_agent_protocol::Event::Yield {
                         request_id, kind, ..
                     } => {
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "yield",
                             Some(format!("child yielded for {}", yield_kind_label(&kind))),
@@ -1154,7 +1151,7 @@ impl ChildRuntimeController {
                         message,
                         recoverable,
                     } if !recoverable => {
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "error",
                             Some(message.clone()),
@@ -1171,9 +1168,9 @@ impl ChildRuntimeController {
                         })
                     }
                     alan_agent_protocol::Event::Error { message, .. } => {
-                        global_child_run_registry()
+                        self.child_run_registry
                             .observe_warning(&self.child_run_id, message.clone());
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "recoverable_error",
                             Some(message.clone()),
@@ -1182,7 +1179,7 @@ impl ChildRuntimeController {
                         ChildEventObservation::Progress
                     }
                     alan_agent_protocol::Event::ToolCallStarted { name, .. } => {
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "tool_call_started",
                             Some(format!("tool {name} started")),
@@ -1191,7 +1188,7 @@ impl ChildRuntimeController {
                     }
                     alan_agent_protocol::Event::ToolCallCompleted { name, success, .. } => {
                         let tool = name.unwrap_or_else(|| "<unknown>".to_string());
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "tool_call_completed",
                             Some(format!("tool {tool} completed success={success:?}")),
@@ -1199,7 +1196,7 @@ impl ChildRuntimeController {
                         ChildEventObservation::Progress
                     }
                     alan_agent_protocol::Event::PlanUpdated { explanation, .. } => {
-                        global_child_run_registry().observe_progress(
+                        self.child_run_registry.observe_progress(
                             &self.child_run_id,
                             "plan_updated",
                             explanation,
@@ -1302,14 +1299,16 @@ impl ChildRuntimeController {
             return;
         };
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
-            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
+            self.child_run_registry
+                .reconcile_process_exit(&self.child_run_id, exit_code);
             return;
         }
         let _ = environment
             .write_process_control_for_pid(pid, "cancel")
             .await;
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
-            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
+            self.child_run_registry
+                .reconcile_process_exit(&self.child_run_id, exit_code);
         }
     }
 
@@ -1321,7 +1320,8 @@ impl ChildRuntimeController {
             return;
         };
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
-            global_child_run_registry().reconcile_process_exit(&self.child_run_id, exit_code);
+            self.child_run_registry
+                .reconcile_process_exit(&self.child_run_id, exit_code);
         }
     }
 
@@ -1451,7 +1451,6 @@ fn yield_kind_label(kind: &YieldKind) -> String {
     match kind {
         YieldKind::Confirmation => "confirmation".to_string(),
         YieldKind::StructuredInput => "structured_input".to_string(),
-        YieldKind::DynamicTool => "dynamic_tool".to_string(),
         YieldKind::Custom(value) => value.clone(),
     }
 }
@@ -2216,13 +2215,13 @@ fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
 
 fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     let mut lines = Vec::new();
-    if let Some(summary) = parent.session.tape.summary() {
+    if let Some(summary) = parent.machine.tape.summary() {
         lines.push("Summary:".to_string());
         lines.push(truncate_chars(summary.trim(), MAX_CHILD_CONVERSATION_CHARS));
     }
 
     let recent_messages = parent
-        .session
+        .machine
         .tape
         .messages()
         .iter()
@@ -2287,7 +2286,7 @@ fn render_plan_snapshot(parent: &RuntimeLoopState) -> Option<String> {
 fn render_tool_results_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     let mut lines = Vec::new();
     for message in parent
-        .session
+        .machine
         .tape
         .messages()
         .iter()
@@ -2341,14 +2340,16 @@ mod tests {
     }
 
     fn test_startup_metadata(
-        session_id: impl Into<String>,
+        process_path: impl Into<String>,
         rollout_path: Option<PathBuf>,
         durable: bool,
     ) -> RuntimeStartupMetadata {
         RuntimeStartupMetadata {
-            session_id: session_id.into(),
+            process_path: process_path.into(),
+            agent_path: "/agent/test".to_string(),
+            rollout_id: None,
             rollout_path,
-            durability: super::super::engine::SessionDurabilityState {
+            durability: super::super::engine::AgentMachineDurabilityState {
                 durable,
                 required: false,
             },
@@ -2667,7 +2668,7 @@ mod tests {
         let workspace_alan_dir = workspace_root.join(".alan");
         let launch_root = workspace_root.join(".alan/agents/grader");
         std::fs::create_dir_all(launch_root.join("persona")).unwrap();
-        std::fs::create_dir_all(crate::workspace_runtime_sessions_dir_from_alan_dir(
+        std::fs::create_dir_all(crate::workspace_runtime_rollouts_dir_from_alan_dir(
             &workspace_alan_dir,
             crate::InstallChannel::Stable,
         ))
@@ -2686,10 +2687,10 @@ mod tests {
         tools.register(NamedTestTool::new("alpha"));
         tools.register(NamedTestTool::new("beta"));
 
-        let mut session = crate::Session::new();
-        session.add_user_message("Parent user asks for review");
-        session.add_assistant_message("Parent assistant explains the approach", None);
-        session.add_tool_message("tool_call_1", "alpha", json!({"summary": "tool output"}));
+        let mut machine = crate::AgentMachine::new();
+        machine.add_user_message("Parent user asks for review");
+        machine.add_assistant_message("Parent assistant explains the approach", None);
+        machine.add_tool_message("tool_call_1", "alpha", json!({"summary": "tool output"}));
 
         let mut turn_state = super::super::TurnState::default();
         turn_state.set_plan_snapshot(
@@ -2704,7 +2705,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "parent-workspace".to_string(),
             workspace_root_dir: Some(workspace_root),
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_for_parent_test(),
             tool_catalog: tools,
@@ -2981,7 +2982,7 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_preserves_parent_dev_channel_for_session_state() {
+    async fn spawn_child_runtime_preserves_parent_dev_channel_for_rollouts() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3012,16 +3013,16 @@ Body
         let result = child.join().await.unwrap();
 
         let rollout_path = result.rollout_path.expect("child rollout path");
-        let dev_sessions_dir = crate::workspace_runtime_sessions_dir_from_alan_dir(
+        let dev_rollouts_dir = crate::workspace_runtime_rollouts_dir_from_alan_dir(
             &workspace_alan_dir,
             crate::InstallChannel::Dev,
         );
-        let stable_sessions_dir = crate::workspace_runtime_sessions_dir_from_alan_dir(
+        let stable_rollouts_dir = crate::workspace_runtime_rollouts_dir_from_alan_dir(
             &workspace_alan_dir,
             crate::InstallChannel::Stable,
         );
-        assert!(rollout_path.starts_with(dev_sessions_dir));
-        assert!(!rollout_path.starts_with(stable_sessions_dir));
+        assert!(rollout_path.starts_with(dev_rollouts_dir));
+        assert!(!rollout_path.starts_with(stable_rollouts_dir));
     }
 
     #[tokio::test]
@@ -3548,11 +3549,12 @@ Body
         });
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: Some(launch_procfs),
             process_environment: Some(launch.environment),
@@ -3620,11 +3622,12 @@ Body
         let submission_id = "externally-stopped-child".to_string();
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx,
             liveness_rx: test_liveness_rx(),
             submission_id: submission_id.clone(),
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: Some(launch_procfs),
             process_environment: Some(launch.environment),
@@ -4211,7 +4214,7 @@ model_reasoning_effort = "high"
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(
-            crate::resolve_session_request_controls(
+            crate::resolve_runtime_request_controls(
                 &seen_config,
                 crate::provider_capabilities_for_config(&seen_config),
                 crate::RequestControlIntent::default(),
@@ -4471,11 +4474,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4506,11 +4510,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4531,14 +4536,32 @@ model_reasoning_effort = "high"
     #[tokio::test]
     async fn child_runtime_join_backfills_output_from_rollout_without_text_deltas() {
         let rollout = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(
-            rollout.path(),
-            concat!(
-                "{\"type\":\"session_meta\",\"session_id\":\"child-session\",\"started_at\":\"2026-04-22T13:08:19Z\",\"cwd\":\"/tmp\",\"model\":\"gpt-5.4\"}\n",
-                "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"{\\\"status\\\":\\\"completed\\\",\\\"summary\\\":\\\"done\\\"}\"}\n"
-            ),
-        )
-        .unwrap();
+        let answer = "{\"status\":\"completed\",\"summary\":\"done\"}";
+        let items = [
+            crate::rollout::RolloutItem::AgentMachineMeta(crate::rollout::AgentMachineMeta {
+                rollout_id: "rollout-child".to_string(),
+                process_path: "/proc/42".to_string(),
+                started_at: "2026-04-22T13:08:19Z".to_string(),
+                cwd: "/tmp".to_string(),
+                model: "gpt-5.4".to_string(),
+                reasoning_effort: None,
+            }),
+            crate::rollout::RolloutItem::Message(crate::rollout::MessageRecord {
+                role: "assistant".to_string(),
+                content: Some(answer.to_string()),
+                tool_name: None,
+                message: Some(Message::assistant(answer)),
+                timestamp: "2026-04-22T13:08:20Z".to_string(),
+            }),
+        ];
+        let content = items
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n")
+            + "\n";
+        std::fs::write(rollout.path(), content).unwrap();
 
         let (tx, rx) = tokio::sync::broadcast::channel(8);
         let submission_id = "sub-rollout".to_string();
@@ -4552,7 +4575,7 @@ model_reasoning_effort = "high"
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata(
-                "child-session",
+                "child-machine",
                 Some(rollout.path().to_path_buf()),
                 true,
             ),
@@ -4560,6 +4583,7 @@ model_reasoning_effort = "high"
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4620,11 +4644,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4665,11 +4690,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4687,10 +4713,11 @@ model_reasoning_effort = "high"
         let (tx, rx) = tokio::sync::broadcast::channel(8);
         let submission_id = "sub-terminal-before-termination".to_string();
         let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        global_child_run_registry().register(ChildRunRecord::new(
+        let child_run_registry = ChildRunRegistry::default();
+        child_run_registry.register(ChildRunRecord::new(
             child_run_id.clone(),
-            "parent-session".to_string(),
-            "child-session".to_string(),
+            "parent-machine".to_string(),
+            "child-machine".to_string(),
             None,
             None,
             None,
@@ -4708,9 +4735,9 @@ model_reasoning_effort = "high"
                 summary: Some("done".to_string()),
             },
         });
-        global_child_run_registry()
+        child_run_registry
             .request_termination(
-                "parent-session",
+                "parent-machine",
                 &child_run_id,
                 "operator",
                 ChildRunTerminationMode::Forceful,
@@ -4720,11 +4747,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: child_run_id.clone(),
+            child_run_registry: child_run_registry.clone(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4735,10 +4763,7 @@ model_reasoning_effort = "high"
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         assert_eq!(result.output_text, "finished");
         assert_eq!(
-            global_child_run_registry()
-                .get(&child_run_id)
-                .unwrap()
-                .status,
+            child_run_registry.get(&child_run_id).unwrap().status,
             ChildRunStatus::Completed
         );
     }
@@ -4748,10 +4773,11 @@ model_reasoning_effort = "high"
         let (tx, rx) = tokio::sync::broadcast::channel(8);
         let submission_id = "sub-yield".to_string();
         let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        global_child_run_registry().register(ChildRunRecord::new(
+        let child_run_registry = ChildRunRegistry::default();
+        child_run_registry.register(ChildRunRecord::new(
             child_run_id.clone(),
-            "parent-session".to_string(),
-            "child-session".to_string(),
+            "parent-machine".to_string(),
+            "child-machine".to_string(),
             None,
             None,
             None,
@@ -4767,11 +4793,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx: test_liveness_rx(),
             submission_id,
             child_run_id: child_run_id.clone(),
+            child_run_registry: child_run_registry.clone(),
             timeout: None,
             process_registry: None,
             process_environment: None,
@@ -4780,7 +4807,7 @@ model_reasoning_effort = "high"
 
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Paused);
-        let child_run = global_child_run_registry().get(&child_run_id).unwrap();
+        let child_run = child_run_registry.get(&child_run_id).unwrap();
         assert_eq!(child_run.status, ChildRunStatus::Failed);
         assert!(child_run.status.is_terminal());
     }
@@ -4880,11 +4907,12 @@ model_reasoning_effort = "high"
 
         let controller = ChildRuntimeController {
             runtime: None,
-            startup_metadata: test_startup_metadata("child-session", None, false),
+            startup_metadata: test_startup_metadata("child-machine", None, false),
             event_rx: rx,
             liveness_rx,
             submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
+            child_run_registry: ChildRunRegistry::default(),
             timeout: Some(Duration::from_millis(80)),
             process_registry: None,
             process_environment: None,

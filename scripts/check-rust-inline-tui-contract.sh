@@ -31,12 +31,13 @@ require_pattern() {
 
 require_file "crates/tui/Cargo.toml"
 require_file "crates/tui/src/lib.rs"
-require_file "crates/tui/src/daemon_client.rs"
+require_file "crates/tui/src/file_backed.rs"
 require_file "crates/tui/src/terminal.rs"
 
 reject_path "clients/tui"
 reject_path "crates/alan/src/cli/chat.rs"
 reject_path "crates/alan/src/cli/ask.rs"
+reject_path "crates/tui/src/daemon_client.rs"
 reject_path "scripts/entitlements/alan-tui.entitlements"
 
 reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \

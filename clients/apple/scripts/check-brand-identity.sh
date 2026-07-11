@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-PATTERN='AlanNative|Alan Shell|Ask Alan|Open in Alan|New Alan|Alan Space|Alan App|alanterm|dev\.alan\.macos|dev\.alan\.native|com\.realmorrisliu\.AlanNative|\balan\.app\b|\balan for macOS\b|CFBundleDisplayName = alan|"INFOPLIST_KEY_CFBundleDisplayName\[sdk=macosx\*\]" = alan|"PRODUCT_NAME\[sdk=macosx\*\]" = alan|path = alan\.app'
+PATTERN='AlanNative|Ask Alan|Open in Alan|New Alan|Alan Space|alanterm|dev\.alan\.macos|dev\.alan\.native|com\.realmorrisliu\.AlanNative|\balan\.app\b|\balan for macOS\b|CFBundleDisplayName = alan|"INFOPLIST_KEY_CFBundleDisplayName\[sdk=macosx\*\]" = alan|"PRODUCT_NAME\[sdk=macosx\*\]" = alan|path = alan\.app'
 
 is_allowed_occurrence() {
     local line="$1"

@@ -402,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn history_persists_across_sessions_via_file() {
+    fn history_persists_across_launches_via_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tui_history");
         {

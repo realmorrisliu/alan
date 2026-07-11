@@ -44,7 +44,7 @@ case "$variant:$case_id" in
         route="steward_inline_shell"
         outcome="inline_edit_loop"
         handles_json='[]'
-        summary="Baseline collapses the repo-local coding loop into the parent steward session."
+        summary="Baseline collapses the repo-local coding loop into the parent steward Process."
         ;;
     candidate:cross_repo_orchestration)
         route="steward_multi_repo"

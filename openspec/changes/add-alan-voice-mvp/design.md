@@ -6,10 +6,11 @@ upload audio, and Cloud Mode is explicit. The old fixed-command controller is
 too limited for free-form recognition and intent proposals.
 
 The architectural correction is at the execution boundary. Alan Voice is a
-host-backed capability under `define-alan-app-service-integration`: platform
-audio and speech APIs may stay inside Alan for macOS, but Alan OS clients operate
-capture and results through an aP tree. Typed `VoiceIntent` remains a Voice
-Service domain document, not a Kernel primitive or global command bus.
+host-backed capability under the canonical `alan-app-service-integration`
+contract: platform audio and speech APIs may stay inside Alan for macOS, but
+Alan OS clients operate capture and results through an aP tree. Typed
+`VoiceIntent` remains a Voice Service domain document, not a Kernel primitive
+or global command bus.
 
 ## Goals / Non-Goals
 
@@ -27,8 +28,7 @@ Service domain document, not a Kernel primitive or global command bus.
 - Replacing the normal terminal or text composer.
 - Making raw audio, Apple framework objects, or cloud credentials visible to
   Agent Processes by default.
-- A generic Alan-wide intent/RPC registry.
-- Daemon session submission or session-scoped current-context APIs.
+- A generic Alan-wide intent registry or host control plane.
 - Full voice navigation or streaming transcript editing in V1.
 
 ## Decisions
@@ -92,9 +92,8 @@ proposal before any target mutation.
 - Reusable app commands run a visible `/bin` Tool or write the owning app
   document/`ctl`.
 
-No branch says “submit to the normal session/runtime path.” If the needed target
-or executable is absent from the namespace, the service creates a safe draft or
-asks the user to select a target.
+If the needed target or executable is absent from the namespace, the service
+creates a safe draft or asks the user to select a target.
 
 ### 5. Alan for macOS is the Hold to Talk renderer/client
 

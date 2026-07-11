@@ -90,8 +90,8 @@ pub enum Event {
         items: Vec<PlanItem>,
     },
 
-    /// Transport-level rollback notification published by `Op::Rollback`.
-    SessionRolledBack {
+    /// Agent Machine rollback notification published by `Op::Rollback`.
+    MachineRolledBack {
         /// Number of logical turns removed from in-memory history.
         turns: u32,
         /// Number of tape messages removed by the rollback.
@@ -227,37 +227,8 @@ pub enum YieldKind {
     Confirmation,
     /// Structured user input form.
     StructuredInput,
-    /// Dynamic tool call that must be executed by the client.
-    DynamicTool,
     /// Extensible custom yield kind.
     Custom(String),
-}
-
-/// Event envelope used by server transports for stable cursors and replay.
-///
-/// The underlying event fields (including `"type"`) are flattened so existing
-/// consumers can continue reading the same event payload shape while gaining
-/// metadata like `event_id`, `turn_id`, and `item_id`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventEnvelope {
-    /// Stable session-scoped event id (monotonic sequence encoded as string).
-    pub event_id: String,
-    /// Numeric session-scoped event sequence.
-    pub sequence: u64,
-    /// Session id the event belongs to.
-    pub session_id: String,
-    /// Submission id that triggered this event, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub submission_id: Option<String>,
-    /// Coarse logical turn id (monotonic within session).
-    pub turn_id: String,
-    /// Stable item id (monotonic within a turn).
-    pub item_id: String,
-    /// Server timestamp in unix epoch milliseconds.
-    pub timestamp_ms: u64,
-    /// Wrapped event payload (flattened to preserve the `type` field).
-    #[serde(flatten)]
-    pub event: Event,
 }
 
 #[cfg(test)]
@@ -614,26 +585,26 @@ mod tests {
     }
 
     #[test]
-    fn test_event_session_rolled_back_serialization() {
-        let event = Event::SessionRolledBack {
+    fn test_event_machine_rolled_back_serialization() {
+        let event = Event::MachineRolledBack {
             turns: 2,
             removed_messages: 4,
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("session_rolled_back"));
+        assert!(json.contains("machine_rolled_back"));
         assert!(json.contains("\"turns\":2"));
 
         let parsed: Event = serde_json::from_str(&json).unwrap();
         match parsed {
-            Event::SessionRolledBack {
+            Event::MachineRolledBack {
                 turns,
                 removed_messages,
             } => {
                 assert_eq!(turns, 2);
                 assert_eq!(removed_messages, 4);
             }
-            _ => panic!("Expected SessionRolledBack"),
+            _ => panic!("Expected MachineRolledBack"),
         }
     }
 
@@ -705,43 +676,6 @@ mod tests {
                 assert_eq!(message, "Stream interrupted");
             }
             _ => panic!("Expected Warning"),
-        }
-    }
-
-    #[test]
-    fn test_event_envelope_serialization() {
-        let envelope = EventEnvelope {
-            event_id: "evt_1".to_string(),
-            sequence: 1,
-            session_id: "sess_1".to_string(),
-            submission_id: Some("sub_1".to_string()),
-            turn_id: "turn_1".to_string(),
-            item_id: "item_1".to_string(),
-            timestamp_ms: 1_701_000_000_000,
-            event: Event::TextDelta {
-                chunk: "hello".to_string(),
-                is_final: false,
-            },
-        };
-
-        let json = serde_json::to_string(&envelope).unwrap();
-        assert!(json.contains("evt_1"));
-        assert!(json.contains("text_delta"));
-
-        let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.event_id, "evt_1");
-        assert_eq!(parsed.sequence, 1);
-        assert_eq!(parsed.session_id, "sess_1");
-        assert_eq!(parsed.submission_id.as_deref(), Some("sub_1"));
-        assert_eq!(parsed.turn_id, "turn_1");
-        assert_eq!(parsed.item_id, "item_1");
-        assert_eq!(parsed.timestamp_ms, 1_701_000_000_000);
-        match parsed.event {
-            Event::TextDelta { chunk, is_final } => {
-                assert_eq!(chunk, "hello");
-                assert!(!is_final);
-            }
-            _ => panic!("Expected TextDelta event"),
         }
     }
 }

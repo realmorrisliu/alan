@@ -16,16 +16,16 @@ struct ShellViewportSnapshot: Codable, Equatable {
 }
 
 struct ShellAlanBinding: Codable, Equatable {
-    let sessionID: String
-    let runStatus: String
-    let pendingYield: Bool
+    let processPath: String
+    let machineState: String
+    let pendingRequest: Bool
     let source: String?
     let lastProjectedAt: String?
 
     private enum CodingKeys: String, CodingKey {
-        case sessionID = "session_id"
-        case runStatus = "run_status"
-        case pendingYield = "pending_yield"
+        case processPath = "process_path"
+        case machineState = "machine_state"
+        case pendingRequest = "pending_request"
         case source
         case lastProjectedAt = "last_projected_at"
     }
@@ -92,6 +92,12 @@ struct ShellPane: Identifiable, Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Binding data is a disposable live projection. An unsupported shape must not
+        // invalidate otherwise durable workspace topology.
+        let alanBinding = try? container.decodeIfPresent(
+            ShellAlanBinding.self,
+            forKey: .alanBinding
+        )
         self.init(
             paneID: try container.decode(String.self, forKey: .paneID),
             tabID: try container.decode(String.self, forKey: .tabID),
@@ -103,7 +109,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
             context: try container.decodeIfPresent(ShellContextSnapshot.self, forKey: .context),
             viewport: try container.decodeIfPresent(ShellViewportSnapshot.self, forKey: .viewport),
             activity: try container.decodeIfPresent(TerminalActivitySnapshot.self, forKey: .activity),
-            alanBinding: try container.decodeIfPresent(ShellAlanBinding.self, forKey: .alanBinding),
+            alanBinding: alanBinding,
             terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
         )
     }

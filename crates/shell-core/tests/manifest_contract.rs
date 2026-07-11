@@ -177,6 +177,59 @@ fn pruning_retains_pinned_active_task_and_empty_spaces_while_repairing_selection
 }
 
 #[test]
+fn unknown_active_task_decodes_conservatively_and_remains_pruning_protected() {
+    let manifest = ShellContentWorkspaceManifest {
+        schema_version: 1,
+        content_contract_version: "0.2".to_string(),
+        window_id: "window_main".to_string(),
+        selected_space_id: Some("space_main".to_string()),
+        selected_tab_id: Some("tab_future_task".to_string()),
+        spaces: vec![ShellContentWorkspaceSpaceRecord {
+            space_id: "space_main".to_string(),
+            title: "Main".to_string(),
+            order: 0,
+            created_at: reference_time(),
+            updated_at: reference_time(),
+            selected_tab_id: Some("tab_future_task".to_string()),
+            tabs: vec![content_tab("tab_future_task", "Future Task", "/future")],
+            terminal_profile_id: None,
+            presentation_icon: None,
+        }],
+        legacy_quick_terminal: None,
+    };
+    let mut encoded = serde_json::to_value(manifest).expect("encode manifest");
+    encoded["spaces"][0]["tabs"][0]["active_task"] =
+        serde_json::Value::String("future_agent_state".to_string());
+
+    let decoded: ShellContentWorkspaceManifest =
+        serde_json::from_value(encoded).expect("decode unknown active task");
+
+    assert_eq!(
+        decoded.spaces[0].tabs[0].active_task,
+        ShellTabActiveTaskState::Unknown
+    );
+    assert_eq!(
+        decoded
+            .materialize("/fallback", REFERENCE_TIME)
+            .spaces
+            .len(),
+        1
+    );
+    assert_eq!(
+        decoded
+            .pruning_expired_tabs("2027-01-16T08:00:00Z", 60)
+            .spaces[0]
+            .tabs[0]
+            .tab_id,
+        "tab_future_task"
+    );
+    assert_eq!(
+        serde_json::to_value(decoded).expect("re-encode manifest")["spaces"][0]["tabs"][0]["active_task"],
+        "unknown"
+    );
+}
+
+#[test]
 fn materialize_uses_pin_snapshot_for_pinned_tabs() {
     let live = content_tab("tab_pinned", "Pinned", "/live/project")
         .live_snapshot

@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
+use crate::agent_machine::AgentMachine;
+#[cfg(test)]
 use crate::llm::LlmClient;
 use crate::llm::{GenerationRequest, Message as LlmMessage, MessageRole, build_generation_request};
 use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
     WORKSPACE_MEMORY_FILENAME, ensure_workspace_memory_layout_at,
 };
-#[cfg(test)]
-use crate::session::Session;
 use crate::tape::Message;
 
 use super::agent_loop::RuntimeLoopState;
@@ -46,7 +46,7 @@ pub(crate) struct InboxEntryDraft {
     pub observation: String,
     pub evidence: Vec<String>,
     pub promotion_rationale: String,
-    pub source_sessions: Vec<String>,
+    pub source_processes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ struct InboxEntryFrontmatter {
     confidence: String,
     created_at: String,
     updated_at: String,
-    source_sessions: Vec<String>,
+    source_processes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +82,7 @@ struct TopicPageFrontmatter {
     tags: Vec<String>,
     entities: Vec<String>,
     updated_at: String,
-    source_sessions: Vec<String>,
+    source_processes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,7 +138,7 @@ pub(crate) async fn stage_inbox_entry(
             confidence: draft.confidence.to_string(),
             created_at: now.to_rfc3339(),
             updated_at: now.to_rfc3339(),
-            source_sessions: dedup_strings(draft.source_sessions),
+            source_processes: dedup_strings(draft.source_processes),
         },
         observation: normalize_inline_text(&draft.observation),
         evidence: normalize_items(draft.evidence),
@@ -201,7 +201,7 @@ pub(crate) async fn promote_inbox_entry(
                 &existing,
                 &title,
                 now,
-                &document.frontmatter.source_sessions,
+                &document.frontmatter.source_processes,
             )?;
             if !contains_promoted_observation(&topic, &document.observation) {
                 topic = append_markdown_section_item(&topic, "## Stable Facts", &promoted_line);
@@ -251,7 +251,7 @@ pub(crate) async fn promote_inbox_entry(
 #[derive(Debug, Clone)]
 pub(crate) struct TurnMemoryPromotionJob {
     memory_dir: PathBuf,
-    session_id: String,
+    process_path: String,
     active_turn_user_messages: Vec<String>,
     llm_request_timeout_secs: u64,
     pub(crate) warning_context: &'static str,
@@ -267,7 +267,7 @@ pub(crate) fn build_turn_memory_promotion_job(
 
     let memory_dir = state.core_config.memory.workspace_dir.clone()?;
     let active_turn_user_messages = active_turn_user_messages(
-        state.session.tape.messages(),
+        state.machine.tape.messages(),
         state.turn_state.active_turn_message_start(),
     );
     if active_turn_user_messages.is_empty() {
@@ -276,7 +276,7 @@ pub(crate) fn build_turn_memory_promotion_job(
 
     Some(TurnMemoryPromotionJob {
         memory_dir,
-        session_id: state.session.id.clone(),
+        process_path: state.process_path().to_string(),
         active_turn_user_messages,
         llm_request_timeout_secs: state.runtime_config.llm_request_timeout_secs,
         warning_context,
@@ -289,11 +289,11 @@ pub(crate) async fn run_turn_memory_promotion_job_with_cancel(
     job: &TurnMemoryPromotionJob,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    capture_confirmed_turn_memory_for_session(
+    capture_confirmed_turn_memory_for_process(
         llm_client,
         job.llm_request_timeout_secs,
         &job.memory_dir,
-        &job.session_id,
+        &job.process_path,
         &job.active_turn_user_messages,
         cancel,
     )
@@ -310,23 +310,23 @@ pub(crate) async fn run_turn_memory_promotion_job_for_runtime_with_cancel(
         .generate_response_with_retry(request, job.llm_request_timeout_secs, cancel)
         .await
         .context("generate turn-end memory promotion plan")?;
-    let candidates = parse_memory_promotion_candidates(&response.content, &job.session_id)?;
+    let candidates = parse_memory_promotion_candidates(&response.content, &job.process_path)?;
     apply_memory_promotion_candidates(&job.memory_dir, candidates, cancel).await
 }
 
 #[cfg(test)]
-async fn capture_confirmed_turn_memory_for_session(
+async fn capture_confirmed_turn_memory_for_process(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
     memory_dir: &Path,
-    session_id: &str,
+    process_path: &str,
     active_turn_user_messages: &[String],
     cancel: &CancellationToken,
 ) -> Result<()> {
     let candidates = generate_memory_promotion_candidates(
         llm_client,
         llm_request_timeout_secs,
-        session_id,
+        process_path,
         active_turn_user_messages,
         cancel,
     )
@@ -367,7 +367,8 @@ async fn capture_confirmed_turn_memory_for_test(
     memory_dir: Option<&Path>,
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
-    session: &Session,
+    machine: &AgentMachine,
+    process_path: &str,
     active_turn_start: Option<usize>,
 ) -> Result<()> {
     if !memory_enabled {
@@ -379,7 +380,7 @@ async fn capture_confirmed_turn_memory_for_test(
     };
 
     let active_turn_user_messages =
-        active_turn_user_messages(session.tape.messages(), active_turn_start);
+        active_turn_user_messages(machine.tape.messages(), active_turn_start);
     if active_turn_user_messages.is_empty() {
         return Ok(());
     }
@@ -388,7 +389,7 @@ async fn capture_confirmed_turn_memory_for_test(
     let candidates = generate_memory_promotion_candidates(
         llm_client,
         llm_request_timeout_secs,
-        &session.id,
+        process_path,
         &active_turn_user_messages,
         &cancel,
     )
@@ -470,7 +471,7 @@ fn ensure_topic_page_frontmatter(
     content: &str,
     title: &str,
     now: DateTime<Utc>,
-    source_sessions: &[String],
+    source_processes: &[String],
 ) -> Result<String> {
     let existing_body = if content.trim().is_empty() {
         default_topic_body(title)
@@ -484,7 +485,7 @@ fn ensure_topic_page_frontmatter(
         let mut parsed: TopicPageFrontmatter =
             serde_yaml::from_str(yaml).context("parse topic page frontmatter")?;
         parsed.updated_at = now.to_rfc3339();
-        parsed.source_sessions = merge_source_sessions(parsed.source_sessions, source_sessions);
+        parsed.source_processes = merge_source_processes(parsed.source_processes, source_processes);
         parsed
     } else {
         TopicPageFrontmatter {
@@ -493,7 +494,7 @@ fn ensure_topic_page_frontmatter(
             tags: Vec::new(),
             entities: Vec::new(),
             updated_at: now.to_rfc3339(),
-            source_sessions: dedup_strings(source_sessions.to_vec()),
+            source_processes: dedup_strings(source_processes.to_vec()),
         }
     };
 
@@ -603,7 +604,7 @@ fn normalize_inline_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn merge_source_sessions(mut existing: Vec<String>, additional: &[String]) -> Vec<String> {
+fn merge_source_processes(mut existing: Vec<String>, additional: &[String]) -> Vec<String> {
     existing.extend(additional.iter().cloned());
     dedup_strings(existing)
 }
@@ -620,7 +621,7 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
 async fn generate_memory_promotion_candidates(
     llm_client: &mut LlmClient,
     llm_request_timeout_secs: u64,
-    session_id: &str,
+    process_path: &str,
     active_turn_user_messages: &[String],
     cancel: &CancellationToken,
 ) -> Result<Vec<MemoryPromotionCandidate>> {
@@ -636,7 +637,7 @@ async fn generate_memory_promotion_candidates(
     )
     .await?;
 
-    parse_memory_promotion_candidates(&response.content, session_id)
+    parse_memory_promotion_candidates(&response.content, process_path)
 }
 
 fn ensure_memory_promotion_not_cancelled(cancel: &CancellationToken) -> Result<()> {
@@ -714,7 +715,7 @@ async fn generate_memory_promotion_response(
 
 fn parse_memory_promotion_candidates(
     raw: &str,
-    session_id: &str,
+    process_path: &str,
 ) -> Result<Vec<MemoryPromotionCandidate>> {
     let json = extract_json_object(raw).ok_or_else(|| {
         anyhow!("turn-end memory promotion response did not contain a JSON object")
@@ -722,18 +723,18 @@ fn parse_memory_promotion_candidates(
     let parsed: MemoryPromotionModelOutput = serde_json::from_str(json)
         .context("failed to parse turn-end memory promotion response as JSON")?;
 
-    Ok(normalize_memory_promotion_candidates(parsed, session_id))
+    Ok(normalize_memory_promotion_candidates(parsed, process_path))
 }
 
 fn normalize_memory_promotion_candidates(
     raw: MemoryPromotionModelOutput,
-    session_id: &str,
+    process_path: &str,
 ) -> Vec<MemoryPromotionCandidate> {
     let mut seen_observations = HashSet::new();
 
     raw.writes
         .into_iter()
-        .filter_map(|write| normalize_memory_promotion_candidate(write, session_id))
+        .filter_map(|write| normalize_memory_promotion_candidate(write, process_path))
         .filter(|candidate| seen_observations.insert(candidate.draft.observation.clone()))
         .take(MEMORY_PROMOTION_MAX_WRITES)
         .collect()
@@ -741,7 +742,7 @@ fn normalize_memory_promotion_candidates(
 
 fn normalize_memory_promotion_candidate(
     raw: MemoryPromotionModelWrite,
-    session_id: &str,
+    process_path: &str,
 ) -> Option<MemoryPromotionCandidate> {
     let kind = normalize_memory_kind(&raw.kind)?;
     let target = canonical_target_for_kind(kind);
@@ -785,7 +786,7 @@ fn normalize_memory_promotion_candidate(
             observation,
             evidence,
             promotion_rationale,
-            source_sessions: vec![session_id.to_string()],
+            source_processes: vec![process_path.to_string()],
         },
     })
 }
@@ -1012,9 +1013,9 @@ mod tests {
                 target: WORKSPACE_MEMORY_FILENAME.to_string(),
                 confidence: "medium",
                 observation: "The recall router should stay lexical-only.".to_string(),
-                evidence: vec!["Observed in session summary.".to_string()],
+                evidence: vec!["Observed in machine summary.".to_string()],
                 promotion_rationale: "Useful, but not yet confirmed as stable memory.".to_string(),
-                source_sessions: vec!["sess-123".to_string()],
+                source_processes: vec!["sess-123".to_string()],
             },
             now,
         )
@@ -1046,7 +1047,7 @@ mod tests {
                 observation: "Keep memory recall lexical and file-backed.".to_string(),
                 evidence: vec!["Repeated in design notes.".to_string()],
                 promotion_rationale: "Confirmed by the user.".to_string(),
-                source_sessions: vec!["sess-456".to_string()],
+                source_processes: vec!["sess-456".to_string()],
             },
             now,
         )
@@ -1088,9 +1089,9 @@ mod tests {
                 confidence: "medium",
                 observation: "Topic pages are the overflow surface for recurring memory facts."
                     .to_string(),
-                evidence: vec!["Repeated across multiple sessions.".to_string()],
+                evidence: vec!["Repeated across multiple Agent Processes.".to_string()],
                 promotion_rationale: "Recurring enough to deserve a topic page.".to_string(),
-                source_sessions: vec!["sess-789".to_string()],
+                source_processes: vec!["sess-789".to_string()],
             },
             now,
         )
@@ -1135,7 +1136,7 @@ mod tests {
                 observation: "Traversal should never be accepted.".to_string(),
                 evidence: vec!["Imported inbox entry.".to_string()],
                 promotion_rationale: "Regression coverage for target validation.".to_string(),
-                source_sessions: vec!["sess-traversal".to_string()],
+                source_processes: vec!["sess-traversal".to_string()],
             },
             now,
         )
@@ -1155,9 +1156,8 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut session = Session::new();
-        session.id = "sess-confirm".to_string();
-        session.add_user_message("My name is Dr. Bob.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Dr. Bob.");
         let provider = MockLlmProvider::new().with_response(mock_generation_response(
             serde_json::json!({
                 "writes": [
@@ -1181,7 +1181,8 @@ mod tests {
             Some(&memory_dir),
             &mut llm_client,
             30,
-            &session,
+            &machine,
+            "/proc/test",
             Some(0),
         )
         .await
@@ -1203,9 +1204,8 @@ mod tests {
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut session = Session::new();
-        session.id = "sess-disabled".to_string();
-        session.add_user_message("My name is Morris.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Morris.");
         let provider = MockLlmProvider::new();
         let mut llm_client = LlmClient::new(provider.clone());
 
@@ -1214,7 +1214,8 @@ mod tests {
             Some(&memory_dir),
             &mut llm_client,
             30,
-            &session,
+            &machine,
+            "/proc/test",
             Some(0),
         )
         .await
@@ -1252,7 +1253,7 @@ mod tests {
                 observation: "Name: Bob".to_string(),
                 evidence: vec!["My name is Bob.".to_string()],
                 promotion_rationale: "Direct user-stated stable identity detail.".to_string(),
-                source_sessions: vec!["sess-bob".to_string()],
+                source_processes: vec!["sess-bob".to_string()],
             },
             now,
         )
@@ -1295,7 +1296,7 @@ target: USER.md
 confidence: high
 created_at: 2026-04-15T10:30:00Z
 updated_at: 2026-04-15T10:30:00Z
-source_sessions:
+source_processes:
   - sess-multiline
 ---
 
@@ -1332,9 +1333,8 @@ Direct user-stated stable identity detail.
         let memory_dir = temp.path().join(".alan/memory");
         ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
-        let mut session = Session::new();
-        session.id = "sess-rule".to_string();
-        session.add_user_message("The rule is use Python 3.12.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("The rule is use Python 3.12.");
         let provider = MockLlmProvider::new().with_response(mock_generation_response(
             serde_json::json!({
                 "writes": [
@@ -1358,7 +1358,8 @@ Direct user-stated stable identity detail.
             Some(&memory_dir),
             &mut llm_client,
             30,
-            &session,
+            &machine,
+            "/proc/test",
             Some(0),
         )
         .await
@@ -1415,7 +1416,7 @@ Direct user-stated stable identity detail.
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session: Session::new(),
+            machine: AgentMachine::new(),
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
                 root, "/agent/1", "default",
@@ -1429,7 +1430,7 @@ Direct user-stated stable identity detail.
         };
         let job = TurnMemoryPromotionJob {
             memory_dir: memory_dir.clone(),
-            session_id: "sess-namespace".to_string(),
+            process_path: "sess-namespace".to_string(),
             active_turn_user_messages: vec!["Remember this namespace fact.".to_string()],
             llm_request_timeout_secs: 30,
             warning_context: "test",
@@ -1466,26 +1467,25 @@ Direct user-stated stable identity detail.
 
     #[tokio::test]
     async fn generate_memory_promotion_candidates_only_uses_active_turn_user_messages() {
-        let mut session = Session::new();
-        session.id = "sess-active-turn".to_string();
-        session.add_user_message("My name is Bob.");
-        session.add_assistant_message("Noted.", None);
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Bob.");
+        machine.add_assistant_message("Noted.", None);
 
-        let active_turn_start = session.tape.messages().len();
+        let active_turn_start = machine.tape.messages().len();
 
-        session.add_user_message("Please continue with the previous task.");
+        machine.add_user_message("Please continue with the previous task.");
         let provider = MockLlmProvider::new().with_response(mock_generation_response(
             serde_json::json!({ "writes": [] }).to_string(),
         ));
         let mut llm_client = LlmClient::new(provider.clone());
 
         let active_turn_user_messages =
-            active_turn_user_messages(session.tape.messages(), Some(active_turn_start));
+            active_turn_user_messages(machine.tape.messages(), Some(active_turn_start));
         let cancel = CancellationToken::new();
         let drafts = generate_memory_promotion_candidates(
             &mut llm_client,
             30,
-            &session.id,
+            "/proc/test",
             &active_turn_user_messages,
             &cancel,
         )
@@ -1599,7 +1599,7 @@ Direct user-stated stable identity detail.
         });
         let job = TurnMemoryPromotionJob {
             memory_dir: memory_dir.clone(),
-            session_id: "sess-cancelled".to_string(),
+            process_path: "sess-cancelled".to_string(),
             active_turn_user_messages: vec!["My name is Morris.".to_string()],
             llm_request_timeout_secs: 0,
             warning_context: "test cancellation",
@@ -1634,7 +1634,7 @@ Direct user-stated stable identity detail.
         });
         let active_turn_user_messages = vec!["My name is Morris.".to_string()];
 
-        let result = capture_confirmed_turn_memory_for_session(
+        let result = capture_confirmed_turn_memory_for_process(
             &mut llm_client,
             30,
             &memory_dir,

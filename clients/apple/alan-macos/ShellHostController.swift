@@ -2965,12 +2965,12 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
 
         for pane in panes where tab.contains(paneID: pane.paneID) {
-            if pane.alanBinding?.pendingYield == true {
+            if pane.alanBinding?.pendingRequest == true {
                 return .alanPendingYield
             }
 
-            if let runStatus = pane.alanBinding?.runStatus,
-               !Self.inactiveAlanRunStatuses.contains(runStatus.lowercased())
+            if let machineState = pane.alanBinding?.machineState,
+               !Self.inactiveAlanMachineStates.contains(machineState.lowercased())
             {
                 return .alanRunning
             }
@@ -3026,14 +3026,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             return 2
         case .alanRunning:
             return 3
-        case .alanSession:
+        case .alanProcess:
             return 4
         case .alanPendingYield:
             return 5
         }
     }
 
-    private static let inactiveAlanRunStatuses: Set<String> = [
+    private static let inactiveAlanMachineStates: Set<String> = [
         "completed",
         "failed",
         "cancelled",
@@ -3335,7 +3335,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         pane: ShellPane,
         contentID: String
     ) -> Bool {
-        if pane.alanBinding?.pendingYield == true {
+        if pane.alanBinding?.pendingRequest == true {
             return true
         }
         if let processState = pane.context?.processState {
@@ -3345,7 +3345,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             if processState == ShellTabActiveTaskState.foregroundCommand.rawValue
                 || processState == ShellTabActiveTaskState.alanRunning.rawValue
                 || processState == ShellTabActiveTaskState.alanPendingYield.rawValue
-                || processState == ShellTabActiveTaskState.alanSession.rawValue
+                || processState == ShellTabActiveTaskState.alanProcess.rawValue
                 || processState == ShellTabActiveTaskState.unknown.rawValue
             {
                 return true
@@ -3375,74 +3375,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     private func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
         shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
-    }
-
-    func settingsWorkspaceContext(forPaneSlotID paneSlotID: String) -> ShellSettingsWorkspaceContext {
-        ShellSettingsWorkspaceContext.resolve(
-            activeWorkingDirectory: settingsWorkspaceWorkingDirectory(forPaneSlotID: paneSlotID),
-            channel: windowContext.installChannel,
-            fileManager: fileManager
-        )
-    }
-
-    private func settingsWorkspaceWorkingDirectory(forPaneSlotID paneSlotID: String) -> String? {
-        let contentState = shellState.contentStateProjection()
-        var candidates: [ShellPane] = []
-
-        func appendCandidate(_ pane: ShellPane?) {
-            guard let pane,
-                  !candidates.contains(where: { $0.paneID == pane.paneID })
-            else {
-                return
-            }
-            candidates.append(pane)
-        }
-
-        let targetPane = pane(paneID: paneSlotID)
-        appendCandidate(targetPane)
-
-        if focusedPane?.paneID != paneSlotID {
-            appendCandidate(focusedPane)
-        }
-        if selectedPane?.paneID != paneSlotID {
-            appendCandidate(selectedPane)
-        }
-
-        let targetTabID = targetPane?.tabID ?? selectedTab?.tabID
-        if let targetTabID {
-            shellState.panes
-                .filter { $0.tabID == targetTabID && $0.paneID != paneSlotID }
-                .forEach { appendCandidate($0) }
-        }
-
-        shellState.panes
-            .filter { $0.paneID != paneSlotID }
-            .forEach { appendCandidate($0) }
-
-        for candidate in candidates {
-            if let workingDirectory = terminalWorkingDirectory(
-                for: candidate,
-                contentState: contentState
-            ) {
-                return workingDirectory
-            }
-        }
-        return nil
-    }
-
-    private func terminalWorkingDirectory(
-        for pane: ShellPane,
-        contentState: ShellContentStateSnapshot
-    ) -> String? {
-        if let content = contentState.contentMounted(in: pane.paneID),
-           content.kind != .terminal
-        {
-            return nil
-        }
-
-        let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
-        return nonEmptyWorkingDirectory(runtimeCwd)
-            ?? nonEmptyWorkingDirectory(pane.cwd)
     }
 
     private func nonEmptyWorkingDirectory(_ path: String?) -> String? {

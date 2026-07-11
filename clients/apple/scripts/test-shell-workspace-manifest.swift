@@ -58,6 +58,7 @@ private enum ShellWorkspaceManifestTests {
     static func run() throws {
         try verifiesMissingManifestCreatesDefaultWithoutMigratingShellState()
         try verifiesCorruptManifestIsQuarantined()
+        try verifiesUnknownActiveTaskDoesNotQuarantineWorkspace()
         try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
         try verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence()
         try verifiesContentSpaceIconMetadataRoundTripsSeparatelyFromTerminalProfile()
@@ -146,6 +147,56 @@ private enum ShellWorkspaceManifestTests {
         _ = try decoder.decode(
             ShellContentWorkspaceManifest.self,
             from: Data(contentsOf: manifestURL)
+        )
+    }
+
+    private static func verifiesUnknownActiveTaskDoesNotQuarantineWorkspace() throws {
+        let fileManager = FileManager.default
+        let tempDirectory = try makeTempDirectory()
+        let manifestURL = tempDirectory.appendingPathComponent("shell-workspace-window_main.json")
+        let tab = makeContentTab(
+            tabID: "tab_unknown_active_task",
+            title: "Unknown Active Task",
+            isPinned: false,
+            pinCwd: nil,
+            liveCwd: "/unknown/active-task",
+            lastActivatedAt: referenceDate,
+            lastActivityAt: referenceDate,
+            activeTask: .inactive
+        )
+        let manifest = makeContentManifest(selectedTabID: tab.tabID, tabs: [tab])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let encoded = try encoder.encode(manifest)
+        guard let encodedText = String(data: encoded, encoding: .utf8) else {
+            throw TestFailure("manifest fixture must be UTF-8")
+        }
+        let unknownText = encodedText.replacingOccurrences(
+            of: "\"active_task\":\"inactive\"",
+            with: "\"active_task\":\"future_agent_state\""
+        )
+        expect(unknownText != encodedText, "fixture must replace the active task raw value")
+        try Data(unknownText.utf8).write(to: manifestURL)
+
+        let store = ShellWorkspaceManifestStore(fileManager: fileManager, manifestURL: manifestURL)
+        let result = try store.loadOrCreateDefault(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/fresh/project",
+            now: referenceDate
+        )
+
+        expect(result.recovery == .loadedExisting, "unknown active task must not quarantine workspace")
+        let restoredTab = try requireOnlyContentTab(in: result.manifest)
+        expect(restoredTab.tabID == tab.tabID, "unknown active task must preserve the saved tab")
+        expect(restoredTab.activeTask == .unknown, "unknown active task must decode conservatively")
+        let rewrittenText = String(data: try encoder.encode(result.manifest), encoding: .utf8) ?? ""
+        expect(
+            rewrittenText.contains("\"active_task\":\"unknown\""),
+            "rewritten manifest must emit only the current unknown state"
+        )
+        expect(
+            !rewrittenText.contains("future_agent_state"),
+            "rewritten manifest must not preserve an unrecognized raw value"
         )
     }
 

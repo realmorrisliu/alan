@@ -3,28 +3,6 @@
 ## Purpose
 TBD - created by archiving change introduce-cross-platform-shell-core. Update Purpose after archive.
 ## Requirements
-### Requirement: Rust shell core owns reusable workspace domain logic
-Alan SHALL provide a platform-neutral Rust shell workspace core that owns
-reusable shell workspace domain behavior shared by Alan for macOS and future
-Linux GTK clients.
-
-The shell core SHALL be independent from SwiftUI, AppKit, GTK, Ghostty, daemon
-hosting, socket transport, file-system persistence locations, clipboard, file
-pickers, and privileged OS executors.
-
-#### Scenario: Platform client mutates workspace state
-- **WHEN** a platform client requests a reusable workspace mutation such as tab
-  open, pane split, focus, move, close, pin, reorder, resize, zoom, or attention
-  update
-- **THEN** the mutation semantics are provided by the Rust shell core
-- **AND** the platform client does not reimplement the same domain mutation in
-  Swift, GTK, or platform-specific controller code
-
-#### Scenario: Shell core is built without platform UI
-- **WHEN** the Rust shell core crate is compiled in isolation
-- **THEN** it does not require Apple frameworks, GTK libraries, Ghostty, an Axum
-  daemon, or a terminal renderer
-
 ### Requirement: Workspace model is platform neutral
 The shell core SHALL define platform-neutral workspace model types for Spaces,
 Tabs, PaneSlots, ContentInstances, split trees, attention, lifecycle state,
@@ -187,3 +165,19 @@ and FFI adapter checks that prove Rust shell core behavior and Swift projection.
 - **AND** Rust tests pass for those cases
 - **AND** Swift adapter tests verify encode, decode, error mapping, and version
   handling for the replacement path
+
+### Requirement: Rust shell core owns platform-neutral workspace domain logic
+
+Alan SHALL provide a platform-neutral Rust shell workspace core that owns reusable Space, Tab, split, focus, lifecycle, and action semantics shared by host clients. The core SHALL depend only on portable domain types and explicit adapter contracts.
+
+#### Scenario: Platform client mutates workspace state
+
+- **WHEN** a platform client requests a reusable workspace mutation
+- **THEN** the Rust shell core returns the next state, domain events, and adapter intents
+- **AND** platform UI code does not reimplement the mutation semantics
+
+#### Scenario: Shell core is built independently
+
+- **WHEN** the shell core crate is compiled in isolation
+- **THEN** it requires no Apple or GTK framework, terminal renderer, socket transport, privileged executor, clipboard, or file picker
+- **AND** platform and OS effects remain behind adapters

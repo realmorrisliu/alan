@@ -19,7 +19,6 @@ durable contract.
 - [Current Governance Contract](./governance_current_contract.md)
 - [OpenSpec Long-Lived Specs](../openspec/specs/)
 - [Active OpenSpec Changes](../openspec/changes/)
-- [Legacy Spec Migration Bridge](./spec/README.md)
 
 ## Current Behavior And Guides
 
@@ -45,13 +44,11 @@ Important current-vs-target pairs:
 
 ## Specs And Contracts
 
-Use OpenSpec instead of treating `docs/spec/`, `plans/`, or
-`docs/superpowers/` as specification stores:
+Use OpenSpec for all normative specifications and change plans:
 
 - [OpenSpec Long-Lived Specs](../openspec/specs/)
 - [Active OpenSpec Changes](../openspec/changes/)
 - [Documentation Governance Spec](../openspec/specs/documentation-governance/)
-- [Legacy Spec Migration Bridge](./spec/README.md)
 
 ## Validation And Harness
 
@@ -61,5 +58,4 @@ Use OpenSpec instead of treating `docs/spec/`, `plans/`, or
 
 ## Target Design Notes
 
-Target design notes should live in OpenSpec. Legacy target docs under
-`docs/spec/` are compatibility bridge pages only.
+Target design notes belong in an active OpenSpec change or an accepted ADR.

@@ -3,8 +3,8 @@
 This first-party package productizes alan's repo-scoped coding worker under
 `crates/agent-engine/skills/repo-coding/`.
 
-It is not the full coding product boundary by itself. The steward/worker model
-is defined in `docs/spec/alan_coding_steward_contract.md`.
+It is not the full coding product boundary by itself. The current stewardship
+contract lives in `openspec/specs/coding-steward-contract/spec.md`.
 
 ## Package Principles
 
@@ -55,8 +55,8 @@ in this package. They are owned by the separate `swebench` first-party skill:
 
 1. `crates/agent-engine/skills/swebench/bin/swebench-lite-prepare-workspaces`
 2. `crates/agent-engine/skills/swebench/bin/swebench-lite-materialize-subset`
-3. `crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_case.sh`
-4. `crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_subset.sh`
+3. `crates/agent-engine/skills/swebench/scripts/check_swebench_harness_env.sh`
+4. `crates/agent-engine/skills/swebench/scripts/setup_swebench_harness_env.sh`
 5. `crates/agent-engine/skills/swebench/scripts/score_swebench_predictions.sh`
 
 That split is intentional:
@@ -64,5 +64,5 @@ That split is intentional:
 1. `repo-coding` remains the measured coding product.
 2. `swebench` owns benchmark orchestration, dataset adaptation, and official
    harness scoring.
-3. Full-steward benchmark runs still exercise the real product path:
-   steward session -> `$repo-coding` -> repo-worker child.
+3. Benchmark execution remains external until a file-native Agent Process
+   launcher owns that workflow.

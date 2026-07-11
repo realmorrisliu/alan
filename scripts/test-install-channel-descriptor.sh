@@ -29,8 +29,6 @@ require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.privileged-he
 require_equal "$ALAN_CLI_NAME" "alan" "stable CLI"
 require_equal "$ALAN_HOME_DISPLAY" "~/.alan" "stable alan home"
 require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents/skills" "stable global skills"
-require_equal "$ALAN_DAEMON_BIND" "0.0.0.0:8090" "stable daemon bind"
-require_equal "$ALAN_DAEMON_URL" "http://127.0.0.1:8090" "stable daemon URL"
 require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-shell-control" "stable shell namespace"
 require_equal "$ALAN_LEGACY_APP_BUNDLE_NAME" "alan.app" "stable legacy app bundle"
 
@@ -42,8 +40,6 @@ require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.dev.privilege
 require_equal "$ALAN_CLI_NAME" "alan-dev" "dev CLI"
 require_equal "$ALAN_HOME_DISPLAY" "~/.alan-dev" "dev alan home"
 require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents-dev/skills" "dev global skills"
-require_equal "$ALAN_DAEMON_BIND" "127.0.0.1:8091" "dev daemon bind"
-require_equal "$ALAN_DAEMON_URL" "http://127.0.0.1:8091" "dev daemon URL"
 require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-dev-shell-control" "dev shell namespace"
 require_equal "$ALAN_LEGACY_APP_BUNDLE_NAME" "" "dev legacy app bundle"
 

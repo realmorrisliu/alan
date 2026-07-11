@@ -1,7 +1,5 @@
 use alan_agent_engine::runtime::spawn_with_llm_client_and_tools;
-use alan_agent_engine::{
-    AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig, session_storage_key,
-};
+use alan_agent_engine::{AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig};
 use alan_agent_protocol::{ContentPart, Event, Op, Submission};
 use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, ToolCall,
@@ -256,7 +254,7 @@ fn prepare_overlay_chain(temp: &TempDir) -> (AlanHomePaths, PathBuf, PathBuf, Pa
     let home_paths = AlanHomePaths::from_home_dir(&home_dir);
 
     std::fs::create_dir_all(
-        alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
+        alan_agent_engine::workspace_runtime_rollouts_dir_from_alan_dir(
             &workspace_alan_dir,
             alan_agent_engine::InstallChannel::Stable,
         ),
@@ -317,15 +315,13 @@ fn runtime_config_for(
     home_paths: AlanHomePaths,
     workspace_root: &Path,
     workspace_alan_dir: &Path,
-    session_id: &str,
-    resume_rollout_path: Option<PathBuf>,
+    recovery_rollout_path: Option<PathBuf>,
 ) -> WorkspaceRuntimeConfig {
     let mut config = WorkspaceRuntimeConfig {
-        session_id: Some(session_id.to_string()),
-        workspace_id: session_storage_key(session_id),
+        workspace_id: "workspace-overlay-integration".to_string(),
         workspace_root_dir: Some(workspace_root.to_path_buf()),
         workspace_alan_dir: Some(workspace_alan_dir.to_path_buf()),
-        resume_rollout_path,
+        recovery_rollout_path,
         agent_home_paths: Some(home_paths),
         ..WorkspaceRuntimeConfig::default()
     };
@@ -393,8 +389,9 @@ async fn run_turn(
     (events, requests)
 }
 
-fn latest_rollout_path(sessions_dir: &Path, session_id: &str) -> PathBuf {
-    let mut stack = vec![sessions_dir.to_path_buf()];
+fn only_rollout_path(rollouts_dir: &Path) -> PathBuf {
+    let mut stack = vec![rollouts_dir.to_path_buf()];
+    let mut matches = Vec::new();
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap();
@@ -407,12 +404,13 @@ fn latest_rollout_path(sessions_dir: &Path, session_id: &str) -> PathBuf {
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("");
-            if filename.contains(session_id) && filename.ends_with(".jsonl") {
-                return path;
+            if filename.ends_with(".jsonl") {
+                matches.push(path);
             }
         }
     }
-    panic!("rollout path not found for requested integration-test session");
+    assert_eq!(matches.len(), 1, "expected exactly one rollout record");
+    matches.pop().unwrap()
 }
 
 fn assert_overlay_request(request: &GenerationRequest) {
@@ -508,13 +506,7 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
         prepare_overlay_chain(&temp);
 
     let (events, requests) = run_turn(
-        runtime_config_for(
-            home_paths,
-            &workspace_root,
-            &workspace_alan_dir,
-            "sess-overlay-surfaces",
-            None,
-        ),
+        runtime_config_for(home_paths, &workspace_root, &workspace_alan_dir, None),
         vec![
             tool_call_response(&read_target),
             text_response("done after policy"),
@@ -544,21 +536,19 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
 }
 
 #[tokio::test]
-async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
+async fn named_agent_overlay_survives_rollout_recovery_in_new_processes() {
     let temp = TempDir::new().unwrap();
     let (home_paths, workspace_root, workspace_alan_dir, _) = prepare_overlay_chain(&temp);
-    let sessions_dir = alan_agent_engine::workspace_runtime_sessions_dir_from_alan_dir(
+    let rollouts_dir = alan_agent_engine::workspace_runtime_rollouts_dir_from_alan_dir(
         &workspace_alan_dir,
         alan_agent_engine::InstallChannel::Stable,
     );
 
-    let session_id = "sess-overlay-base";
     let (_, first_requests) = run_turn(
         runtime_config_for(
             home_paths.clone(),
             &workspace_root,
             &workspace_alan_dir,
-            session_id,
             None,
         ),
         vec![text_response("first turn")],
@@ -567,61 +557,65 @@ async fn named_agent_overlay_survives_resume_and_fork_runtime_restarts() {
     .await;
     assert_overlay_requests(&first_requests);
 
-    let rollout_path = latest_rollout_path(&sessions_dir, session_id);
+    let rollout_path = only_rollout_path(&rollouts_dir);
 
-    let (_, resumed_requests) = run_turn(
+    let (_, recovered_requests) = run_turn(
         runtime_config_for(
             home_paths.clone(),
             &workspace_root,
             &workspace_alan_dir,
-            session_id,
             Some(rollout_path.clone()),
         ),
-        vec![text_response("resumed turn")],
-        "please use $overlay-skill after resume",
+        vec![text_response("recovered turn")],
+        "please use $overlay-skill after recovery",
     )
     .await;
-    let resumed_overlay_requests = assert_overlay_requests(&resumed_requests);
+    let recovered_overlay_requests = assert_overlay_requests(&recovered_requests);
     assert_request_messages_include_history(
-        resumed_overlay_requests
+        recovered_overlay_requests
             .last()
             .copied()
-            .expect("expected resumed overlay request"),
+            .expect("expected recovered overlay request"),
         &[
             (
                 MessageRole::User,
                 "please use $overlay-skill on the first turn",
             ),
             (MessageRole::Assistant, "first turn"),
-            (MessageRole::User, "please use $overlay-skill after resume"),
+            (
+                MessageRole::User,
+                "please use $overlay-skill after recovery",
+            ),
         ],
     );
 
-    let (_, forked_requests) = run_turn(
+    let (_, second_recovery_requests) = run_turn(
         runtime_config_for(
             home_paths,
             &workspace_root,
             &workspace_alan_dir,
-            "sess-overlay-fork",
             Some(rollout_path),
         ),
-        vec![text_response("forked turn")],
-        "please use $overlay-skill after fork",
+        vec![text_response("another recovered turn")],
+        "please use $overlay-skill from the same execution record",
     )
     .await;
-    let forked_overlay_requests = assert_overlay_requests(&forked_requests);
+    let recovered_overlay_requests = assert_overlay_requests(&second_recovery_requests);
     assert_request_messages_include_history(
-        forked_overlay_requests
+        recovered_overlay_requests
             .last()
             .copied()
-            .expect("expected forked overlay request"),
+            .expect("expected second recovered overlay request"),
         &[
             (
                 MessageRole::User,
                 "please use $overlay-skill on the first turn",
             ),
             (MessageRole::Assistant, "first turn"),
-            (MessageRole::User, "please use $overlay-skill after fork"),
+            (
+                MessageRole::User,
+                "please use $overlay-skill from the same execution record",
+            ),
         ],
     );
 }

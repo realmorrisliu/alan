@@ -7,16 +7,21 @@ authority relative to `/proc` and the agent overlay, and governed
 parent-initiated termination.
 ## Requirements
 ### Requirement: Child Run Registration
-The system SHALL create a child-run record before submitting the first operation to a delegated child runtime.
+Alan SHALL register each delegated child as a child Agent Process before its initial turn. The
+record SHALL contain parent and child Process paths or pids, workspace and namespace metadata,
+rollout/checkpoint path when available, launch metadata, creation time, and starting or running
+status. The record SHALL be a projection of `/proc` and `/agent` truth and SHALL identify execution
+only through those Process and durable-evidence owners.
 
-#### Scenario: Delegated child is launched
-- **WHEN** a parent runtime launches a delegated child runtime
-- **THEN** the child-run registry contains a record with parent session id, child session id, workspace metadata, rollout path when available, launch metadata, created time, and `starting` or `running` status before the child receives its initial turn
-- **AND** the launch metadata includes a bounded summary of the capability-bearing mounts and `/bin` bindings the child was spawned with, so capability investigations do not require the child process to still be alive
+#### Scenario: Child registration precedes initial input
+- **WHEN** a parent Agent Process spawns a child Agent Executable
+- **THEN** the child record is visible before the initial turn is delivered
+- **AND** parent/child identity resolves to concrete Process and AgentFS paths
 
-#### Scenario: Child launch fails after runtime startup
-- **WHEN** child launch fails after a child session id or rollout path is known
-- **THEN** the child-run record is updated to `failed` with terminal metadata instead of disappearing from the registry
+#### Scenario: Child launch fails after allocation
+- **WHEN** launch fails after a child pid, Process path, or rollout/checkpoint path is known
+- **THEN** the child record reaches a terminal failure state with that evidence
+- **AND** the allocated Process record does not remain in a starting or running state
 
 ### Requirement: Child Liveness And Timeout Classification
 The system SHALL classify child timeouts by idle liveness freshness rather than only elapsed launch wall-clock time.
