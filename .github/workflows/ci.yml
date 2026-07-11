@@ -51,7 +51,10 @@ jobs:
         run: npm install --global @fission-ai/openspec@1.4.1
 
       - name: Validate canonical specs and active changes
-        run: just openspec-check
+        run: |
+          bash scripts/test-openspec-current-surfaces.sh
+          bash scripts/check-openspec-current-surfaces.sh
+          openspec validate --all --strict
 
   clippy:
     name: Clippy Lint
