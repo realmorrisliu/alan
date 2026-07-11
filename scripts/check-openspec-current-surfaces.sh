@@ -133,7 +133,7 @@ scan_rule_keys() {
             in_rules=0
             continue
         fi
-        if [[ "$line" =~ ^[[:space:]][[:space:]]([[:alnum:]_-]+):[[:space:]]*$ ]]; then
+        if [[ "$line" =~ ^[[:space:]]+([[:alnum:]_-]+):[[:space:]]*$ ]]; then
             key="${BASH_REMATCH[1]}"
             if [[ "$supported" != *" $key "* ]]; then
                 record_violation "unsupported-rule-key" "$config_file" "$line_number" "$line"

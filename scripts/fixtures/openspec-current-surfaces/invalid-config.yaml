@@ -1,11 +1,11 @@
 schema: spec-driven
 
 rules:
-  proposal:
-    - Keep proposals current.
-  specs:
-    - Keep requirements durable.
-  tasks:
-    - Verify before archive.
-  archive:
-    - This artifact key is not supported by the schema.
+    proposal:
+        - Keep proposals current.
+    specs:
+        - Keep requirements durable.
+    tasks:
+        - Verify before archive.
+    archive:
+        - This artifact key is not supported by the schema.
