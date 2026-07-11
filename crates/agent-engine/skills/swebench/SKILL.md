@@ -15,7 +15,7 @@ metadata:
 capabilities:
   required_tools: [bash]
 compatibility:
-  requirements: Use the package-local `bin/` and `scripts/` entrypoints for SWE-bench preparation, execution, and scoring flows.
+  requirements: Use the package-local `bin/` and `scripts/` entrypoints for SWE-bench preparation, manifest materialization, harness setup or validation, and scoring; supply prediction execution independently.
 ---
 
 # SWE-bench

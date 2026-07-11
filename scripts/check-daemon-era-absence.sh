@@ -16,6 +16,8 @@ reject_path() {
 
 retired_paths=(
     "crates/agent-engine/src/session.rs"
+    "crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_case.sh"
+    "crates/agent-engine/skills/swebench/scripts/run_swebench_full_steward_subset.sh"
     "crates/alan/src/cli/daemon.rs"
     "crates/alan/src/daemon"
     "crates/alan/src/host_config.rs"
