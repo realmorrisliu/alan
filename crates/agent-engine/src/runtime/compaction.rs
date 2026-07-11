@@ -127,13 +127,7 @@ fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
 }
 
 fn effective_hard_trigger_ratio(runtime_config: &super::RuntimeConfig) -> f32 {
-    let configured_hard = runtime_config.compaction_hard_trigger_ratio.clamp(0.0, 1.0);
-    let legacy_hard = runtime_config.compaction_trigger_ratio.clamp(0.0, 1.0);
-    if (configured_hard - legacy_hard).abs() > f32::EPSILON {
-        legacy_hard
-    } else {
-        configured_hard
-    }
+    runtime_config.compaction_hard_trigger_ratio.clamp(0.0, 1.0)
 }
 
 fn effective_soft_trigger_ratio(

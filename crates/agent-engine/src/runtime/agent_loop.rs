@@ -1591,7 +1591,7 @@ mod tests {
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
         runtime_config.context_window_tokens = 256;
-        runtime_config.compaction_trigger_ratio = 0.8;
+        runtime_config.compaction_hard_trigger_ratio = 0.8;
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -1644,7 +1644,7 @@ mod tests {
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
         runtime_config.context_window_tokens = 16_384;
-        runtime_config.compaction_trigger_ratio = 0.0;
+        runtime_config.compaction_hard_trigger_ratio = 0.0;
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -1697,7 +1697,7 @@ mod tests {
         runtime_config.compaction_trigger_messages = 100; // avoid message-count trigger
         runtime_config.compaction_keep_last = 1;
         runtime_config.context_window_tokens = 16_384;
-        runtime_config.compaction_trigger_ratio = 0.8;
+        runtime_config.compaction_hard_trigger_ratio = 0.8;
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
@@ -1754,7 +1754,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
-            compaction_trigger_ratio: 0.85,
             compaction_soft_trigger_ratio: 0.70,
             compaction_hard_trigger_ratio: 0.85,
             ..super::RuntimeConfig::default()
@@ -1851,7 +1850,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
-            compaction_trigger_ratio: 0.85,
             compaction_soft_trigger_ratio: 0.70,
             compaction_hard_trigger_ratio: 0.85,
             ..super::RuntimeConfig::default()
@@ -1951,7 +1949,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
-            compaction_trigger_ratio: 0.85,
             compaction_soft_trigger_ratio: 0.70,
             compaction_hard_trigger_ratio: 0.85,
             ..super::RuntimeConfig::default()
@@ -2055,7 +2052,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: ((estimated_prompt_tokens as f64) / 0.75).ceil() as u32,
-            compaction_trigger_ratio: 0.85,
             compaction_soft_trigger_ratio: 0.70,
             compaction_hard_trigger_ratio: 0.85,
             ..super::RuntimeConfig::default()
@@ -2152,7 +2148,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: ((estimated_prompt_tokens as f64) / 0.95).ceil() as u32,
-            compaction_trigger_ratio: 0.80,
             compaction_soft_trigger_ratio: 0.70,
             compaction_hard_trigger_ratio: 0.80,
             ..super::RuntimeConfig::default()
@@ -2219,7 +2214,6 @@ mod tests {
             compaction_trigger_messages: 100,
             compaction_keep_last: 1,
             context_window_tokens: 128_000,
-            compaction_trigger_ratio: 0.95,
             compaction_soft_trigger_ratio: 0.90,
             compaction_hard_trigger_ratio: 0.95,
             ..super::RuntimeConfig::default()
@@ -2281,7 +2275,7 @@ mod tests {
         runtime_config.compaction_trigger_messages = 100;
         runtime_config.compaction_keep_last = 1;
         runtime_config.context_window_tokens = (estimated_prompt_tokens + 10) as u32;
-        runtime_config.compaction_trigger_ratio = 1.0;
+        runtime_config.compaction_hard_trigger_ratio = 1.0;
 
         let mut state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),

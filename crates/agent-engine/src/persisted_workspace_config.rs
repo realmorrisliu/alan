@@ -59,8 +59,6 @@ pub struct WorkspaceConfigState {
     pub max_tokens: Option<u32>,
     /// Context window budget for compaction heuristics.
     pub context_window_tokens: Option<u32>,
-    /// Deprecated hard-threshold alias for automatic compaction.
-    pub compaction_trigger_ratio: Option<f32>,
     /// Utilization ratio threshold for pre-flush soft pressure.
     pub compaction_soft_trigger_ratio: Option<f32>,
     /// Utilization ratio threshold for hard compaction pressure.

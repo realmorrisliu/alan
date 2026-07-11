@@ -179,11 +179,6 @@ enum ShellSignal {
 }
 
 enum ShellPalette {
-    // Deprecated aliases — use ShellPaper / ShellInk / ShellSignal in new
-    // code. Views migrate per-file in follow-up changes.
-    static let rootBacking = ShellPaper.root
-    static let canvas = ShellPaper.canvas
-    static let window = ShellPaper.window
     static let windowBackdropTint = Color.shellAdaptive(
         light: (0.755, 0.765, 0.850),
         lightAlpha: 0.44,
@@ -686,7 +681,7 @@ enum ShellMaterialRole {
         case .terminalChromeSelected:
             return ShellPalette.terminalSoft.opacity(0.52)
         case .floatingOverlay:
-            return ShellPalette.window.opacity(0.86)
+            return ShellPaper.window.opacity(0.86)
         case .floatingInput:
             return ShellPalette.panel.opacity(0.92)
         case .controlGlass:
@@ -763,9 +758,9 @@ enum ShellMaterialRole {
         if reduceTransparency {
             switch self {
             case .windowBackdrop, .sidebarGlass, .workspaceBackdrop:
-                return ShellPalette.window
+                return ShellPaper.window
             case .floatingOverlay:
-                return ShellPalette.window.opacity(increasedContrast ? 0.98 : 0.94)
+                return ShellPaper.window.opacity(increasedContrast ? 0.98 : 0.94)
             case .floatingInput, .panel, .panelSoft:
                 return ShellPalette.panel
             case .controlGlass, .controlGlassHover:
@@ -784,7 +779,7 @@ enum ShellMaterialRole {
         if increasedContrast {
             switch self {
             case .floatingOverlay:
-                return ShellPalette.window.opacity(0.94)
+                return ShellPaper.window.opacity(0.94)
             case .floatingInput, .panelSoft:
                 return ShellPalette.panel
             case .controlGlass, .controlGlassHover:

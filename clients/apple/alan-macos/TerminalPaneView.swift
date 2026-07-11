@@ -450,7 +450,7 @@ private struct ShellWorkspacePanelFrame: ViewModifier {
             .clipShape(shape)
             .background {
                 shape
-                    .fill(ShellPalette.rootBacking)
+                    .fill(ShellPaper.root)
                     .shellShadow(ShellShadows.workspacePanelRim)
                     .shellShadow(ShellShadows.workspacePanel)
             }
