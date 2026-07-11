@@ -92,6 +92,12 @@ struct ShellPane: Identifiable, Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Binding data is a disposable live projection. An unsupported shape must not
+        // invalidate otherwise durable workspace topology.
+        let alanBinding = try? container.decodeIfPresent(
+            ShellAlanBinding.self,
+            forKey: .alanBinding
+        )
         self.init(
             paneID: try container.decode(String.self, forKey: .paneID),
             tabID: try container.decode(String.self, forKey: .tabID),
@@ -103,7 +109,7 @@ struct ShellPane: Identifiable, Codable, Equatable {
             context: try container.decodeIfPresent(ShellContextSnapshot.self, forKey: .context),
             viewport: try container.decodeIfPresent(ShellViewportSnapshot.self, forKey: .viewport),
             activity: try container.decodeIfPresent(TerminalActivitySnapshot.self, forKey: .activity),
-            alanBinding: try container.decodeIfPresent(ShellAlanBinding.self, forKey: .alanBinding),
+            alanBinding: alanBinding,
             terminalProfileID: try container.decodeIfPresent(String.self, forKey: .terminalProfileID)
         )
     }

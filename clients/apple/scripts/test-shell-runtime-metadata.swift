@@ -162,6 +162,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSmokeEnvironmentPathOverrides()
         verifiesShellStatePersistenceWritesContentStateShape()
         verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
+        verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript()
         verifiesRestoredTranscriptPanelPresentationMatchesTerminalLayout()
@@ -6632,6 +6633,59 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(restored?.windowID == windowID, "legacy v0.1 shell-state decode must remain available")
         expect(restored?.panes.first?.paneID == "pane_1", "legacy v0.1 shell-state decode must preserve panes")
+    }
+
+    private static func verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata() {
+        let windowID = "unsupported_binding_\(UUID().uuidString)"
+        let persistenceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID).json")
+        let workingDirectory = "/tmp/unsupported-binding-project"
+        let state = ShellStateSnapshot.bootstrapDefault(
+            windowID: windowID,
+            workingDirectory: workingDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: persistenceURL) }
+
+        guard let encoded = try? JSONEncoder().encode(state),
+              var document = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any],
+              var panes = document["panes"] as? [[String: Any]],
+              !panes.isEmpty
+        else {
+            fail("unsupported binding setup must encode a legacy shell state")
+        }
+        panes[0]["alan_binding"] = ["unsupported_binding_contract": 1]
+        document["panes"] = panes
+
+        guard let unsupportedBindingState = try? JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        ) else {
+            fail("unsupported binding setup must encode JSON")
+        }
+        do {
+            try unsupportedBindingState.write(to: persistenceURL, options: .atomic)
+        } catch {
+            fail("unsupported binding setup must write shell state: \(error)")
+        }
+
+        let restored = ShellStatePersistenceStore.restoreShellState(
+            fileManager: .default,
+            persistenceURL: persistenceURL
+        )
+        expect(restored?.windowID == windowID, "unsupported binding metadata must not discard workspace state")
+        expect(restored?.panes.first?.paneID == "pane_1", "unsupported binding metadata must preserve panes")
+        expect(
+            restored?.panes.first?.cwd == workingDirectory,
+            "unsupported binding metadata must preserve terminal working directory"
+        )
+        expect(restored?.panes.first?.alanBinding == nil, "unsupported binding metadata must be dropped")
+
+        let rewritten = restored.flatMap { try? JSONEncoder().encode($0) }
+        let rewrittenText = rewritten.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        expect(
+            !rewrittenText.contains("\"alan_binding\""),
+            "rewritten shell state must not retain unsupported binding metadata"
+        )
     }
 
     private static func verifiesWorkspaceManifestStartupRestoresPinnedSnapshot() {

@@ -3013,10 +3013,10 @@ require_pattern \
     "@State private var selectedGroup = ShellSettingsNavigationGroup\\.general" \
     "Settings content must default internal navigation selection to General"
 
-require_pattern \
+reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
     "case agent" \
-    "Settings navigation model must include Agent as a first-class group"
+    "Settings navigation model must not restore the retired daemon-backed Agent group"
 
 require_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
@@ -3028,10 +3028,10 @@ require_pattern \
     "ShellSettingsGroupSectionModel" \
     "Settings navigation model must support task-oriented group sections"
 
-require_pattern \
+reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
     "agentSelector" \
-    "Settings Agent group must expose the supported Alan agent affordance"
+    "Settings navigation model must not restore the retired Agent selector placeholder"
 
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
