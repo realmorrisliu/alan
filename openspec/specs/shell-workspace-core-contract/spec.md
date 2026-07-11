@@ -1,7 +1,9 @@
 # shell-workspace-core-contract Specification
 
 ## Purpose
-TBD - created by archiving change introduce-cross-platform-shell-core. Update Purpose after archive.
+Defines the platform-neutral shell workspace core: model and reducer semantics,
+versioned manifests, actions, control commands, Terminal Profiles, constrained
+bindings, and the adapter boundary for UI and OS effects.
 ## Requirements
 ### Requirement: Workspace model is platform neutral
 The shell core SHALL define platform-neutral workspace model types for Spaces,

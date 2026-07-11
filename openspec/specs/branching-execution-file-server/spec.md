@@ -1,7 +1,9 @@
 # branching-execution-file-server Specification
 
 ## Purpose
-TBD - created by archiving change add-branching-execution-file-server. Update Purpose after archive.
+Defines the headless `branchfs` tree for forking visible execution branches,
+explicit scoring and selection, evidence-preserving discard, and blocking
+branch observation.
 ## Requirements
 ### Requirement: branchfs exposes a branching execution tree
 
@@ -82,4 +84,3 @@ lifecycle records.
   exists
 - **THEN** the read remains pending until a fork, score, select, or discard
   record is appended
-

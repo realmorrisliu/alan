@@ -86,15 +86,16 @@ license records, but they should not be mandatory for ordinary readers.
 ### Dependencies
 
 - `alan-app-service-integration`: UPDF consumes its descriptor-passing, Agent
-  Executable spawn, file-client, and compatibility-bridge rules. UPDF remains a
-  file/package workflow and does not require a long-running app service in V0.
+  Executable spawn, direct file-client, and missing-native-boundary entry
+  criteria. UPDF remains a file/package workflow and does not require a
+  long-running app service in V0.
 
 ## Impact
 
 - This umbrella change captures product direction and capability boundaries.
-- Alan for macOS preview remains a read-only file/package client. Any current
-  shell content-instance wiring is a named compatibility bridge, not UPDF
-  authority.
+- Alan for macOS preview remains parked until the host can consume the read-only
+  package file contract directly; package preview does not introduce another
+  client-facing authority.
 - Follow-up implementation changes should separately cover:
   - the first `crates/updf` harness and standalone binary;
   - Alan for macOS read-only `.updf` package preview;

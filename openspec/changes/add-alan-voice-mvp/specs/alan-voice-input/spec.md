@@ -137,13 +137,19 @@ intent proposal and file/process execution rules as other speech.
 - **THEN** Alan Voice resolves it as a normal app-command proposal
 - **AND** unsupported commands fail through the same recoverable result path
 
-### Requirement: Host compatibility bridge is deletion-bound
-The system SHALL name any temporary Alan for macOS callback bridge
-`AlanVoiceHostCompatibilityBridge`, translate it to canonical Voice Service file
-operations, keep intent truth outside the bridge, add no bridge-only behavior,
-and delete it when the host consumes aP directly.
+### Requirement: Native Hold to Talk requires direct Voice Service attachment
+Alan for macOS SHALL implement Hold to Talk by opening, watching, and controlling
+the canonical Voice Service files. Native capture UI work SHALL remain blocked
+until that direct file-client boundary is available.
 
-#### Scenario: Host bridge is inspected
-- **WHEN** maintainers audit the Voice implementation
-- **THEN** the bridge's consumer, translated files, and deletion gate are explicit
-- **AND** remote or Agent Process clients do not depend on the bridge
+#### Scenario: Direct host attachment is unavailable
+- **WHEN** Alan for macOS cannot yet open and watch the Voice Service capture
+  tree
+- **THEN** native Hold to Talk implementation remains blocked
+- **AND** no callback or alternate client-facing authority is introduced
+
+#### Scenario: Host capture is inspected
+- **WHEN** maintainers audit the Alan for macOS Voice implementation
+- **THEN** shortcut and overlay actions resolve to canonical capture files and
+  owning `ctl` operations
+- **AND** remote and Agent Process clients use the same mounted service tree

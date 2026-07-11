@@ -88,19 +88,21 @@ Rejected because two grammars would immediately drift.
 ### 3. `run` is a Tool and every execution is an ordinary Process
 
 Install a first-party Tool at `/bin/run`, with its machine-readable manifest at
-`/lib/exec/run/manifest` and manual at `/man/1/run`. A client reads the current
-`addr` snapshot and spawns `run`, passing the `/mnt/edit` path or bounded buffer
-descriptors plus the expected body/address revisions and range. The resulting
-Alan Shell Evaluator Process is visible at `/proc/<pid>`; that path is the sole
-execution identity.
+`/lib/exec/run/manifest` and manual at `/man/1/run`, through the canonical
+package/binfs mount. A client reads the current `addr` snapshot and spawns
+`run`, passing the `/mnt/edit` path or bounded buffer descriptors plus the
+expected body/address revisions and range. The resulting Alan Shell Evaluator
+Process is visible at `/proc/<pid>`; that path is the sole execution identity.
 
-The target `alan-binfs` crate does not yet exist. The first slice therefore
-uses a named compatibility projection in the namespace-native bootstrap to
-bind the executable and its package files. That projection has one deletion
-gate: replace it with the normal binfs/package mount when `alan-binfs` lands.
-It must not make `run` available only as an Agent Execution Engine-private JSON
-Tool, because humans and non-agent clients must be able to spawn the same
-command file.
+The target `alan-binfs` crate does not yet exist, so exposing the command and
+its package files is an explicit entry criterion rather than something this
+change may emulate. The executable payload and focused logic may be developed
+and tested before that mount exists, but `/bin/run`, its manifest, and its
+manual remain unavailable until the normal package/binfs path can publish all
+three together. No startup helper or test harness may bind them as a second
+client-facing installation path. `run` also must not exist only as an Agent
+Execution Engine-private JSON Tool, because humans and non-agent clients must
+be able to spawn the same command file once the package is mounted.
 
 The `run` Tool uses its `ProcessInvocation` pid and inherited Namespace to read
 the selected bytes and submit a complete-document `ctl exec` containing the
@@ -226,6 +228,10 @@ signing, installation, and Service Manager/binfs projection.
 - [Native subprocesses cannot inspect Alan namespaces] → Continue projecting
   allowed mounts into the OS sandbox and do not claim mount visibility alone is
   security enforcement.
+- [The canonical package/binfs mount is not implemented yet] → Develop the
+  evaluator payload independently where useful, but keep command exposure and
+  the end-to-end harness blocked until the canonical mount publishes the
+  executable, manifest, and manual together.
 
 ## Migration Plan
 
@@ -237,14 +243,14 @@ signing, installation, and Service Manager/binfs projection.
    running Process observation and cancellation.
 4. Replace editfs `ExecutionPolicy` with revision validation, Process-linked
    events, and revision-safe result append semantics.
-5. Add the native `run` Tool and its manifest/manual projection in the
-   namespace-native bootstrap used by the harness; name the temporary package
-   projection and its binfs deletion gate.
+5. After the canonical package/binfs mount is available, install the native
+   `run` Tool, manifest, and manual through that mount and only then enable the
+   end-to-end harness.
 6. Prove stale-selection rejection, caller authority, finite materialization,
    live tail, explicit capture, concurrency, and headless human/agent symmetry
    end to end.
 7. Keep the existing stdio driver and direct `io/` + `ctl` agent paths working;
-   rollback removes the `run` binding and restores the prior editfs adapter
+   rollback unmounts the `run` package and restores the prior editfs adapter
    without changing stored domain data.
 
 ## Open Questions

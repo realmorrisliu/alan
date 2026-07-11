@@ -15,9 +15,10 @@ framework.
 - Reuse Alan Shell's existing explicit `ls`, `cat`, `tail`, `write`, `echo`, and
   `spawn` grammar through a shared headless parser/executor; do not introduce a
   second surface-only parser or a full `rc`-like language in this slice.
-- Add the short, discoverable `run` Tool. Each selected-text execution spawns an
-  ordinary Alan Shell Evaluator Process whose `/proc/<pid>` tree is the sole
-  execution identity and lifecycle surface.
+- Add the short, discoverable `run` Tool through the canonical package/binfs
+  mount. Treat that mount as an entry criterion for command exposure. Each
+  selected-text execution spawns an ordinary Alan Shell Evaluator Process whose
+  `/proc/<pid>` tree is the sole execution identity and lifecycle surface.
 - Make the evaluator validate the selected `body`/`addr` revisions through
   `editfs`, execute under its inherited caller Namespace, stream output through
   its Process files, and materialize bounded UTF-8 results back into the buffer
@@ -64,7 +65,9 @@ capability, not an independent durable subsystem.
 - Evolves `crates/editfs` control and event semantics and removes
   `ExecutionPolicy::{AcceptAll,DenyAll}` as the execution boundary.
 - Adds a first-party `run` executable, Tool Manifest, manual surface, Process
-  lifecycle tests, and a headless Shell + editfs + Kernel integration harness.
+  lifecycle tests, and a headless Shell + editfs + Kernel integration harness
+  only through the canonical package/binfs mount; no bootstrap-only command
+  binding is introduced.
 - Updates the Alan product glossary with Programmable Client Surface, Alan Shell
   Evaluator Process, and WASM Component terminology.
 - Does not change Alan Kernel primitives, add a new namespace root, implement a

@@ -1,7 +1,9 @@
 # auto-approve-policy Specification
 
 ## Purpose
-TBD - created by archiving change introduce-auto-approve-policy. Update Purpose after archive.
+Defines Alan's single Autonomous approval posture, deterministic escalation
+boundaries, non-persistent permissions, keyboard-driven approval and structured
+input surfaces, decision context, and interrupt behavior.
 ## Requirements
 ### Requirement: Single human-in-the-end auto-approve mode
 The agent SHALL operate in a single posture named `Autonomous` in which routine operations proceed without prompting and operations needing judgment are escalated. The system SHALL NOT expose multiple selectable approval modes. Escalations SHALL be routed to the reviewer (see the `autonomous-review-mode` capability) rather than always pausing for a human, except for red-line operations which bypass the reviewer (deny outright, or go straight to the human). A human remains the final fallback when the reviewer denies past the circuit breaker, when an operation is on the always-human red line, or when the reviewer is unavailable.
@@ -106,4 +108,3 @@ The user SHALL be able to interrupt a running turn at any time.
 #### Scenario: Esc interrupts mid-turn
 - **WHEN** the user presses Esc while the agent is running
 - **THEN** the agent is interrupted
-

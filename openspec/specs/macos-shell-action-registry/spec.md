@@ -1,7 +1,9 @@
 # macos-shell-action-registry Specification
 
 ## Purpose
-TBD - created by archiving change add-macos-shell-action-registry. Update Purpose after archive.
+Defines stable macOS shell action identity, targeting, availability, menu and
+keyboard routing, removed-action exclusions, and the boundary between shared
+shell-core actions and platform-owned presentation actions.
 ## Requirements
 ### Requirement: Shell Actions Have Stable Registry Entries
 The macOS shell SHALL define shared shell operations through a shell-only action

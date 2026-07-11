@@ -1,7 +1,9 @@
 # shell-core-authority-contract Specification
 
 ## Purpose
-TBD - created by archiving change make-shell-core-authoritative. Update Purpose after archive.
+Defines Rust shell core as the fail-closed authority for portable shell-domain
+behavior, with macOS limited to adapters, platform effects, persistence IO, and
+recovery around the versioned facade.
 ## Requirements
 ### Requirement: Shell core is authoritative for portable shell domain behavior
 Alan SHALL treat Rust shell core as the authority for portable shell-domain

@@ -99,9 +99,10 @@ creates a safe draft or asks the user to select a target.
 
 The host owns the global shortcut, microphone permission prompts, compact overlay,
 and Keychain integration. It drives the same capture files another authorized
-client could use. If the current host needs a callback bridge, it is named
-`AlanVoiceHostCompatibilityBridge`, translates to capture file operations, owns
-no intent truth, and is deleted when the host consumes aP directly.
+client could use. The Hold to Talk surface does not land until the Voice Service
+tree and direct host file client can open, watch, and control the capture files;
+if that boundary is unavailable, the native surface remains blocked rather than
+using a callback path.
 
 ### 6. Legacy fixed-command recognition is removed
 
@@ -119,8 +120,9 @@ execution rules as all other utterances.
   Mode, never silent upload.
 - [Risk] Voice applies a destructive action → Mitigation: safety class,
   reviewable proposal, current access check, and owning governance.
-- [Risk] Host bridge becomes authority → Mitigation: no bridge-only behavior and
-  explicit direct-aP deletion gate.
+- [Risk] Direct host file attachment is unavailable → Mitigation: land the Voice
+  Service tree and fake-recognition fixtures first, then keep native Hold to Talk
+  work blocked until it can use that tree directly.
 
 ## Migration Plan
 
@@ -129,8 +131,8 @@ execution rules as all other utterances.
 3. Add typed intent proposal/target documents and reviewable drafts.
 4. Route each V1 intent to native file/process operations.
 5. Add opt-in cloud recognition and host secret references.
-6. Remove the fixed-command controller and later delete the host compatibility
-   bridge.
+6. Remove the fixed-command controller and verify the host has no alternate
+   callback execution path.
 
 ## Open Questions
 

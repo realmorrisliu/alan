@@ -1,7 +1,8 @@
 # tool-result-presentation Specification
 
 ## Purpose
-TBD - created by archiving change add-structured-tool-rendering. Update Purpose after archive.
+Defines tool-agnostic result presentation primitives, human-readable Tool call
+titles, additive structured completion payloads, and consistent TUI rendering.
 ## Requirements
 ### Requirement: Tool results are modeled by presentation form
 The protocol SHALL represent rich tool results using a closed set of presentation primitives that is independent of tool identity: `Diff`, `FileContent`, `Command`, `Listing`, and `PlainText`.

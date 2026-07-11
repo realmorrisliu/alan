@@ -1,11 +1,10 @@
 ## Why
 
-Groove Master is a serious bass-practice product whose Alan integration was
-originally designed around the retired programmable-environment Object, Command,
-Buffer, View, Query, and `ContentInstance` model. Its product decisions remain
-valuable, but it must now be defined as an Alan App with an app-owned domain core,
-a mountable service tree, and a producer Agent Process created through bounded
-descriptors and spawn.
+Groove Master is a serious bass-practice product whose Alan integration must be
+defined directly as an Alan App with an app-owned domain core, a mountable
+service tree, and a producer Agent Process created through bounded descriptors
+and spawn. Native host work must wait for direct file-client attachment rather
+than creating another authority boundary.
 
 ## What Changes
 
@@ -19,9 +18,8 @@ descriptors and spawn.
   audio backend that owns capture/playback.
 - Add a Groove Master aP adapter that posts `/srv/groove-master` and serves the
   app-owned tree at `/mnt/groove-master`.
-- Make Alan for macOS a file client over that tree. Any initial
-  `ShellContentInstance` integration is a named compatibility bridge with a
-  deletion gate, not the app contract.
+- Make Alan for macOS a direct file client over that tree. Native UI work has an
+  entry criterion that the host can open, watch, and write the mounted files.
 - Define producer-agent work as Agent Executable spawn with bounded plan,
   journal, marker, recording-metadata, and writable proposal descriptors.
 - Replace the old line-by-line implementation plan with a file-tree-first phased
@@ -46,6 +44,6 @@ canonical specs and is replaced by this capability.
   file-server adapter, and Alan for macOS renderer/client.
 - Service Manager starts the adapter, posts its handle, and mounts its tree;
   Alan Kernel gains no Groove Master types.
-- The previous `ShellContentInstance`-centered implementation plan is discarded.
+- Earlier host-owned integration plans are discarded.
 - Producer-agent planning/reflection uses normal Agent Process, Tool, Skill,
   Memory Store, request/action, and file semantics.

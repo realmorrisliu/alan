@@ -1,7 +1,8 @@
 # host-directory-mounts Specification
 
 ## Purpose
-TBD - created by archiving change add-host-dir-file-server. Update Purpose after archive.
+Defines confined host-directory aP file servers and the projection of declared
+host mounts into Process namespaces and Tool sandbox specifications.
 ## Requirements
 ### Requirement: Host directories can be mounted as aP file trees
 Alan OS SHALL provide a host-directory-backed aP file server that exposes a

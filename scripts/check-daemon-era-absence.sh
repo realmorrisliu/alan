@@ -122,6 +122,9 @@ is_allowed_daemon_match() {
         scripts/check-rust-inline-tui-contract.sh)
             return 0 # Negative structural assertion
             ;;
+        scripts/check-openspec-current-surfaces.sh)
+            return 0 # Negative structural assertions for deleted OpenSpec source references
+            ;;
     esac
     return 1
 }

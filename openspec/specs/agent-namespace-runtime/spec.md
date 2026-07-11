@@ -1,7 +1,9 @@
 # agent-namespace-runtime Specification
 
 ## Purpose
-TBD - created by archiving change refactor-engine-namespace-native. Update Purpose after archive.
+Defines the namespace-native Agent Execution Engine boundary: model generation,
+Tool execution, AgentFS state, Process spawn, and shell conversation all flow
+through mounted files rather than injected providers or side-channel state.
 ## Requirements
 ### Requirement: The engine's environment is its namespace
 The Agent Execution Engine SHALL take exactly one environment: a namespace handle
@@ -131,4 +133,3 @@ writes `io/output`; the shell tails `io/output`.
 - **THEN** the agent reads the input, generates via its mounted LLM connection,
   and the model's response appears on `io/output`
 - **AND** no operation outside aP file IO is used to carry the conversation
-

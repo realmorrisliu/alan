@@ -1,7 +1,9 @@
 # agent-file-layout-contract Specification
 
 ## Purpose
-TBD - created by archiving change define-agent-file-layout-contract. Update Purpose after archive.
+Defines the generic Process layout and the `/agent` overlay convention,
+including namespace-derived capabilities, file-backed IO and machine state,
+request/action trees, stream authority, access rights, and durability ownership.
 ## Requirements
 ### Requirement: An agent is a conforming process, not a kernel type
 Alan OS SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
