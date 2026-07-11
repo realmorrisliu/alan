@@ -6,6 +6,7 @@ fixtures="$repo_root/scripts/fixtures/openspec-current-surfaces"
 guard="$repo_root/scripts/check-openspec-current-surfaces.sh"
 tmp_root="$(mktemp -d /tmp/alan-openspec-current-surfaces.XXXXXX)"
 trap 'rm -rf "$tmp_root"' EXIT
+fallback_path="$(dirname "$(command -v bash)"):$(dirname "$(command -v find)"):$(dirname "$(command -v grep)"):$(dirname "$(command -v sort)"):$(dirname "$(command -v mktemp)"):$(dirname "$(command -v cp)"):$(dirname "$(command -v mkdir)"):$(dirname "$(command -v rm)")"
 
 make_case() {
     local name="$1"
@@ -26,7 +27,7 @@ make_case() {
 expect_pass() {
     local case_root="$1"
     OPEN_SPEC_CURRENT_SURFACE_SKIP_INSTRUCTIONS=1 bash "$guard" "$case_root" >/dev/null
-    PATH="$(dirname "$(command -v bash)"):$(dirname "$(command -v find)"):$(dirname "$(command -v grep)"):$(dirname "$(command -v sort)"):$(dirname "$(command -v mktemp)"):$(dirname "$(command -v cp)"):$(dirname "$(command -v mkdir)"):$(dirname "$(command -v rm)")" \
+    PATH="$fallback_path" \
         OPEN_SPEC_CURRENT_SURFACE_SKIP_INSTRUCTIONS=1 bash "$guard" "$case_root" >/dev/null
 }
 
@@ -55,6 +56,14 @@ cp "$fixtures/positive-archive.md" \
 cp "$fixtures/positive-allowlist.txt" \
     "$positive/scripts/openspec-current-surface-allowlist.txt"
 expect_pass "$positive"
+
+no_active="$(make_case no-active)"
+rm -rf \
+    "$no_active/openspec/changes/active-example" \
+    "$no_active/openspec/changes/clean-canonical-spec-debt"
+cp "$fixtures/positive-archive.md" \
+    "$no_active/openspec/changes/archive/2026-01-01-history/design.md"
+PATH="$fallback_path" bash "$guard" "$no_active" >/dev/null
 
 purpose="$(make_case purpose)"
 cp "$fixtures/negative-purpose.md" \

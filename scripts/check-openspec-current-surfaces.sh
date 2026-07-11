@@ -230,18 +230,17 @@ check_instruction_lookup() {
     local change artifact output
     [[ "${OPEN_SPEC_CURRENT_SURFACE_SKIP_INSTRUCTIONS:-0}" == "1" ]] && return
 
-    if ! command -v openspec >/dev/null 2>&1; then
-        violations+=("openspec/config.yaml:0: [instruction-check] openspec CLI is required")
-        return
-    fi
-
     change="${OPEN_SPEC_CURRENT_SURFACE_CHANGE:-clean-canonical-spec-debt}"
     if [[ ! -d "$changes_root/$change" ]]; then
         change="$(find "$changes_root" -mindepth 1 -maxdepth 1 -type d ! -name archive -print | sort | head -n 1)"
         change="${change##*/}"
     fi
     if [[ -z "$change" ]]; then
-        violations+=("openspec/changes:0: [instruction-check] no active change is available for instruction lookup")
+        return
+    fi
+
+    if ! command -v openspec >/dev/null 2>&1; then
+        violations+=("openspec/config.yaml:0: [instruction-check] openspec CLI is required")
         return
     fi
 
