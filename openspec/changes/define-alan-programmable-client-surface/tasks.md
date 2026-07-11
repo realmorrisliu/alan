@@ -36,11 +36,12 @@
   start and result materialization while keeping Process status, output,
   cancellation, and exit truth exclusively under `/proc`.
 - [ ] 3.3 Add revision-bound read-write body fids that can append bounded UTF-8
-  bytes at the observed end and reject clunk after any concurrent body revision
-  or append-position change.
-- [ ] 3.4 Add complete-document materialization reporting that validates the
-  committed body revision/range before linking it to `/proc/<pid>` and rejects
-  inconsistent associations.
+  bytes at the observed end, reject clunk after any concurrent body revision
+  or append-position change, and return an append commit token naming the
+  committed range and resulting revision.
+- [ ] 3.4 Add complete-document materialization reporting that binds the record
+  to the presented append commit token before linking it to `/proc/<pid>`,
+  rejecting tokenless range claims and ranges committed by another writer.
 - [ ] 3.5 Replace the existing editfs policy tests with focused tests for current
   and stale evaluator snapshots, partial ctl writes, concurrent selection/body
   changes, safe result append, materialization records, and blocking event reads.

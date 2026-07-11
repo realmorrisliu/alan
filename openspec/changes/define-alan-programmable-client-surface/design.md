@@ -145,9 +145,13 @@ For a finite command whose complete output is bounded UTF-8, `run` also opens
 `/mnt/edit/body` read-write, appends the bytes at the observed end, and clunks
 to commit only if the body revision still matches. A conflict never overwrites
 another client's edit: `run` reopens the latest revision and retries a bounded
-number of safe end-appends. The editfs event stream records the resulting body
-range, body revision, and `/proc/<pid>` path, so the raw body stays plain text
-while the execution boundary remains inspectable. If materialization fails,
+number of safe end-appends. A committed append returns an editfs-issued commit
+token naming the committed range and revision; the materialization record must
+present that token, so a Process/result link can only name bytes this evaluator
+actually appended — range existence in a revision is not enough. The editfs
+event stream records the resulting body range, body revision, and `/proc/<pid>`
+path, so the raw body stays plain text while the execution boundary remains
+inspectable. If materialization fails,
 the command may still succeed; its complete result remains in Process output
 and status distinguishes command failure from materialization failure.
 
