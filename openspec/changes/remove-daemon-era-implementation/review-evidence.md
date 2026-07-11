@@ -130,6 +130,9 @@ The guard runs in CI against the built debug binary.
   manifest write uses only the current enum. The workspace-manifest lane proves
   that an unknown value preserves the saved tab instead of quarantining the
   entire workspace.
+- Child-run exit reconciliation reports the authoritative `/proc/<pid>` from
+  `child_process_path`; the optional `/agent/<pid>` projection remains separate
+  metadata and is not presented as the Process whose exit was observed.
 
 ## Validation result
 

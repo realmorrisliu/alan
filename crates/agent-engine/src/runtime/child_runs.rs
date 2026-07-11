@@ -184,7 +184,7 @@ impl ChildRunRegistry {
         record.latest_event_kind = Some("proc_exited".to_string());
         record.latest_status_summary = Some(format!(
             "authoritative process {} exited with code {exit_code}",
-            record.agent_path.as_deref().unwrap_or("/proc/<unknown>")
+            record.child_process_path
         ));
         record.updated_at_ms = now_ms();
     }
@@ -402,9 +402,9 @@ mod tests {
         ChildRunRecord::new(
             child_run_id.to_string(),
             parent_process_path.to_string(),
-            format!("child-machine-{child_run_id}"),
+            "/proc/42".to_string(),
             Some("/tmp/workspace".to_string()),
-            Some("/proc/42".to_string()),
+            Some("/agent/42".to_string()),
             Some("repo-coding".to_string()),
         )
     }
@@ -646,13 +646,11 @@ mod tests {
         let record = registry.get("run-1").unwrap();
         assert_eq!(record.status, ChildRunStatus::Failed);
         assert_eq!(record.latest_event_kind.as_deref(), Some("proc_exited"));
-        assert_eq!(record.agent_path.as_deref(), Some("/proc/42"));
-        assert!(
-            record
-                .latest_status_summary
-                .as_deref()
-                .unwrap()
-                .contains("exited with code 17")
+        assert_eq!(record.child_process_path, "/proc/42");
+        assert_eq!(record.agent_path.as_deref(), Some("/agent/42"));
+        assert_eq!(
+            record.latest_status_summary.as_deref(),
+            Some("authoritative process /proc/42 exited with code 17")
         );
     }
 
