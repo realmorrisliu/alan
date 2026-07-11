@@ -271,7 +271,6 @@ fn sha256_hex(input: &str) -> String {
 }
 
 fn build_effect_identity(
-    process_path: &str,
     machine: &crate::agent_machine::AgentMachine,
     tool_name: &str,
     tool_arguments: &Value,
@@ -284,9 +283,11 @@ fn build_effect_identity(
         "arguments": normalized_arguments,
     });
     let request_fingerprint = sha256_hex(&request_payload.to_string());
+    // The effect index is owned by the Agent Machine and is carried into a
+    // recovered machine. Process paths remain provenance on EffectRecord, but
+    // cannot be part of the key: recovery intentionally launches a fresh PID.
     let idempotency_key = format!(
-        "process:{}:turn:{}:{}",
-        process_path,
+        "machine:turn:{}:{}",
         machine.user_turn_ordinal(),
         request_fingerprint
     );
@@ -766,13 +767,7 @@ where
     let process_path = state.process_path().to_string();
     let effect_identity =
         classify_effect_category(&tool_call.name, tool_capability).map(|category| {
-            build_effect_identity(
-                &process_path,
-                &state.machine,
-                &tool_call.name,
-                &tool_arguments,
-                category,
-            )
+            build_effect_identity(&state.machine, &tool_call.name, &tool_arguments, category)
         });
     let existing_effect = effect_identity.as_ref().and_then(|identity| {
         state
@@ -2114,13 +2109,24 @@ mod tests {
         tools: ToolRegistry,
         provider: P,
     ) -> RuntimeLoopState {
+        create_test_state_with_machine_tools_provider_and_agent_path(
+            machine, tools, provider, "/agent/1",
+        )
+    }
+
+    fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
+        machine: AgentMachine,
+        tools: ToolRegistry,
+        provider: P,
+        agent_path: &str,
+    ) -> RuntimeLoopState {
         let agentfs = Arc::new(AgentFs::new());
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection("default", Box::new(provider));
 
         let mut process_namespace = Namespace::new();
         process_namespace.mount(
-            "/agent/1",
+            agent_path,
             InProcessTransport::new(agentfs.clone()),
             Access::ReadWrite,
         );
@@ -2159,7 +2165,7 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
+                root, agent_path, "default",
             )),
             tool_catalog: tools,
             core_config: config,
@@ -3554,6 +3560,7 @@ default_action: allow
         });
 
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        assert_eq!(state.process_path(), "/proc/1");
         let (_, first_events) = execute_single_tool_call(
             &mut state,
             "call-file-1",
@@ -3577,27 +3584,35 @@ default_action: allow
             .path()
             .clone();
 
-        let recovered_machine = AgentMachine::load_from_rollout_in_dir(
-            &rollout_path,
-            "/proc/test",
-            "mock",
-            rollouts_dir,
-        )
-        .await
-        .unwrap();
+        let recovered_machine =
+            AgentMachine::load_from_rollout_in_dir(&rollout_path, "/proc/2", "mock", rollouts_dir)
+                .await
+                .unwrap();
         let mut recovered_tools = ToolRegistry::new();
         recovered_tools.register(CountingEffectTool {
             name: "write_file",
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut recovered_state =
-            create_test_state_with_machine_and_tools(recovered_machine, recovered_tools);
+        let mut recovered_state = create_test_state_with_machine_tools_provider_and_agent_path(
+            recovered_machine,
+            recovered_tools,
+            SimpleMockProvider,
+            "/agent/2",
+        );
+        assert_eq!(recovered_state.process_path(), "/proc/2");
+        let replay_arguments = json!({"path": "notes.txt", "payload": "hello"});
+        let replay_identity = build_effect_identity(
+            &recovered_state.machine,
+            "write_file",
+            &replay_arguments,
+            EffectCategory::File,
+        );
         let _ = execute_single_tool_call(
             &mut recovered_state,
             "call-file-2",
             "write_file",
-            json!({"path": "notes.txt", "payload": "hello"}),
+            replay_arguments,
         )
         .await;
 
@@ -3617,6 +3632,12 @@ default_action: allow
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original tool payload"
         );
+        let replayed_effect = recovered_state
+            .machine
+            .effect_by_idempotency_key(&replay_identity.idempotency_key)
+            .expect("dedupe replay effect should exist");
+        assert_eq!(replayed_effect.process_path, "/proc/2");
+        assert!(replayed_effect.dedupe_hit);
     }
 
     #[tokio::test]
@@ -3641,13 +3662,8 @@ default_action: allow
                 "authorization": "Bearer secret-token"
             }
         });
-        let identity = build_effect_identity(
-            &state.process_path(),
-            &state.machine,
-            "bash",
-            &arguments,
-            EffectCategory::Network,
-        );
+        let identity =
+            build_effect_identity(&state.machine, "bash", &arguments, EffectCategory::Network);
 
         let _ = execute_single_tool_call(&mut state, "call-net-1", "bash", arguments.clone()).await;
         let _ = execute_single_tool_call(&mut state, "call-net-2", "bash", arguments).await;
@@ -3708,13 +3724,8 @@ default_action: allow
                 "authorization": "Bearer secret-token"
             }
         });
-        let identity = build_effect_identity(
-            &state.process_path(),
-            &state.machine,
-            "bash",
-            &arguments,
-            EffectCategory::Network,
-        );
+        let identity =
+            build_effect_identity(&state.machine, "bash", &arguments, EffectCategory::Network);
 
         let _ = execute_single_tool_call(&mut state, "call-net-secret", "bash", arguments).await;
 
@@ -3802,32 +3813,15 @@ default_action: allow
         let arguments = json!({"path":"notes.txt","payload":"hello"});
 
         machine.add_user_message("turn-1");
-        let first = build_effect_identity(
-            "/proc/test",
-            &machine,
-            "write_file",
-            &arguments,
-            EffectCategory::File,
-        );
+        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
         machine.add_user_message("turn-2");
-        let second = build_effect_identity(
-            "/proc/test",
-            &machine,
-            "write_file",
-            &arguments,
-            EffectCategory::File,
-        );
+        let second =
+            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         let removed = machine.rollback_last_turns(1);
         assert!(removed.removed_messages > 0);
         machine.add_user_message("turn-3");
-        let third = build_effect_identity(
-            "/proc/test",
-            &machine,
-            "write_file",
-            &arguments,
-            EffectCategory::File,
-        );
+        let third = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         assert_ne!(
             second.idempotency_key, third.idempotency_key,
@@ -3841,24 +3835,13 @@ default_action: allow
         let mut machine = AgentMachine::new();
         let arguments = json!({"path":"notes.txt","payload":"hello"});
         machine.add_user_message("write once");
-        let first = build_effect_identity(
-            "/proc/test",
-            &machine,
-            "write_file",
-            &arguments,
-            EffectCategory::File,
-        );
+        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         machine.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
             json!({"checkpoint_type":"effect_replay_confirmation","choice":"approve"}),
         )]);
-        let replayed = build_effect_identity(
-            "/proc/test",
-            &machine,
-            "write_file",
-            &arguments,
-            EffectCategory::File,
-        );
+        let replayed =
+            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         assert_eq!(
             first.idempotency_key, replayed.idempotency_key,
@@ -3880,7 +3863,6 @@ default_action: allow
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
-            &state.process_path(),
             &state.machine,
             "write_file",
             &arguments,
@@ -3933,7 +3915,6 @@ default_action: allow
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
-            &state.process_path(),
             &state.machine,
             "write_file",
             &arguments,
@@ -4083,14 +4064,12 @@ default_action: allow
         let arguments_first = json!({"path": "notes-1.txt", "payload": "hello"});
         let arguments_second = json!({"path": "notes-2.txt", "payload": "world"});
         let identity_first = build_effect_identity(
-            &state.process_path(),
             &state.machine,
             "write_file",
             &arguments_first,
             EffectCategory::File,
         );
         let identity_second = build_effect_identity(
-            &state.process_path(),
             &state.machine,
             "write_file",
             &arguments_second,

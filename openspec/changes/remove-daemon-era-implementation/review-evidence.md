@@ -2,7 +2,7 @@
 
 Snapshot date: 2026-07-11.
 
-Implementation branch base: contracts commit `c4115bfd`.
+Implementation branch base: contracts commit `cfc73492`.
 
 ## Removal boundary
 
@@ -103,6 +103,22 @@ archive. Narrow allowlists record the surviving owners listed above and do not
 permit a general word-only bypass.
 
 The guard runs in CI against the built debug binary.
+
+## Review follow-up
+
+- Effect idempotency keys are scoped by Agent Machine turn and request
+  fingerprint, not by Process path. Effect records still retain the producing
+  Process path as provenance. Recovery into a fresh PID therefore reuses the
+  prior applied/unknown decision instead of executing an irreversible effect
+  again.
+- Rollout loading preserves every complete JSONL record before an unterminated
+  torn tail. Only a final no-newline serde EOF or incomplete UTF-8 sequence is
+  ignored; malformed middle records, complete invalid tails, and other UTF-8
+  corruption remain hard failures.
+- Focused tests cover recovery from /proc/1 into /proc/2, dedupe replay under
+  the fresh Process, JSON and UTF-8 torn tails, invalid-tail rejection, valid
+  final records without a newline, and Agent Machine recovery from the complete
+  prefix.
 
 ## Validation result
 

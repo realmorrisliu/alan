@@ -1110,22 +1110,59 @@ impl RolloutRecorder {
 
     /// Load history from a rollout file
     pub async fn load_history(path: &PathBuf) -> anyhow::Result<Vec<RolloutItem>> {
-        let content = fs::read_to_string(path).await?;
+        let content = fs::read(path).await?;
+        let ends_with_record_delimiter = content.ends_with(b"\n");
         let mut items = Vec::new();
+        let mut lines = content.split(|byte| *byte == b'\n').enumerate().peekable();
 
-        for (index, line) in content.lines().enumerate() {
+        while let Some((index, line_bytes)) = lines.next() {
+            let is_unterminated_tail = lines.peek().is_none() && !ends_with_record_delimiter;
+            let line = match std::str::from_utf8(line_bytes) {
+                Ok(line) => line,
+                Err(err) if is_unterminated_tail && err.error_len().is_none() => {
+                    warn!(
+                        path = %path.display(),
+                        line = index + 1,
+                        error = %err,
+                        "Ignoring torn trailing rollout record with incomplete UTF-8"
+                    );
+                    break;
+                }
+                Err(err) => {
+                    return Err(anyhow!(err)).with_context(|| {
+                        format!(
+                            "invalid UTF-8 in current rollout record at {}:{}",
+                            path.display(),
+                            index + 1
+                        )
+                    });
+                }
+            };
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            let item = serde_json::from_str::<RolloutItem>(line).with_context(|| {
-                format!(
-                    "invalid current rollout record at {}:{}",
-                    path.display(),
-                    index + 1
-                )
-            })?;
-            items.push(item);
+            match serde_json::from_str::<RolloutItem>(line) {
+                Ok(item) => items.push(item),
+                Err(err) if is_unterminated_tail && err.is_eof() => {
+                    warn!(
+                        path = %path.display(),
+                        line = index + 1,
+                        error = %err,
+                        "Ignoring torn trailing rollout record"
+                    );
+                    break;
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "invalid current rollout record at {}:{}",
+                            path.display(),
+                            index + 1
+                        )
+                    });
+                }
+            }
         }
 
         Ok(items)
@@ -1645,6 +1682,74 @@ this is not valid json
 
         let error = RolloutRecorder::load_history(&file_path).await.unwrap_err();
         assert!(error.to_string().contains("invalid current rollout record"));
+    }
+
+    #[tokio::test]
+    async fn test_load_history_ignores_torn_trailing_json_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_torn_tail.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_history_ignores_torn_trailing_utf8_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_torn_utf8_tail.jsonl");
+        let mut content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\""
+        )
+        .as_bytes()
+        .to_vec();
+        content.extend_from_slice(&[0xe2, 0x82]);
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_history_rejects_non_torn_invalid_trailing_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_invalid_tail.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "not json"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let error = RolloutRecorder::load_history(&file_path).await.unwrap_err();
+        assert!(error.to_string().contains("invalid current rollout record"));
+    }
+
+    #[tokio::test]
+    async fn test_load_history_accepts_valid_final_record_without_newline() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("valid_without_newline.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"First\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"Second\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:56Z\"}"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        assert_eq!(items.len(), 2);
     }
 
     #[tokio::test]

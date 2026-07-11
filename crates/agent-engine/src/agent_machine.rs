@@ -199,9 +199,7 @@ impl AgentMachine {
     }
 
     fn turn_ordinal_from_effect_idempotency_key(key: &str) -> Option<u64> {
-        let payload = key.strip_prefix("process:")?;
-        let marker_index = payload.rfind(":turn:")?;
-        let tail = &payload[(marker_index + ":turn:".len())..];
+        let tail = key.strip_prefix("machine:turn:")?;
         let turn_segment = tail.split(':').next()?;
         turn_segment.parse::<u64>().ok()
     }
@@ -1767,6 +1765,52 @@ mod tests {
     }
 
     #[test]
+    fn test_load_from_rollout_recovers_complete_records_before_torn_tail() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+            let rollout_path = temp_dir.path().join("rollout-torn-tail.jsonl");
+
+            let items = [
+                RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                    rollout_id: "test-torn-tail".to_string(),
+                    process_path: "/proc/1".to_string(),
+                    started_at: "2026-01-29T14:30:52Z".to_string(),
+                    cwd: "/tmp".to_string(),
+                    model: "gemini-2.0-flash".to_string(),
+                    reasoning_effort: None,
+                }),
+                RolloutItem::Message(MessageRecord {
+                    role: "user".to_string(),
+                    content: Some("survives crash".to_string()),
+                    tool_name: None,
+                    message: Some(Message::user("survives crash")),
+                    timestamp: "2026-01-29T14:30:56Z".to_string(),
+                }),
+            ];
+            let mut content = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n");
+            content.push_str("\n{\"type\":\"message\",\"role\":");
+            tokio::fs::write(&rollout_path, content).await.unwrap();
+
+            let machine = AgentMachine::load_from_rollout_in_dir(
+                &rollout_path,
+                "/proc/2",
+                "gemini-2.0-flash",
+                temp_dir.path(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(machine.tape.messages(), &[Message::user("survives crash")]);
+        });
+    }
+
+    #[test]
     fn test_load_from_rollout_does_not_count_runtime_confirmation_control_messages_as_turns() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -2150,7 +2194,7 @@ mod tests {
                     effect_id: "ef-compaction".to_string(),
                     process_path: "sess-compaction-floor".to_string(),
                     tool_call_id: "call-1".to_string(),
-                    idempotency_key: "process:sess-compaction-floor:turn:7:fp-1".to_string(),
+                    idempotency_key: "machine:turn:7:fp-1".to_string(),
                     effect_type: "file".to_string(),
                     request_fingerprint: "fp-1".to_string(),
                     result_digest: Some("digest-1".to_string()),
