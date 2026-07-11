@@ -813,9 +813,10 @@ pub fn seatbelt_profile(
     // `.agents`). The kernel cannot distinguish a tool's tampering from the
     // legitimate program-internal writes those dirs are designed for — denying
     // `.git` breaks `git` itself (init/add/commit all write `.git`), and denying
-    // `.alan` breaks the agent's own `.alan/memory`. Protected-subpath tampering is
-    // instead blocked by the path-guard parser (direct + shell-wrapper-nested path
-    // writes), which leaves program-internal writes (git porcelain, memory) intact.
+    // `.alan` breaks the agent's channel-scoped Memory Store. Protected-subpath
+    // tampering is instead blocked by the path-guard parser (direct +
+    // shell-wrapper-nested path writes), which leaves program-internal writes
+    // (git porcelain, memory) intact.
     // The OS sandbox's role here is the workspace + network boundary.
     let network_rule = if allow_network {
         ""

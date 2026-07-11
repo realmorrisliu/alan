@@ -133,6 +133,10 @@ The guard runs in CI against the built debug binary.
 - Child-run exit reconciliation reports the authoritative `/proc/<pid>` from
   `child_process_path`; the optional `/agent/<pid>` projection remains separate
   metadata and is not presented as the Process whose exit was observed.
+- Sandbox direct writes and shell-wrapper recursion allow only the stable/dev
+  channel-scoped `.alan/runtime/<channel>/memory/` trees. Unscoped
+  `.alan/memory/`, unknown channels, the retired singular `.alan/agent/` root,
+  and other protected state remain denied.
 
 ## Validation result
 
