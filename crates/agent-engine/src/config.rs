@@ -316,10 +316,6 @@ pub struct Config {
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
 
-    /// Deprecated alias for the hard utilization ratio threshold.
-    #[serde(default)]
-    pub compaction_trigger_ratio: Option<f32>,
-
     /// Utilization ratio of the context window at which automatic compaction
     /// should first attempt a silent memory flush.
     #[serde(default)]
@@ -344,9 +340,6 @@ pub struct Config {
     // ========================================================================
     // Thinking / Reasoning Controls
     // ========================================================================
-    #[serde(default, rename = "thinking_budget_tokens", skip_serializing)]
-    pub(crate) deprecated_thinking_budget_tokens: Option<u32>,
-
     /// Named cross-provider model reasoning effort. None = use model/provider default.
     #[serde(default)]
     pub model_reasoning_effort: Option<ReasoningEffort>,
@@ -458,7 +451,7 @@ fn default_tool_repeat_limit() -> usize {
     4
 }
 
-fn default_compaction_trigger_ratio() -> f32 {
+fn default_compaction_hard_trigger_ratio() -> f32 {
     0.8
 }
 
@@ -509,12 +502,10 @@ impl Default for Config {
             max_tool_loops: None,
             tool_repeat_limit: default_tool_repeat_limit(),
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: default_prompt_snapshot_max_chars(),
-            deprecated_thinking_budget_tokens: None,
             model_reasoning_effort: None,
             streaming_mode: default_streaming_mode(),
             partial_stream_recovery_mode: default_partial_stream_recovery_mode(),
@@ -632,7 +623,6 @@ impl Config {
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
         config.skill_overrides = config.resolved_skill_overrides();
         config.validate_compaction_thresholds(path.display().to_string())?;
-        config.validate_reasoning_controls(path.display().to_string())?;
         Ok(config)
     }
 
@@ -754,7 +744,6 @@ impl Config {
         )?;
         config.model_catalog = model_catalog;
         config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
-        config.validate_reasoning_controls("merged agent-root configuration".to_string())?;
         Ok(config)
     }
 
@@ -1009,8 +998,7 @@ impl Config {
 
     pub fn effective_compaction_hard_trigger_ratio(&self) -> f32 {
         self.compaction_hard_trigger_ratio
-            .or(self.compaction_trigger_ratio)
-            .unwrap_or_else(default_compaction_trigger_ratio)
+            .unwrap_or_else(default_compaction_hard_trigger_ratio)
     }
 
     pub fn effective_compaction_soft_trigger_ratio(&self) -> f32 {
@@ -1165,13 +1153,6 @@ impl Config {
     }
 
     fn validate_compaction_thresholds(&self, source: String) -> anyhow::Result<()> {
-        if self.compaction_trigger_ratio.is_some() && self.compaction_hard_trigger_ratio.is_some() {
-            anyhow::bail!(
-                "configuration file {} sets both deprecated `compaction_trigger_ratio` and `compaction_hard_trigger_ratio`; remove the deprecated field",
-                source
-            );
-        }
-
         let hard = self.effective_compaction_hard_trigger_ratio();
         let soft = self.effective_compaction_soft_trigger_ratio();
         if !(hard > 0.0 && hard <= 1.0) {
@@ -1187,16 +1168,6 @@ impl Config {
                 source,
                 soft,
                 hard
-            );
-        }
-        Ok(())
-    }
-
-    fn validate_reasoning_controls(&self, source: String) -> anyhow::Result<()> {
-        if self.deprecated_thinking_budget_tokens.is_some() {
-            anyhow::bail!(
-                "configuration file {} uses removed `thinking_budget_tokens`; replace it with `model_reasoning_effort`",
-                source
             );
         }
         Ok(())
@@ -1336,7 +1307,6 @@ mod tests {
         assert_eq!(config.tool_timeout_secs, 30);
         assert_eq!(config.tool_repeat_limit, 4);
         assert_eq!(config.context_window_tokens, None);
-        assert_eq!(config.compaction_trigger_ratio, None);
         assert_eq!(config.compaction_hard_trigger_ratio, None);
         assert_eq!(config.compaction_soft_trigger_ratio, None);
         assert!((config.effective_compaction_hard_trigger_ratio() - 0.8).abs() < f32::EPSILON);
@@ -1742,7 +1712,7 @@ model_reasoning_effort = "high"
     }
 
     #[test]
-    fn test_config_from_file_rejects_legacy_thinking_budget() {
+    fn test_config_from_file_rejects_retired_thinking_budget_as_unknown() {
         let temp = TempDir::new().unwrap();
         let config_path = temp.path().join("test_config.toml");
         std::fs::write(
@@ -1755,11 +1725,9 @@ thinking_budget_tokens = 2048
         .unwrap();
 
         let err = Config::from_file(&config_path).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("uses removed `thinking_budget_tokens`")
-        );
-        assert!(err.to_string().contains("model_reasoning_effort"));
+        let message = format!("{err:#}");
+        assert!(message.contains("unknown field"));
+        assert!(message.contains("thinking_budget_tokens"));
     }
 
     #[test]
@@ -2117,7 +2085,7 @@ tool_repeat_limit = 5
 prompt_snapshot_enabled = true
 prompt_snapshot_max_chars = 10000
 context_window_tokens = 65536
-compaction_trigger_ratio = 0.75
+compaction_hard_trigger_ratio = 0.75
 streaming_mode = "on"
 partial_stream_recovery_mode = "continue_once"
 
@@ -2138,7 +2106,7 @@ required = true
         assert_eq!(config.max_tool_loops, Some(10));
         assert_eq!(config.tool_repeat_limit, 5);
         assert_eq!(config.context_window_tokens, Some(65_536));
-        assert_eq!(config.compaction_trigger_ratio, Some(0.75));
+        assert_eq!(config.compaction_hard_trigger_ratio, Some(0.75));
         assert!((config.effective_compaction_hard_trigger_ratio() - 0.75).abs() < f32::EPSILON);
         assert!((config.effective_compaction_soft_trigger_ratio() - 0.675).abs() < f32::EPSILON);
         assert!(config.prompt_snapshot_enabled);
@@ -2171,7 +2139,7 @@ required = true
     }
 
     #[test]
-    fn test_config_from_file_rejects_duplicate_hard_threshold_fields() {
+    fn test_config_from_file_rejects_retired_compaction_threshold_as_unknown() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         std::fs::write(
@@ -2179,17 +2147,14 @@ required = true
             r#"
 connection_profile = "openai-main"
 compaction_trigger_ratio = 0.8
-compaction_hard_trigger_ratio = 0.85
 "#,
         )
         .unwrap();
 
         let err = Config::from_file(&config_path).unwrap_err();
-        assert!(
-            err.to_string().contains(
-                "deprecated `compaction_trigger_ratio` and `compaction_hard_trigger_ratio`"
-            )
-        );
+        let message = format!("{err:#}");
+        assert!(message.contains("unknown field"));
+        assert!(message.contains("compaction_trigger_ratio"));
     }
 
     #[test]

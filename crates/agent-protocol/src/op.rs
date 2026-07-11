@@ -23,37 +23,12 @@ pub enum ToolCapability {
 /// (network, destructive/irreversible commands, unknown capability) escalate
 /// and are routed to the reviewer (see the `autonomous-review-mode` capability),
 /// with a deterministic red line bypassing the reviewer to deny or to the human.
-/// There is intentionally no mode switcher. Legacy config values (e.g.
-/// `auto_approve`, `conservative`) are accepted for backward compatibility but
-/// always resolve to `Autonomous`.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+/// There is intentionally no mode switcher or alternate serialized profile.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GovernanceProfile {
     #[default]
     Autonomous,
-}
-
-impl<'de> Deserialize<'de> for GovernanceProfile {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // The posture is locked to `Autonomous`, but we still validate input:
-        // only the known string aliases resolve to it. A non-string value
-        // (bool/number/object) or an unrecognized string is rejected rather than
-        // silently treated as Autonomous, so a typo'd or wrong-typed profile
-        // surfaces as a config error instead of a false sense of a stricter mode.
-        let raw = String::deserialize(deserializer)?;
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "autonomous" | "auto_approve" | "auto-approve" | "autoapprove" | "conservative" => {
-                Ok(GovernanceProfile::Autonomous)
-            }
-            other => Err(serde::de::Error::custom(format!(
-                "unknown governance profile {other:?}; expected one of: \
-                 autonomous, auto_approve, conservative"
-            ))),
-        }
-    }
 }
 
 /// Agent Process governance configuration.
@@ -68,11 +43,10 @@ pub struct GovernanceConfig {
 }
 
 /// Input handling mode for `Op::Input`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMode {
     /// Inject guidance into the currently active execution.
-    #[default]
     Steer,
     /// Queue intent and execute immediately after current execution completes.
     FollowUp,
@@ -115,13 +89,10 @@ pub enum Op {
     },
 
     /// Append user input with explicit routing semantics.
-    /// Legacy `type=steer` remains accepted as an alias.
-    #[serde(alias = "steer")]
     Input {
         /// User's input content parts.
         parts: Vec<ContentPart>,
         /// Input routing mode (`steer`, `follow_up`, `next_turn`).
-        #[serde(default, skip_serializing_if = "is_default_input_mode")]
         mode: InputMode,
     },
 
@@ -189,10 +160,6 @@ impl Submission {
             op,
         }
     }
-}
-
-fn is_default_input_mode(mode: &InputMode) -> bool {
-    matches!(mode, InputMode::Steer)
 }
 
 #[cfg(test)]
@@ -293,16 +260,23 @@ mod tests {
     fn test_governance_profile_serialization() {
         let json = serde_json::to_string(&GovernanceProfile::Autonomous).unwrap();
         assert_eq!(json, "\"autonomous\"");
-        // Legacy values are accepted but resolve to the locked Autonomous posture.
-        let legacy: GovernanceProfile = serde_json::from_str("\"conservative\"").unwrap();
-        assert_eq!(legacy, GovernanceProfile::Autonomous);
-        let legacy2: GovernanceProfile = serde_json::from_str("\"auto_approve\"").unwrap();
-        assert_eq!(legacy2, GovernanceProfile::Autonomous);
-        // Typos and wrong-typed values are rejected, not silently autonomous.
-        for bad in ["\"conservativ\"", "\"strict\"", "false", "{}", "5"] {
+        let parsed: GovernanceProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, GovernanceProfile::Autonomous);
+
+        for bad in [
+            "\"auto_approve\"",
+            "\"auto-approve\"",
+            "\"autoapprove\"",
+            "\"conservative\"",
+            "\"conservativ\"",
+            "\"strict\"",
+            "false",
+            "{}",
+            "5",
+        ] {
             assert!(
                 serde_json::from_str::<GovernanceProfile>(bad).is_err(),
-                "malformed governance profile accepted: {bad}"
+                "retired or malformed governance profile accepted: {bad}"
             );
         }
     }
@@ -416,7 +390,7 @@ mod tests {
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("input"));
         assert!(json.contains("follow up"));
-        assert!(!json.contains("\"mode\""));
+        assert!(json.contains("\"mode\":\"steer\""));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         match deserialized {
@@ -449,29 +423,16 @@ mod tests {
     }
 
     #[test]
-    fn test_input_mode_defaults_to_steer_for_legacy_payload_without_mode() {
-        let json = r#"{"type":"input","parts":[{"type":"text","text":"legacy"}]}"#;
-        let parsed: Op = serde_json::from_str(json).unwrap();
-        match parsed {
-            Op::Input { parts, mode } => {
-                assert_eq!(parts[0].as_text(), Some("legacy"));
-                assert_eq!(mode, InputMode::Steer);
-            }
-            _ => panic!("Expected Input"),
-        }
+    fn test_input_without_mode_is_rejected() {
+        let json = r#"{"type":"input","parts":[{"type":"text","text":"missing mode"}]}"#;
+        assert!(serde_json::from_str::<Op>(json).is_err());
     }
 
     #[test]
-    fn test_legacy_steer_alias_maps_to_input_mode_steer() {
-        let json = r#"{"type":"steer","parts":[{"type":"text","text":"legacy steer"}]}"#;
-        let parsed: Op = serde_json::from_str(json).unwrap();
-        match parsed {
-            Op::Input { parts, mode } => {
-                assert_eq!(parts[0].as_text(), Some("legacy steer"));
-                assert_eq!(mode, InputMode::Steer);
-            }
-            _ => panic!("Expected Input"),
-        }
+    fn test_retired_steer_operation_is_rejected() {
+        let json =
+            r#"{"type":"steer","parts":[{"type":"text","text":"legacy steer"}],"mode":"steer"}"#;
+        assert!(serde_json::from_str::<Op>(json).is_err());
     }
 
     #[test]
