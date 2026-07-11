@@ -81,8 +81,12 @@ atomically validate the expected revision and append position, append the bytes
 at the current end of `body` as an ordinary body edit that advances the body
 revision, and emit the edit event plus a Process-linked materialization event
 naming the committed range, the new body revision, and the supplied
-`/proc/<pid>` Path. A stale revision or append position SHALL fail the commit
-with a typed aP error and no side effects. Because the result bytes and their
+`/proc/<pid>` Path. As with `ctl exec`, the supplied `/proc/<pid>` Path SHALL be
+recorded as caller-asserted correlation metadata, not verified identity, until
+aP request provenance provides authentication: the atomic commit binds the
+bytes to this commit, not the pid to the writer, so consumers MUST NOT treat
+the Process link as verified provenance. A stale revision or append position
+SHALL fail the commit with a typed aP error and no side effects. Because the result bytes and their
 Process link commit together, a materialization event SHALL never attribute
 bytes committed by another writer, and editfs SHALL NOT accept a post-hoc
 record that links an existing `body` range to a Process. This uses only
@@ -96,7 +100,8 @@ complete output into a parallel execution record.
 - **THEN** `body` gains the appended bytes as an ordinary edit with an advanced
   revision and an edit event
 - **AND** the same commit emits a materialization event linking exactly that
-  committed range and revision to the supplied `/proc/<pid>` Path
+  committed range and revision to the supplied `/proc/<pid>` Path, recorded as
+  caller-asserted correlation
 
 #### Scenario: Concurrent edit rejects materialization
 - **WHEN** another client changes `body` after the evaluator captures the append

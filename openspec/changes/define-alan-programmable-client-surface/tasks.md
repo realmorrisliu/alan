@@ -36,7 +36,9 @@
   rejected rather than validated.
 - [ ] 3.2 Define and implement Process-linked editfs event records for execution
   start and result materialization while keeping Process status, output,
-  cancellation, and exit truth exclusively under `/proc`.
+  cancellation, and exit truth exclusively under `/proc`; both event kinds
+  record the supplied `/proc/<pid>` path as caller-asserted correlation, not
+  verified identity.
 - [ ] 3.3 Add the complete-document `materialize` control write: expected
   revision and append position plus bounded UTF-8 result bytes and the
   evaluator's `/proc/<pid>` path, committing atomically on clunk as an ordinary
