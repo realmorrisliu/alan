@@ -1759,12 +1759,19 @@ async fn persist_delegated_child_evidence(
     {
         return None;
     }
-    let result_doc = json!({
-        "child_agent_path": result.process_path,
+    let mut result_doc = json!({
+        "child_process_path": result.process_path,
         "child_run_id": result.child_run_id,
         "terminal_status": child_runtime_status_label(result.status.clone()),
         "redactions": redacted.markers,
     });
+    if let Some(agent_path) = result
+        .child_run
+        .as_ref()
+        .and_then(|record| record.agent_path.as_deref())
+    {
+        result_doc["child_agent_path"] = json!(agent_path);
+    }
     let action_id = state
         .namespace_environment()
         .write_action(

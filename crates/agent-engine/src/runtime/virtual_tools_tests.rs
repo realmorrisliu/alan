@@ -135,13 +135,13 @@ fn capability_view_for_workspace_skill(workspace_root: &std::path::Path) -> Reso
     }])
 }
 
-fn test_child_run_record(child_run_id: &str, parent_agent_path: &str) -> ChildRunRecord {
+fn test_child_run_record(child_run_id: &str, parent_process_path: &str) -> ChildRunRecord {
     ChildRunRecord::new(
         child_run_id.to_string(),
-        parent_agent_path.to_string(),
-        format!("child-machine-{child_run_id}"),
+        parent_process_path.to_string(),
+        "/proc/42".to_string(),
         Some("/tmp/alan-delegated-parent".to_string()),
-        Some("/proc/42".to_string()),
+        Some("/agent/42".to_string()),
         Some("repo-coding".to_string()),
     )
 }
@@ -1296,7 +1296,7 @@ fn test_delegated_result_redacts_structured_summary() {
 }
 
 #[tokio::test]
-async fn redaction_expansion_preserves_delegated_output_reference() {
+async fn redaction_expansion_preserves_delegated_output_reference_and_child_paths() {
     let (state, shell) = create_namespace_agent_loop_state_and_shell();
     let request = DelegatedSkillInvocationRequest {
         skill_id: "repo-review".to_string(),
@@ -1308,7 +1308,7 @@ async fn redaction_expansion_preserves_delegated_output_reference() {
     };
     let result = ChildRuntimeResult {
         status: ChildRuntimeStatus::Completed,
-        process_path: "child-machine".to_string(),
+        process_path: "/proc/42".to_string(),
         child_run_id: Some("child-run-1".to_string()),
         rollout_path: Some(PathBuf::from("/tmp/child-rollout.jsonl")),
         output_text: "Bearer x ".repeat(400),
@@ -1317,7 +1317,7 @@ async fn redaction_expansion_preserves_delegated_output_reference() {
         warnings: Vec::new(),
         error_message: None,
         pause: None,
-        child_run: None,
+        child_run: Some(test_child_run_record("child-run-1", &state.process_path())),
     };
 
     assert!(result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
@@ -1327,6 +1327,22 @@ async fn redaction_expansion_preserves_delegated_output_reference() {
     let delegated = delegated_result_from_completed_child(&result, Some(&output_ref));
     assert!(delegated.output_text.is_none());
     assert_eq!(delegated.output_ref.as_ref(), Some(&output_ref));
+    let action_result_path = format!(
+        "{}/result",
+        output_ref
+            .path
+            .strip_suffix("/output")
+            .expect("action output path")
+    );
+    let action_result: serde_json::Value = serde_json::from_slice(
+        &shell
+            .cat(&action_result_path)
+            .await
+            .expect("delegated action result"),
+    )
+    .expect("delegated action result JSON");
+    assert_eq!(action_result["child_process_path"], json!("/proc/42"));
+    assert_eq!(action_result["child_agent_path"], json!("/agent/42"));
     let retained = String::from_utf8(shell.cat(&output_ref.path).await.unwrap()).unwrap();
     assert!(retained.chars().count() > MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
     assert!(retained.contains("[REDACTED reason=credential_token]"));
