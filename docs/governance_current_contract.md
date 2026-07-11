@@ -1,129 +1,53 @@
-# Governance Current Contract
+# Current Governance Contract
 
-> Status: authoritative current implementation contract
->
-> Scope: current alan runtime / daemon / built-in tools. This document describes
-> what the repository guarantees today. VNext target docs may describe broader
-> HITE governance semantics and optional stronger containment, but they must not
-> be read as statements about current behavior unless they explicitly say so.
+This document describes implemented Agent Execution Engine governance.
+Normative target requirements live in OpenSpec.
 
-## Purpose
+## Policy resolution
 
-This document pins the current governance semantics so design, docs, and code
-can stay aligned while alan evolves toward fuller HITE governance.
+Policy resolves in this order:
 
-## Current Decisions
+1. an explicit governance policy path;
+2. the highest-precedence existing `policy.yaml` in the resolved AgentRoot
+   chain;
+3. builtin profile defaults.
 
-### 1. Policy File Resolution Is Override, Not Merge
+An authored policy file replaces the builtin rule set; it is not merged
+implicitly.
 
-Policy resolution order is:
+## Per-call decisions
 
-1. `governance.policy_path`, if set
-2. the highest-precedence existing `policy.yaml` in the resolved `AgentRoot` chain
-3. builtin profile defaults
+Each Tool call receives one policy decision: `allow`, `deny`, or `escalate`.
+An escalation creates a pending confirmation request. Approval applies only to
+that checkpoint; there is no Process-wide approval cache.
 
-Default workspace agents resolve:
+Unknown prior effect state uses its own replay-confirmation request so audit
+records distinguish policy decisions from idempotency safety.
 
-- `~/.alan/agents/default/policy.yaml -> {workspace}/.alan/agents/default/policy.yaml`
+## Execution backend
 
-Named agents extend that chain with:
+The default `workspace_path_guard` is best-effort path and command-shape
+enforcement. It does not claim full network or Process isolation. Optional
+Seatbelt or Landlock backends provide stronger host enforcement when active.
 
-- `~/.alan/agents/<name>/policy.yaml -> {workspace}/.alan/agents/<name>/policy.yaml`
+Policy and execution backend are separate: policy decides whether an effect is
+authorized, while the backend constrains how an authorized effect executes.
 
-When a policy file is found, its `rules` and `default_action` replace the
-builtin profile rule set for that session. alan does not implicitly merge a
-policy file with builtin profile rules.
+## Current matchers
 
-Rationale:
+Policy rules support:
 
-- override semantics are predictable and testable
-- implicit merge semantics would require extra precedence rules
-- explicit inheritance can be added later if needed as a separate feature
+- Tool name;
+- capability;
+- command pattern;
+- normalized path prefix.
 
-### 2. `tool_escalation` Is Reserved For Policy Escalation
+Relative paths are evaluated against current Tool cwd when available. Shell
+payloads remain conservatively constrained because arbitrary programs can hide
+effects behind their own argument or script semantics.
 
-`tool_escalation` means one thing only: `PolicyEngine` returned `escalate` for a
-tool call.
+## Audit identity
 
-Other confirmation checkpoints must use their own types. In particular:
-
-- replaying a side effect after an `unknown` prior result uses
-  `effect_replay_confirmation`
-
-Rationale:
-
-- a checkpoint type should map to one semantic source
-- audit logs and UI surfaces should distinguish policy boundaries from runtime
-  safety checks
-
-### 3. No Session-Scoped Approval Cache
-
-alan does not keep a session-wide approval cache for governance escalations.
-Each `escalate` outcome yields an explicit confirmation request and each approval
-applies only to the pending checkpoint being resumed.
-
-Turn-local replay bookkeeping is still allowed for resuming the exact pending
-tool call or tool batch. That bookkeeping is execution control, not an approval
-policy.
-
-Rationale:
-
-- the V2 governance model is explicit `Yield` / `Resume`
-- cached approvals blur auditability and make behavior harder to predict
-
-### 4. The Current Sandbox Backend Is Best-Effort
-
-The current built-in sandbox backend is `workspace_path_guard`.
-
-It provides:
-
-- workspace path containment checks
-- protected subpath blocking for `.git`, `.alan`, and `.agents`
-- conservative shell-shape validation for direct commands with statically
-  addressable paths
-
-It does **not** provide a strict OS sandbox, and it does **not** guarantee full
-network or process isolation. It is a best-effort execution guard, not a hard
-containment boundary.
-
-Optional stronger containment backends may be added later for deployments that
-need them, but they must be documented as separate backend levels and not
-conflated with `workspace_path_guard`.
-
-Current daemon session APIs report this host-side guard as
-`execution_backend: "workspace_path_guard"` so clients can present the active
-execution backend honestly without implying strict containment.
-
-### 5. Current Policy Matchers Include Path Prefix Rules
-
-alan's current `policy.yaml` matcher surface includes:
-
-1. `tool`
-2. `capability`
-3. `match_command`
-4. `match_path_prefix`
-
-`match_path_prefix` currently applies to common file-oriented arguments such as
-`path`, `paths`, `directory`, `cwd`, and `workspace_root`.
-Before matching, alan lexically normalizes `.` / `..` segments and lets
-relative policy prefixes still match absolute tool paths on component
-boundaries.
-When the runtime has a current tool `cwd`, relative path arguments are also
-evaluated against that base so parent-traversal paths do not bypass policy.
-alan also case-folds path-prefix comparisons conservatively so case variants do
-not bypass policy on case-insensitive hosts.
-
-This is useful for coding-governance boundaries on sensitive paths such as
-workflow, deploy, infrastructure, or credential files. It does not make bash
-commands fully path-aware; shell payloads still rely on `match_command` plus
-the execution backend's own path/shaping logic.
-
-## Alignment Rules
-
-- README and current-user docs must describe the semantics in this document.
-- Code comments about current behavior must not claim stricter guarantees than
-  this document.
-- VNext / target docs must link here when their target state differs from the
-  current implementation.
-- Governance changes are incomplete until docs, behavior, and tests all match
-  this contract.
+Audit records use call, Process, Tool, turn, request, action, rollout, and
+checkpoint identity owned by the execution path. AgentFS and rollout evidence
+surface those decisions without introducing a second lifecycle authority.

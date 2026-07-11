@@ -21,7 +21,7 @@ Alan Kernel or Agent Processes.
 - **WHEN** Alan for macOS enables the service
 - **THEN** the access-filtered handle and mounted tree expose config, status,
   capture records, drafts, results, and events
-- **AND** no daemon session or typed RPC is required
+- **AND** every Alan OS client uses the mounted file surface
 
 ### Requirement: Hold to Talk uses a capture lifecycle object
 Alan Voice SHALL allocate a capture object for each Hold to Talk interaction and
@@ -83,7 +83,7 @@ Tool execution, or bounded Agent Executable spawn.
 #### Scenario: Agent request targets an existing agent
 - **WHEN** the focused surface supplies an authorized Agent Process descriptor
 - **THEN** Alan Voice writes the accepted request to that process's `io/input`
-- **AND** it does not address a daemon session id
+- **AND** the Process descriptor remains the target authority
 
 #### Scenario: Agent request starts new work
 - **WHEN** no existing agent is selected and the user commits the request

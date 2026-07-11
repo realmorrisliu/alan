@@ -27,9 +27,9 @@ categories:
   - title: "Tools"
     labels:
       - area/tools
-  - title: "CLI and Daemon"
+  - title: "CLI and Host"
     labels:
-      - area/cli-daemon
+      - area/cli-host
   - title: "TUI"
     labels:
       - area/tui

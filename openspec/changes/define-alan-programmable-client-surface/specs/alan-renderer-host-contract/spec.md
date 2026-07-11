@@ -12,8 +12,7 @@ domain authority.
 - **WHEN** a renderer receives a Namespace containing `/mnt/edit`, `/bin/run`,
   and `/proc`
 - **THEN** it can render `body` and `tag`, project `addr`, observe `event`, and
-  follow evaluator Process output without a daemon session or semantic view
-  snapshot
+  follow evaluator Process output from the mounted file surfaces
 - **AND** another file client can perform the same authoritative operations
 
 ### Requirement: Renderer discovery is a Namespace projection
@@ -48,8 +47,8 @@ Stream Offset and SHALL NOT automatically copy live `tail` bytes into editable
 `body`. Explicit finite capture SHALL use ordinary Alan Shell commands and the
 same result-materialization contract as a headless client.
 
-#### Scenario: Renderer reconnects to a live evaluator
-- **WHEN** a renderer reattaches while a `tail` evaluator Process remains live
+#### Scenario: Renderer reattaches to a live evaluator
+- **WHEN** a renderer attaches again while a `tail` evaluator Process remains live
 - **THEN** it resumes the Process output Stream from its saved offset
 - **AND** it does not reconstruct execution from renderer history or duplicate
   the live bytes into editfs

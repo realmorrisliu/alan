@@ -9,7 +9,8 @@ portable and app-owned.
 The prior design mapped those concepts onto a generic programmable environment
 and planned direct `ShellContentInstance` wiring. ADR-0024 retired the generic
 Object/Buffer/View/Command/Query ontology, and
-`define-alan-app-service-integration` establishes the replacement boundary:
+the `alan-app-service-integration` capability folded into
+`remove-daemon-era-contracts` establishes the durable boundary:
 domain core → aP adapter → `/srv` handle → `/mnt` tree → symmetric UI/Tool/agent
 file clients.
 

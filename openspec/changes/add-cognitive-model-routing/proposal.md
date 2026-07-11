@@ -1,11 +1,9 @@
 ## Why
 
 Alan should normally use a fast model path and deliberately escalate complex or
-high-cost work to a deeper model. The previous change hid that behavior inside a
-runtime `CognitiveRouter`, session overrides, daemon DTOs, and an internal virtual
-action; the Plan 9-like design requires model choice, attempt isolation,
-escalation, and observability to be expressed through mounted LLM Connections,
-Processes, files, and streams.
+high-cost work to a deeper model. Model choice, attempt isolation, escalation,
+and observability are expressed through mounted LLM Connections, Processes,
+files, and streams.
 
 ## What Changes
 
@@ -23,7 +21,7 @@ Processes, files, and streams.
   status, and ordered events under `machine/routing/` in the agent overlay.
 - Accept explicit next-attempt/default control as `route` commands on the
   agent-runtime-owned `machine/ctl` — the agent overlay gains no third `ctl`
-  file — and remove new session/fork/turn daemon DTO requirements.
+  file.
 - Compose the selected LLM Connection with canonical reasoning-effort controls
   in the provider-neutral llmfs Generation request. Provider adapters remain
   unaware of cognitive roles.
@@ -52,6 +50,4 @@ Processes, files, and streams.
   active Connection.
 - Side-effect isolation is enforced by the attempt namespace and visible `/bin`
   union, not a runtime-only Tool classification gate.
-- Daemon compatibility surfaces may mirror routing files temporarily, but this
-  change adds no daemon/session API requirements and remote clients use the
-  returned namespace.
+- Every observer reads the returned namespace and routing files.

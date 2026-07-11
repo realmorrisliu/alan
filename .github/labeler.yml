@@ -18,7 +18,7 @@ area/tools:
       - any-glob-to-any-file:
           - "crates/tools/**"
 
-area/cli-daemon:
+area/cli-host:
   - changed-files:
       - any-glob-to-any-file:
           - "crates/alan/**"
@@ -27,7 +27,6 @@ area/tui:
   - changed-files:
       - any-glob-to-any-file:
           - "crates/tui/**"
-          - "docs/spec/alan_tui_ui_ux.md"
 
 area/docs:
   - changed-files:

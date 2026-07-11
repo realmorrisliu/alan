@@ -15,9 +15,8 @@
 - [ ] 2.2 Implement `route auto`, `route next system-1`, and `route next
   system-2` commands on the agent-runtime-owned `machine/ctl`, with one-input
   consumption, deterministic gate precedence, and refusal records.
-- [ ] 2.3 Remove planned daemon create/list/read/reconnect/fork routing metadata
-  and session/fork/turn override requirements; any temporary mirror must be named
-  compatibility code with a deletion gate.
+- [ ] 2.3 Verify routing identity and control exist only in Process,
+  `machine/ctl`, and `machine/routing` file owners.
 
 ## 3. Attempt Process Orchestration
 

@@ -27,8 +27,7 @@
 - [ ] 2.4 Define `macos-updf-preview` for Alan's read-only `.updf` preview and
   QA summary consumer role.
 - [ ] 2.5 Define agent review through bounded descriptors, `/bin/updf`, a role
-  Skill, Agent Executable spawn, and a writable proposal tree rather than an
-  embedded engine or daemon/session API.
+  Skill, Agent Executable spawn, and a writable proposal tree.
 
 ## 3. Implementation Slice Decomposition
 

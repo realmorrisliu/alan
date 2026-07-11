@@ -50,7 +50,7 @@ license records, but they should not be mandatory for ordinary readers.
   QA issues, bounded Agent Process patches, visual diffs, and human approval.
 - Define agent-assisted review as opening project/package/QA descriptors,
   binding the `updf` executable as a Tool, and spawning a role-specific Agent
-  Executable; no embedded agent engine or daemon/session API is part of UPDF.
+  Executable through the normal Process and namespace boundary.
 - Record additional publishing-industry concerns for later follow-up specs,
   including accessibility, metadata, validation, editioning, samples, sales
   operations, reader data portability, print/POD, citations, indexing, and

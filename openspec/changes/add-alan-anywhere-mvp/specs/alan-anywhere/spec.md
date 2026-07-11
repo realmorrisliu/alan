@@ -1,187 +1,85 @@
 ## ADDED Requirements
 
-### Requirement: Account-bound device enrollment
-alan SHALL bind each remote-capable Mac and iPhone app installation to an Alan
-account and a stable device identity before allowing Alan Anywhere access.
+### Requirement: Alan Anywhere uses explicit owned-device enrollment
+Alan Anywhere SHALL require account sign-in, device-key establishment, a
+user-facing device name, and explicit confirmation before a Mac becomes an
+owned remote-entry destination.
 
-#### Scenario: Mac enrolls after account login
-- **WHEN** a user signs in to Alan for macOS
-- **THEN** the Mac is registered as a device owned by that account
-- **AND** the Mac receives device-bound credentials suitable for remote
-  availability
-- **AND** those credentials are stored in the platform secure store rather than
-  in workspace files
+#### Scenario: User enrolls a Mac
+- **WHEN** the signed-in user confirms enrollment on the Mac
+- **THEN** Alan records the owned device and its public identity material
+- **AND** remote entry remains disabled until enrollment completes
 
-#### Scenario: iPhone signs in to the same account
-- **WHEN** a user signs in to Alan on iPhone with the same account as the Mac
-- **THEN** the iPhone is registered as a device owned by that account
-- **AND** the iPhone can request access only to devices associated with that
-  account
+### Requirement: Device availability is product-facing and bounded
+Alan Anywhere SHALL show enrolled-device availability using human-readable
+device identity and expiry-bounded presence. It SHALL NOT publish destination
+workspace, app, or Process catalogs before entry.
 
-### Requirement: Automatic Mac remote availability
-Alan for macOS SHALL automatically keep the signed-in Mac remotely connectable
-while the app is running and the user has not disabled Alan Anywhere.
+#### Scenario: iPhone lists devices
+- **WHEN** the user opens Alan Anywhere on iPhone
+- **THEN** it shows owned devices with honest availability freshness
+- **AND** infrastructure identifiers remain behind explicit diagnostics
 
-#### Scenario: Alan for macOS starts while signed in
-- **WHEN** Alan for macOS starts with a valid signed-in account and device binding
-- **THEN** it establishes an outbound encrypted connection to the Alan remote
-  service without requiring inbound network configuration
-- **AND** the user is not asked for public IP, router, VPN, tunnel, SSH, or port
-  forwarding settings
+### Requirement: Remote Entry Tickets are short-lived and intent-bound
+Alan Anywhere SHALL authorize entry with a single-use or replay-protected ticket
+bound to account, source device, destination device, entry intent, nonce, and
+expiry. The destination host SHALL validate the ticket and local policy.
 
-#### Scenario: Alan for macOS loses remote connectivity
-- **WHEN** the Mac loses network connectivity or its outbound remote connection
-  drops
-- **THEN** Alan for macOS retries connection in the background
-- **AND** Alan Cloud marks the device stale or offline without changing local
-  runtime state
+#### Scenario: Ticket is replayed
+- **WHEN** a used or expired ticket is presented again
+- **THEN** the destination refuses entry
+- **AND** bounded audit evidence records the refusal
 
-### Requirement: User-owned device discovery
-alan SHALL let a signed-in iPhone discover the user's own online Alan for macOS
-devices without exposing relay or tunnel implementation details.
+### Requirement: Entry hands off a general Remote Entry Process
+Successful product entry SHALL consume `remote-access-service` handoff and give
+the client the granted Remote Entry Process namespace. Product discovery SHALL
+continue through ordinary file operations after handoff.
 
-#### Scenario: iPhone lists available Macs
-- **WHEN** the iPhone app requests Alan Anywhere devices for the signed-in
-  account
-- **THEN** the response includes only devices owned by that account
-- **AND** each device includes product-facing status such as online/offline,
-  last seen, and connectability
-- **AND** the response does not require the iPhone user to provide a daemon URL,
-  public IP, tunnel URL, or relay node token
-
-#### Scenario: Device is offline
-- **WHEN** a previously enrolled Mac is not connected to Alan Cloud
-- **THEN** the iPhone may show the Mac as offline or unavailable
-- **AND** the iPhone MUST NOT offer remote entry into that Mac
-  until it reconnects
-
-### Requirement: Device availability discovery
-alan SHALL expose enough device availability status for iPhone users to choose
-which owned Alan device to enter remotely. Authoritative workspace, session,
-task, and app-continuation discovery happens after attachment through the
-returned remote namespace, not through the pre-attachment control plane.
-
-#### Scenario: Mac publishes connectable device status
-- **WHEN** Alan for macOS is online
-- **THEN** it publishes connectable device status for the signed-in user
-- **AND** status includes product-facing availability such as online/offline,
-  last seen, and whether remote entry is currently accepted
-- **AND** the Mac remains the authority for local namespace, process, app, and
-  work state
-
-#### Scenario: iPhone chooses which device to enter
-- **WHEN** the iPhone user selects an online Mac
-- **THEN** the iPhone can request remote entry into that Mac's Alan OS
-- **AND** work discovery proceeds through the returned `Remote Entry Process`
+#### Scenario: Entry succeeds
+- **WHEN** the destination validates the ticket and creates the entry Process
+- **THEN** the client receives the granted namespace root
+- **AND** files, Processes, Agent Processes, and apps are discovered from that
   namespace
-- **AND** the UI presents the action as entering another Alan device rather than
-  connecting to infrastructure
 
-### Requirement: Remote namespace interaction
-alan SHALL allow iPhone to interact with the selected Mac by entering a
-`Remote Entry Process` namespace and then using ordinary Alan OS file
-operations.
+### Requirement: Network continuity uses leases and stream offsets
+Alan Anywhere SHALL preserve active entry across temporary byte-delivery loss by
+reattaching the current lease, rereading files, and resuming streams from
+caller-held offsets. It SHALL NOT recreate already-running execution.
 
-#### Scenario: iPhone sends a message
-- **WHEN** the iPhone user sends a message to an agent process through Alan
-  Anywhere
-- **THEN** the message is written through the attached remote namespace, such as
-  an agent `io/` surface
-- **AND** the Mac validates authority through the descriptor and process model
+#### Scenario: Mobile connectivity changes
+- **WHEN** byte delivery is interrupted while the lease remains valid
+- **THEN** the client reattaches and resumes observable streams from saved
+  offsets
+- **AND** destination Process identity remains unchanged
 
-#### Scenario: iPhone interrupts an active run
-- **WHEN** the iPhone user interrupts a running remote process
-- **THEN** the interrupt is written through the relevant remote process control
-  surface, such as `/proc/<pid>/ctl`
-- **AND** the Mac remains responsible for applying or rejecting the interrupt
+### Requirement: Revocation terminates remote lineage
+Device, account, lease, and explicit operator revocation SHALL prevent new entry
+and terminate the affected active remote lineage according to
+`remote-access-service`.
 
-#### Scenario: iPhone resumes a pending yield
-- **WHEN** a remote agent process is waiting for confirmation or structured input
-- **THEN** the iPhone can write the response through the remote request surface
-- **AND** the Mac validates the pending request before advancing the process
+#### Scenario: User revokes a lost iPhone
+- **WHEN** the user revokes the source device from another authorized surface
+- **THEN** active entry lineage for that device terminates
+- **AND** future tickets for the device are rejected
 
-### Requirement: Realtime remote stream flow
-alan SHALL support realtime remote delivery of stream file records from the Mac
-to the iPhone through the attached remote namespace.
+### Requirement: Alan Cloud has bounded coordination authority
+Alan Cloud SHALL limit its coordination authority to accounts, enrolled-device
+metadata, coarse presence, ticket issuance, and byte-delivery coordination. It
+SHALL NOT author destination files, Process state, Agent Machine state, policy
+decisions, or Tool results.
 
-#### Scenario: Process streams output remotely
-- **WHEN** a Mac-authored remote process appends output, events, warnings,
-  errors, or request state to stream files
-- **THEN** the iPhone receives those records in near real time by reading the
-  remote streams
-- **AND** stream identity, offsets, and record order remain authored by the Mac
+#### Scenario: Cloud state disagrees with destination state
+- **WHEN** cloud metadata claims a destination action completed but destination
+  files do not
+- **THEN** clients treat destination files and Process state as authoritative
+- **AND** the cloud claim cannot commit or fabricate the action
 
-#### Scenario: Relay transports stream bytes
-- **WHEN** realtime stream records are delivered through Alan Cloud relay
-- **THEN** the relay forwards transport bytes without becoming the authority for
-  stream offsets, record order, process state, or runtime state
-- **AND** the iPhone can recover missed observations by reattaching and reading
-  from saved stream offsets
+### Requirement: The product contract is transport-neutral
+Alan Anywhere SHALL require authenticated encrypted byte delivery with measured
+interactive quality, while leaving the concrete transport to a separate
+accepted implementation change.
 
-### Requirement: Reconnect and gap recovery
-alan SHALL recover remote iPhone attachments after app backgrounding, network
-changes, and relay reconnects without duplicating execution.
-
-#### Scenario: iPhone reconnects with a valid cursor
-- **WHEN** the iPhone reattaches to a live lease with saved stream offsets
-- **THEN** it resumes reading stream records from those offsets
-- **AND** execution is not restarted or re-driven by reconnect
-
-#### Scenario: iPhone cursor has a gap
-- **WHEN** the iPhone reattaches after a saved stream offset is no longer
-  available
-- **THEN** the stream read reports the gap through file/stream semantics
-- **AND** the iPhone rebuilds actionable state by rereading current files from
-  the returned namespace before continuing stream consumption
-
-### Requirement: Host-authoritative execution boundary
-alan SHALL keep Alan Anywhere execution, tool access, governance, namespace
-reads, and process state authoritative on the user's destination Alan OS host.
-
-#### Scenario: Cloud brokers remote entry
-- **WHEN** Alan Cloud brokers an Alan Anywhere entry attempt
-- **THEN** it issues or validates only the product-layer entry ticket and
-  transport route
-- **AND** Alan Cloud MUST NOT execute tools, read namespace files, decide policy
-  outcomes, spawn processes, or mutate runtime state on behalf of the Mac
-
-#### Scenario: Mac rejects unauthorized entry
-- **WHEN** a remote entry attempt lacks a valid account, device, target, entry
-  intent, expiry, or revocation state
-- **THEN** the Mac or product control plane rejects the attempt with a
-  machine-readable authorization error
-- **AND** no remote entry process is created or reattached
-
-### Requirement: Remote access security and revocation
-alan SHALL protect Alan Anywhere with encrypted transport, device binding,
-short-lived remote entry tickets, and revocation.
-
-#### Scenario: Remote connection is established
-- **WHEN** iPhone connects to a Mac through Alan Anywhere
-- **THEN** the connection uses encrypted transport
-- **AND** the remote entry ticket is scoped to the signed-in account, client
-  device, target Mac device, entry intent, expiry, and revocation state
-- **AND** the current single-user default does not require workspace-, session-,
-  or operation-scoped tokens before entering the user's remote namespace
-
-#### Scenario: Device is revoked
-- **WHEN** a user revokes a Mac or iPhone device
-- **THEN** alan invalidates future remote access for that device
-- **AND** active remote connections using that device credential are closed or
-  rejected before additional state-changing operations are accepted
-
-### Requirement: Zero-configuration product language
-alan SHALL present Alan Anywhere as device-to-device Alan continuation, not as
-remote desktop or user-managed networking.
-
-#### Scenario: User opens Alan Anywhere on iPhone
-- **WHEN** the iPhone user opens the Alan Anywhere surface
-- **THEN** the primary UI language describes online Alan devices and entry into
-  the selected device
-- **AND** it does not require or foreground VPN, tunnel, Cloudflare, SSH, port
-  mapping, router configuration, public IP, or daemon URL concepts
-
-#### Scenario: Debug details are needed
-- **WHEN** a developer opens an explicit debug or diagnostics surface
-- **THEN** alan may expose relay, node, routing, and connection diagnostics
-- **AND** those diagnostics remain outside the default user workflow
+#### Scenario: Transport implementation changes
+- **WHEN** Alan adopts a different byte-delivery mechanism
+- **THEN** device, ticket, handoff, Process, lease, and revocation semantics stay
+  unchanged
