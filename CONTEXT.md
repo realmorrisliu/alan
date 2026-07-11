@@ -1,631 +1,132 @@
-# Alan Product Context
-
-This glossary names Alan product concepts that cut across macOS shell, runtime,
-and future Alan OS work.
-
-The canonical kernel model is [ADR-0024](docs/adr/0024-plan9-kernel-model.md)
-(Plan 9 kernel) and [ADR-0025](docs/adr/0025-target-crate-architecture.md)
-(crate architecture); remote attachment is anchored by
-[ADR-0028](docs/adr/0028-remote-attachment-model.md) with its validatable
-contract in the `remote-access-service` OpenSpec capability. Where this
-glossary and the ADRs disagree, the ADRs win. Glossary entries carry names and
-one-line meanings only — normative semantics live in the ADRs and OpenSpec.
-Key consequences: the kernel has a single `Process` category (no `Agent Process`
-kernel type — agent-ness is a file-layout convention); `/agent` is a view over
-`/proc`; observation is a blocking read on a stream (no Subscription primitive);
-`Agent Capability`, `Context Grant`, and `Result Contract` are retired.
-
-## Language
-
-**Alan Agent**:
-The built-in optional Agent Workspace app for inspecting, steering, and
-organizing Agent Processes. It is not required to run agents; Alan Shell and
-other apps can operate through Alan OS files, descriptors, and syscalls.
-_Avoid_: OS core, agent backend, required agent entrypoint, Root Agent
-
-**Alan Kernel**:
-The small file-tree substrate inside Alan OS: namespace and mounts, paths,
-files, descriptors, access rights, credentials, processes, and the process
-table.
-_Avoid_: UI framework, object database, agent runtime, app backend
-
-**File**:
-A named Alan OS object exposed in the mounted namespace and opened through a
-Descriptor. Files may be directories, regular data, streams, process status or
-control endpoints, service endpoints, app-owned domain objects, or executable
-operation files.
-_Avoid_: POSIX bytes-only file, private app object copy, Kernel-owned domain record
-
-**Resource**:
-An app-, service-, or product-level name for a domain object. At the Kernel
-boundary, resources are exposed as Files in the mounted namespace.
-_Avoid_: separate Kernel primitive from File, private database primary key
-
-**Process**:
-A bounded execution with lifecycle, file descriptors, cancellation, exit status,
-owner, and process-table identity. Processes expose status, control, input,
-output, and events through Files, and they create or write ordinary Files.
-_Avoid_: task as separate Kernel primitive, root session, background chatbot
-
-**Agent Process**:
-An ordinary `Process` that runs an agent, recognized by conforming to the agent
-file-layout convention (it exposes `io/`, `status`, `ctl` plus `requests/`,
-`actions/`, `machine/`, `context/`, `children/`, and `events`). It is NOT a
-separate Kernel type — the Kernel has one `Process` category, and agent-ness is
-discovered by walking the process directory, not by a Kernel flag. Lowercase
-"agent process" is preferred prose for "a process that is an agent".
-_Avoid_: Agent Process as a Kernel category, Agent Run, app-local chatbot, hidden
-session, API task object
-
-**Stream**:
-An ordered File kind for observing process output, events, audit, file changes,
-or host updates. Streams are not a separate Kernel primitive; they are opened,
-read, tailed, watched, and resumed like Files.
-_Avoid_: hidden callback, transport detail, standalone event bus
-
-**Stream Offset**:
-A position in a Stream File used to resume reading, tailing, replay, result
-lookup, or cross-host recovery.
-_Avoid_: renderer scroll position, callback token, app-local sequence only
-
-**Service Event Stream**:
-A service- or app-owned Stream File for activity, audit, recovery, replay, or
-projection rebuilds. It is not a separate Kernel primitive or Kernel-owned
-journal.
-_Avoid_: Kernel primitive, universal audit database, object store, event system
-
-**Namespace**:
-The mounted Alan OS file tree where apps, hosts, and services expose files,
-directories, streams, process endpoints, service endpoints, and executable
-operation files.
-_Avoid_: private app database, plugin registry, object store
-
-**Standard Namespace**:
-The canonical Alan OS root layout. Top-level roots are kept small and stable:
-`/proc`, `/agent`, `/srv`, `/bin`, `/lib`, `/man`, and `/mnt`. Alan-specific
-packages belong under `/lib`; mounted service, app, and data trees belong under
-`/mnt`.
-_Avoid_: product-specific top-level roots, global registry sprawl, `/skill`,
-`/mem`, `/policy`, `/service` as default roots
-
-**Path**:
-A namespace-qualified file name. Prefer Path when naming durable Alan Kernel
-identity.
-_Avoid_: global object id, private database primary key, universal URI
-
-**Mount**:
-A binding that exposes an app, host, service, or native system file tree inside
-the Alan OS Namespace.
-_Avoid_: plugin registry entry, object collection, app-private folder
-
-**Remote Attachment**:
-Cross-host Alan OS access through mountable file trees over aP; all remote
-interaction is file operations on a returned namespace (ADR-0028 D1, D13).
-_Avoid_: daemon session API, remote-control tunnel as the product boundary, screen sharing
-
-**Remote Compatibility Gateway**:
-Retired concept — no HTTP/WS/daemon-session translation layer for remote
-access exists or may be added (ADR-0028 D11).
-_Avoid_: thin HTTP adapter, WebSocket compatibility bridge, temporary daemon gateway, session API wrapper
-
-**User Namespace Attachment**:
-The single-user-phase default remote scope: the owning user's full namespace,
-with the threat model stated explicitly (ADR-0028 D1).
-_Avoid_: per-session remote access, per-workspace default projection, fine-grained capability slicing by default
-
-**Remote Entry Process**:
-The real `Process` created on the destination host that embodies a remote
-client's authority; a general shell entry, not an Agent Process (ADR-0028 D2).
-_Avoid_: daemon session, transport socket as authority, out-of-band super-user client
-
-**Remote Attachment Lease**:
-The bounded window in which a `Remote Entry Process` survives transport loss
-and may be explicitly reattached; active from handoff readiness (ADR-0028 D6).
-_Avoid_: TCP lifetime as session lifetime, permanent orphan process, daemon session store row
-
-**Remote Reattach Intent**:
-The explicit request to resume a leased entry process; fresh entry never
-implicitly revives an old lineage (ADR-0028 D2, D6).
-_Avoid_: implicit session reuse, hidden cwd resurrection, daemon-style auto-resume
-
-**Remote Reconnect Recovery**:
-Recovery = lease reattach + saved `Stream Offset`s + ordinary file reads;
-never re-drives execution (ADR-0028 D6).
-_Avoid_: reconnect snapshot API as source of truth, re-driving execution, transport-owned session state
-
-**Neutral Remote Shell Entry**:
-A fresh remote entry lands in a general shell with the standard login
-namespace; nothing is implicitly restored (ADR-0028 D2).
-_Avoid_: implicit workspace resurrection, product-specific startup surface, hidden session restore at OS entry
-
-**Remote Lineage Revocation**:
-Revocation or lease expiry tears down the whole remote-attached lineage by
-default; no local takeover escape hatch this phase (ADR-0028 D7).
-_Avoid_: silently lingering remote authority, permanent remote child after revocation, hidden daemon cleanup job
-
-**File Server**:
-A long-running Process that exports a file tree which other processes can mount
-or bind into their Namespace. Alan OS services are file servers, not HTTP APIs.
-_Avoid_: REST service, hidden singleton backend, object API
-
-**Remote Access Service**:
-The Service-Manager-started file server owning cross-host entry
-(`/srv/remote-access`); OS-generic, never runtime authority (ADR-0028 D4).
-_Avoid_: daemon replacement as system center, Root Agent gateway, runtime authority
-
-**Remote Attachment Handoff**:
-The blocking, one-shot delivery of a `Remote Entry Process` root handle after
-bootstrap; steady-state work never proxies through the service (ADR-0028 D5).
-_Avoid_: permanent proxying through the entry service, daemon session broker, runtime truth living in the handshake layer
-
-**Remote Bootstrap Tree**:
-The minimal aP entry surface of `Remote Access Service`: `new/` for fresh
-entry, `leases/` for explicit reattach (ADR-0028 D5).
-_Avoid_: separate RPC login protocol, long-lived control plane API, steady-state workspace surface
-
-**Remote Entry Clone**:
-The clone-via-open allocation of a fresh bootstrap instance (`new/clone` →
-`request`, `status`, `handoff`, `ctl`) (ADR-0028 D5).
-_Avoid_: create-session RPC, magic start command, hidden bootstrap allocation
-
-**Remote Bootstrap Consumption**:
-A successful handoff consumes its bootstrap instance; re-attachment needs a
-new clone or an explicit lease reattach (ADR-0028 D5).
-_Avoid_: reusable bootstrap session object, repeated root-handle reads, hidden attach cache
-
-**Remote Bootstrap Cleanup**:
-Pre-handoff failures are cleaned up by the bootstrap instance (including
-partial entry processes); post-handoff lifecycle belongs to the process tree
-and lease (ADR-0028 D5).
-_Avoid_: orphan half-created entry process, post-handoff service ownership, cleanup through daemon session state
-
-**Remote Lease Directory**:
-The browsable `leases/` view exposing minimal neutral metadata for explicit
-reattachment (ADR-0028 D5).
-_Avoid_: magic resume flag on a single control file, hidden lease catalog, daemon session list API
-
-**Remote Namespace Root Handoff**:
-Clients receive the entry process's namespace root itself and walk ordinary
-Alan OS paths — no remote-only endpoint bundle (ADR-0028 D5).
-_Avoid_: remote-only service menu, daemon session object, attach-specific API surface
-
-**Login Namespace Template**:
-The standard per-user namespace shape cloned for any fresh entry process,
-local or remote (ADR-0028 D3).
-_Avoid_: remote-only default namespace, borrowing a live shell namespace, hidden shared mutable workspace
-
-**Remote Context Tree**:
-Lineage-local `/mnt/remote` files exposing attachment facts (device, transport,
-lease, history); inherited by descendants, never host-global (ADR-0028 D8).
-_Avoid_: implicit remote headers, client-only memory, hidden handshake metadata
-
-**Service Manager**:
-The Alan OS system Process responsible for starting, stopping, restarting, and
-supervising system services and boot units. It replaces the former daemon as the
-canonical lifecycle concept and exposes its management view as files.
-_Avoid_: Alan daemon as architecture concept, Root Agent, app backend
-
-**Service Handle Registry**:
-The `/srv` file tree where running file servers post handles that other
-processes can mount. `/srv` is a rendezvous point, not the service state tree.
-_Avoid_: service database, REST endpoint registry, app launcher
-
-**Process Table**:
-The Alan Kernel view of bounded Processes, their lifecycle, descriptors,
-parents, owners, credentials, and cancellation or signal targets.
-_Avoid_: task database, chat session list, app-owned job queue
-
-**Descriptor**:
-A typed opaque authority-bearing reference returned by opening a File or
-Process endpoint, paired with Access Rights and any relevant offset state. It is
-the Alan Kernel analogue of a file descriptor.
-_Avoid_: durable path identity, object database key, capability descriptor
-
-**Access Rights**:
-The access modes attached to a Descriptor, such as read, write, watch, spawn,
-or signal.
-_Avoid_: agent risk score, app-domain policy, product confirmation state
-
-**Runtime Reference**:
-A temporary in-memory or compatibility reference used by projections, caches, or
-running state. It is not the canonical Path or authority-bearing Descriptor.
-_Avoid_: durable path identity, native authority, object database key
-
-**Operation Surface**:
-An umbrella term for service/app descriptors exposed through the file tree.
-Commands and queries stay above Kernel while referencing paths, files, processes,
-descriptors, and namespaces. Watching is not an operation surface — it is a
-blocking read on a stream file; Subscription is retired (ADR-0024 D8).
-_Avoid_: Kernel primitive, app callback registry, code module boundary,
-Subscription as an operation surface
-
-**Command**:
-A typed executable operation surface that requests a side effect or spawns a
-Process under Descriptor/Access Rights checks and any relevant service or app
-governance.
-_Avoid_: view callback, tool synonym, Kernel primitive above File
-
-**Query**:
-A typed read-only operation surface for inspecting files, processes, streams, or
-snapshots through file-tree semantics.
-_Avoid_: mutation path, hidden recomputation hook, database query only
-
-**Subscription**:
-Retired as a concept. Watching is a blocking read on an `events`/`log` stream
-file (`tail -f` semantics): the read blocks until new records arrive. There is no
-Subscription primitive, object, or registry.
-_Avoid_: Subscription as a primitive, separate event system, hidden callback,
-mutable view state
-
-**Agent Runtime Service**:
-A system file-server Process managed by Service Manager. It executes Agent
-Processes, serves AgentFS, and backs agent executables without exposing a
-product-facing HTTP API.
-_Avoid_: Agent Capability Service API, app backend, Root Agent
-
-**AgentFS**:
-The `/agent` file tree served by Agent Runtime Service. It is a view over
-`/proc` (a union/bind of agent-conforming process directories), not a second
-process table — `/proc/<pid>` is the source of truth. `/agent/root` is the
-stable alias to whichever pid currently embodies the Root Agent's home, and
-`/agent/<pid>` exposes the agent file-layout surfaces.
-_Avoid_: second process table, executable catalog, agent registry, chat history
-database
-
-**Agent Executable**:
-An executable file that creates an Agent Process when spawned. Agent
-Executables are discovered through the normal command namespace, usually `/bin`,
-after bind/union mounting; they are not invoked through an agent API.
-_Avoid_: Agent Capability Descriptor, API method, app-local prompt
-
-**Tool**:
-A reusable executable installed in the Alan OS command namespace. Agent
-Processes use Tools by spawning executables, passing descriptors, reading
-stdout/stderr/result files, and waiting for exit status.
-_Avoid_: JSON function, runtime-private callback, skill
-
-**Tool Manifest**:
-A machine-readable file describing a Tool's argv, stdin/stdout/result
-conventions, required descriptors, effect class, exit status, and sandbox hints.
-It is stored under `/lib/exec/<name>/manifest` and complements the Tool's
-`--help` output and manual page.
-_Avoid_: hidden registry entry, agent-only schema, permission source
-
-**WASM Component**:
-A portable compiled Alan extension with a WIT boundary and explicitly granted
-Descriptors and Access Rights. It is projected into Alan OS as a Tool or a
-File-Server Service rather than becoming a separate client API.
-_Avoid_: ambient host plugin, replacement for aP, user-facing scripting language,
-unclassified extension
-
-**Skill**:
-A manual-like knowledge package installed under `/lib/skill/<name>` and
-documented under `/man/skill/<name>`. Skills are read by Agent Processes through
-descriptors and may explain tools, workflows, examples, constraints, and domain
-procedures; they do not execute.
-_Avoid_: Tool, executable, permission grant, hidden prompt injection
-
-**Agent Context**:
-The files bound into an agent's namespace (notably under `context/`, plus the
-`/bin` tools and Skills it can see) at spawn time, such as a target file,
-selection, Skill directory, Memory Store, or policy file. The model request is
-assembled as a view over these namespace files; changing context means changing
-the namespace, not calling a grant API.
-_Avoid_: Context Grant API, prompt dump, implicit global access
-
-**Credential**:
-The Kernel identity and authority context used for access checks, such as a
-user, app, service, process, or agent actor credential.
-_Avoid_: product persona, chat participant, app-local user profile
-
-**Remote Device Identity**:
-The authenticated remote installation/hardware identity — provenance and audit
-context, not the authority-bearing `Credential` (ADR-0028 D9).
-_Avoid_: replacing the user credential, standalone permission principal by default, hidden transport token
-
-**Remote Product Control Plane**:
-The product-layer account/device/presence/relay/ticket system (e.g. for Alan
-Anywhere); lives outside Alan OS proper (ADR-0028 D10).
-_Avoid_: Alan OS kernel primitive, daemon-era runtime authority, cloud-owned process truth
-
-**Remote Entry Ticket**:
-A short-lived product credential authorizing one entry attempt (account +
-device + target + intent + expiry); never a daemon-session token (ADR-0028 D10).
-_Avoid_: daemon endpoint token, session-scoped bearer token, fine-grained workspace capability by default
-
-**Alan Anywhere**:
-The product experience over remote attachment: control plane gets you to
-`Remote Access Service`; the OS hands back a real namespace (ADR-0028 D10).
-_Avoid_: daemon remote-control product, relay UI, session API wrapper, Alan OS primitive
-
-**Alan Anywhere Discovery**:
-Pre-attachment discovery stops at owned-device availability; work discovery
-happens after entry by reading the remote namespace (ADR-0028 D10).
-_Avoid_: daemon session picker, cloud-owned workspace catalog, pre-attach app continuation state
-
-**Remote Transport Mode**:
-The byte-delivery path (direct, relay, LAN); affects reachability and latency,
-never attach semantics (ADR-0028 D11).
-_Avoid_: separate remote API family per transport, relay mode as architecture, transport-specific process model
-
-**Imported Remote Tree**:
-A remote tree mounted like any file server, default `/mnt/peer/<remote-id>`
-(named by exported entry tree, not device); effects execute on the remote host
-(ADR-0028 D12).
-_Avoid_: remote-only client abstraction, daemon API mirror, special cross-host object model
-
-**Cross-Host Process Composition**:
-Cross-host cooperation = walk/read/write/spawn on imported trees; no dedicated
-agent-to-agent RPC protocol (ADR-0028 D12).
-_Avoid_: special agent-to-agent wire protocol, daemon delegation API, hidden remote orchestration channel
-
-**Directional Remote Visibility**:
-Importing a remote tree never implicitly exposes the local namespace back;
-reverse sharing is an ordinary explicit export (ADR-0028 D12).
-_Avoid_: implicit bidirectional attach, transport-created shared namespace, hidden reverse channel
-
-**Access Check**:
-The Kernel/OS authority check for whether a Credential can obtain a Descriptor
-for a path, file, process endpoint, stream, or mounted service with Access
-Rights such as read, write, watch, spawn, or signal.
-_Avoid_: agent risk scoring, product confirmation flow, app-domain policy,
-capability descriptor
-
-**Consent Broker**:
-A Host Service or OS service that asks for and records user/system consent for
-resource access, such as files, microphone, automation, workspace
-writes, or cross-app access.
-_Avoid_: Kernel primitive, agent action risk model, app-specific modal only
-
-**Agent Action Governance**:
-The agent runtime decision layer that evaluates whether an agent-proposed or
-autonomous action can run, must ask, or must be denied.
-_Avoid_: universal OS command governance, UNIX permission check, app-local delete button policy
-
-**Agent Action Effect Class**:
-A semantic classification of an agent-proposed action's effect, such as inspect,
-draft, modify, delete, publish, execute, delegate, remember, or cross-app, used
-by Agent Action Governance.
-_Avoid_: read/write only, tool capability as full risk model
-
-**Agent Action Risk**:
-The governance assessment of whether an agent-proposed action can run
-automatically, must ask for approval, or must be denied, based on policy, effect
-class, target scope, reversibility, guard strength, and auditability.
-_Avoid_: write means unsafe, read means safe
-
-**Agent Execution Guard**:
-The containment, validation, or approval mechanism used to constrain
-agent-proposed actions, such as an OS sandbox, workspace path guard, app object
-guard, domain validator, or human approval gate.
-_Avoid_: policy alone, sandbox as the only guard
-
-**Agent Action**:
-A specific external effect proposed or initiated by an Agent Process, such as
-spawning a Tool, writing a File, editing a resource, requesting consent, or
-issuing an app command. Actions are exposed under AgentFS and are not Tools
-themselves.
-_Avoid_: Tool definition, generic command history, Kernel primitive
-
-**Agent Request**:
-A file-tree interaction where an Agent Process asks for confirmation,
-structured input, selection, credentials, or another external answer. Requests
-are answered by writing response files, not by calling a resume API.
-_Avoid_: private callback, HTTP resume operation, modal-only UI
-
-**Agent IO**:
-The external input, output, and event surface of an Agent Process. Agent IO is
-what shells, apps, and users consume by default; it is distinct from machine
-tape.
-_Avoid_: tape, full runtime trace, debug log
-
-**Agent Machine**:
-The Turing-machine view of an Agent Process exposed by Agent Runtime Service:
-tape, machine state, transition events, and checkpoints. This is an AgentFS
-surface, not Alan Kernel ontology.
-_Avoid_: Kernel state, user-facing transcript, session API
-
-**Object**:
-A typed Alan surface for an inspectable File or app domain resource. Prefer
-File when naming Alan Kernel ontology.
-_Avoid_: Kernel primitive above File, private object store, durable object id
-
-**Task**:
-A user-facing or app-facing name for work in progress. Prefer Process when
-naming Alan Kernel execution semantics.
-_Avoid_: separate Kernel primitive from Process, todo item as execution authority,
-task database
-
-**Artifact**:
-A service/app-facing presentation or compatibility surface over an ordinary
-File produced by a Process.
-_Avoid_: Kernel primitive, separate artifact database, durable Kernel artifact id
-
-**Evidence**:
-An Agent/App-facing interpretation of paths, stream offsets, process ids,
-descriptors, app artifact paths, or native selectors as support for a claim,
-result, memory, command proposal, or decision.
-_Avoid_: Kernel primitive, ProvenanceRef, evidence database
-
-**Semantic View**:
-A host-facing projection or rendering hint over file, process, and stream-file
-state. Business truth remains in the underlying Files and Processes.
-_Avoid_: UI framework, app state authority, renderer-owned truth
-
-**Agent Memory Kind**:
-The agent-cognitive classification of memory as working, episodic, semantic, or
-procedural. This describes how an agent uses memory, not who owns it.
-_Avoid_: user/app/system ownership bucket, storage location, permission model
-
-**Working Memory**:
-Session-local agent memory needed to continue the current task.
-_Avoid_: durable user preference, cross-app continuity store
-
-**Episodic Memory**:
-Agent memory about what happened in past sessions, handoffs, daily notes, or
-run histories.
-_Avoid_: stable fact store, behavior rule
-
-**Semantic Memory**:
-Stable agent memory about durable facts, preferences, constraints, conventions,
-or decisions.
-_Avoid_: raw transcript, chronological log, current TODO
-
-**Procedural Memory**:
-Behavioral memory expressed through prompts, persona files, skills, or other
-rules for how an agent should act.
-_Avoid_: user identity fact, session summary, app-owned history
-
-**Memory Store**:
-An ownership and authority boundary for memory files. Memory Stores expose
-memory as file trees that Agent Processes can access only through Access
-Checks, Descriptors, or app-controlled surfaces. When a Memory Store is mounted
-for browsing or process use, the conventional mount location is under
-`/mnt/mem`.
-_Avoid_: memory kind, global agent brain, Kernel primitive
-
-**Personal Memory Store**:
-The Memory Store for user-owned preferences, habits, goals, identity, and
-stable constraints.
-_Avoid_: app history, workspace status, raw transcript dump
-
-**System Continuity Store**:
-The Memory Store for Alan OS continuity across apps, active work, and
-relationships between runs or tasks.
-_Avoid_: app-owned private memory, global scrape, root agent session
-
-**App Memory Store**:
-An Alan App-owned Memory Store for domain memory such as reading history,
-practice logs, project notes, or app-specific evidence.
-_Avoid_: automatic Root Agent memory, global agent memory
-
-**Workspace Memory Store**:
-The Memory Store for workspace-scoped agent work, decisions, conventions,
-handoffs, and project continuity.
-_Avoid_: personal identity memory, app-private history, Kernel memory system
-
-**Agent Execution Engine**:
-The current internal implementation of the Agent Runtime Service concept: tape,
-machine loop, model calls, tool execution compatibility, skills, policy, memory,
-and persistence. It is not Alan Kernel.
-_Avoid_: Alan OS, Alan Kernel, app UI, daemon
-
-**Root Agent**:
-The always-available Agent Process at the root of the agent process tree, with
-long-lived identity, memory, system awareness, and cross-app continuity. It can
-coordinate child Agent Processes but is not the Service Manager, root
-permission, or an ever-growing chat session.
-_Avoid_: root permission, root agent session, agent kernel, global chat
-
-**Root Agent Process**:
-The concrete Agent Process exposed through `/agent/root`. It is launched by
-Service Manager as a boot unit and appears in both `/proc` and `/agent`.
-_Avoid_: Service Manager, daemon, global conversation
-
-**Agent Workspace**:
-An optional user-visible workspace, such as Alan Agent, where users inspect,
-steer, and organize Agent Processes, requests, actions, memory, evidence, and
-cross-app work.
-_Avoid_: Root Agent, required agent runtime, root session
-
-**Agent Process Migration**:
-The migration of existing Alan Agent capabilities into Alan OS by preserving,
-adapting, or rewriting them as Kernel primitives, system file-server behavior,
-AgentFS surfaces, Tools, Skills, policy descriptors, compatibility behavior, or
-optional workspace UI.
-_Avoid_: Agent Capability model, greenfield replacement, copying runtime internals into Kernel
-
-**Root Agent Authority**:
-The authority model for the Root Agent: broad system awareness and
-suggestion power through default system index, notification, and continuity
-descriptors, with app-private reads and side effects mediated through explicit
-Descriptors, consent, policy, and audit paths.
-_Avoid_: root automation permission, unrestricted agent access
-
-**Generation**:
-One LLM call — a single evaluation of the agent's transition function. A
-Generation is modeled as a connection directory under an LLM Connection: the
-caller writes a neutral request document to `data` (possibly over several writes)
-and clunks it to commit, then reads a typed token stream from `events`.
-Generations are visible as files so their progress and cost can be
-inspected.
-_Avoid_: hidden fd-only session, provider-specific request as the canonical
-shape, a generation that cannot be observed as files
-
-**LLM Provider**:
-A wire adapter (driver) for one model API — Anthropic, OpenAI Responses, etc.
-Served read-only for introspection at `/mnt/llm/providers/<provider>`. A Provider knows the
-protocol but holds no Credential and no default Model, so it is not callable on
-its own.
-_Avoid_: provider as a callable endpoint, provider that embeds credentials
-
-**LLM Connection**:
-A callable endpoint that binds a Provider, a Model, and a Credential together,
-served by `llmfs` at `/mnt/llm/connections/<connection>` (llmfs posts its mountable handle at
-`/srv/llm`; `/srv` holds handles only, not service state). Generations happen
-here. An agent
-gains model access only by binding a Connection into its namespace; changing the
-model means binding a different Connection. Credentials stay in the Connection /
-secret store and never enter the request document or the agent's namespace as
-plaintext. Cost, metering, and rate-limiting live here, not in a global quota
-service.
-_Avoid_: credentials in the request, a global model-quota service, ambient model
-access outside the namespace, conflating Provider with Connection
-
-**Knowledge Checkpoint**:
-A root hash over an agent's content-addressed knowledge DAG (tape, memory,
-context). A checkpoint names an exact state; forking from one is cheap (shared
-unchanged blocks); history is tamper-evident. Knowledge is stored content-
-addressed and deduplicated, bounded by reachability GC (not kept forever).
-_Avoid_: mutable checkpoint, full-copy fork, never-delete storage, a checkpoint
-that cannot be verified by hash
-
-**Message Routing**:
-Decoupled communication via `routefs`: a sender writes a typed message to `send`
-(framed, committed on clunk) and rule files route it by content/type to a
-destination port (a stream a receiver tails). The sender does not name the
-receiver. Used for agent/tool/app handoff
-and human-in-the-loop governance routing; messages are logged and rules are
-inspectable files. (Idea from Plan 9's Plumber; name is Alan's own.)
-_Avoid_: sender naming the receiver, hidden routing with no log, routing as the
-primary control path, silently dropped messages
-
-**Alan Shell**:
-The primary shell for Alan OS: a Plan 9 `rc`-like and Acme-like interaction
-surface for using the Namespace, files, processes, Agent Processes, Tools,
-Skills, Memory Stores, and system services. It may be rendered by the current
-Ratatui path in `crates/tui` and by Alan for macOS.
-_Avoid_: Alan TUI as product name, daemon client, terminal product naming, chat UI
-
-**Programmable Client Surface**:
-The Alan Shell interaction contract that lets humans and agents compose mounted
-Files, Streams, and executable Processes through editable text and file
-operations. It is part of Alan Shell, not a separate component, service, app, or
-product.
-_Avoid_: ClientSurface object, client service, UI framework, app runtime,
-separate programmable environment
-
-**Alan Shell Evaluator Process**:
-An ordinary Process spawned by an Alan Shell client to execute one explicit
-editable-text selection under the caller's bounded Namespace. Its `/proc` path
-is the execution identity; it is created through the `run` Tool, and `editfs`
-never owns a separate execution registry.
-_Avoid_: buffer-local execution object, hidden evaluator task, editfs command
-runner, opaque execution id
-
-**Primary Shell Window**:
-The single main Alan shell window used by the macOS app. Short-term product
-work assumes there is only one shell window, and summon behavior targets this
-window.
-_Avoid_: recent shell window, per-Space shell window, Quick Terminal window
-
-**Primary Window Summon**:
-The user action that brings Alan's primary shell window to the user's current
-macOS Space and display. It targets the main Alan window, not a detached
-terminal panel or separate terminal runtime, and it preserves the current Alan
-workspace Space, Tab, and Pane selection. Alan comes to the user's current
-desktop context rather than moving the user to Alan's previous desktop context.
-It replaces the former Quick Terminal shortcut without keeping Quick Terminal
-compatibility aliases. It is an app/window command, not a shell workspace
-action.
-_Avoid_: Quick Terminal summon, Peak summon, global terminal toggle, quick-terminal alias
+# Alan Vocabulary
+
+This glossary is descriptive. Normative behavior lives in OpenSpec; architectural
+decisions live in `docs/adr/`.
+
+## Product and system
+
+**Alan** — A programmable personal computing environment.
+
+**Alan OS** — The system boundary formed by Alan Kernel, File-Server Services,
+Service Manager, Root Agent Process, Agent Runtime Service, hosts, and app
+integration conventions.
+
+**Standard Namespace** — The canonical root layout: `/proc`, `/agent`, `/srv`,
+`/bin`, `/lib`, `/man`, and `/mnt`.
+
+**Alan Kernel** — Namespace and mounts, paths, files, descriptors, access
+rights, credentials, the Process table, and synthetic `/proc` and `/srv`
+devices. It depends only on aP among Alan crates.
+
+**aP** — Alan's byte-oriented file-service protocol. It carries file
+operations, directory entries, clone-via-open allocation, and offset-readable
+streams without embedding higher-level domain objects.
+
+**Service Manager** — The system Process that starts, stops, restarts, and
+supervises services and boot units.
+
+**File-Server Service** — A long-running Process that exports a tree other
+Processes can mount or bind into their namespace.
+
+**Service Handle Registry (`/srv`)** — The rendezvous tree where a running file
+server posts a mountable handle. Service state belongs in the service's own
+tree, not in `/srv`.
+
+## Execution
+
+**Process** — A bounded execution with PID, parent, descriptors, credentials,
+lifecycle, streams, status, and exit state.
+
+**Agent Process** — An ordinary Process that conforms to the agent file layout.
+Its lifecycle source of truth is `/proc/<pid>` and its AgentFS view is
+`/agent/<pid>`.
+
+**Root Agent Process** — The always-available root of the agent process tree,
+surfaced through `/agent/root`. It coordinates child Agent Processes.
+
+**Agent Executable** — An executable bound into `/bin` that creates an Agent
+Process when spawned.
+
+**Agent Runtime Service** — The internal File-Server Service that executes
+Agent Processes and serves AgentFS.
+
+**Agent Machine** — Tape and transition-local state for one Agent Process. It
+is surfaced through `/agent/<pid>/machine`.
+
+**Tape** — Ordered messages, context items, Tool records, and compaction state
+consumed by the transition function.
+
+**Turn** — One user-input transition through model generation and any resulting
+Tool loop.
+
+**Yield** — A transition pause that exposes a pending request through AgentFS.
+
+**Checkpoint** — Durable Agent Machine evidence tied to a tape root and
+execution record.
+
+**Rollout** — Append-only durable execution evidence. A rollout has its own
+identifier and records the Process path that produced it.
+
+**Child Run Registration** — Process-local metadata describing one delegated
+child Agent Process launch. Live lifecycle remains authoritative in `/proc`.
+
+## Files, commands, and knowledge
+
+**AgentFS** — The file server mounted at `/agent`. It exposes agent IO,
+requests, actions, children, machine state, plans, notices, and streams.
+
+**Tool** — A reusable executable installed in the command namespace.
+Permissions come from descriptors, access rights, policy, and the selected
+execution backend.
+
+**Skill** — A manual-like knowledge package passed to Agent Processes. A Skill
+does not execute by itself.
+
+**Memory Stores** — File trees that own personal, system-continuity, app, and
+workspace memory authority.
+
+**Working Memory** — Process-local continuity material keyed by Process path.
+
+**Episodic Memory** — Durable summaries of prior Agent Process execution.
+
+**Handoff** — A compact file describing current goal, completed work, open
+loops, next steps, and evidence references for a later Agent Process.
+
+**LLM Connection** — A resolved provider/model/credential-reference binding
+used by an Agent Process. Secret material remains in its owning host store.
+
+## Hosts and apps
+
+**Alan Shell** — The primary file-native interaction model for namespace,
+files, Processes, Agent Processes, Tools, Skills, Memory Stores, and services.
+The current interactive implementation is the Rust TUI.
+
+**Alan Renderer Host** — A renderer/input host that consumes mounted AgentFS
+and `/proc` files and writes to their control surfaces.
+
+**Alan for macOS** — The native Apple terminal host, renderer, input shell,
+windowing layer, and OS integration surface. Its future Alan OS attachment is a
+separate design decision governed by ADR-0029.
+
+**Alan Agent** — An optional Agent Workspace app for inspecting, steering, and
+organizing Agent Processes through files.
+
+**Alan App** — An app with an app-owned domain core and an Alan file-server
+adapter. Its UI, Tools, and Agent Processes read the same authoritative tree.
+
+**Host-backed capability** — A File-Server Service whose adapter may call
+platform frameworks, XPC helpers, device SDKs, or other host-local mechanisms
+while keeping the exported file tree authoritative for Alan OS clients.
+
+## Current implementation names
+
+**Agent Execution Engine (`alan-agent-engine`)** — The current model-call,
+Tool, policy, Skill, memory, compaction, and persistence loop in
+`crates/agent-engine`.
+
+**Alan terminal UI (`alan-terminal-ui`)** — The linked Ratatui renderer and
+input loop in `crates/tui`, backed by AgentFS and `/proc` files.
+
+**Shell workspace core (`alan-shell-core`)** — Platform-neutral spaces, tabs,
+panes, terminal activity, settings, and persistence domain model shared with
+Alan for macOS.

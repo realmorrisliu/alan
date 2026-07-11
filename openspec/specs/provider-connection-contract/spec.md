@@ -20,13 +20,6 @@ boundaries in OpenSpec.
   `openrouter-provider-adapter`, or an active provider change
 - **AND** no duplicate provider contract is maintained under `docs/spec/`
 
-#### Scenario: Legacy provider doc is referenced
-- **WHEN** `docs/spec/provider_capability_contract.md`,
-  `docs/spec/provider_auth_contract.md`,
-  `docs/spec/connection_profile_contract.md`, or a provider migration doc is
-  opened
-- **THEN** the page is only a bridge to the OpenSpec owner
-
 ### Requirement: Host auth and runtime provider state remain separated
 alan SHALL keep host credential control, managed login state, connection profile
 metadata, runtime request shaping, and provider-native features in their

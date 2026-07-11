@@ -21,11 +21,6 @@ assets, delegated launch targets, and management surfaces in OpenSpec.
 - **AND** `docs/skill_authoring.md` and `docs/skills_and_tools.md` remain
   implementation/operator guides instead of contract sources
 
-#### Scenario: Legacy skill contract is opened
-- **WHEN** `docs/spec/skill_system_contract.md` is reached during migration
-- **THEN** the page points to this OpenSpec capability and does not restate the
-  full legacy contract
-
 ### Requirement: Skill vocabulary is stable
 alan SHALL use stable skill-system vocabulary consistently across runtime,
 daemon, CLI, documentation, and authoring tooling.

@@ -166,8 +166,8 @@ exists.
 
 - **No mass-market UI.** Pro users only for now; expose the raw namespace;
   accept Emacs-style deep-and-narrow.
-- **No RPC platform.** A non-file agent API is compatibility transport at
-  most, never the canonical boundary.
+- **No RPC platform.** Alan OS clients use file operations, descriptors, and
+  executable spawn as the system boundary.
 - **No proprietary object store.** Files, mounts, and projections; source
   data is not forced into Alan.
 - **No literal Acme UI.** Mouse chords and no-syntax-highlighting are taste,

@@ -128,8 +128,8 @@ process re-binding the same home. The pid is ephemeral — durable identity is t
 home path, and stable names like `/agent/root` resolve to whichever pid currently
 embodies the home. Whether an agent is durable or ephemeral is decided by where
 its home is mounted (tmpfs home → ephemeral; disk-backed home → durable), not by
-any agent type. (Absorbs Workspace / AgentInstance / Session into home tree +
-process + process lifetime. Refines ADR-0002.)
+any agent type. Durable definition and continuity live in the home tree while
+execution lifetime belongs to Process. Refines ADR-0002.
 
 ### D8. Observation is a blocking read on an events stream
 
@@ -137,7 +137,7 @@ There is no second event system. To observe anything, a consumer opens and reads
 an `events`/`log` stream and blocks until new records arrive; `tail -f` is
 literally "watch". Any container with dynamic children (e.g. `requests/`) exposes
 a sibling events stream where child add/remove/change records appear. These
-streams are bounded-retention append logs with offset resume so a reconnecting
+streams are bounded-retention append logs with offset continuation so a later
 watcher neither misses nor mis-replays. This eliminates Subscription as a
 primitive (subscription = a blocking read). (Makes ADR-0017 concrete.)
 
@@ -192,5 +192,5 @@ memory, or runtime — the crate that should change least.
 file · directory · stream · namespace · mount · bind · union · fid · process ·
 `/proc` · `/srv` · ctl. Retired as kernel concepts: Agent Process (type), Object,
 Buffer, View, Command, Query, Subscription, Task, Artifact, Evidence, Journal,
-ViewModel, Workspace, AgentInstance, Session, Context Grant, Result Contract,
+ViewModel, AgentInstance, Context Grant, Result Contract,
 global opaque id.

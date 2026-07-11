@@ -32,7 +32,7 @@ targets, QA findings, comments, and agent-proposed patches instead of manually
 maintaining multiple target-specific editions. The review host SHALL open
 bounded project, package, QA, preview, and writable proposal descriptors, bind
 the `updf` Tool and role Skill, and spawn a role-specific Agent Executable rather
-than embedding an agent engine or calling a daemon/session API.
+than creating a second execution authority inside UPDF.
 
 #### Scenario: Comment is attached to preview context
 - **WHEN** a reviewer comments on a target preview page or region

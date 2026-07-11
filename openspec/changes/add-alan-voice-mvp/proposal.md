@@ -1,10 +1,8 @@
 ## Why
 
 Alan for macOS needs low-friction Hold to Talk without becoming always-on
-dictation or a separate voice assistant. The previous change correctly defined
-the product interaction but routed typed intents through session/runtime bridges;
-the Plan 9-like design requires recognition, intent proposals, targeting, and
-execution to meet Alan OS through a host-backed file-server tree.
+dictation or a separate voice assistant. Recognition, intent proposals,
+targeting, and execution meet Alan OS through a host-backed file-server tree.
 
 ## What Changes
 
@@ -17,8 +15,8 @@ execution to meet Alan OS through a host-backed file-server tree.
   remain behind the adapter.
 - Represent capture instances, transcript, typed intent proposal, status,
   result, events, and lifecycle control as files.
-- Resolve the target from descriptors and mounted app/service trees rather than
-  session ids or global “current context” objects.
+- Resolve the target from descriptors and mounted app/service trees with no
+  global “current context” object.
 - Execute accepted intents through canonical file writes, owning `ctl` writes,
   `/bin` Tool execution, or Agent Executable spawn with bounded descriptors.
 - Keep ambiguous or unsafe intents as reviewable proposal files; cancellation
@@ -47,5 +45,5 @@ None.
 - Agent commands create or write an Agent Process through normal file/spawn
   semantics; task, search, capture, and app commands target their owning mounted
   trees or Tool executables.
-- No new daemon session, runtime submission, typed RPC, or remote-control API is
-  introduced.
+- Every Alan OS-facing interaction uses the Voice Service tree, Tool spawn, or
+  Agent Executable spawn.

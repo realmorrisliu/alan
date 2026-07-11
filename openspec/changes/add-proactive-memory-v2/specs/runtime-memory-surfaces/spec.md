@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Memory surfaces consume store-owned write state
-Generated recall, handoff, session-summary, and daily-note surfaces SHALL read
+Generated recall, handoff, Episodic Memory, and daily-note surfaces SHALL read
 current memory through namespace-mounted Memory Store files. They SHALL keep
 write/evidence references bounded, SHALL NOT duplicate the full ledger, and
 SHALL NOT reintroduce content whose store-owned write state is reverted.
@@ -14,18 +14,18 @@ SHALL NOT reintroduce content whose store-owned write state is reverted.
 
 #### Scenario: A write was reverted
 - **WHEN** the current store tree or ledger state marks a write reverted
-- **THEN** recall, handoff, session-summary, and daily-note surfaces exclude the
+- **THEN** recall, handoff, Episodic Memory, and daily-note surfaces exclude the
   reverted fact as current memory
 
-### Requirement: Legacy workspace memory is a compatibility store
-The current `.alan/memory/` workspace layout SHALL be treated as the backing
-storage of a Workspace Memory Store compatibility adapter. Agent-facing
+### Requirement: Channel-scoped workspace memory backs the Workspace Memory Store
+The current `.alan/runtime/<channel>/memory/` workspace layout SHALL be treated
+as the backing storage of a Workspace Memory Store adapter. Agent-facing
 references SHALL use mounted namespace paths under `/mnt/mem` or passed
 descriptors rather than raw host workspace paths.
 
-#### Scenario: Existing workspace memory is loaded
-- **WHEN** a workspace still stores pure-text memory under `.alan/memory/`
-- **THEN** the compatibility adapter projects it through the authorized
+#### Scenario: Workspace memory is loaded
+- **WHEN** a workspace stores pure-text memory under its active channel root
+- **THEN** the adapter projects it through the authorized
   Workspace Memory Store tree
 - **AND** callers do not infer Personal or System-Continuity authority from
-  compatibility filenames
+  workspace filenames

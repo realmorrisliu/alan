@@ -38,7 +38,7 @@ cargo test -p alan-terminal-ui
 - Prefer focused commits with clear intent.
 - Conventional-style commit messages are recommended, for example:
   - `feat(runtime): add queued input cap for broker drain`
-  - `fix(daemon): rollback staged state on persist failure`
+  - `fix(agent-engine): preserve machine state when a turn fails`
 
 ## Pull Request Expectations
 

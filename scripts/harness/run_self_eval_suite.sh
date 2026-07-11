@@ -136,8 +136,8 @@ compute_boundary_violations() {
 compute_recovery_success_rate() {
     local profile_dir="$1"
     local scenarios=(
-        "autonomy__reboot_resume"
         "autonomy__dedup_side_effect"
+        "governance__recovery_boundary"
     )
     local passed_count=0
     local total_count="${#scenarios[@]}"

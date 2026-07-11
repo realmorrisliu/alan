@@ -18,8 +18,3 @@ Do not use it for:
 ## Evergreen Maintainer Guides
 
 - [github_automation.md](./github_automation.md)
-
-## Project-Specific Maintainer Notes
-
-- [remote_control_phased_plan.md](./remote_control_phased_plan.md)
-- [verification_first_runtime_plan.md](./verification_first_runtime_plan.md)

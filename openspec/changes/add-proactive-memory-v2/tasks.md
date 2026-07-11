@@ -4,8 +4,8 @@
   surfaces to `alan-memfs` using ordinary aP operations and commit-on-clunk.
 - [ ] 1.2 Implement atomic target-document plus ledger commit with namespace
   target containment and access-right checks.
-- [ ] 1.3 Project the current `.alan/memory/` layout through a Workspace Memory
-  Store compatibility adapter under `/mnt/mem`.
+- [ ] 1.3 Project the current `.alan/runtime/<channel>/memory/` layout through a
+  Workspace Memory Store adapter under `/mnt/mem`.
 
 ## 2. Planning And Validation
 
@@ -26,11 +26,11 @@
 - [ ] 3.2 Implement precise `revert` control with anchor/hash verification,
   atomic target+ledger update, and `manual_resolution_required` failure.
 - [ ] 3.3 Reimplement `alan memory recent|show|revert` as file clients over the
-  mounted Memory Store; add no daemon endpoints.
+  mounted Memory Store.
 
 ## 4. Memory Surface Integration
 
-- [ ] 4.1 Update recall, handoff, session-summary, and daily-note readers to use
+- [ ] 4.1 Update recall, handoff, Episodic Memory, and daily-note readers to use
   namespace Memory Store paths and bounded ledger/evidence references.
 - [ ] 4.2 Ensure prompt-facing surfaces exclude reverted content and never copy
   complete ledger records.
@@ -42,8 +42,8 @@
 - [ ] 5.1 Add unit and integration tests for proposal commit, target containment,
   store authority, disabled mounts, redaction, dedupe, staging, atomic ledger
   writes, revert, conflict failure, and prompt exclusion.
-- [ ] 5.2 Add compatibility tests proving `.alan/memory/` remains readable through
-  the Workspace Memory Store adapter without leaking raw host paths.
+- [ ] 5.2 Add projection tests proving the channel-scoped backing tree remains
+  readable through the Workspace Memory Store without leaking raw host paths.
 - [ ] 5.3 Run focused engine/memfs tests and `cargo test --workspace` or document
   unrelated blockers with the focused suites green.
 - [ ] 5.4 Run `openspec validate add-proactive-memory-v2 --strict` and full strict

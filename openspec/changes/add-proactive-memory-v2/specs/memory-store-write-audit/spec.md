@@ -52,7 +52,7 @@ timestamps, redaction summary, and revert state.
 - **WHEN** an authorized client reads a ledger record
 - **THEN** it can determine what changed, why, from which bounded evidence, and
   whether the write was reverted
-- **AND** it does not need a daemon API or raw rollout path
+- **AND** the record uses namespace evidence references rather than raw host paths
 
 ### Requirement: Revert is store-owned lifecycle control
 The Memory Store SHALL retain `/mnt/mem/<store>/writes/<write-id>/ctl` after

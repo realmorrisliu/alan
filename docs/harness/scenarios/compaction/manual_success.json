@@ -1,12 +1,12 @@
 {
   "id": "compaction/manual_success",
   "category": "compaction",
-  "description": "Validate the manual compaction success path surfaces the same attempt across event, read, reconnect, rollout, and recovery views.",
+  "description": "Validate manual compaction persists one coherent Agent Machine attempt.",
   "blocking": false,
-  "command": "cargo test -p alan --test compaction_integration_test compaction_manual_success_surfaces_match -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_manual_compaction_records_audit_fields -- --exact",
   "assertions": [
     "manual compaction completes successfully",
-    "event/read/reconnect/rollout/recovery surfaces agree on the same attempt id",
+    "Agent Machine and rollout evidence agree on the attempt id",
     "durable compaction summary is linked to the producing attempt"
   ],
   "kpi_tags": [
