@@ -3918,7 +3918,7 @@ default_action: allow
     }
 
     #[tokio::test]
-    async fn test_side_effect_dedupe_survives_session_rollout_recovery_for_file_effects() {
+    async fn test_side_effect_dedupe_survives_rollout_recovery_for_file_effects() {
         let temp = tempfile::TempDir::new().unwrap();
         let sessions_dir = temp.path();
         let counter = Arc::new(AtomicUsize::new(0));
