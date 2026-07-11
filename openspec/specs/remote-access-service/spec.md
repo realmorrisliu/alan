@@ -1,7 +1,10 @@
 # remote-access-service Specification
 
 ## Purpose
-TBD - created by archiving change remove-daemon-era-contracts. Update Purpose after archive.
+Defines the file-native Alan OS boundary for authenticated cross-host entry:
+the Remote Bootstrap Tree, one-shot handoff, Remote Entry Processes, attachment
+leases, lineage revocation, remote context, mounted trees, and the single
+semantic boundary that every byte transport must preserve.
 ## Requirements
 ### Requirement: Remote Access Service is a Service-Manager-started file server
 Alan OS SHALL own cross-host entry through a `Remote Access Service`: a file server started by
@@ -122,9 +125,9 @@ projection SHALL require a separate accepted capability and SHALL NOT be implied
 
 ### Requirement: Remote access has one file-native semantic boundary
 Alan OS remote entry SHALL occur only through aP operations on the Remote Bootstrap Tree and the
-returned namespace. Direct, relay, LAN, and future transports MAY vary byte delivery, reachability,
-encryption, latency, ticketing, and reconnect behavior, but SHALL NOT introduce a second semantic
-entry, control, recovery, or application API.
+returned namespace. Authenticated byte transports MAY vary byte delivery, reachability,
+encryption, latency, and ticketing, but SHALL NOT introduce a second semantic entry, control,
+recovery, or application API.
 
 #### Scenario: A transport proposes a second semantic surface
 - **WHEN** remote transport work proposes functionality unavailable through the Remote Access

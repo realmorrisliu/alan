@@ -105,7 +105,8 @@ terminology.
 #### Scenario: Retired Alan host-service surface is reintroduced
 - **WHEN** a current source, canonical spec, active change, command, configuration field, test, or
   current document reintroduces a retired host-service module, service-control command, Session
-  transport route, relay, reconnect snapshot, or host-service-backed consumer
+  transport route, remote forwarding service, snapshot-based reattachment, or
+  host-service-backed consumer
 - **THEN** repository verification fails and identifies the live owner that must be removed or
   expressed through its canonical Process, file, namespace, or service boundary
 

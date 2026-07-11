@@ -84,7 +84,7 @@ search_repo() {
 matches_file="$(mktemp /tmp/alan-daemon-era-absence.XXXXXX)"
 trap 'rm -f "$matches_file"' EXIT
 
-retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect_snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta'
+retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect[ _-]snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta|(^|[^[:alnum:]_])relay([^[:alnum:]_]|$)'
 
 if search_repo "$retired_exact_pattern" "${scan_roots[@]}" >"$matches_file"; then
     cat "$matches_file" >&2

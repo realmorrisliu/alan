@@ -1,7 +1,10 @@
 # alan-app-service-integration Specification
 
 ## Purpose
-TBD - created by archiving change remove-daemon-era-contracts. Update Purpose after archive.
+Defines how Alan Apps and host-backed services preserve app-owned domain
+authority while exporting aP file trees, posting handles through `/srv`,
+mounting them under `/mnt`, and granting UI, Tool, and Agent Process clients
+the same descriptor-bounded operations.
 ## Requirements
 ### Requirement: Alan Apps keep domain authority above Kernel
 An Alan App SHALL own its domain model, invariants, persistence rules, and product semantics outside
