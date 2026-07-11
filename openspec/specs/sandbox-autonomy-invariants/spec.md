@@ -84,37 +84,39 @@ Protected-subpath writes SHALL remain blocked on every backend.
 
 #### Scenario: Direct/nested protected-subpath tampering is blocked
 - **WHEN** a command writes to a protected subpath (`.git`, `.alan`, `.agents`) via an explicit path operand, directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
-- **THEN** the write is blocked by the path-guard parser, which checks direct operands and recurses into shell-wrapper inline scripts. The protected subpaths are NOT kernel-denied — denying `.git` would break git itself, which must write `.git` — so program-internal writes by purpose-built tools (git porcelain to `.git`, the agent to `.alan/memory`) are allowed
+- **THEN** the write is blocked by the path-guard parser, which checks direct operands and recurses into shell-wrapper inline scripts
+- **AND** program-internal writes by purpose-built owners remain possible, including git porcelain writing `.git` and Agent memory workflows writing the active channel-scoped Memory Store
 
 #### Scenario: Out-of-workspace reads stay contained under an OS sandbox
 - **WHEN** an auto-approved read-classified bash command references a path outside the workspace (`cat ~/.ssh/id_rsa`, `cat /etc/passwd`), under any backend including a wrapper form
 - **THEN** it is rejected by the path-guard parser's containment check — the OS sandbox confines writes and network but permits reads, so dropping the shape parser must NOT drop path containment; secrets cannot be read into tool output without approval
 
-#### Scenario: Carve-outs are preserved under recursion
-- **WHEN** an OS-sandboxed command writes to an agent-writable carve-out within a protected root (`.alan/memory`), directly or inside a wrapper
-- **THEN** the write is allowed, because the recursive protected check honors the same carve-outs as the direct path check
+#### Scenario: Channel-scoped Memory Store carve-outs are preserved under recursion
+- **WHEN** an OS-sandboxed command writes beneath `.alan/runtime/stable/memory/` or `.alan/runtime/dev/memory/`, directly or inside a wrapper
+- **THEN** the recursive protected check allows the write through the same narrow carve-out as the direct path check
+- **AND** unscoped `.alan/memory/`, unknown runtime channels, rollout, cache, shell-restore, policy, and other protected state remain blocked
 
 #### Scenario: Approved network intent is preserved
 - **WHEN** a command classified as a network capability is approved and executed
 - **THEN** it runs with the sandbox network restriction lifted (still filesystem-confined) so the approved network call is not futile
 
-### Requirement: The client never silently drops events across a reconnect
+### Requirement: Renderer file streams preserve offsets across reattachment
 
-The TUI's live event stream SHALL preserve a replay cursor so that no event is
-lost between hydration and the first subscribe, or across a disconnect and
-resubscribe. The future-only `/events` stream SHALL be backstopped by draining the
-buffered `/events/read` replay API from the last seen event id before each
-(re)subscribe, with sequence-based dedup against any overlap.
+A renderer reading an offset-addressable AgentFS stream SHALL retain its last delivered offset and SHALL NOT silently omit data when reopening the file or reattaching to the Agent Process. Overlap SHALL be deduplicated by stable file offset or record identity, and an unrecoverable retention gap SHALL be surfaced.
 
-#### Scenario: Events emitted during a reconnect gap are replayed
-- **WHEN** the live `/events` stream errors or ends and the client waits and resubscribes, and one or more events (e.g. a `Yield`) were emitted during the gap
-- **THEN** the client drains `/events/read` after the last seen event id and delivers the missed events before resuming the live stream, so a pending approval/form still appears
+#### Scenario: Records written during reattachment are read
 
-#### Scenario: Overlap between replay and live stream is deduped
-- **WHEN** a drained buffered event and a live-stream event refer to the same sequence
-- **THEN** it is delivered once, deduped by sequence
+- **WHEN** a renderer's file watch ends and records are appended before it opens the stream again
+- **THEN** the renderer resumes from its last delivered offset
+- **AND** it delivers retained records in order before following new appends
 
-#### Scenario: A replay gap is surfaced, not silently dropped
-- **WHEN** `/events/read` reports `gap: true` (the replay cursor had fallen out of the daemon buffer, so only a truncated tail is returned)
-- **THEN** the client surfaces a recoverable error to the user instead of continuing as if replay were complete, so missed tool/approval state is not hidden
+#### Scenario: Snapshot and stream overlap is deduplicated
 
+- **WHEN** hydrated snapshot state and an offset-readable stream contain the same durable record
+- **THEN** the renderer presents the record once using its stable identity or offset
+
+#### Scenario: Retention gap is surfaced
+
+- **WHEN** the requested offset is older than retained stream data
+- **THEN** the renderer reports a recoverable gap instead of pretending the stream is continuous
+- **AND** recovery proceeds through current AgentFS snapshot and file semantics

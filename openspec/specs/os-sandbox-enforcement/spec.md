@@ -85,32 +85,14 @@ On Linux, the OS sandbox backend SHALL confine network access (in addition to La
 - **THEN** network operations are surfaced to the human rather than reviewer-judged or auto-allowed
 
 ### Requirement: Confinement input is a projected SandboxSpec
-The OS sandbox SHALL confine a native subprocess from a `SandboxSpec` value —
-writable roots, a read denylist, and a default network posture — rather than a
-single hard-coded workspace path. The spec SHALL be a projection of the mount
-declaration list, with the workspace modeled as the seed (first, default)
-writable entry. When the spec carries exactly one writable root and an empty read
-denylist, the emitted Seatbelt profile and Landlock ruleset SHALL be identical to
-those produced from that path directly (this change is behavior-preserving).
+Alan SHALL derive a `SandboxSpec` from the concrete Process namespace, descriptors, credentials,
+network policy, executable, and delegated mounts. The spec SHALL be attributable to that Process and
+SHALL contain the complete inputs needed by the selected OS sandbox backend.
 
-#### Scenario: Single-root spec preserves the current profile
-- **WHEN** a `SandboxSpec` is built with one writable root (the workspace) and an
-  empty read denylist
-- **THEN** the generated Seatbelt profile / Landlock ruleset is byte-for-byte the
-  one produced today from a lone `workspace_root`
-- **AND** no read-deny rule is emitted
-
-#### Scenario: The workspace is the seed writable entry
-- **WHEN** a session confines tool execution with only a workspace
-- **THEN** the spec's writable roots contain exactly the workspace path
-- **AND** enforcement is indistinguishable from the prior single-path confinement
-
-#### Scenario: The read denylist is plumbed but inert at this stage
-- **WHEN** the spec's read denylist is empty
-- **THEN** the backends emit no read-deny rules and reads follow the existing
-  allow-default posture
-- **AND** the denylist parameter still threads to the backends so it can be
-  populated later without changing their signatures
+#### Scenario: A Tool Process receives workspace-only confinement
+- **WHEN** a Tool Process is spawned with only a workspace mount and no network authority
+- **THEN** the selected OS sandbox backend receives a matching `SandboxSpec`
+- **AND** the Process namespace, descriptors, credentials, and policy determine its confinement
 
 ### Requirement: macOS sensitive-read denylist
 Default sandbox specs SHALL include a sensitive-read denylist for common
@@ -208,4 +190,3 @@ unavailable.
 - **WHEN** a native subprocess is evaluated or executed
 - **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `workspace_path_guard`
 - **AND** the audit distinguishes reified namespace paths from projected host paths
-

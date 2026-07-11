@@ -97,21 +97,25 @@ The macOS shell SHALL retain Unpinned Tabs across app restarts until they are in
 - **AND** if the selected Space has no remaining Tabs, alan keeps the Space selected with no selected Tab
 
 ### Requirement: Active tasks prevent unpinned Tab retirement
+
 The macOS shell SHALL protect Unpinned Tabs from lifecycle retirement when terminal-aware metadata indicates that user work is actively running or waiting for input.
 
 #### Scenario: Foreground command is running
+
 - **WHEN** an Unpinned Tab contains a terminal pane with an active foreground command
-- **THEN** alan treats that Tab as having an active task
+- **THEN** Alan treats that Tab as having an active task
 - **AND** lifecycle pruning does not retire it solely because its TTL anchor is older than 12 hours
 
-#### Scenario: alan session is active
-- **WHEN** an Unpinned Tab contains an alan session that is running, waiting for input, or pending yield
-- **THEN** alan treats that Tab as having an active task
+#### Scenario: Supported CLI agent is active
+
+- **WHEN** an Unpinned Tab contains a supported CLI coding-agent process that is running, waiting for input, or reporting a pending user action through terminal activity metadata
+- **THEN** Alan treats that Tab as having an active task
 - **AND** lifecycle pruning does not retire it solely because its TTL anchor is older than 12 hours
 
 #### Scenario: Shell is idle
+
 - **WHEN** an Unpinned Tab contains only an idle shell prompt
-- **THEN** alan does not treat `processExited == false` by itself as an active task
+- **THEN** Alan does not treat `processExited == false` by itself as an active task
 - **AND** the Tab can be retired after TTL expiry
 
 ### Requirement: Shell state remains a runtime snapshot
@@ -518,4 +522,3 @@ of state rather than rewriting and disk-writing every file on every runtime even
 - **WHEN** a terminal's transcript changes and the app keeps running
 - **THEN** alan persists the latest transcript snapshot within the configured debounce window
 - **AND** a hard crash may lose at most that window of the most recent scrollback
-

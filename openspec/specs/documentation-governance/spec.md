@@ -4,7 +4,6 @@
 Defines how alan separates durable OpenSpec requirements from implementation
 guides, operator runbooks, executable fixtures, bridge pages, and retired
 historical plans.
-
 ## Requirements
 ### Requirement: OpenSpec owns durable specifications
 alan SHALL use OpenSpec as the only durable source of truth for product,
@@ -94,3 +93,30 @@ system outside OpenSpec.
   or acceptance criteria without pointing to OpenSpec
 - **THEN** the documentation governance review rejects the document or requires
   the normative content to move into OpenSpec
+
+### Requirement: Current repository surfaces exclude the retired host-service architecture
+Alan SHALL reject live retired host-service contracts, code, commands, configuration, tests,
+fixtures, and consumers from current repository surfaces. The guard SHALL cover canonical specs,
+active changes, source code, build and release wiring, public help, environment variables, and
+current docs; it SHALL exclude immutable OpenSpec archive history and SHALL distinguish unrelated
+Apple `LaunchDaemon`, terminal-session, authentication-session, and third-party protocol
+terminology.
+
+#### Scenario: Retired Alan host-service surface is reintroduced
+- **WHEN** a current source, canonical spec, active change, command, configuration field, test, or
+  current document reintroduces a retired host-service module, service-control command, Session
+  transport route, relay, reconnect snapshot, or host-service-backed consumer
+- **THEN** repository verification fails and identifies the live owner that must be removed or
+  expressed through its canonical Process, file, namespace, or service boundary
+
+#### Scenario: Historical archive records the former architecture
+- **WHEN** an immutable file under `openspec/changes/archive/` contains retired terminology
+- **THEN** the current-surface guard ignores that historical record
+- **AND** no current spec, code, help surface, or active change may cite it as current authority
+
+#### Scenario: Unrelated platform terminology uses the same word
+- **WHEN** current code uses Apple `LaunchDaemon` APIs or a terminal, authentication, or third-party
+  protocol session that is not the retired execution-manager abstraction
+- **THEN** the semantic guard permits that owned use
+- **AND** a broad word-only allowlist SHALL NOT hide a retired host-service or Session-transport
+  compatibility surface

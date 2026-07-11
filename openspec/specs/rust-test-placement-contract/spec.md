@@ -4,7 +4,6 @@
 Defines Rust test placement rules for inline unit tests, extracted white-box
 suites, crate-level integration tests, migration policy, and behavior-boundary
 coverage.
-
 ## Requirements
 ### Requirement: Rust test placement contracts live in OpenSpec
 alan SHALL specify Rust test placement rules, extraction triggers, migration
@@ -32,30 +31,6 @@ than oversized inline modules.
 - **WHEN** a Rust test verifies cross-module or public crate behavior
 - **THEN** it belongs in a crate-level integration test unless private access is
   the core reason for the test
-
-### Requirement: Rust test placement vocabulary is stable
-alan SHALL use stable Rust test placement vocabulary across OpenSpec, AGENTS.md,
-review guidance, and crate documentation.
-
-Stable terms:
-
-- **Inline unit test**: a `#[cfg(test)] mod tests` block kept in the same file
-  as the implementation it exercises.
-- **Extracted white-box test file**: a test-only Rust file compiled as a child
-  module of the implementation module so it can exercise private details
-  without widening production visibility.
-- **Integration test**: a crate-level test under `crates/<crate>/tests/`
-  compiled outside the library module tree and exercised through the crate's
-  external surface or process boundary.
-- **Live test**: an integration test that talks to a real provider, daemon, or
-  runtime environment and is normally `#[ignore]` plus explicitly opt-in.
-- **Test support helper**: fixture-building or assertion helper code that
-  exists only to support tests.
-
-#### Scenario: Test placement docs classify a test
-- **WHEN** docs, review comments, or OpenSpec changes classify Rust tests
-- **THEN** they use inline unit test, extracted white-box test file,
-  integration test, live test, and test support helper with these meanings
 
 ### Requirement: Rust test placement scope is explicit
 alan SHALL apply this placement contract to Rust code under `crates/*` without
@@ -114,83 +89,6 @@ or fixture-heavy regression packs.
   fixture builders, or long async orchestration
 - **THEN** it is extracted to a white-box test file or moved to integration
   tests based on the behavior boundary
-
-### Requirement: Extracted white-box tests preserve private access without bloating implementation files
-alan SHALL move large private-access Rust tests into extracted white-box test
-files instead of widening production visibility or embedding large suites in
-implementation files.
-
-Use extracted white-box files for:
-
-- async scenario suites against private runtime or daemon internals
-- tests with reusable local fixtures or helper builders
-- large regression matrices
-- tests whose size makes the implementation file difficult to review
-- tests that would otherwise force internal helpers to become public
-
-Stable placement rules:
-
-1. For a flat module file such as `foo.rs`, extracted white-box tests either
-   live in an adjacent file such as `foo_tests.rs` loaded with
-   `#[cfg(test)] #[path = "foo_tests.rs"] mod foo_tests;`, or trigger
-   conversion to a directory-backed layout when multiple test files or helpers
-   are expected.
-2. For a directory-backed module such as `foo/mod.rs`, extracted white-box
-   tests live in `foo/tests.rs`, or in a nested test-only tree rooted by
-   `foo/tests.rs` with topic files under `foo/tests/*.rs`, loaded from
-   `foo/mod.rs` under `#[cfg(test)] mod tests;`.
-3. White-box support helpers used only by one module stay adjacent to that
-   module's extracted tests rather than moving into production code.
-4. Extracted white-box files remain test-only modules and must not be
-   referenced by production code.
-
-This tier is the default extraction target for large inline test blocks that
-still need private implementation access.
-
-#### Scenario: Flat module needs extracted private tests
-- **WHEN** `foo.rs` has private-access tests that are too large to remain
-  inline
-- **THEN** alan uses an adjacent `foo_tests.rs` loaded with an explicit
-  `#[cfg(test)]` path module or converts the module to a directory-backed
-  layout when the suite needs multiple files
-
-#### Scenario: White-box helper is test-only
-- **WHEN** helper code exists only for extracted white-box tests
-- **THEN** it remains in the adjacent test-only module tree and is not imported
-  by production code
-
-### Requirement: Integration tests cover public crate and process boundaries
-alan SHALL use `crates/<crate>/tests/` for black-box behavior validated through
-crate boundaries, process boundaries, or durable external contracts.
-
-Integration tests are the correct location for:
-
-- crate public API behavior
-- CLI flows
-- HTTP route and websocket contract behavior
-- cross-module orchestration that does not need private access
-- persistence, restart, and replay flows viewed from the crate boundary
-- protocol contract and event-sequence validation
-- smoke tests and live-provider or live-runtime harnesses
-
-Stable placement rules:
-
-1. Integration tests must not require widening production visibility solely to
-   make the test compile.
-2. Shared integration-test helpers belong under `crates/<crate>/tests/support/`
-   or a similarly explicit test-only support module under `tests/`.
-3. Live tests remain integration tests, normally `#[ignore]`, with explicit
-   opt-in environment variables and companion docs or scripts when needed.
-
-#### Scenario: HTTP route contract is tested
-- **WHEN** a test validates daemon route, websocket, event-sequence, or protocol
-  behavior through the public crate/process boundary
-- **THEN** it lives under `crates/<crate>/tests/`
-
-#### Scenario: Live provider test is added
-- **WHEN** a Rust test talks to a real provider or live runtime environment
-- **THEN** it is an opt-in integration test, normally ignored by default and
-  documented with its required environment
 
 ### Requirement: Test placement decisions choose the narrowest useful boundary
 alan SHALL require each new or materially edited Rust test to choose the
@@ -285,3 +183,50 @@ Migration rules:
 - **WHEN** a refactor already changes a module containing oversized inline tests
 - **THEN** the refactor should migrate those tests toward extracted white-box or
   integration placement when the move can stay behavior-preserving
+
+### Requirement: Rust test placement vocabulary uses current runtime owners
+
+Alan SHALL use stable Rust test placement vocabulary across OpenSpec, AGENTS.md, review guidance, and crate documentation.
+
+- **Inline unit test**: a small `#[cfg(test)] mod tests` block in the implementation file.
+- **Extracted white-box test file**: a test-only child module that exercises private details without widening production visibility.
+- **Integration test**: a crate-level test under `crates/<crate>/tests/` that exercises an external crate, CLI process, or durable file boundary.
+- **Live test**: an opt-in integration test against a real provider, Process host, mounted namespace, or other live surviving environment.
+- **Test support helper**: fixture or assertion code compiled only for tests.
+
+#### Scenario: Test placement is classified
+
+- **WHEN** current docs, review comments, or OpenSpec changes classify a Rust test
+- **THEN** they use these terms with the stated meanings
+- **AND** they do not preserve a removed transport as a standard test category
+
+### Requirement: Extracted white-box tests preserve private access for current owners
+
+Alan SHALL place large private-access suites in extracted white-box files adjacent to the implementation owner rather than widening production visibility or bloating implementation files.
+
+#### Scenario: Private Agent Engine suite grows
+
+- **WHEN** an Agent Engine, Process, AgentFS, policy, provider, Tool, or renderer suite needs private access and substantial fixtures or async orchestration
+- **THEN** it moves to an adjacent test-only module tree
+- **AND** its helpers are not imported by production code
+
+#### Scenario: Flat module needs extracted tests
+
+- **WHEN** `foo.rs` has a large private-access suite
+- **THEN** it loads an adjacent `foo_tests.rs` under `#[cfg(test)]` or converts to a directory-backed module layout
+
+### Requirement: Integration tests cover public crate, CLI, Process, and file boundaries
+
+Alan SHALL use `crates/<crate>/tests/` for black-box behavior validated through public crate APIs, CLI processes, Process and AgentFS boundaries, persistence records, or live provider/runtime harnesses.
+
+#### Scenario: AgentFS contract is tested
+
+- **WHEN** a test validates public Process launch, AgentFS IO, request, action, machine, offset, or control behavior
+- **THEN** it exercises the public crate or process/file boundary from a crate-level integration test
+- **AND** it does not require private production visibility
+
+#### Scenario: Live provider test is added
+
+- **WHEN** a Rust test talks to a real provider or live Process environment
+- **THEN** it is an explicitly opt-in integration test, normally ignored by default
+- **AND** its required environment is documented

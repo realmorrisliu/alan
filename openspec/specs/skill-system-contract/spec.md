@@ -5,7 +5,6 @@ Defines alan's durable skill-system contract: portable skill packages, alan-nati
 sidecars, discovery and exposure rules, prompt rendering, package-local helpers,
 delegated execution, management surfaces, and the removed legacy mount-mode
 model.
-
 ## Requirements
 ### Requirement: Skill system contracts live in OpenSpec
 alan SHALL specify skill package layout, `SKILL.md` semantics, compatibility
@@ -20,50 +19,6 @@ assets, delegated launch targets, and management surfaces in OpenSpec.
   capability
 - **AND** `docs/skill_authoring.md` and `docs/skills_and_tools.md` remain
   implementation/operator guides instead of contract sources
-
-### Requirement: Skill vocabulary is stable
-alan SHALL use stable skill-system vocabulary consistently across runtime,
-daemon, CLI, documentation, and authoring tooling.
-
-Stable terms:
-
-- **Skill package**: one directory-backed portable skill plus optional
-  alan-native sidecars, resources, and package-local launch targets.
-- **First-party skill package**: a skill package shipped by alan from a built-in
-  source. It follows the same package contract as externally discovered
-  packages.
-- **Portable skill**: the shared public contract centered on `SKILL.md`.
-- **alan sidecar**: optional `skill.yaml` / `package.yaml` metadata that extends
-  runtime behavior without changing `SKILL.md`.
-- **Host tool**: a runtime capability registered through alan's tool system and
-  exposed uniformly to the model.
-- **Package-local executable tool**: a deterministic executable shipped under
-  `bin/` inside one skill package and bound relative to that package instead of
-  registered as a host-global tool.
-- **Package-local helper**: deterministic executable or support logic shipped
-  inside a skill package, usually under `scripts/` as glue, wrappers, or
-  compatibility launchers.
-- **Package-local launch target**: an alan-native export under `agents/<name>/`
-  that may be launched for delegated execution.
-- **Implicit invocation**: a skill is listed in the prompt catalog so the model
-  may decide to use it on demand.
-- **Host-level force-select**: a host/runtime UX such as direct skill-name
-  mention or `$skill-id` that asks the host to activate a skill directly.
-- **Active skill**: a skill force-selected for the current turn and rendered as
-  active runtime context.
-- **Parent runtime**: the runtime currently handling the user turn and, when
-  supported, exposing `invoke_delegated_skill`.
-- **Launch-root runtime**: a runtime started from a package-local launch target.
-  Launch-root runtimes intentionally keep nested delegated execution disabled in
-  V1.
-- **Delegated skill**: a skill that resolves to a package-local launch target
-  instead of parent-runtime inline instructions.
-
-#### Scenario: Documentation names a skill-system concept
-- **WHEN** docs, CLI output, daemon responses, or prompt assembly describe one
-  of these concepts
-- **THEN** they use the stable term and preserve the boundary defined by this
-  capability
 
 ### Requirement: Skill packages are directory-backed capabilities
 alan SHALL treat a skill package as a directory with a root `SKILL.md` and
@@ -617,41 +572,6 @@ Rules:
 - **THEN** the canonical target root remains inside the package tree
 - **AND** escaped symlink targets are ignored
 
-### Requirement: Management surfaces expose skill-level state
-alan SHALL expose skill-system management through local-first CLI and daemon
-surfaces while preserving skill-level `enabled` and
-`allow_implicit_invocation`.
-
-Management surfaces:
-
-- `alan skills list`
-- `alan skills packages`
-- `alan skills init`
-- `alan skills validate`
-- `alan skills eval`
-- `GET /api/v1/skills/catalog`
-- `GET /api/v1/skills/changed?after=<cursor>`
-- `POST /api/v1/skills/overrides`
-
-Rules:
-
-- Daemon skill APIs use the default workspace or a registered workspace alias /
-  short id, not arbitrary filesystem paths.
-- Override writes persist through the highest-precedence writable `AgentRoot`.
-- Override writes reject unknown `skill_id` values; callers use a runtime skill
-  id from the current catalog.
-- Change detection is cursor-based so clients do not need full catalog reloads
-  on every poll.
-- Catalog and daemon responses expose skill-level `enabled` and
-  `allow_implicit_invocation`.
-- Package snapshots do not expose mount modes because package-level exposure is
-  not part of the stable contract.
-
-#### Scenario: Skill catalog is queried
-- **WHEN** a CLI or daemon client requests the skill catalog
-- **THEN** alan returns skill-level exposure and availability state
-- **AND** package snapshots omit removed mount-mode concepts
-
 ### Requirement: First-party packages are ordinary skill packages
 alan SHALL ship first-party packages as ordinary directory-backed skill
 packages, not privileged always-active instruction blobs.
@@ -700,7 +620,7 @@ Required cutover behavior:
   direct skill references; portable skills do not declare extra trigger
   metadata.
 - The system prompt catalog is the only implicit-discovery surface.
-- CLI, daemon, and catalog surfaces expose `enabled` and
+- CLI and package-catalog surfaces expose `enabled` and
   `allow_implicit_invocation`, not mount modes.
 - Tests asserting mount-mode behavior are deleted or rewritten.
 - No legacy compatibility shim is required by this contract.
@@ -710,45 +630,6 @@ Required cutover behavior:
   activation as current behavior
 - **THEN** the reference is removed, rewritten, or treated as outside this
   stable contract
-
-### Requirement: Validation covers resolution, prompts, availability, and docs
-alan SHALL validate the skill-system cutover with coverage for resolution,
-prompt assembly, availability, CLI/daemon/catalog behavior, and documentation.
-
-Validation matrix:
-
-- Skill override merge resolves `enabled` and `allow_implicit_invocation`
-  independently across overlays.
-- Disabled skills are absent from explicit and implicit runtime surfaces.
-- `allow_implicit_invocation = false` skills are catalog-hidden but still
-  force-selectable by direct `skill_id`.
-- Inline implicit skills appear in the catalog with canonical `SKILL.md` paths
-  and are not auto-injected.
-- Delegated implicit skills appear in the catalog with `skill_id`, `target`,
-  and direct `invoke_delegated_skill` guidance.
-- Direct `skill_id` mention still renders active skill context for inline
-  skills.
-- Direct `skill_id` mention still renders delegated stubs for delegated skills.
-- No skill-authored alias / keyword / pattern / always-active activation
-  remains.
-- Disabled skills render as not found.
-- Enabled but unavailable skills render unavailable diagnostics on direct
-  `skill_id` mention.
-- Unavailable skills do not appear in the implicit catalog.
-- Catalog snapshots expose `enabled` and `allow_implicit_invocation`.
-- Package snapshots no longer expose mount modes.
-- Daemon override writes target `skill_overrides`.
-- CLI output no longer prints mount-mode labels.
-- Config examples use `skill_overrides`.
-- Architecture and AGENTS summaries do not mention mount modes or always-active
-  activation.
-- Built-in fixtures and snapshots assume no always-active defaults.
-
-#### Scenario: Skill-system cutover is validated
-- **WHEN** alan changes skill resolution, prompt rendering, availability, CLI
-  output, daemon APIs, catalog snapshots, or docs
-- **THEN** validation covers the relevant rows of this matrix
-- **AND** reports actual checks, skipped checks, and remaining risk separately
 
 ### Requirement: Non-goals remain outside the stable contract
 alan SHALL keep explicitly removed or deferred skill-system concepts outside
@@ -802,3 +683,31 @@ source path.
 - **WHEN** a workspace skill run writes generated runtime output, evaluation cache, or logs through Alan-managed paths
 - **THEN** those generated outputs are channel-scoped
 - **AND** the source skill package under `<workspace>/.agents/skills/` remains unchanged unless the user explicitly edits or installs into that workspace source
+
+### Requirement: Skill vocabulary is owned by packages and resolution
+Alan SHALL use stable Skill, Skill Package, Registry, Resolver, Active Skill, Exposure Mode,
+Invocation Mode, and Resource vocabulary across packages, prompt assembly, direct CLI, namespace
+projection, documentation, and authoring tools.
+
+#### Scenario: A Skill is described on a current surface
+- **WHEN** a package, prompt, CLI response, namespace projection, or document describes a Skill
+- **THEN** it uses the canonical skill-level vocabulary
+- **AND** it does not depend on a background catalog API
+
+### Requirement: Skill management remains local-first
+Alan SHALL expose Skill discovery, validation, enablement, override, authoring, and evaluation
+through direct CLI and package operations. Catalog snapshots MAY be derived locally but SHALL NOT
+be a second authority or require a persistent product server.
+
+#### Scenario: Operator inspects the Skill catalog
+- **WHEN** an operator runs the direct Skill list or package command
+- **THEN** Alan resolves installed packages and effective skill-level state locally
+- **AND** the result comes from the package, registry, resolver, and override owners
+
+### Requirement: Skill validation covers durable owners
+Skill validation SHALL cover package structure, registry resolution, prompt rendering,
+availability, delegation, CLI behavior, namespace projection, authoring, and current docs.
+
+#### Scenario: A removed management surface returns
+- **WHEN** a Skill test or current document adds a background API as a required management owner
+- **THEN** validation rejects the change

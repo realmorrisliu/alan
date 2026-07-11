@@ -5,30 +5,16 @@ Define alan's first-class OpenRouter provider contract, including connection
 profile identity, OpenRouter-specific settings, SDK-backed request dispatch,
 response normalization, streaming behavior, capability reporting, and
 verification expectations.
-
 ## Requirements
 ### Requirement: OpenRouter provider identity
-alan SHALL expose OpenRouter as a first-class provider id named `openrouter` in
-runtime configuration, connection profiles, daemon connection catalogs, and CLI
-connection commands. alan SHALL NOT expose the retired
-`openrouter_openai_chat_completions_compatible` id as a provider choice.
+alan SHALL expose the SDK-backed OpenRouter chat adapter under the canonical provider id
+`openrouter` across runtime configuration, connection profiles, direct CLI descriptors, and Agent
+Process connection bindings.
 
-#### Scenario: Creating an OpenRouter profile
-- **WHEN** an operator runs `alan connection add openrouter --profile openrouter-main --setting model=<model-id>`
-- **THEN** alan creates a secret-backed connection profile whose provider is `openrouter`
-
-#### Scenario: Resolving an OpenRouter profile
-- **WHEN** a session starts with `connection_profile = "openrouter-main"`
-- **THEN** alan resolves the runtime provider to OpenRouter rather than `openai_chat_completions_compatible`
-
-#### Scenario: Creating a profile with the retired OpenRouter-compatible id
-- **WHEN** an operator runs `alan connection add openrouter_openai_chat_completions_compatible`
-- **THEN** alan rejects the command as an unsupported provider id
-
-#### Scenario: Retired id is absent from provider catalogs
-- **WHEN** the CLI or daemon lists available connection providers
-- **THEN** `openrouter` is present
-- **AND** `openrouter_openai_chat_completions_compatible` is absent
+#### Scenario: Agent Process uses an OpenRouter profile
+- **WHEN** an Agent Process is spawned with `connection_profile = "openrouter-main"`
+- **THEN** the resolved provider identity is `openrouter`
+- **AND** provider selection requires no background API catalog
 
 ### Requirement: Retired OpenRouter provider removal
 alan SHALL remove `openrouter_openai_chat_completions_compatible` as a supported
@@ -49,26 +35,14 @@ without providing automatic migration or alias behavior.
 - **THEN** alan rejects it instead of treating it as an OpenRouter alias
 
 ### Requirement: OpenRouter connection settings
-alan SHALL keep OpenRouter-specific settings separate from generic
-OpenAI-compatible settings.
+The OpenRouter descriptor SHALL expose its supported connection settings through the direct CLI and
+owning connection metadata surfaces. Settings SHALL include model and supported endpoint/provider
+options without exposing secrets.
 
-#### Scenario: Profile descriptor settings
-- **WHEN** the daemon or CLI lists provider descriptors
-- **THEN** the OpenRouter descriptor includes `model` as a required setting
-- **AND** the descriptor includes `base_url`, `http_referer`, `x_title`, and `app_categories` as optional settings
-- **AND** the descriptor declares the default `base_url`
-
-#### Scenario: Default base URL
-- **WHEN** an OpenRouter profile omits `base_url`
-- **THEN** alan uses `https://openrouter.ai/api/v1` as the resolved OpenRouter base URL
-
-#### Scenario: Unknown OpenRouter setting
-- **WHEN** an OpenRouter profile includes a setting that is not declared by the OpenRouter descriptor
-- **THEN** alan rejects the profile with a provider-setting validation error
-
-#### Scenario: Generic compatible settings remain isolated
-- **WHEN** an operator configures `openai_chat_completions_compatible`
-- **THEN** OpenRouter-only settings such as `http_referer`, `x_title`, and `app_categories` are not accepted by the generic compatible provider
+#### Scenario: Operator lists OpenRouter settings
+- **WHEN** an operator runs the direct connection-provider listing command
+- **THEN** the OpenRouter descriptor reports supported non-secret settings
+- **AND** the descriptor is resolved from the local provider and connection owners
 
 ### Requirement: SDK-backed provider construction
 alan SHALL construct OpenRouter providers through `openrouter-rs` and SHALL NOT

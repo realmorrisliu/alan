@@ -1202,249 +1202,6 @@ first-party alan tab creation surfaces.
 - **THEN** the supported path is to use a normal terminal tab and run the
   desired CLI command inside that terminal
 
-### Requirement: Settings Surface Uses Task-Oriented Sections
-Alan macOS Settings SHALL organize configuration and local status into
-task-oriented groups rather than exposing storage files, raw implementation
-IDs, or one-off controls as the primary information architecture. The accepted
-Settings information architecture SHALL use the General, Terminal, Agent, and
-System groups; older Interface, Accounts, Sessions, Capabilities, and Local
-families are data families that map into those groups rather than top-level
-navigation sections.
-
-The default Settings group order SHALL be:
-
-- General
-- Terminal
-- Agent
-- System
-
-#### Scenario: Settings tab renders grouped sections
-- **WHEN** the user opens the Settings content tab
-- **THEN** alan shows General, Terminal, Agent, and System as the internal
-  Settings navigation groups in the shell content area
-- **AND** General is selected by default and contains the everyday Interface
-  preference rows before advanced or diagnostic rows
-- **AND** the content remains inside the existing shell tab chrome
-
-#### Scenario: Existing interface preferences remain available
-- **WHEN** the Settings tab is active
-- **THEN** alan exposes appearance mode, sidebar visibility, and inactive split
-  pane dimming as editable preferences in the General group
-- **AND** changing those preferences updates the same app-level preference state
-  used by the main shell surface
-
-#### Scenario: Storage details are secondary
-- **WHEN** Settings presents profile, session, skill, daemon, CLI, update, or
-  local data information
-- **THEN** alan uses user-facing labels for the primary row text
-- **AND** raw file names such as `agent.toml`, `connections.toml`, `host.toml`,
-  and raw content identifiers appear only as secondary diagnostic detail when
-  needed
-
-### Requirement: Settings Surface Preserves Configuration Boundaries
-Alan macOS Settings SHALL present configuration through the existing authority
-for each configuration family and MUST NOT become an independent parser/editor
-for runtime or credential files.
-
-#### Scenario: Account summary uses connection control surfaces
-- **WHEN** Settings presents connection profile, provider, model, credential, or
-  connection-test state
-- **THEN** alan uses the connection control-plane surface or typed client model
-  derived from that surface
-- **AND** Settings does not read secret material or display secret values
-
-#### Scenario: Capability summary uses skill catalog state
-- **WHEN** Settings presents skill or capability state
-- **THEN** alan uses the resolved skill catalog and override state exposed by
-  the skill management surface
-- **AND** Settings presents `enabled` and `allow_implicit_invocation` as
-  user-facing capability state rather than legacy mount-mode labels
-
-#### Scenario: Local summary uses install-channel helpers
-- **WHEN** Settings presents local app identity, channel, daemon, CLI, update,
-  shell-control, or alan-home status
-- **THEN** alan derives those values from install-channel, host-config, CLI
-  installer, update-policy, or shell-control helpers
-- **AND** dev-channel Settings uses dev-channel labels and locations rather than
-  silently falling back to stable-channel state
-
-### Requirement: Settings Editing Is Progressive And Safe
-Alan macOS Settings SHALL distinguish immediately editable preferences from
-summaries and advanced controls whose writes affect credentials, daemon routing,
-agent runtime behavior, skills, or local install state.
-
-#### Scenario: First-phase editable controls are limited
-- **WHEN** the first grouped Settings implementation ships
-- **THEN** local Interface preferences are directly editable
-- **AND** Accounts, Capabilities, and Local rows default to read-only summaries
-  or focused actions unless their existing control-plane write path is wired
-- **AND** Settings avoids freeform editing of `agent.toml`, `connections.toml`,
-  `host.toml`, `models.toml`, or credential stores
-
-#### Scenario: Advanced runtime controls use disclosure
-- **WHEN** Settings exposes runtime controls such as reasoning effort,
-  streaming, recovery, tool limits, timeouts, compaction, prompt snapshots, or
-  skill overrides
-- **THEN** alan places advanced controls behind progressive disclosure or a
-  compact advanced section
-- **AND** the default view remains focused on everyday app, account, session,
-  capability, and local status tasks
-
-#### Scenario: Sensitive account actions are explicit
-- **WHEN** the user performs account actions such as login, logout, set key, or
-  test connection from Settings
-- **THEN** alan presents those actions as explicit commands with provider and
-  profile context
-- **AND** Settings does not expose raw token or API-key contents after the
-  action completes
-
-### Requirement: Settings Surface Keeps Shell-Native Density
-Alan macOS Settings SHALL use compact native-feeling row groups, restrained
-typography, and calm hierarchy that fit the terminal-first shell instead of a
-page-like dashboard or marketing/settings portal.
-
-#### Scenario: Settings rows stay scannable
-- **WHEN** Settings renders multiple sections
-- **THEN** each row has one primary label and at most one focused trailing
-  control, value, or action
-- **AND** secondary text is concise and does not repeat the section heading
-
-#### Scenario: Settings avoids dashboard chrome
-- **WHEN** Settings is active
-- **THEN** alan does not add a hero header, metric cards, nested cards,
-  decorative gradients, or a separate settings navigation shell
-- **AND** the Settings surface remains visually subordinate to the surrounding
-  shell workspace
-
-#### Scenario: Unavailable status is calm and actionable
-- **WHEN** a Settings data source such as daemon connection state, skill catalog,
-  update policy, or CLI install status is unavailable
-- **THEN** alan shows a compact unavailable status in the relevant row or
-  section
-- **AND** alan avoids raw stack traces or debug payloads in the default Settings
-  view
-
-### Requirement: Settings Uses Internal Task Navigation
-Alan macOS Settings SHALL use a compact internal navigation to separate settings
-into task-oriented groups and SHALL render only the selected group in the main
-Settings content area.
-
-The default Settings navigation order SHALL be:
-
-- General
-- Terminal
-- Agent
-- System
-
-#### Scenario: Settings opens on General
-- **WHEN** the user opens the Settings content tab
-- **THEN** alan shows the internal Settings navigation inside the Settings content area
-- **AND** General is selected by default
-- **AND** the main Settings content area shows General rows without showing every other settings group in one continuous scroll
-
-#### Scenario: Settings group selection changes content
-- **WHEN** the user selects a Settings navigation group
-- **THEN** alan updates the main Settings content area to show that group's rows
-- **AND** the outer shell sidebar, tab selection, split layout, and toolbar remain unchanged
-
-#### Scenario: Settings group mapping stays task oriented
-- **WHEN** Settings builds its navigation groups from the settings surface snapshot
-- **THEN** General contains Interface preferences
-- **AND** Terminal contains Terminal Profiles, Managed Terminal Account, Mac login session, and sudo behavior rows
-- **AND** Agent contains the Alan agent selector, provider connection, model, credential, account action, runtime default, skill status, skill package source, and command line tool rows
-- **AND** System contains app identity, install channel, daemon endpoint, updates, Alan home, shell state, shell control, and diagnostics rows
-
-#### Scenario: Terminal identity stays separate from Agent configuration
-- **WHEN** Settings renders Terminal and Agent groups
-- **THEN** Terminal Profiles and Managed Terminal Accounts appear in Terminal
-- **AND** provider connection profile, provider, model, credential, account action, runtime default, and skill rows appear in Agent
-- **AND** alan does not label local terminal identity as an agent account or provider account
-
-#### Scenario: Agent selector is scoped to supported agents
-- **WHEN** the user opens the Agent Settings group
-- **THEN** alan shows Alan as the currently configurable agent
-- **AND** alan does not show Codex as a disabled option or coming-soon panel until Codex settings are supported
-
-#### Scenario: Skill package source copy is explicit
-- **WHEN** Settings renders the Agent skill source row
-- **THEN** alan labels the filesystem package source as Skill Packages
-- **AND** alan does not label that path as Public skills
-
-#### Scenario: Navigation stays visually subordinate
-- **WHEN** Settings renders the internal navigation
-- **THEN** the navigation uses compact native-feeling rows, restrained typography, SF Symbol icons, and a subtle selected state
-- **AND** alan does not present the Settings navigation as a page-like dashboard, large tab bar, marketing panel, or second app-level sidebar
-
-### Requirement: Settings Uses Native Source List And Preference Detail
-Alan macOS Settings SHALL present its internal navigation as a compact native
-source list and SHALL present the selected group as a compact sectioned
-preference list inside the existing shell content area.
-
-#### Scenario: Settings opens with native hierarchy
-- **WHEN** the user opens the Settings content tab in light mode
-- **THEN** alan shows the existing Settings groups in a compact source-list navigation
-- **AND** the Settings pane title, navigation rail, and page backdrop share a shallow native gray plane
-- **AND** the selected group renders as direct preference sections rather than a stable white page sheet or web-style card page
-- **AND** the Settings surface remains inside the shell content area without creating a separate preferences window or dashboard shell
-
-#### Scenario: Selected group uses direct preference geometry
-- **WHEN** the Settings window is wider than the selected group's content
-- **THEN** alan keeps the selected group's row content column left anchored with a stable maximum width
-- **AND** alan gives the content enough width for developer metadata such as paths, endpoints, and namespaces
-- **AND** alan uses section titles and horizontal dividers to create hierarchy instead of container cards or a page sheet
-- **AND** alan does not stretch sparse settings rows across the full detail pane
-- **AND** alan does not compensate for sparse settings with large blank card surfaces
-
-#### Scenario: Navigation remains subordinate
-- **WHEN** Settings renders the internal navigation
-- **THEN** the navigation uses source-list row selection, restrained icon and label sizing, and subtle material depth
-- **AND** the navigation rail contains only General, Terminal, Agent, and System, without a duplicate internal Settings title
-- **AND** the navigation list starts 24pt below the Settings content top with 12pt leading inset and 8pt trailing inset
-- **AND** each navigation row uses 30pt row height with approximately 13pt icon and 13pt label sizing
-- **AND** the selected source-list row uses a macOS-style capsule fill with active text/icon state and no blue accent bar
-- **AND** selected navigation text and icons become primary rather than blue-emphasized
-- **AND** alan does not present the internal Settings navigation as a second app-level sidebar, large tab bar, or stack of web buttons
-
-### Requirement: Settings Rows Use Precise Native Form Rhythm
-Alan macOS Settings rows SHALL use disciplined app-UI typography, stable columns,
-and restrained dividers so settings can be scanned like a developer control
-panel rather than a dashboard card.
-
-#### Scenario: Row columns align
-- **WHEN** a selected Settings group renders multiple rows
-- **THEN** label, description, value, action, toggle, and segmented-control positions align consistently across rows in that group
-- **AND** rows use one native setting template: title, optional secondary text, and optional trailing control
-- **AND** read-only System metadata values render as secondary text below the label rather than as a far-right table column
-- **AND** toggles, segmented controls, and button actions share a bounded trailing control column instead of hugging the full 760pt content edge
-- **AND** long metadata values expose the full value through native help or an explicit Copy/Show action
-
-#### Scenario: System rows expose real actions
-- **WHEN** the System group presents local endpoint, path, and diagnostics rows
-- **THEN** alan exposes compact actions for rows with natural local operations, such as copying the daemon endpoint and opening local folders
-- **AND** daemon endpoint uses a native Copy button rather than blue link styling
-- **AND** local folder actions use native wording such as Show... rather than web-style external-link arrows
-- **AND** diagnostics remains a real toggle plus export action
-- **AND** install facts such as Channel and Updates remain honest read-only values rather than disabled or fake edit controls
-- **AND** update explanations and implementation details do not appear as always-visible copy when the label/value pair is already clear
-
-#### Scenario: Row descriptions clarify scope
-- **WHEN** a row label is ambiguous without context, such as Sidebar or Inactive split dimming
-- **THEN** alan provides concise secondary copy that explains the affected surface
-- **AND** the secondary copy stays visually subordinate to the row label
-
-#### Scenario: Typography roles remain native and scannable
-- **WHEN** Settings renders its source list and selected group's rows
-- **THEN** alan uses distinct typography roles for source-list labels, page titles, section labels, row labels, row descriptions, and trailing values
-- **AND** row descriptions and trailing values remain visually subordinate to row labels through size, weight, and muted blue-gray ink
-- **AND** row labels use restrained native weight rather than reading as page headings
-- **AND** the selected source-list item emphasizes the label and active icon without turning every navigation label blue
-
-#### Scenario: Dense row rhythm is preserved
-- **WHEN** a selected Settings group contains only a small number of rows
-- **THEN** alan keeps row height, section spacing, and typography compact enough that the surface feels intentional instead of empty
-- **AND** section spacing stays close to a control-panel rhythm rather than leaving large About-page gaps between sections
-- **AND** alan does not compensate for sparse content with oversized headers, hero spacing, or large decorative panels
-
 ### Requirement: Settings Surface Depth Avoids Web Dashboard Chrome
 Alan macOS Settings SHALL use subtle native surface depth and restrained accent
 color. It SHALL avoid visual treatments that make the surface read as a web
@@ -1756,7 +1513,7 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **THEN** alan creates a new tab in the same Space near the clicked tab using
   the clicked tab's safe launch context
 - **AND** alan does not clone live process state, scrollback, pending approvals,
-  runtime sessions, or user title locks
+  runtime handles, or user title locks
 - **AND** alan disables the item when the clicked tab cannot be duplicated
   safely
 
@@ -1810,7 +1567,7 @@ the terminal sidebar feel like a dashboard or debug surface.
 - **WHEN** the user starts dragging a sidebar tab row
 - **THEN** the drag session carries the dragged tab identity and source
   organization location as part of the drag payload or an equivalent
-  session-scoped source record
+  drag-lifetime source record
 - **AND** the drop target does not depend solely on transient hover or row
   gesture state that can be cleared before the drop is performed
 
@@ -1829,3 +1586,64 @@ the terminal sidebar feel like a dashboard or debug surface.
   tab, or pane identity
 - **AND** alan clears any insertion preview state after the rejected drop
 
+### Requirement: Settings uses local shell task sections
+
+Alan for macOS Settings SHALL organize currently owned preferences into General, Terminal, and System groups. It SHALL NOT expose an Agent integration group until a later OpenSpec change defines its data and lifecycle boundary.
+
+#### Scenario: Settings opens
+
+- **WHEN** the user opens Settings in the shell content area
+- **THEN** General, Terminal, and System are the available internal groups
+- **AND** General is selected by default
+- **AND** the surface contains no placeholder for an undecided Alan OS attachment
+
+### Requirement: Settings preserves local configuration authorities
+
+Alan for macOS Settings SHALL read and write each surviving setting through its existing macOS shell, terminal profile, managed terminal account, install-channel, update, shell-control, or diagnostics owner.
+
+#### Scenario: Local preference is edited
+
+- **WHEN** a user changes appearance, sidebar, inactive-pane dimming, terminal profile, or another supported local preference
+- **THEN** Settings uses the same typed owner as the active shell feature
+- **AND** it does not parse unrelated runtime, credential, or service files independently
+
+### Requirement: Settings editing is progressive and locally bounded
+
+Settings SHALL distinguish immediately editable local preferences from sensitive terminal-account actions, install facts, and diagnostics controls.
+
+#### Scenario: Sensitive local action is selected
+
+- **WHEN** a user provisions a managed terminal account or performs another privileged local action
+- **THEN** Settings presents an explicit action with its local identity and safety state
+- **AND** no raw secret is displayed after completion
+
+### Requirement: Local Settings keeps shell-native density
+
+Settings SHALL use compact native row groups, restrained typography, calm hierarchy, and concise unavailable states for surviving local sources.
+
+#### Scenario: A local source is unavailable
+
+- **WHEN** terminal profile, update, CLI install, shell-control, or diagnostics state cannot be read
+- **THEN** Settings shows a compact unavailable status in the owning row
+- **AND** it does not show raw diagnostics or add dashboard chrome
+
+### Requirement: Settings uses native local task navigation
+
+Settings SHALL render General, Terminal, and System as a compact native source list and SHALL show only the selected group's rows in the detail area.
+
+#### Scenario: Group selection changes content
+
+- **WHEN** the user selects a Settings group
+- **THEN** the detail area updates without changing the outer shell sidebar, tab selection, split layout, or toolbar
+- **AND** General owns app preferences, Terminal owns terminal profiles and managed terminal identity, and System owns install, update, shell-control, and diagnostics facts
+
+### Requirement: Local Settings rows use precise native form rhythm
+
+Settings rows SHALL align labels, secondary descriptions, values, toggles, and actions consistently while keeping actions limited to real operations owned by the local macOS product.
+
+#### Scenario: System rows expose local actions
+
+- **WHEN** System presents local paths, install facts, update state, or diagnostics
+- **THEN** natural operations use compact native actions such as Copy, Show, or Export
+- **AND** read-only facts remain honest values rather than disabled edit controls
+- **AND** long metadata is available through native help or an explicit Copy or Show action

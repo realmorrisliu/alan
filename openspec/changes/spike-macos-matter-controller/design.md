@@ -5,9 +5,9 @@ controller spike possible without Apple Home, Home Assistant, vendor cloud APIs,
 or an upstream Matter sidecar. A directly Matter-capable light is a bounded,
 low-risk target that avoids bridge topology and high-risk actuators.
 
-The `alan-app-service-integration` capability folded into
-`remove-daemon-era-contracts` permits Apple frameworks, XPC, and host storage
-behind an aP adapter, but files remain the Alan OS authority surface.
+The canonical `alan-app-service-integration` capability permits Apple
+frameworks, XPC, and host storage behind an aP adapter, but files remain the
+Alan OS authority surface.
 This spike therefore proves both the platform controller and the host-backed
 file-server boundary.
 
