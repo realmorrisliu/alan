@@ -141,17 +141,19 @@ produced before Process exit. The user-space ProcessRunner bridge will accept an
 incremental output sink backed by the existing ProcFS stream; this changes no
 Kernel ontology.
 
-For a finite command whose complete output is bounded UTF-8, `run` also opens
-`/mnt/edit/body` read-write, appends the bytes at the observed end, and clunks
-to commit only if the body revision still matches. A conflict never overwrites
-another client's edit: `run` reopens the latest revision and retries a bounded
-number of safe end-appends. A committed append returns an editfs-issued commit
-token naming the committed range and revision; the materialization record must
-present that token, so a Process/result link can only name bytes this evaluator
-actually appended — range existence in a revision is not enough. The editfs
-event stream records the resulting body range, body revision, and `/proc/<pid>`
-path, so the raw body stays plain text while the execution boundary remains
-inspectable. If materialization fails,
+For a finite command whose complete output is bounded UTF-8, `run` submits one
+complete-document `materialize` control write carrying its `/proc/<pid>` path,
+the expected body revision and append position, and the result bytes; editfs
+commits on clunk, atomically appending the bytes as an ordinary body edit and
+emitting the Process-linked materialization event in the same commit. A
+conflict never overwrites another client's edit: a stale revision fails the
+commit without side effects and `run` retries a bounded number of safe
+end-appends against the newly read end. Because bytes and attribution commit
+together, a Process/result link can only name bytes this evaluator actually
+appended — no post-hoc range claim exists, and no aP clunk payload or protocol
+change is needed. The editfs event stream records the resulting body range,
+body revision, and `/proc/<pid>` path, so the raw body stays plain text while
+the execution boundary remains inspectable. If materialization fails,
 the command may still succeed; its complete result remains in Process output
 and status distinguishes command failure from materialization failure.
 

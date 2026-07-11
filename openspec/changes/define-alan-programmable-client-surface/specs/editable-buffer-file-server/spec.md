@@ -35,54 +35,40 @@ identity, until aP request provenance provides authentication.
   the current buffer at clunk
 - **THEN** editfs returns a typed aP error and appends no execution-started event
 
-### Requirement: body supports revision-safe result append
-Editfs SHALL allow an evaluator Process to append bounded UTF-8 result bytes to
-the current end of `body` through a read-write fid bound to the body revision
-observed at open. Clunk SHALL commit the append only if that revision and append
-position are still current. A successful result append SHALL advance the body
-revision and remain an ordinary body edit, and editfs SHALL return an append
-commit token to the committing fid identifying that commit, its resulting body
-revision, and the committed range.
+### Requirement: Result materialization is one atomic append-and-link commit
+Editfs SHALL accept an evaluator's complete-document `materialize` control write
+carrying the evaluator's `/proc/<pid>` Path, the expected body revision and
+append position, and the bounded UTF-8 result bytes. On clunk, editfs SHALL
+atomically validate the expected revision and append position, append the bytes
+at the current end of `body` as an ordinary body edit that advances the body
+revision, and emit the edit event plus a Process-linked materialization event
+naming the committed range, the new body revision, and the supplied
+`/proc/<pid>` Path. A stale revision or append position SHALL fail the commit
+with a typed aP error and no side effects. Because the result bytes and their
+Process link commit together, a materialization event SHALL never attribute
+bytes committed by another writer, and editfs SHALL NOT accept a post-hoc
+record that links an existing `body` range to a Process. This uses only
+ordinary aP writes and commit-on-clunk; no clunk response payload or protocol
+change is required. Editfs SHALL NOT copy Process status, exit state, or
+complete output into a parallel execution record.
 
-#### Scenario: Result append commits
-- **WHEN** an evaluator opens `body` read-write, writes bounded UTF-8 bytes at the
-  observed end, and clunks before another body edit
-- **THEN** editfs appends the bytes, advances the body revision, and emits an edit
-  event
-- **AND** the committing evaluator receives an append commit token naming the
-  committed range and new body revision
+#### Scenario: Materialization commits atomically
+- **WHEN** an evaluator clunks a complete `materialize` document whose expected
+  revision and append position match the current buffer
+- **THEN** `body` gains the appended bytes as an ordinary edit with an advanced
+  revision and an edit event
+- **AND** the same commit emits a materialization event linking exactly that
+  committed range and revision to the supplied `/proc/<pid>` Path
 
-#### Scenario: Concurrent edit rejects result append
-- **WHEN** another client changes `body` after the evaluator opens its
-  read-write fid but before clunk
-- **THEN** editfs rejects the stale append and preserves the concurrent edit
+#### Scenario: Concurrent edit rejects materialization
+- **WHEN** another client changes `body` after the evaluator captures the append
+  position but before its `materialize` document is clunked
+- **THEN** editfs fails the commit with a typed aP error, appends no bytes,
+  emits no events, and preserves the concurrent edit
+- **AND** the evaluator may retry a safe append against the newly read body end
 
-### Requirement: editfs links materialized ranges to Process truth
-After a successful result append, editfs SHALL accept a complete-document
-materialization record from the evaluator that names `/proc/<pid>` and presents
-the append commit token editfs issued for that result append. Editfs SHALL bind
-the materialization event to the specific append commit the token identifies —
-its committed range and body revision — and SHALL NOT accept range existence in
-a revision as a substitute for the token; a record naming bytes committed by a
-different writer or a different commit SHALL be rejected. Editfs SHALL NOT copy
-Process status, exit state, or complete output into a parallel execution record.
-
-#### Scenario: Materialization is recorded
-- **WHEN** a `run` Process presents the append commit token for its finite
-  result together with its `/proc/<pid>` Path
-- **THEN** editfs appends an event linking that commit's range and revision to
-  `/proc/<pid>`
-- **AND** clients continue to read execution status and complete output from the
-  Process files
-
-#### Scenario: Materialization record is inconsistent
-- **WHEN** the record's token does not match an append commit editfs performed,
-  or names a commit other than the one that wrote the result bytes
-- **THEN** editfs rejects the record and does not publish a false Process/result
-  association
-
-#### Scenario: Record names another writer's bytes
-- **WHEN** an evaluator reports a range that exists in the named revision but was
-  committed by a different writer or commit
-- **THEN** editfs rejects the record because the presented token does not
-  identify that commit
+#### Scenario: Post-hoc range attribution is rejected
+- **WHEN** a client submits a record that names an existing `body` range and a
+  `/proc/<pid>` Path without carrying the result bytes in a `materialize` commit
+- **THEN** editfs rejects it, because Process/result links exist only as
+  products of atomic materialize commits
