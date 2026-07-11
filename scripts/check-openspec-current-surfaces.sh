@@ -9,10 +9,61 @@ changes_root="$repo_root/openspec/changes"
 allowlist_file="$repo_root/scripts/openspec-current-surface-allowlist.txt"
 violations=()
 
-if ! command -v rg >/dev/null 2>&1; then
-    printf 'error: rg is required by the OpenSpec current-surface guard\n' >&2
-    exit 1
-fi
+current_markdown_files() {
+    [[ -d "$spec_root" ]] && find "$spec_root" -type f -name '*.md' -print
+    [[ -d "$changes_root" ]] && find "$changes_root" \
+        -path "$changes_root/archive" -prune -o -type f -name '*.md' -print
+}
+
+search_purpose_lines() {
+    local pattern="$1"
+    local file line_number line
+
+    if command -v rg >/dev/null 2>&1; then
+        rg --no-heading --color never -n -i --glob 'spec.md' "$pattern" "$spec_root" || true
+        return
+    fi
+
+    while IFS= read -r file; do
+        while IFS=: read -r line_number line; do
+            [[ -n "$line_number" ]] && printf '%s:%s:%s\n' "$file" "$line_number" "$line"
+        done < <(grep -n -i -E "$pattern" "$file" || true)
+    done < <(find "$spec_root" -type f -name 'spec.md' -print | sort)
+}
+
+search_current_file_names() {
+    local pattern="$1"
+    local file
+
+    if command -v rg >/dev/null 2>&1; then
+        rg --no-heading --color never -l -i --glob '*.md' --glob '!**/archive/**' \
+            "$pattern" "$spec_root" "$changes_root" || true
+        return
+    fi
+
+    while IFS= read -r file; do
+        if grep -q -i -E "$pattern" "$file"; then
+            printf '%s\n' "$file"
+        fi
+    done < <(current_markdown_files | sort)
+}
+
+search_current_lines() {
+    local pattern="$1"
+    local file line_number line
+
+    if command -v rg >/dev/null 2>&1; then
+        rg --no-heading --color never -n -i --glob '*.md' --glob '!**/archive/**' \
+            "$pattern" "$spec_root" "$changes_root" || true
+        return
+    fi
+
+    while IFS= read -r file; do
+        while IFS=: read -r line_number line; do
+            [[ -n "$line_number" ]] && printf '%s:%s:%s\n' "$file" "$line_number" "$line"
+        done < <(grep -n -i -E "$pattern" "$file" || true)
+    done < <(current_markdown_files | sort)
+}
 
 relative_path() {
     local path="$1"
@@ -58,7 +109,7 @@ scan_purpose_placeholders() {
     while IFS=: read -r file line_number line; do
         [[ -n "$file" ]] || continue
         record_violation "purpose-placeholder" "$file" "$line_number" "$line"
-    done < <(rg --no-heading --color never -n -i --glob 'spec.md' "$pattern" "$spec_root" || true)
+    done < <(search_purpose_lines "$pattern")
 }
 
 scan_rule_keys() {
@@ -157,12 +208,12 @@ scan_bridge_paragraphs() {
 
 scan_current_documents() {
     local file line line_number candidate_pattern
-    candidate_pattern='Views/Console|Controllers/Console|Models/Console|Services/Daemon|crates/alan/src/daemon|crates/alan/src/cli/daemon\.rs|daemon_client\.rs|ShellContentInstance|HostCompatibilityBridge|namespace[- ]bootstrap|callback|\bdtos?\b|ContentInstance|host[- ]action|compatibility|event[- ]broadcast'
+    candidate_pattern='Views/Console|Controllers/Console|Models/Console|Services/Daemon|crates/alan/src/daemon|crates/alan/src/cli/daemon\.rs|daemon_client\.rs|ShellContentInstance|HostCompatibilityBridge|namespace[- ]bootstrap|callback|(^|[^[:alnum:]_])dtos?([^[:alnum:]_]|$)|ContentInstance|host[- ]action|compatibility|event[- ]broadcast'
 
     while IFS= read -r file; do
         [[ -n "$file" ]] || continue
         scan_bridge_paragraphs "$file"
-    done < <(rg --no-heading --color never -l -i --glob '*.md' --glob '!**/archive/**' "$candidate_pattern" "$spec_root" "$changes_root" || true)
+    done < <(search_current_file_names "$candidate_pattern")
 
     while IFS=: read -r file line_number line; do
         [[ -n "$file" ]] || continue
@@ -172,7 +223,7 @@ scan_current_documents() {
         if is_bridge_identifier "$line"; then
             record_violation "bridge-identifier" "$file" "$line_number" "$line"
         fi
-    done < <(rg --no-heading --color never -n -i --glob '*.md' --glob '!**/archive/**' "$candidate_pattern" "$spec_root" "$changes_root" || true)
+    done < <(search_current_lines "$candidate_pattern")
 }
 
 check_instruction_lookup() {

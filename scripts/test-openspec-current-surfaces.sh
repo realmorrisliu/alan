@@ -26,6 +26,8 @@ make_case() {
 expect_pass() {
     local case_root="$1"
     OPEN_SPEC_CURRENT_SURFACE_SKIP_INSTRUCTIONS=1 bash "$guard" "$case_root" >/dev/null
+    PATH="$(dirname "$(command -v bash)"):$(dirname "$(command -v find)"):$(dirname "$(command -v grep)"):$(dirname "$(command -v sort)"):$(dirname "$(command -v mktemp)"):$(dirname "$(command -v cp)"):$(dirname "$(command -v mkdir)"):$(dirname "$(command -v rm)")" \
+        OPEN_SPEC_CURRENT_SURFACE_SKIP_INSTRUCTIONS=1 bash "$guard" "$case_root" >/dev/null
 }
 
 expect_failure() {
